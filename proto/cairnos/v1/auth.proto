@@ -1,0 +1,69 @@
+// LoginService: access-key login and token revocation
+// (.agents/spec/08-auth-and-access.md, "Model"). A client exchanges its
+// long-lived access key at /v1/login for a short-lived bearer token; the
+// revocation RPC feeds the jti/sub denylist that every verify consults, so
+// a token dies before its exp (Change 1 in the spec).
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// LoginService exchanges access keys for bearer tokens and revokes tokens.
+// Login itself is tokenless (it is the way in); Revoke requires the admin
+// scope, enforced by the auth interceptor like every other method.
+service LoginService {
+  // Login exchanges a valid, enabled access key for a short-lived token
+  // carrying the key's scopes. The long-lived key crosses the wire here,
+  // which is why a non-loopback bind demands TLS
+  // (.agents/spec/08-auth-and-access.md, "Model").
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post: "/v1/login"
+      body: "*"
+    };
+  }
+
+  // Revoke denylists one token by jti, or every live token minted from one
+  // access key by key id. Requires the admin scope.
+  rpc Revoke(RevokeRequest) returns (RevokeResponse) {
+    option (google.api.http) = {
+      post: "/v1/auth/revoke"
+      body: "*"
+    };
+  }
+}
+
+message LoginRequest {
+  // key is the plaintext access key printed once by `cairnos keys add`.
+  string key = 1;
+}
+
+message LoginResponse {
+  // token is the signed JWT to present as `Authorization: Bearer <token>`.
+  string token = 1;
+
+  // expires_at is the token's exp; clients re-call Login with their access
+  // key for a fresh token (.agents/spec/08-auth-and-access.md, Change 2).
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// RevokeRequest names exactly one revocation target: jti or key_id.
+message RevokeRequest {
+  // jti denylists one token until any token with that id could expire.
+  string jti = 1;
+
+  // key_id denylists every live token minted from one access key. The key
+  // itself stays enabled and can mint fresh tokens; disable the key with
+  // `cairnos keys disable` to stop logins too.
+  string key_id = 2;
+}
+
+message RevokeResponse {
+  // denied echoes the denylisted target: "jti:<id>" or "key:<id>".
+  string denied = 1;
+}

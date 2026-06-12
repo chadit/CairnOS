@@ -1,0 +1,59 @@
+# skill_gap_analyzer.toml: what do the jobs want that you don't have yet?
+#
+# Run it:
+#   cairnos run examples/agents/skill_gap_analyzer/skill_gap_analyzer.toml \
+#     --input jobs_json='[{"title": "Platform Engineer", "skills": "Go, Kubernetes, Terraform"}]' \
+#     --input profile="Go, PostgreSQL, gRPC" \
+#     --input notify_to=me@example.com
+#
+# The compare action calls a Go function named skill_gap_compare through the
+# local_fn runner. Functions can't live in config, so the operator registers
+# it at build time when wiring the engine. See the README next to this file.
+
+[workflow]
+name        = "skill_gap_analyzer"
+version     = "1"
+description = "Extract required skills from job postings and compare them against your profile."
+on_error    = "halt"
+timeout     = "10m"
+
+[workflow.inputs.jobs_json]
+type        = "string"
+required    = true
+description = "JSON array of job postings, for example a saved Career Scout digest."
+
+[workflow.inputs.profile]
+type        = "string"
+required    = true
+description = "Comma-separated list of skills you already have."
+
+[workflow.inputs.notify_to]
+type        = "string"
+required    = true
+description = "Email address that receives the gap report."
+
+[action.extract_skills]
+runner = "anthropic"
+
+[action.extract_skills.params]
+system = """
+You extract skill requirements from job postings. Reply with a JSON array of
+skill names, lowercase, deduplicated. No prose, no markdown fences, only the
+array.
+"""
+prompt = """
+Job postings:
+${{ inputs.jobs_json }}
+"""
+
+# skill_gap_compare is registered by the operator at build time; see the
+# README for the function contract and a reference implementation.
+[action.compare]
+runner     = "local_fn"
+depends_on = ["extract_skills"]
+params     = { fn = "skill_gap_compare", required = "${{ extract_skills.output }}", profile = "${{ inputs.profile }}" }
+
+[action.email_summary]
+runner     = "email"
+depends_on = ["compare"]
+params     = { to = "${{ inputs.notify_to }}", subject = "Skill gap report", body = "${{ compare.output }}" }

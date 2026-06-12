@@ -1,0 +1,53 @@
+# Example Prometheus alert rules over the cairnos_* metric catalog
+# (.agents/spec/06-observability-and-tuning.md). Load with:
+#
+#   rule_files:
+#     - alerts.yml
+#
+# Thresholds are starting points; tune them to your run volume and budget.
+groups:
+  - name: cairnos
+    rules:
+      - alert: CairnOSHighRunFailureRate
+        expr: |
+          (
+            sum(rate(cairnos_runs_total{status="failed"}[15m]))
+              /
+            sum(rate(cairnos_runs_total[15m]))
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of CairnOS runs are failing"
+          description: >-
+            Over the last 15 minutes, the failed share of CairnOS runs stayed
+            above 20% for 10 minutes. Check the run-overview dashboard for the
+            failing workflow, then `cairnos runs list --status failed` for the
+            error codes.
+
+      - alert: CairnOSBreakerOpen
+        expr: cairnos_circuit_state == 2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Circuit breaker for runner {{ $labels.runner }} is open"
+          description: >-
+            The breaker for runner {{ $labels.runner }} has been OPEN for more
+            than 5 minutes, so every workflow using it is failing fast. If the
+            upstream service has recovered, reset it with the admin API
+            (AdminService.ResetBreaker); otherwise investigate the service.
+
+      - alert: CairnOSCostSpike
+        expr: sum(increase(cairnos_cost_usd_total[1h])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "CairnOS spent more than $5 in the last hour"
+          description: >-
+            Estimated runner spend passed $5/hour. Cost is runner-estimated,
+            not an invoice, but a sudden rise usually means a retry storm, a
+            runaway agent loop, or a new high-volume schedule. Break it down
+            with `sum by (workflow) (increase(cairnos_cost_usd_total[1h]))`
+            or `cairnos cost --since 1d`.

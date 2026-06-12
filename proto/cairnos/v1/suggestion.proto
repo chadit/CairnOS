@@ -1,0 +1,113 @@
+// SuggestionService: the Phase 3 tuning-suggestion review queue
+// (.agents/spec/06-observability-and-tuning.md, "Review flow"). The API
+// mirrors the CLI: list the queue, approve, reject. There is no scan or
+// replay RPC on purpose; replay re-invokes real runners with real cost, so
+// it stays behind the CLI's explicit --replay flag, and nothing in Phase 3
+// auto-applies a suggestion.
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// SuggestionService manages the human review queue over persisted tuning
+// suggestions.
+service SuggestionService {
+  // ListSuggestions lists suggestions newest-first, filterable by status.
+  rpc ListSuggestions(ListSuggestionsRequest) returns (ListSuggestionsResponse) {
+    option (google.api.http) = {get: "/v1/suggestions"};
+  }
+
+  // ApproveSuggestion marks a suggestion approved and returns the annotated
+  // change for the operator to apply by hand. Nothing is written to
+  // workflow or config files.
+  rpc ApproveSuggestion(ApproveSuggestionRequest) returns (ApproveSuggestionResponse) {
+    option (google.api.http) = {
+      post: "/v1/suggestions/{id}/approve"
+      body: "*"
+    };
+  }
+
+  // RejectSuggestion marks a suggestion rejected.
+  rpc RejectSuggestion(RejectSuggestionRequest) returns (RejectSuggestionResponse) {
+    option (google.api.http) = {
+      post: "/v1/suggestions/{id}/reject"
+      body: "*"
+    };
+  }
+}
+
+// Savings is an estimated improvement with a confidence band, never a
+// promise.
+message Savings {
+  double cost_usd_per_run = 1;
+
+  int64 latency_delta_ms = 2;
+
+  // confidence is low, medium, or high. Output-changing kinds never rise
+  // above low in Phase 3.
+  string confidence = 3;
+}
+
+// Suggestion is one evidence-backed tuning proposal awaiting human review.
+message Suggestion {
+  string id = 1;
+
+  // kind is caching, batching, or param_tuning.
+  string kind = 2;
+
+  // target is the workflow or "workflow.action" the change applies to.
+  string target = 3;
+
+  // status is open, approved, or rejected.
+  string status = 4;
+
+  // rationale explains the proposal in plain language with its evidence.
+  string rationale = 5;
+
+  // evidence carries the metrics that triggered the suggestion.
+  google.protobuf.Struct evidence = 6;
+
+  // proposed carries the concrete change being proposed.
+  google.protobuf.Struct proposed = 7;
+
+  Savings est_savings = 8;
+
+  google.protobuf.Timestamp created_at = 9;
+}
+
+message ListSuggestionsRequest {
+  // status narrows to one review state; empty means all.
+  string status = 1;
+
+  // limit caps the result count; zero means the server default.
+  int32 limit = 2;
+}
+
+message ListSuggestionsResponse {
+  repeated Suggestion suggestions = 1;
+}
+
+message ApproveSuggestionRequest {
+  string id = 1;
+}
+
+message ApproveSuggestionResponse {
+  Suggestion suggestion = 1;
+
+  // annotation is the rendered change for the operator to apply by hand.
+  string annotation = 2;
+}
+
+message RejectSuggestionRequest {
+  string id = 1;
+}
+
+message RejectSuggestionResponse {
+  Suggestion suggestion = 1;
+}

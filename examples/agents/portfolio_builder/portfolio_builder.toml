@@ -1,0 +1,60 @@
+# portfolio_builder.toml: plan a portfolio project, scaffold it, ping a hook.
+#
+# Run it:
+#   cairnos run examples/agents/portfolio_builder/portfolio_builder.toml \
+#     --input target_role="Staff Platform Engineer" \
+#     --input notify_url=https://hooks.example.com/portfolio
+#
+# Trigger-only: no schedule, you run it when you want a new project.
+
+[workflow]
+name        = "portfolio_builder"
+version     = "1"
+description = "Plan a portfolio project for a target role, scaffold it with codex, then post a completion ping."
+on_error    = "halt"
+timeout     = "30m"
+
+[workflow.inputs.target_role]
+type        = "string"
+required    = true
+description = "The role the portfolio project should speak to."
+
+[workflow.inputs.project_dir]
+type        = "string"
+default     = "./portfolio"
+description = "Where codex should create the project skeleton."
+
+[workflow.inputs.notify_url]
+type        = "string"
+required    = true
+description = "Your webhook endpoint for the completion ping."
+
+[action.plan]
+runner = "anthropic"
+
+[action.plan.params]
+system = """
+You design small, finishable portfolio projects. Output a project plan:
+name, one-paragraph pitch, the three or four core features, the tech stack,
+and a file-level layout. Scope it to roughly two weekends of work.
+"""
+prompt = "Design a portfolio project that demonstrates the skills expected of a ${{ inputs.target_role }}."
+
+[action.scaffold]
+runner     = "codex"
+depends_on = ["plan"]
+
+[action.scaffold.params]
+prompt = """
+Create a new project skeleton under ${{ inputs.project_dir }} following this
+plan. Create the directory layout, a README with the pitch and feature list,
+and stub source files with TODO markers. Do not implement features yet.
+
+Plan:
+${{ plan.output }}
+"""
+
+[action.notify]
+runner     = "webhook"
+depends_on = ["scaffold"]
+params     = { url = "${{ inputs.notify_url }}", body = "portfolio_builder finished. Scaffold summary: ${{ scaffold.output }}" }

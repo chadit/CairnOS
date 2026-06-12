@@ -1,0 +1,20 @@
+# Keep the build context to source and module files only.
+.git
+.github
+.env
+.env.*
+data/
+bin/
+.claude
+.claude-lint-skip
+.agents
+*.db
+*.db-wal
+*.db-shm
+Dockerfile
+.dockerignore
+
+# The Go binary does not build or embed the SPA (it is a separate static bundle
+# served outside the image), so the whole web/ tree — node_modules included —
+# stays out of the build context.
+web/

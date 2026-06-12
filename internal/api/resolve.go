@@ -1,0 +1,65 @@
+package api
+
+import (
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"google.golang.org/grpc/codes"
+
+	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/workflow"
+)
+
+// WorkflowResolver loads a workflow by name out of a directory, freshly on
+// every call so edits apply without re-registration. It is the shared run
+// lookup the WorkflowService and the A2A adapter both go through, so the two
+// resolve names identically (the A2A adapter lives in internal/a2a and reuses
+// this exported surface rather than reimplementing the scan).
+type WorkflowResolver struct {
+	dir    string
+	logger *slog.Logger
+}
+
+// NewWorkflowResolver builds a resolver over one workflows directory.
+func NewWorkflowResolver(dir string, logger *slog.Logger) *WorkflowResolver {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &WorkflowResolver{dir: dir, logger: logger}
+}
+
+// Resolve returns the workflow named name, or a canonical NotFound gRPC error
+// when no file in the directory carries that name. Files that fail to load are
+// skipped with a log line so one broken file cannot mask the others.
+func (r *WorkflowResolver) Resolve(name string) (*workflow.Workflow, error) {
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		return nil, errorStatus(codes.NotFound,
+			cairnerr.Newf(codeWorkflowNotFound, "no workflow named %q: workflows directory unreadable: %v", name, err))
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), workflowFileSuffix) {
+			continue
+		}
+
+		path := filepath.Join(r.dir, entry.Name())
+
+		flow, loadErr := workflow.Load(path)
+		if loadErr != nil {
+			r.logger.Warn("skipping unloadable workflow file", "path", path, "error", loadErr)
+
+			continue
+		}
+
+		if flow.Name == name {
+			return flow, nil
+		}
+	}
+
+	return nil, errorStatus(codes.NotFound,
+		cairnerr.Newf(codeWorkflowNotFound, "no workflow named %q in %s", name, r.dir))
+}

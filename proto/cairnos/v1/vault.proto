@@ -1,0 +1,121 @@
+// VaultService: documents with tags and links, queried by the typed graph DSL
+// (.agents/spec/05-memory-and-knowledge.md, "Vault and Knowledge Graph";
+// .agents/spec/14-open-decisions.md, S1: a typed DSL, not GraphQL).
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// VaultService manages the Obsidian-style document store and its typed graph
+// query.
+service VaultService {
+  // PutDocument persists a new document or overwrites an existing one and
+  // returns its id.
+  rpc PutDocument(PutDocumentRequest) returns (PutDocumentResponse) {
+    option (google.api.http) = {
+      post: "/v1/vault"
+      body: "*"
+    };
+  }
+
+  // GetDocument fetches one document by id, with its derived backlinks.
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
+    option (google.api.http) = {get: "/v1/vault/{id}"};
+  }
+
+  // DeleteDocument removes one document and its links.
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse) {
+    option (google.api.http) = {delete: "/v1/vault/{id}"};
+  }
+
+  // QueryVault runs the typed graph query: tag and project filtering, bounded
+  // link traversal, and keyword text match.
+  rpc QueryVault(QueryVaultRequest) returns (QueryVaultResponse) {
+    option (google.api.http) = {
+      post: "/v1/vault/query"
+      body: "*"
+    };
+  }
+}
+
+// VaultDocument is one vault entry. links are outbound references; backlinks
+// are the derived inbound set, populated on a get and read-only on a put.
+message VaultDocument {
+  string id = 1;
+  string title = 2;
+
+  // body is markdown.
+  string body = 3;
+
+  repeated string tags = 4;
+
+  // links are outbound document ids this one references.
+  repeated string links = 5;
+
+  // backlinks are inbound document ids (derived, ignored on put).
+  repeated string backlinks = 6;
+
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message PutDocumentRequest {
+  VaultDocument document = 1;
+}
+
+message PutDocumentResponse {
+  string id = 1;
+}
+
+message GetDocumentRequest {
+  string id = 1;
+}
+
+message GetDocumentResponse {
+  VaultDocument document = 1;
+}
+
+message DeleteDocumentRequest {
+  string id = 1;
+}
+
+message DeleteDocumentResponse {}
+
+// QueryVaultRequest is the typed graph query DSL over the wire. Every field is
+// optional and AND-combined.
+message QueryVaultRequest {
+  // tags narrows to documents carrying every listed tag.
+  repeated string tags = 1;
+
+  // project narrows to one project (a "project:<name>" tag convention).
+  string project = 2;
+
+  // linked_from is a document id whose link graph is traversed.
+  string linked_from = 3;
+
+  // hops bounds the link traversal depth from linked_from.
+  int32 hops = 4;
+
+  // text is a keyword match over title and body.
+  string text = 5;
+
+  // limit caps the result count; zero means no cap.
+  int32 limit = 6;
+
+  // semantic asks for vector search when a backend is configured; keyword
+  // search answers otherwise and fallback is set in the response.
+  bool semantic = 7;
+}
+
+message QueryVaultResponse {
+  repeated VaultDocument documents = 1;
+
+  // fallback is true when semantic search was requested but keyword search
+  // answered because no vector backend is configured.
+  bool fallback = 2;
+}

@@ -1,0 +1,2740 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "cairnos/v1/common.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "WorkflowService"
+    },
+    {
+      "name": "A2AService"
+    },
+    {
+      "name": "RunnerPlugin"
+    },
+    {
+      "name": "AdminService"
+    },
+    {
+      "name": "LoginService"
+    },
+    {
+      "name": "ChatService"
+    },
+    {
+      "name": "GovernanceService"
+    },
+    {
+      "name": "MemoryService"
+    },
+    {
+      "name": "LanguageRulesService"
+    },
+    {
+      "name": "SuggestionService"
+    },
+    {
+      "name": "VaultService"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/a2a/tasks": {
+      "get": {
+        "summary": "ListTasks lists tasks newest-first, backed by ListRuns.",
+        "operationId": "A2AService_ListTasks",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListTasksResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "skill",
+            "description": "skill narrows to one workflow name; empty means all.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "description": "state narrows to one task state; empty means all.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means the server default.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      },
+      "post": {
+        "summary": "CreateTask starts a run from an A2A task request: the skill names the\nworkflow, params become workflow inputs. It returns the created task\n(run) without waiting for completion; TaskUpdates streams progress.",
+        "operationId": "A2AService_CreateTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateTaskResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "CreateTaskRequest names the skill (workflow) and supplies its params\n(inputs). The optional client_task_id is echoed back for correlation; it\ndoes not become the run id, which the node mints.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateTaskRequest"
+            }
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      }
+    },
+    "/v1/a2a/tasks/{taskId}": {
+      "get": {
+        "summary": "GetTask reads one task's current state, backed by GetRun.",
+        "operationId": "A2AService_GetTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetTaskResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      }
+    },
+    "/v1/a2a/tasks/{taskId}/cancel": {
+      "post": {
+        "summary": "CancelTask stops an in-flight task started through this node, backed by\nCancelRun.",
+        "operationId": "A2AService_CancelTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CancelTaskResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/A2AServiceCancelTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      }
+    },
+    "/v1/a2a/tasks/{taskId}/updates": {
+      "get": {
+        "summary": "TaskUpdates streams one task's run and action events until it finalizes,\nbacked by the WorkflowService run event stream. Over HTTP the gateway\ndelivers it as newline-delimited JSON, one update per line.",
+        "operationId": "A2AService_TaskUpdates",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1TaskUpdate"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1TaskUpdate"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      }
+    },
+    "/v1/auth/revoke": {
+      "post": {
+        "summary": "Revoke denylists one token by jti, or every live token minted from one\naccess key by key id. Requires the admin scope.",
+        "operationId": "LoginService_Revoke",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RevokeResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "RevokeRequest names exactly one revocation target: jti or key_id.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RevokeRequest"
+            }
+          }
+        ],
+        "tags": [
+          "LoginService"
+        ]
+      }
+    },
+    "/v1/chat/sessions": {
+      "get": {
+        "summary": "ListSessions lists the workspace's sessions, most-recently-updated first.",
+        "operationId": "ChatService_ListSessions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListSessionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means no cap.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      },
+      "post": {
+        "summary": "CreateSession opens a new conversation with a personality.",
+        "operationId": "ChatService_CreateSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateSessionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateSessionRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      }
+    },
+    "/v1/chat/sessions/{sessionId}": {
+      "get": {
+        "summary": "GetSession fetches one session's metadata.",
+        "operationId": "ChatService_GetSession",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetSessionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      }
+    },
+    "/v1/chat/sessions/{sessionId}/confirm": {
+      "post": {
+        "summary": "ConfirmAction resolves a pending workflow proposal: approve fires the\nworkflow and streams its run events, deny clears the gate and runs\nnothing. Approve additionally requires write:workflow on the token.",
+        "operationId": "ChatService_ConfirmAction",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1ChatEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1ChatEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ChatServiceConfirmActionBody"
+            }
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      }
+    },
+    "/v1/chat/sessions/{sessionId}/messages": {
+      "get": {
+        "summary": "ListMessages returns one session's full transcript in order.",
+        "operationId": "ChatService_ListMessages",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListMessagesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      },
+      "post": {
+        "summary": "SendMessage runs one conversation turn for a new user message and streams\nits events: assistant text chunks, tool-call events, a\nconfirmation-required event when the agent proposes a workflow, run\nstarted/finished events when a confirmed workflow fires, and a closing\nturn-done event. The HTTP gateway delivers the stream as chunked\nnewline-delimited JSON, one event per line.",
+        "operationId": "ChatService_SendMessage",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1ChatEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1ChatEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ChatServiceSendMessageBody"
+            }
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      }
+    },
+    "/v1/governance/audit": {
+      "get": {
+        "summary": "ListAudit lists governance audit rows newest-first.",
+        "operationId": "GovernanceService_ListAudit",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListAuditResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means the server default.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "GovernanceService"
+        ]
+      }
+    },
+    "/v1/governance/runs/{runId}/terminate": {
+      "post": {
+        "summary": "TerminateRun cancels an active run; it maps to the same machinery as\nCancelRun. Admin scope; audit-logged.",
+        "operationId": "GovernanceService_TerminateRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TerminateRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/GovernanceServiceTerminateRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "GovernanceService"
+        ]
+      }
+    },
+    "/v1/governance/workflows/{workflowName}/budget": {
+      "get": {
+        "summary": "GetWorkflowBudgetState reports a workflow's current-period spend, its\nconfigured limit and period, and whether it is paused. Spend rides on\nestimated cost, so it is a soft ceiling, not a billed total.",
+        "operationId": "GovernanceService_GetWorkflowBudgetState",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkflowBudgetStateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "GovernanceService"
+        ]
+      }
+    },
+    "/v1/governance/workflows/{workflowName}/pause": {
+      "post": {
+        "summary": "PauseWorkflow blocks new runs of a workflow until it is resumed. In-flight\nruns finish. Admin scope; audit-logged.",
+        "operationId": "GovernanceService_PauseWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PauseWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/GovernanceServicePauseWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "GovernanceService"
+        ]
+      }
+    },
+    "/v1/governance/workflows/{workflowName}/resume": {
+      "post": {
+        "summary": "ResumeWorkflow lifts a workflow's pause flag. Admin scope; audit-logged.",
+        "operationId": "GovernanceService_ResumeWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResumeWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/GovernanceServiceResumeWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "GovernanceService"
+        ]
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "summary": "Health reports liveness and store readiness. Never requires auth.",
+        "operationId": "AdminService_Health",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1HealthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "AdminService"
+        ]
+      }
+    },
+    "/v1/login": {
+      "post": {
+        "summary": "Login exchanges a valid, enabled access key for a short-lived token\ncarrying the key's scopes. The long-lived key crosses the wire here,\nwhich is why a non-loopback bind demands TLS\n(.agents/spec/08-auth-and-access.md, \"Model\").",
+        "operationId": "LoginService_Login",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1LoginResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1LoginRequest"
+            }
+          }
+        ],
+        "tags": [
+          "LoginService"
+        ]
+      }
+    },
+    "/v1/memory": {
+      "get": {
+        "summary": "SearchMemory returns entries relevant to the query: keyword by default,\nsemantic when a vector backend is configured.",
+        "operationId": "MemoryService_SearchMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SearchMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "text",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "semantic",
+            "description": "semantic asks for vector search when a backend is configured; keyword\nsearch answers otherwise and fallback is set in the response.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "MemoryService"
+        ]
+      },
+      "post": {
+        "summary": "AddMemory persists a new entry and returns its id.",
+        "operationId": "MemoryService_AddMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AddMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1AddMemoryRequest"
+            }
+          }
+        ],
+        "tags": [
+          "MemoryService"
+        ]
+      }
+    },
+    "/v1/memory/{id}": {
+      "get": {
+        "summary": "GetMemory fetches one entry by id.",
+        "operationId": "MemoryService_GetMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "MemoryService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteMemory removes one entry by id.",
+        "operationId": "MemoryService_DeleteMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "MemoryService"
+        ]
+      },
+      "put": {
+        "summary": "ReplaceMemory overwrites an entry's content, scope, importance, tags,\nand token cost.",
+        "operationId": "MemoryService_ReplaceMemory",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ReplaceMemoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/MemoryServiceReplaceMemoryBody"
+            }
+          }
+        ],
+        "tags": [
+          "MemoryService"
+        ]
+      }
+    },
+    "/v1/rules": {
+      "get": {
+        "summary": "ListLanguages returns the distinct languages with at least one rule.",
+        "operationId": "LanguageRulesService_ListLanguages",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListLanguagesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "LanguageRulesService"
+        ]
+      },
+      "post": {
+        "summary": "PutRule upserts one rule keyed by (language, project, key). An empty\nproject sets a language default.",
+        "operationId": "LanguageRulesService_PutRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PutRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1PutRuleRequest"
+            }
+          }
+        ],
+        "tags": [
+          "LanguageRulesService"
+        ]
+      }
+    },
+    "/v1/rules/{language}": {
+      "get": {
+        "summary": "GetRules returns the merged rule set for a language, optionally narrowed\nto a project: language defaults with the project's overrides applied.",
+        "operationId": "LanguageRulesService_GetRules",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "language",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "LanguageRulesService"
+        ]
+      }
+    },
+    "/v1/runners": {
+      "get": {
+        "summary": "ListRunners lists the registered runner names.",
+        "operationId": "AdminService_ListRunners",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunnersResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "AdminService"
+        ]
+      }
+    },
+    "/v1/runners/{runner}/breaker/reset": {
+      "post": {
+        "summary": "ResetBreaker resets one runner's circuit breaker.",
+        "operationId": "AdminService_ResetBreaker",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResetBreakerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runner",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/AdminServiceResetBreakerBody"
+            }
+          }
+        ],
+        "tags": [
+          "AdminService"
+        ]
+      }
+    },
+    "/v1/runs": {
+      "get": {
+        "summary": "ListRuns lists runs newest-first, filterable by workflow and status.",
+        "operationId": "WorkflowService_ListRuns",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListRunsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflow",
+            "description": "workflow narrows to one workflow name; empty means all.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "description": "status narrows to one run status; empty means all.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means the server default.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/v1/runs/{runId}": {
+      "get": {
+        "summary": "GetRun fetches one run's current state, including its action results.",
+        "operationId": "WorkflowService_GetRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/v1/runs/{runId}/cancel": {
+      "post": {
+        "summary": "CancelRun cancels an in-flight run started through this server.",
+        "operationId": "WorkflowService_CancelRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CancelRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCancelRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/v1/suggestions": {
+      "get": {
+        "summary": "ListSuggestions lists suggestions newest-first, filterable by status.",
+        "operationId": "SuggestionService_ListSuggestions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListSuggestionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "description": "status narrows to one review state; empty means all.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means the server default.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "SuggestionService"
+        ]
+      }
+    },
+    "/v1/suggestions/{id}/approve": {
+      "post": {
+        "summary": "ApproveSuggestion marks a suggestion approved and returns the annotated\nchange for the operator to apply by hand. Nothing is written to\nworkflow or config files.",
+        "operationId": "SuggestionService_ApproveSuggestion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ApproveSuggestionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SuggestionServiceApproveSuggestionBody"
+            }
+          }
+        ],
+        "tags": [
+          "SuggestionService"
+        ]
+      }
+    },
+    "/v1/suggestions/{id}/reject": {
+      "post": {
+        "summary": "RejectSuggestion marks a suggestion rejected.",
+        "operationId": "SuggestionService_RejectSuggestion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RejectSuggestionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SuggestionServiceRejectSuggestionBody"
+            }
+          }
+        ],
+        "tags": [
+          "SuggestionService"
+        ]
+      }
+    },
+    "/v1/vault": {
+      "post": {
+        "summary": "PutDocument persists a new document or overwrites an existing one and\nreturns its id.",
+        "operationId": "VaultService_PutDocument",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PutDocumentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1PutDocumentRequest"
+            }
+          }
+        ],
+        "tags": [
+          "VaultService"
+        ]
+      }
+    },
+    "/v1/vault/query": {
+      "post": {
+        "summary": "QueryVault runs the typed graph query: tag and project filtering, bounded\nlink traversal, and keyword text match.",
+        "operationId": "VaultService_QueryVault",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1QueryVaultResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "QueryVaultRequest is the typed graph query DSL over the wire. Every field is\noptional and AND-combined.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1QueryVaultRequest"
+            }
+          }
+        ],
+        "tags": [
+          "VaultService"
+        ]
+      }
+    },
+    "/v1/vault/{id}": {
+      "get": {
+        "summary": "GetDocument fetches one document by id, with its derived backlinks.",
+        "operationId": "VaultService_GetDocument",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetDocumentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "VaultService"
+        ]
+      },
+      "delete": {
+        "summary": "DeleteDocument removes one document and its links.",
+        "operationId": "VaultService_DeleteDocument",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteDocumentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "VaultService"
+        ]
+      }
+    },
+    "/v1/workflows/validate": {
+      "post": {
+        "summary": "ValidateWorkflow parses and validates a workflow file without running\nit, returning every canonical validation error found in one pass.",
+        "operationId": "WorkflowService_ValidateWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ValidateWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "ValidateWorkflowRequest carries the raw workflow file bytes (TOML). Over\nHTTP/JSON the bytes field is base64-encoded, per proto3 JSON mapping.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1ValidateWorkflowRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/v1/workflows/{workflowName}/runs": {
+      "post": {
+        "summary": "RunWorkflow starts a run by workflow name and streams run and action\nevents as they happen. The HTTP gateway delivers the stream as chunked\nnewline-delimited JSON, one event per line.",
+        "operationId": "WorkflowService_RunWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1RunEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1RunEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRunWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "A2AServiceCancelTaskBody": {
+      "type": "object"
+    },
+    "AdminServiceResetBreakerBody": {
+      "type": "object"
+    },
+    "ChatServiceConfirmActionBody": {
+      "type": "object",
+      "properties": {
+        "approve": {
+          "type": "boolean",
+          "description": "approve fires the pending workflow; deny clears the gate without running."
+        }
+      }
+    },
+    "ChatServiceSendMessageBody": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "GovernanceServicePauseWorkflowBody": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "reason is recorded in the audit row and on the pause flag."
+        }
+      }
+    },
+    "GovernanceServiceResumeWorkflowBody": {
+      "type": "object"
+    },
+    "GovernanceServiceTerminateRunBody": {
+      "type": "object"
+    },
+    "MemoryServiceReplaceMemoryBody": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/v1MemoryEntry"
+        }
+      }
+    },
+    "SuggestionServiceApproveSuggestionBody": {
+      "type": "object"
+    },
+    "SuggestionServiceRejectSuggestionBody": {
+      "type": "object"
+    },
+    "WorkflowServiceCancelRunBody": {
+      "type": "object"
+    },
+    "WorkflowServiceRunWorkflowBody": {
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "type": "object"
+        }
+      },
+      "description": "RunWorkflowRequest names the workflow (resolved against the server's\nworkflows directory) and supplies its declared inputs."
+    },
+    "cairnosA2aV1Task": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "skill": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/v1TaskState"
+        },
+        "params": {
+          "type": "object"
+        },
+        "error": {
+          "$ref": "#/definitions/v1Error"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "created_at, started_at, and finished_at echo the run timestamps as\nRFC 3339 strings so an HTTP-only consumer needs no protobuf timestamp\ndecoding."
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "finishedAt": {
+          "type": "string"
+        }
+      },
+      "description": "Task is one unit of A2A work, the wire shape of a CairnOS run. task_id is\nthe run id, skill is the workflow name, and params are the run inputs."
+    },
+    "cairnosV1Usage": {
+      "type": "object",
+      "properties": {
+        "inputTokens": {
+          "type": "string",
+          "format": "int64"
+        },
+        "outputTokens": {
+          "type": "string",
+          "format": "int64"
+        },
+        "cachedTokens": {
+          "type": "string",
+          "format": "int64"
+        },
+        "costUsd": {
+          "type": "number",
+          "format": "double"
+        },
+        "latencyMs": {
+          "type": "string",
+          "format": "int64"
+        },
+        "retries": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "Usage is the per-action resource accounting from the runner."
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "protobufNullValue": {
+      "type": "string",
+      "enum": [
+        "NULL_VALUE"
+      ],
+      "default": "NULL_VALUE",
+      "description": "`NullValue` is a singleton enumeration to represent the null value for the\n`Value` type union.\n\nThe JSON representation for `NullValue` is JSON `null`.\n\n - NULL_VALUE: Null value."
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1ActionResult": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "output": {
+          "description": "output is the action's result value, JSON-shaped."
+        },
+        "usage": {
+          "$ref": "#/definitions/cairnosV1Usage"
+        },
+        "error": {
+          "$ref": "#/definitions/v1Error"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ActionResult is the persisted outcome of one action within a run."
+    },
+    "v1ActionState": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the action lifecycle state:\npending|ready|running|succeeded|failed|skipped."
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "ActionState is one action's position within a run at event time."
+    },
+    "v1AddMemoryRequest": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/v1MemoryEntry"
+        }
+      }
+    },
+    "v1AddMemoryResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "v1ApproveSuggestionResponse": {
+      "type": "object",
+      "properties": {
+        "suggestion": {
+          "$ref": "#/definitions/v1Suggestion"
+        },
+        "annotation": {
+          "type": "string",
+          "description": "annotation is the rendered change for the operator to apply by hand."
+        }
+      }
+    },
+    "v1AuditEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string",
+          "description": "actor is the auth subject when present, else \"cli\" or \"local\"."
+        },
+        "action": {
+          "type": "string",
+          "description": "action is pause, resume, or terminate."
+        },
+        "target": {
+          "type": "string",
+          "description": "target is the workflow name or run id the action applied to."
+        },
+        "detail": {
+          "type": "string",
+          "description": "detail is free-form context, such as a pause reason."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "AuditEntry is one governance audit row."
+    },
+    "v1CancelRunResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "description": "CancelRunResponse acknowledges the cancel signal; the run finalizes\nasynchronously and lands in run history as canceled."
+    },
+    "v1CancelTaskResponse": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/v1TaskState"
+        }
+      },
+      "description": "CancelTaskResponse acknowledges the cancel signal; the task finalizes\nasynchronously and lands in history as canceled."
+    },
+    "v1ChatEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/definitions/v1ChatEventType"
+        },
+        "text": {
+          "type": "string",
+          "description": "text carries assistant reply text on ASSISTANT_CHUNK and the final reply\non TURN_DONE."
+        },
+        "tool": {
+          "type": "string",
+          "description": "tool and tool_input are set on TOOL_CALL."
+        },
+        "toolInput": {
+          "type": "object"
+        },
+        "proposal": {
+          "$ref": "#/definitions/v1WorkflowProposal",
+          "description": "proposal is set on CONFIRMATION_REQUIRED."
+        },
+        "runId": {
+          "type": "string",
+          "description": "run_id is set on RUN_STARTED and RUN_FINISHED; run_status on RUN_FINISHED."
+        },
+        "runStatus": {
+          "type": "string"
+        }
+      },
+      "description": "ChatEvent is one entry in a turn's stream. Only the fields a given type uses\nare set."
+    },
+    "v1ChatEventType": {
+      "type": "string",
+      "enum": [
+        "CHAT_EVENT_TYPE_UNSPECIFIED",
+        "CHAT_EVENT_TYPE_ASSISTANT_CHUNK",
+        "CHAT_EVENT_TYPE_TOOL_CALL",
+        "CHAT_EVENT_TYPE_CONFIRMATION_REQUIRED",
+        "CHAT_EVENT_TYPE_RUN_STARTED",
+        "CHAT_EVENT_TYPE_RUN_FINISHED",
+        "CHAT_EVENT_TYPE_TURN_DONE"
+      ],
+      "default": "CHAT_EVENT_TYPE_UNSPECIFIED",
+      "description": "ChatEventType says what a ChatEvent describes."
+    },
+    "v1ChatMessage": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "role": {
+          "type": "string",
+          "description": "role is user, assistant, or tool."
+        },
+        "content": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ChatMessage is one entry in a conversation."
+    },
+    "v1ChatSession": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "personality": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ChatSession is one persisted conversation."
+    },
+    "v1CreateSessionRequest": {
+      "type": "object",
+      "properties": {
+        "personality": {
+          "type": "string",
+          "description": "personality names the session's personality; empty uses the default."
+        }
+      }
+    },
+    "v1CreateSessionResponse": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "$ref": "#/definitions/v1ChatSession"
+        }
+      }
+    },
+    "v1CreateTaskRequest": {
+      "type": "object",
+      "properties": {
+        "skill": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "clientTaskId": {
+          "type": "string"
+        }
+      },
+      "description": "CreateTaskRequest names the skill (workflow) and supplies its params\n(inputs). The optional client_task_id is echoed back for correlation; it\ndoes not become the run id, which the node mints."
+    },
+    "v1CreateTaskResponse": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "#/definitions/cairnosA2aV1Task"
+        },
+        "clientTaskId": {
+          "type": "string",
+          "description": "client_task_id echoes the request's correlation id, if any."
+        }
+      }
+    },
+    "v1DeleteDocumentResponse": {
+      "type": "object"
+    },
+    "v1DeleteMemoryResponse": {
+      "type": "object"
+    },
+    "v1Error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "code is the canonical dotted identifier, e.g. \"workflow.cycle_detected\"."
+        },
+        "message": {
+          "type": "string",
+          "description": "message is the human-readable explanation, safe to show users."
+        },
+        "details": {
+          "type": "object",
+          "description": "details carries structured context such as the cycle path or the\nmissing key."
+        }
+      },
+      "description": "Error is the canonical engine error: a stable dotted code, a message safe\nto surface, and structured details for programmatic consumers. It mirrors\ninternal/cairnerr.Error and rides in gRPC status details so the gateway\ncan rebuild the canonical HTTP error envelope."
+    },
+    "v1GetDocumentResponse": {
+      "type": "object",
+      "properties": {
+        "document": {
+          "$ref": "#/definitions/v1VaultDocument"
+        }
+      }
+    },
+    "v1GetMemoryResponse": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/v1MemoryEntry"
+        }
+      }
+    },
+    "v1GetRulesResponse": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1LanguageRule"
+          },
+          "description": "rules is the merged set: language defaults with project overrides applied."
+        }
+      }
+    },
+    "v1GetRunResponse": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "$ref": "#/definitions/v1Run"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ActionResult"
+          }
+        }
+      }
+    },
+    "v1GetSessionResponse": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "$ref": "#/definitions/v1ChatSession"
+        }
+      }
+    },
+    "v1GetTaskResponse": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "$ref": "#/definitions/cairnosA2aV1Task"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ActionResult"
+          },
+          "description": "actions carries the run's per-action results, reusing the WorkflowService\nActionResult shape so A2A and the native API report the same detail."
+        }
+      }
+    },
+    "v1GetWorkflowBudgetStateResponse": {
+      "type": "object",
+      "properties": {
+        "workflowName": {
+          "type": "string"
+        },
+        "hasBudget": {
+          "type": "boolean",
+          "description": "has_budget is false when the workflow declares no [workflow.budget]; the\nspend, limit, and period fields are then meaningless."
+        },
+        "period": {
+          "type": "string",
+          "description": "period is day, week, or month; empty when has_budget is false."
+        },
+        "spendUsd": {
+          "type": "number",
+          "format": "double",
+          "description": "spend_usd is the estimated spend for the current period."
+        },
+        "limitUsd": {
+          "type": "number",
+          "format": "double",
+          "description": "limit_usd is the configured ceiling; zero when has_budget is false."
+        },
+        "onExceed": {
+          "type": "string",
+          "description": "on_exceed is pause or warn; empty when has_budget is false."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "paused is true when an admin paused the workflow."
+        }
+      }
+    },
+    "v1HealthResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "status is \"ok\" when the config loaded and the store answers."
+        }
+      }
+    },
+    "v1LanguageRule": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "description": "LanguageRule is one coding-standard entry. An empty project means a language\ndefault applying to every project in that language."
+    },
+    "v1ListAuditResponse": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1AuditEntry"
+          }
+        }
+      }
+    },
+    "v1ListLanguagesResponse": {
+      "type": "object",
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1ListMessagesResponse": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ChatMessage"
+          }
+        }
+      }
+    },
+    "v1ListRunnersResponse": {
+      "type": "object",
+      "properties": {
+        "runners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1RunnerInfo"
+          }
+        }
+      }
+    },
+    "v1ListRunsResponse": {
+      "type": "object",
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Run"
+          }
+        }
+      }
+    },
+    "v1ListSessionsResponse": {
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ChatSession"
+          }
+        }
+      }
+    },
+    "v1ListSuggestionsResponse": {
+      "type": "object",
+      "properties": {
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Suggestion"
+          }
+        }
+      }
+    },
+    "v1ListTasksResponse": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/cairnosA2aV1Task"
+          }
+        }
+      }
+    },
+    "v1LoginRequest": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "key is the plaintext access key printed once by `cairnos keys add`."
+        }
+      }
+    },
+    "v1LoginResponse": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "token is the signed JWT to present as `Authorization: Bearer \u003ctoken\u003e`."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "expires_at is the token's exp; clients re-call Login with their access\nkey for a fresh token (.agents/spec/08-auth-and-access.md, Change 2)."
+        }
+      }
+    },
+    "v1MemoryEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "description": "scope groups entries, e.g. \"global\" or \"project:finance-app\"."
+        },
+        "content": {
+          "type": "string"
+        },
+        "importance": {
+          "type": "integer",
+          "format": "int32",
+          "description": "importance (0..100) drives load ordering and eviction."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tokenCost": {
+          "type": "integer",
+          "format": "int32",
+          "description": "token_cost is the measured token length of content."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "MemoryEntry is one curated note."
+    },
+    "v1PauseWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "workflowName": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1PutDocumentRequest": {
+      "type": "object",
+      "properties": {
+        "document": {
+          "$ref": "#/definitions/v1VaultDocument"
+        }
+      }
+    },
+    "v1PutDocumentResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "v1PutRuleRequest": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/v1LanguageRule"
+        }
+      }
+    },
+    "v1PutRuleResponse": {
+      "type": "object"
+    },
+    "v1QueryVaultRequest": {
+      "type": "object",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "tags narrows to documents carrying every listed tag."
+        },
+        "project": {
+          "type": "string",
+          "description": "project narrows to one project (a \"project:\u003cname\u003e\" tag convention)."
+        },
+        "linkedFrom": {
+          "type": "string",
+          "description": "linked_from is a document id whose link graph is traversed."
+        },
+        "hops": {
+          "type": "integer",
+          "format": "int32",
+          "description": "hops bounds the link traversal depth from linked_from."
+        },
+        "text": {
+          "type": "string",
+          "description": "text is a keyword match over title and body."
+        },
+        "limit": {
+          "type": "integer",
+          "format": "int32",
+          "description": "limit caps the result count; zero means no cap."
+        },
+        "semantic": {
+          "type": "boolean",
+          "description": "semantic asks for vector search when a backend is configured; keyword\nsearch answers otherwise and fallback is set in the response."
+        }
+      },
+      "description": "QueryVaultRequest is the typed graph query DSL over the wire. Every field is\noptional and AND-combined."
+    },
+    "v1QueryVaultResponse": {
+      "type": "object",
+      "properties": {
+        "documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1VaultDocument"
+          }
+        },
+        "fallback": {
+          "type": "boolean",
+          "description": "fallback is true when semantic search was requested but keyword search\nanswered because no vector backend is configured."
+        }
+      }
+    },
+    "v1RejectSuggestionResponse": {
+      "type": "object",
+      "properties": {
+        "suggestion": {
+          "$ref": "#/definitions/v1Suggestion"
+        }
+      }
+    },
+    "v1ReplaceMemoryResponse": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/v1MemoryEntry"
+        }
+      }
+    },
+    "v1ResetBreakerResponse": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "description": "state is the breaker position after the reset: CLOSED."
+        }
+      }
+    },
+    "v1ResumeWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "workflowName": {
+          "type": "string"
+        },
+        "resumed": {
+          "type": "boolean",
+          "description": "resumed is false when the workflow was not paused to begin with."
+        }
+      }
+    },
+    "v1RevokeRequest": {
+      "type": "object",
+      "properties": {
+        "jti": {
+          "type": "string",
+          "description": "jti denylists one token until any token with that id could expire."
+        },
+        "keyId": {
+          "type": "string",
+          "description": "key_id denylists every live token minted from one access key. The key\nitself stays enabled and can mint fresh tokens; disable the key with\n`cairnos keys disable` to stop logins too."
+        }
+      },
+      "description": "RevokeRequest names exactly one revocation target: jti or key_id."
+    },
+    "v1RevokeResponse": {
+      "type": "object",
+      "properties": {
+        "denied": {
+          "type": "string",
+          "description": "denied echoes the denylisted target: \"jti:\u003cid\u003e\" or \"key:\u003cid\u003e\"."
+        }
+      }
+    },
+    "v1Run": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "workflowName": {
+          "type": "string"
+        },
+        "workflowHash": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status is the run lifecycle state:\npending|running|succeeded|failed|canceled."
+        },
+        "trigger": {
+          "type": "string",
+          "description": "trigger records what started the run: cli|schedule|api|a2a|webhook."
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "error": {
+          "$ref": "#/definitions/v1Error"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "Run is one execution of a workflow, mirroring the persisted run row."
+    },
+    "v1RunEvent": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/definitions/v1RunEventType"
+        },
+        "action": {
+          "$ref": "#/definitions/v1ActionState",
+          "description": "action is set on ACTION_TRANSITION events."
+        },
+        "run": {
+          "$ref": "#/definitions/v1Run",
+          "description": "run is set on RUN_FINISHED with the terminal run record."
+        },
+        "error": {
+          "$ref": "#/definitions/v1Error",
+          "description": "error is set when the transition or the run carried a failure."
+        }
+      },
+      "description": "RunEvent is one entry in the RunWorkflow stream."
+    },
+    "v1RunEventType": {
+      "type": "string",
+      "enum": [
+        "RUN_EVENT_TYPE_UNSPECIFIED",
+        "RUN_EVENT_TYPE_RUN_STARTED",
+        "RUN_EVENT_TYPE_ACTION_TRANSITION",
+        "RUN_EVENT_TYPE_RUN_FINISHED"
+      ],
+      "default": "RUN_EVENT_TYPE_UNSPECIFIED",
+      "description": "RunEventType says what a RunEvent describes."
+    },
+    "v1RunnerInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "description": "RunnerInfo describes one registered runner."
+    },
+    "v1Savings": {
+      "type": "object",
+      "properties": {
+        "costUsdPerRun": {
+          "type": "number",
+          "format": "double"
+        },
+        "latencyDeltaMs": {
+          "type": "string",
+          "format": "int64"
+        },
+        "confidence": {
+          "type": "string",
+          "description": "confidence is low, medium, or high. Output-changing kinds never rise\nabove low in Phase 3."
+        }
+      },
+      "description": "Savings is an estimated improvement with a confidence band, never a\npromise."
+    },
+    "v1SearchMemoryResponse": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1MemoryEntry"
+          }
+        },
+        "fallback": {
+          "type": "boolean",
+          "description": "fallback is true when semantic search was requested but keyword search\nanswered because no vector backend is configured."
+        }
+      }
+    },
+    "v1Suggestion": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "kind is caching, batching, or param_tuning."
+        },
+        "target": {
+          "type": "string",
+          "description": "target is the workflow or \"workflow.action\" the change applies to."
+        },
+        "status": {
+          "type": "string",
+          "description": "status is open, approved, or rejected."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "rationale explains the proposal in plain language with its evidence."
+        },
+        "evidence": {
+          "type": "object",
+          "description": "evidence carries the metrics that triggered the suggestion."
+        },
+        "proposed": {
+          "type": "object",
+          "description": "proposed carries the concrete change being proposed."
+        },
+        "estSavings": {
+          "$ref": "#/definitions/v1Savings"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "Suggestion is one evidence-backed tuning proposal awaiting human review."
+    },
+    "v1TaskState": {
+      "type": "string",
+      "enum": [
+        "TASK_STATE_UNSPECIFIED",
+        "TASK_STATE_PENDING",
+        "TASK_STATE_RUNNING",
+        "TASK_STATE_SUCCEEDED",
+        "TASK_STATE_FAILED",
+        "TASK_STATE_CANCELED"
+      ],
+      "default": "TASK_STATE_UNSPECIFIED",
+      "description": "TaskState is one task's lifecycle position, the A2A spelling of a run\nstatus. The values mirror run status one to one\n(pending|running|succeeded|failed|canceled), so consumers that only speak\nA2A never see CairnOS run vocabulary."
+    },
+    "v1TaskStep": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "TaskStep is one action's position within a task at update time."
+    },
+    "v1TaskUpdate": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/definitions/v1TaskUpdateType"
+        },
+        "step": {
+          "$ref": "#/definitions/v1TaskStep",
+          "description": "step is set on ACTION updates: the action name, its status, and attempt."
+        },
+        "task": {
+          "$ref": "#/definitions/cairnosA2aV1Task",
+          "description": "task is set on the FINISHED update with the terminal task record."
+        },
+        "error": {
+          "$ref": "#/definitions/v1Error",
+          "description": "error is set when the step or the task carried a failure."
+        }
+      },
+      "description": "TaskUpdate is one entry in the TaskUpdates stream, the A2A wire shape of a\nrun event. step is set on action updates; task carries the terminal task\nrecord on the finished update."
+    },
+    "v1TaskUpdateType": {
+      "type": "string",
+      "enum": [
+        "TASK_UPDATE_TYPE_UNSPECIFIED",
+        "TASK_UPDATE_TYPE_STARTED",
+        "TASK_UPDATE_TYPE_ACTION",
+        "TASK_UPDATE_TYPE_FINISHED"
+      ],
+      "default": "TASK_UPDATE_TYPE_UNSPECIFIED",
+      "description": "TaskUpdateType says what a TaskUpdate describes, the A2A spelling of the\nrun event types."
+    },
+    "v1TerminateRunResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "status acknowledges the cancel signal; the run finalizes as canceled."
+        }
+      }
+    },
+    "v1ValidateWorkflowRequest": {
+      "type": "object",
+      "properties": {
+        "toml": {
+          "type": "string",
+          "format": "byte"
+        }
+      },
+      "description": "ValidateWorkflowRequest carries the raw workflow file bytes (TOML). Over\nHTTP/JSON the bytes field is base64-encoded, per proto3 JSON mapping."
+    },
+    "v1ValidateWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Error"
+          },
+          "description": "errors lists every canonical validation problem found, so authors fix a\nfile in one pass."
+        }
+      }
+    },
+    "v1VaultDocument": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string",
+          "description": "body is markdown."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "links are outbound document ids this one references."
+        },
+        "backlinks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "backlinks are inbound document ids (derived, ignored on put)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "VaultDocument is one vault entry. links are outbound references; backlinks\nare the derived inbound set, populated on a get and read-only on a put."
+    },
+    "v1WorkflowProposal": {
+      "type": "object",
+      "properties": {
+        "workflowName": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "estimatedBudgetUsd": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "description": "WorkflowProposal is the D9 confirmation payload: the workflow the agent wants\nto run, its inputs, and the estimated spend, shown so the user approves from\nfull information."
+    }
+  }
+}

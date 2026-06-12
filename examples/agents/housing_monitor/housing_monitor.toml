@@ -1,0 +1,67 @@
+# housing_monitor.toml: morning check on listings from an API you may use.
+#
+# Run it:
+#   cairnos run examples/agents/housing_monitor/housing_monitor.toml \
+#     --input listings_url=https://api.example.com/listings \
+#     --input region=austin-tx \
+#     --input notify_to=me@example.com
+#
+# Sourcing (S5 in .agents/spec/14-open-decisions.md): listings_url must be a
+# real-estate API you hold a key for, or a feed you run yourself. Never a
+# scraped listing site; scraping Zillow, Redfin, or similar violates their
+# terms of service.
+
+[workflow]
+name        = "housing_monitor"
+version     = "1"
+description = "Pull listings from your own real-estate API, filter by price, email when something matches."
+schedule    = "30 7 * * *"
+on_error    = "halt"
+timeout     = "10m"
+
+[workflow.inputs.listings_url]
+type        = "string"
+required    = true
+description = "Your real-estate API endpoint. A source you are permitted to query (see the S5 note above)."
+
+[workflow.inputs.region]
+type        = "string"
+required    = true
+description = "Region slug your API expects, for example austin-tx."
+
+[workflow.inputs.max_price]
+type        = "int"
+default     = 500000
+description = "Upper price bound for the filter."
+
+[workflow.inputs.notify_to]
+type        = "string"
+required    = true
+description = "Email address that receives the alert."
+
+# POST to the user-supplied API; the response body becomes this action's
+# output. Swap in an mcp_client action here if your source speaks MCP.
+[action.fetch_listings]
+runner     = "webhook"
+idempotent = true
+params     = { url = "${{ inputs.listings_url }}", body = '{"region": "${{ inputs.region }}", "max_price": "${{ inputs.max_price }}"}' }
+
+[action.fetch_listings.retry]
+max_attempts = 3
+backoff      = "exponential"
+base_delay   = "2s"
+max_delay    = "30s"
+
+# listing_filter is registered by the operator at build time and returns
+# { count, summary }; see the README for the contract.
+[action.filter_listings]
+runner     = "local_fn"
+depends_on = ["fetch_listings"]
+params     = { fn = "listing_filter", listings = "${{ fetch_listings.output }}", max_price = "${{ inputs.max_price }}" }
+
+# Skipped, not failed, when the filter found nothing under the price bound.
+[action.alert]
+runner     = "email"
+depends_on = ["filter_listings"]
+condition  = "${{ filter_listings.output.count }} > 0"
+params     = { to = "${{ inputs.notify_to }}", subject = "Housing Monitor: new matches", body = "${{ filter_listings.output.summary }}" }

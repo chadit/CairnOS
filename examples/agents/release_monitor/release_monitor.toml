@@ -1,0 +1,130 @@
+# release_monitor.toml: watch upstream releases and open a roadmap issue when
+# one of them lines up with where CairnOS is headed.
+#
+# Run it:
+#   cairnos run examples/agents/release_monitor/release_monitor.toml
+# Put it on the daily schedule:
+#   cairnos schedule add examples/agents/release_monitor/release_monitor.toml
+#
+# Fan-out limit (read the README): each github op=releases action pulls ONE
+# repo, and the schema has no foreach yet (it is reserved for a later phase in
+# .agents/spec/02-workflow-schema.md). So this file pulls two representative
+# repos through two parallel actions and fans them into one judging step. To
+# watch more, copy a release_* action, point its repo at the next entry, and
+# add that action to the compare step's depends_on and prompt. The `repos`
+# input below documents the intended watched set; it does not drive the actions
+# on its own until foreach lands.
+#
+# S6 note (.agents/spec/14-open-decisions.md): the issues repo is CairnOS-Issues
+# (corrected from the vision's CairOS-Issues). Any -task migration is a
+# separate concern and is not wired into this workflow.
+
+[workflow]
+name        = "release_monitor"
+version     = "1"
+description = "Pull upstream release feeds, ask an LLM whether any release fits the CairnOS roadmap, and file a triage issue when it does."
+schedule    = "@daily"
+on_error    = "halt"
+timeout     = "15m"
+
+[workflow.inputs.repos]
+type        = "string[]"
+default     = ["n8n-io/n8n", "modelcontextprotocol/go-sdk"]
+description = "Upstream owner/name repos to watch. Documents the intended set; with no foreach yet, the actions below name their repos directly (see the fan-out note at the top)."
+
+[workflow.inputs.issues_repo]
+type        = "string"
+default     = "chadit/CairnOS-Issues"
+description = "Private issues repo that receives triage drafts. Corrected to CairnOS-Issues per S6."
+
+[workflow.inputs.roadmap_summary]
+type        = "string"
+default     = """
+CairnOS replaces Hermes Agent, OpenClaw, n8n, and cron/script sprawl with one
+engine: TOML workflows, a DAG executor, real runners (LLM, github, email,
+webhook), an MCP client for connector breadth, and a bounded agent loop for
+self-planning tasks. Near-term roadmap: built-in runners and the MCP client
+(1a), the agent loop that retires Hermes and OpenClaw (1c), full observability
+(2), then auth, A2A, and multi-node (4). A release matters to this roadmap when
+it touches workflow engines, agent loops, the MCP protocol or its SDKs, model
+connectors, or scheduler and retry semantics CairnOS would want to track.
+"""
+description = "Plain-text roadmap summary the compare step judges releases against. Edit this as the roadmap moves."
+
+# One repo per action: the github runner's op=releases takes a single repo, so
+# each watched repo is its own root action. They share no dependency, so the
+# engine runs them in parallel and the compare step fans them back in.
+[action.releases_n8n]
+runner     = "github"
+idempotent = true
+params     = { op = "releases", repo = "n8n-io/n8n", limit = 5 }
+
+[action.releases_n8n.retry]
+max_attempts = 3
+backoff      = "exponential"
+base_delay   = "2s"
+max_delay    = "30s"
+
+[action.releases_mcp]
+runner     = "github"
+idempotent = true
+params     = { op = "releases", repo = "modelcontextprotocol/go-sdk", limit = 5 }
+
+[action.releases_mcp.retry]
+max_attempts = 3
+backoff      = "exponential"
+base_delay   = "2s"
+max_delay    = "30s"
+
+# The judging step. The LLM returns plain text, so the prompt pins a one-word
+# verdict on the first line: MATCH or NONE. The create_issue step gates on that
+# sentinel, the same trick career_scout uses with NO_MATCHES.
+[action.compare]
+runner     = "anthropic"
+depends_on = ["releases_n8n", "releases_mcp"]
+
+[action.compare.params]
+system = """
+You compare upstream software releases against the CairnOS roadmap and decide
+whether any release is worth a human looking at.
+
+Roadmap summary:
+${{ inputs.roadmap_summary }}
+
+Your reply has two parts. The first line is a single word verdict: MATCH if at
+least one release touches the roadmap, NONE if nothing does. After that line,
+when the verdict is MATCH, write a short issue body: name each relevant release
+(repo, tag, one line on why it fits the roadmap). When the verdict is NONE,
+write nothing after the first line.
+
+You will see false positives. When unsure, lean toward MATCH and let the human
+triage. The body you write becomes a draft issue, not a decision.
+"""
+prompt = """
+Recent n8n-io/n8n releases:
+${{ releases_n8n.output }}
+
+Recent modelcontextprotocol/go-sdk releases:
+${{ releases_mcp.output }}
+"""
+
+[action.compare.retry]
+max_attempts = 2
+backoff      = "exponential"
+base_delay   = "2s"
+max_delay    = "20s"
+
+# Files into issues_repo only when the verdict is not NONE. The whole verdict
+# (sentinel line plus body) becomes the issue body, so a human reading the issue
+# sees the model's reasoning. On a NONE day this action is skipped, not failed.
+[action.file_issue]
+runner     = "github"
+depends_on = ["compare"]
+condition  = "${{ compare.output }} != 'NONE'"
+
+[action.file_issue.params]
+op     = "create_issue"
+repo   = "${{ inputs.issues_repo }}"
+title  = "Release monitor: upstream release may fit the roadmap"
+body   = "${{ compare.output }}"
+labels = ["release-monitor", "triage"]

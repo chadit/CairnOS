@@ -1,0 +1,30 @@
+# language_rules_assistant.toml: look up the coding rules for a language.
+#
+# Run it:
+#   cairnos run examples/agents/language_rules_assistant/language_rules_assistant.toml
+#   cairnos run examples/agents/language_rules_assistant/language_rules_assistant.toml --input language=python
+#   cairnos run examples/agents/language_rules_assistant/language_rules_assistant.toml --input language=go --input project=finance-app
+#
+# Trigger-only, single action. The runner reads flat TOML rule files from a
+# configured directory; see the README for the config block and a sample
+# rules file. Phase 1 serves static files; Phase 7b replaces the stub with
+# the real Rules Service.
+
+[workflow]
+name        = "language_rules_assistant"
+version     = "1"
+description = "Serve the coding rules for a language, with optional per-project overrides."
+
+[workflow.inputs.language]
+type        = "string"
+default     = "go"
+description = "Language to look up; matches a <language>.toml file in the rules dir."
+
+[workflow.inputs.project]
+type        = "string"
+default     = ""
+description = "Optional project overlay; matches <language>.<project>.toml when present."
+
+[action.get_rules]
+runner = "language_rules_service"
+params = { language = "${{ inputs.language }}", project = "${{ inputs.project }}" }

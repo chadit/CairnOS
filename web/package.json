@@ -1,0 +1,51 @@
+{
+  "name": "cairnos-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CairnOS visual builder. A web client over the CairnOS HTTP gateway.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.101.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router-dom": "7.17.0",
+    "reactflow": "11.11.4",
+    "smol-toml": "1.6.1",
+    "zustand": "5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.0",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@eslint/js": "9.39.4",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "@vitest/coverage-v8": "3.2.6",
+    "eslint": "9.39.4",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.2",
+    "globals": "17.6.0",
+    "jsdom": "29.1.1",
+    "msw": "2.14.6",
+    "prettier": "3.8.4",
+    "tailwindcss": "4.3.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.61.0",
+    "vite": "7.3.5",
+    "vitest": "3.2.6"
+  }
+}

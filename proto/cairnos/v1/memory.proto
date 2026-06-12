@@ -1,0 +1,119 @@
+// MemoryService: CRUD and search over the curated memory entries
+// (.agents/spec/05-memory-and-knowledge.md, "Memory";
+// .agents/spec/07-api-protocols.md, "Core services").
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// MemoryService manages the bounded, curated notes loaded into prompts.
+service MemoryService {
+  // AddMemory persists a new entry and returns its id.
+  rpc AddMemory(AddMemoryRequest) returns (AddMemoryResponse) {
+    option (google.api.http) = {
+      post: "/v1/memory"
+      body: "*"
+    };
+  }
+
+  // GetMemory fetches one entry by id.
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse) {
+    option (google.api.http) = {get: "/v1/memory/{id}"};
+  }
+
+  // ReplaceMemory overwrites an entry's content, scope, importance, tags,
+  // and token cost.
+  rpc ReplaceMemory(ReplaceMemoryRequest) returns (ReplaceMemoryResponse) {
+    option (google.api.http) = {
+      put: "/v1/memory/{id}"
+      body: "*"
+    };
+  }
+
+  // DeleteMemory removes one entry by id.
+  rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse) {
+    option (google.api.http) = {delete: "/v1/memory/{id}"};
+  }
+
+  // SearchMemory returns entries relevant to the query: keyword by default,
+  // semantic when a vector backend is configured.
+  rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse) {
+    option (google.api.http) = {get: "/v1/memory"};
+  }
+}
+
+// MemoryEntry is one curated note.
+message MemoryEntry {
+  string id = 1;
+
+  // scope groups entries, e.g. "global" or "project:finance-app".
+  string scope = 2;
+
+  string content = 3;
+
+  // importance (0..100) drives load ordering and eviction.
+  int32 importance = 4;
+
+  repeated string tags = 5;
+
+  // token_cost is the measured token length of content.
+  int32 token_cost = 6;
+
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message AddMemoryRequest {
+  MemoryEntry entry = 1;
+}
+
+message AddMemoryResponse {
+  string id = 1;
+}
+
+message GetMemoryRequest {
+  string id = 1;
+}
+
+message GetMemoryResponse {
+  MemoryEntry entry = 1;
+}
+
+message ReplaceMemoryRequest {
+  string id = 1;
+  MemoryEntry entry = 2;
+}
+
+message ReplaceMemoryResponse {
+  MemoryEntry entry = 1;
+}
+
+message DeleteMemoryRequest {
+  string id = 1;
+}
+
+message DeleteMemoryResponse {}
+
+message SearchMemoryRequest {
+  string scope = 1;
+  string text = 2;
+  repeated string tags = 3;
+  int32 limit = 4;
+
+  // semantic asks for vector search when a backend is configured; keyword
+  // search answers otherwise and fallback is set in the response.
+  bool semantic = 5;
+}
+
+message SearchMemoryResponse {
+  repeated MemoryEntry entries = 1;
+
+  // fallback is true when semantic search was requested but keyword search
+  // answered because no vector backend is configured.
+  bool fallback = 2;
+}

@@ -1,0 +1,75 @@
+# career_scout.toml: daily job monitor over a feed you already own.
+#
+# Run it:
+#   cairnos run examples/agents/career_scout/career_scout.toml \
+#     --input feed_url=https://feeds.example.com/jobs \
+#     --input resume_summary="Senior Go engineer, distributed systems" \
+#     --input notify_to=me@example.com
+#
+# Sourcing (S5 in .agents/spec/14-open-decisions.md): feed_url must be a
+# source you're allowed to query. An official API you hold a key for, or a
+# feed you run yourself. Never a scraped listing site; scraping LinkedIn or
+# Indeed violates their terms of service.
+
+[workflow]
+name        = "career_scout"
+version     = "1"
+description = "Fetch jobs from your own feed, score them against your resume, email a digest when something fits."
+schedule    = "@daily"
+on_error    = "halt"
+timeout     = "15m"
+
+[workflow.inputs.feed_url]
+type        = "string"
+required    = true
+description = "Your own job feed endpoint. A source you are permitted to query (see the S5 note above)."
+
+[workflow.inputs.resume_summary]
+type        = "string"
+required    = true
+description = "Short plain-text summary of your experience and target role."
+
+[workflow.inputs.notify_to]
+type        = "string"
+required    = true
+description = "Email address that receives the digest."
+
+# POST to the user-supplied feed; the response body becomes this action's
+# output. Swap in an mcp_client action here if your source speaks MCP.
+[action.fetch_jobs]
+runner     = "webhook"
+idempotent = true
+params     = { url = "${{ inputs.feed_url }}", body = '{"recency": "24h"}' }
+
+[action.fetch_jobs.retry]
+max_attempts = 3
+backoff      = "exponential"
+base_delay   = "2s"
+max_delay    = "30s"
+
+[action.score_jobs]
+runner     = "openai"
+depends_on = ["fetch_jobs"]
+
+[action.score_jobs.params]
+system = """
+You score job postings against a resume. Score each posting 1 to 10 for fit.
+Reply with a ranked plain-text list of every posting scoring 7 or higher:
+title, link, score, and one line on why it fits. If nothing scores 7 or
+higher, reply with exactly NO_MATCHES and nothing else.
+"""
+prompt = """
+Resume summary:
+${{ inputs.resume_summary }}
+
+Job feed (raw):
+${{ fetch_jobs.output }}
+"""
+
+# Skipped, not failed, on a quiet day: the NO_MATCHES sentinel from the
+# scoring prompt is what the condition checks.
+[action.send_digest]
+runner     = "email"
+depends_on = ["score_jobs"]
+condition  = "${{ score_jobs.output }} != 'NO_MATCHES'"
+params     = { to = "${{ inputs.notify_to }}", subject = "Career Scout: new matches", body = "${{ score_jobs.output }}" }

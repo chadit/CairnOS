@@ -1,0 +1,180 @@
+// A2AService: the Agent-to-Agent protocol adapter
+// (.agents/spec/09-a2a-and-hive.md, "Core methods"). A2A is a thin protocol
+// shim over the existing WorkflowService, not a second engine: an A2A "task"
+// is a CairnOS "run", so CreateTask starts a run, GetTask reads one,
+// ListTasks lists them, CancelTask stops one, and TaskUpdates streams a run's
+// events. Every method needs the a2a:task scope; the gateway gives HTTP-only
+// agents the same surface over JSON.
+
+syntax = "proto3";
+
+package cairnos.a2a.v1;
+
+import "cairnos/v1/common.proto";
+import "cairnos/v1/workflow.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1;a2av1";
+
+// A2AService is the A2A protocol surface external agents call. It maps the
+// task vocabulary onto runs and reuses the WorkflowService run lifecycle, so
+// an A2A task and an API run are the same persisted record.
+service A2AService {
+  // CreateTask starts a run from an A2A task request: the skill names the
+  // workflow, params become workflow inputs. It returns the created task
+  // (run) without waiting for completion; TaskUpdates streams progress.
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse) {
+    option (google.api.http) = {
+      post: "/v1/a2a/tasks"
+      body: "*"
+    };
+  }
+
+  // GetTask reads one task's current state, backed by GetRun.
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse) {
+    option (google.api.http) = {get: "/v1/a2a/tasks/{task_id}"};
+  }
+
+  // ListTasks lists tasks newest-first, backed by ListRuns.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {get: "/v1/a2a/tasks"};
+  }
+
+  // CancelTask stops an in-flight task started through this node, backed by
+  // CancelRun.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {
+    option (google.api.http) = {
+      post: "/v1/a2a/tasks/{task_id}/cancel"
+      body: "*"
+    };
+  }
+
+  // TaskUpdates streams one task's run and action events until it finalizes,
+  // backed by the WorkflowService run event stream. Over HTTP the gateway
+  // delivers it as newline-delimited JSON, one update per line.
+  rpc TaskUpdates(TaskUpdatesRequest) returns (stream TaskUpdate) {
+    option (google.api.http) = {get: "/v1/a2a/tasks/{task_id}/updates"};
+  }
+}
+
+// TaskState is one task's lifecycle position, the A2A spelling of a run
+// status. The values mirror run status one to one
+// (pending|running|succeeded|failed|canceled), so consumers that only speak
+// A2A never see CairnOS run vocabulary.
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_PENDING = 1;
+  TASK_STATE_RUNNING = 2;
+  TASK_STATE_SUCCEEDED = 3;
+  TASK_STATE_FAILED = 4;
+  TASK_STATE_CANCELED = 5;
+}
+
+// Task is one unit of A2A work, the wire shape of a CairnOS run. task_id is
+// the run id, skill is the workflow name, and params are the run inputs.
+message Task {
+  string task_id = 1;
+  string skill = 2;
+  TaskState state = 3;
+  google.protobuf.Struct params = 4;
+  cairnos.v1.Error error = 5;
+
+  // created_at, started_at, and finished_at echo the run timestamps as
+  // RFC 3339 strings so an HTTP-only consumer needs no protobuf timestamp
+  // decoding.
+  string created_at = 6;
+  string started_at = 7;
+  string finished_at = 8;
+}
+
+// CreateTaskRequest names the skill (workflow) and supplies its params
+// (inputs). The optional client_task_id is echoed back for correlation; it
+// does not become the run id, which the node mints.
+message CreateTaskRequest {
+  string skill = 1;
+  google.protobuf.Struct params = 2;
+  string client_task_id = 3;
+}
+
+message CreateTaskResponse {
+  Task task = 1;
+
+  // client_task_id echoes the request's correlation id, if any.
+  string client_task_id = 2;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message GetTaskResponse {
+  Task task = 1;
+
+  // actions carries the run's per-action results, reusing the WorkflowService
+  // ActionResult shape so A2A and the native API report the same detail.
+  repeated cairnos.v1.ActionResult actions = 2;
+}
+
+message ListTasksRequest {
+  // skill narrows to one workflow name; empty means all.
+  string skill = 1;
+
+  // state narrows to one task state; empty means all.
+  string state = 2;
+
+  // limit caps the result count; zero means the server default.
+  int32 limit = 3;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message CancelTaskRequest {
+  string task_id = 1;
+}
+
+// CancelTaskResponse acknowledges the cancel signal; the task finalizes
+// asynchronously and lands in history as canceled.
+message CancelTaskResponse {
+  string task_id = 1;
+  TaskState state = 2;
+}
+
+message TaskUpdatesRequest {
+  string task_id = 1;
+}
+
+// TaskUpdateType says what a TaskUpdate describes, the A2A spelling of the
+// run event types.
+enum TaskUpdateType {
+  TASK_UPDATE_TYPE_UNSPECIFIED = 0;
+  TASK_UPDATE_TYPE_STARTED = 1;
+  TASK_UPDATE_TYPE_ACTION = 2;
+  TASK_UPDATE_TYPE_FINISHED = 3;
+}
+
+// TaskUpdate is one entry in the TaskUpdates stream, the A2A wire shape of a
+// run event. step is set on action updates; task carries the terminal task
+// record on the finished update.
+message TaskUpdate {
+  string task_id = 1;
+  TaskUpdateType type = 2;
+
+  // step is set on ACTION updates: the action name, its status, and attempt.
+  TaskStep step = 3;
+
+  // task is set on the FINISHED update with the terminal task record.
+  Task task = 4;
+
+  // error is set when the step or the task carried a failure.
+  cairnos.v1.Error error = 5;
+}
+
+// TaskStep is one action's position within a task at update time.
+message TaskStep {
+  string name = 1;
+  string status = 2;
+  int32 attempt = 3;
+}

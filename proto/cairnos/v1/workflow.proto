@@ -1,0 +1,191 @@
+// WorkflowService: run, inspect, cancel, and validate workflows
+// (.agents/spec/07-api-protocols.md, "Core services"). gRPC is the source of
+// truth; the HTTP routes come from the google.api.http annotations through
+// grpc-gateway, so there is no second set of handlers to keep in sync.
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "cairnos/v1/common.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// WorkflowService starts and observes workflow runs.
+service WorkflowService {
+  // RunWorkflow starts a run by workflow name and streams run and action
+  // events as they happen. The HTTP gateway delivers the stream as chunked
+  // newline-delimited JSON, one event per line.
+  rpc RunWorkflow(RunWorkflowRequest) returns (stream RunEvent) {
+    option (google.api.http) = {
+      post: "/v1/workflows/{workflow_name}/runs"
+      body: "*"
+    };
+  }
+
+  // GetRun fetches one run's current state, including its action results.
+  rpc GetRun(GetRunRequest) returns (GetRunResponse) {
+    option (google.api.http) = {get: "/v1/runs/{run_id}"};
+  }
+
+  // ListRuns lists runs newest-first, filterable by workflow and status.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse) {
+    option (google.api.http) = {get: "/v1/runs"};
+  }
+
+  // CancelRun cancels an in-flight run started through this server.
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/runs/{run_id}/cancel"
+      body: "*"
+    };
+  }
+
+  // ValidateWorkflow parses and validates a workflow file without running
+  // it, returning every canonical validation error found in one pass.
+  rpc ValidateWorkflow(ValidateWorkflowRequest) returns (ValidateWorkflowResponse) {
+    option (google.api.http) = {
+      post: "/v1/workflows/validate"
+      body: "*"
+    };
+  }
+}
+
+// RunWorkflowRequest names the workflow (resolved against the server's
+// workflows directory) and supplies its declared inputs.
+message RunWorkflowRequest {
+  string workflow_name = 1;
+  google.protobuf.Struct inputs = 2;
+}
+
+// RunEventType says what a RunEvent describes.
+enum RunEventType {
+  RUN_EVENT_TYPE_UNSPECIFIED = 0;
+  RUN_EVENT_TYPE_RUN_STARTED = 1;
+  RUN_EVENT_TYPE_ACTION_TRANSITION = 2;
+  RUN_EVENT_TYPE_RUN_FINISHED = 3;
+}
+
+// ActionState is one action's position within a run at event time.
+message ActionState {
+  string name = 1;
+
+  // status is the action lifecycle state:
+  // pending|ready|running|succeeded|failed|skipped.
+  string status = 2;
+
+  int32 attempt = 3;
+}
+
+// RunEvent is one entry in the RunWorkflow stream.
+message RunEvent {
+  string run_id = 1;
+  RunEventType type = 2;
+
+  // action is set on ACTION_TRANSITION events.
+  ActionState action = 3;
+
+  // run is set on RUN_FINISHED with the terminal run record.
+  Run run = 4;
+
+  // error is set when the transition or the run carried a failure.
+  Error error = 5;
+}
+
+// Run is one execution of a workflow, mirroring the persisted run row.
+message Run {
+  string run_id = 1;
+  string workflow_name = 2;
+  string workflow_hash = 3;
+
+  // status is the run lifecycle state:
+  // pending|running|succeeded|failed|canceled.
+  string status = 4;
+
+  // trigger records what started the run: cli|schedule|api|a2a|webhook.
+  string trigger = 5;
+
+  google.protobuf.Struct inputs = 6;
+  Error error = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp started_at = 9;
+  google.protobuf.Timestamp finished_at = 10;
+}
+
+// ActionResult is the persisted outcome of one action within a run.
+message ActionResult {
+  string name = 1;
+  string runner = 2;
+  string status = 3;
+  int32 attempt = 4;
+
+  // output is the action's result value, JSON-shaped.
+  google.protobuf.Value output = 5;
+
+  Usage usage = 6;
+  Error error = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+}
+
+// Usage is the per-action resource accounting from the runner.
+message Usage {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  int64 cached_tokens = 3;
+  double cost_usd = 4;
+  int64 latency_ms = 5;
+  int32 retries = 6;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message GetRunResponse {
+  Run run = 1;
+  repeated ActionResult actions = 2;
+}
+
+message ListRunsRequest {
+  // workflow narrows to one workflow name; empty means all.
+  string workflow = 1;
+
+  // status narrows to one run status; empty means all.
+  string status = 2;
+
+  // limit caps the result count; zero means the server default.
+  int32 limit = 3;
+}
+
+message ListRunsResponse {
+  repeated Run runs = 1;
+}
+
+message CancelRunRequest {
+  string run_id = 1;
+}
+
+// CancelRunResponse acknowledges the cancel signal; the run finalizes
+// asynchronously and lands in run history as canceled.
+message CancelRunResponse {
+  string run_id = 1;
+  string status = 2;
+}
+
+// ValidateWorkflowRequest carries the raw workflow file bytes (TOML). Over
+// HTTP/JSON the bytes field is base64-encoded, per proto3 JSON mapping.
+message ValidateWorkflowRequest {
+  bytes toml = 1;
+}
+
+message ValidateWorkflowResponse {
+  bool valid = 1;
+
+  // errors lists every canonical validation problem found, so authors fix a
+  // file in one pass.
+  repeated Error errors = 2;
+}

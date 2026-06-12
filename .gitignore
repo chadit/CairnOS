@@ -2,11 +2,22 @@
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 # Binaries for programs and plugins
+bin/
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+
+# Compiled example programs. Go names a binary after its package dir, so
+# building examples/a2a or examples/plugins/echo (at the repo root or in place)
+# drops an extensionless `a2a`/`echo` binary. The patterns are anchored so they
+# catch only the binaries, not the internal/a2a, examples/a2a, or
+# examples/plugins/echo source dirs of the same name. Prefer `go build -o bin/`.
+/a2a
+/echo
+examples/a2a/a2a
+examples/plugins/echo/echo
 
 # Test binary, built with `go test -c`
 *.test

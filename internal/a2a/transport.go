@@ -1,0 +1,109 @@
+package a2a
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"os"
+
+	"google.golang.org/grpc/credentials"
+)
+
+// TLSConfig is the [a2a] mTLS block (.agents/spec/09-a2a-and-hive.md,
+// "Transport security"). mTLS proves the connection, the bearer token proves
+// the caller's scopes: the two are orthogonal layers, so a connection that
+// passes mTLS still presents a token, and a token alone over plaintext still
+// works on a loopback bind. All three files are required together or omitted
+// together; a partial trio is a configuration error rather than a silent
+// downgrade to one-way TLS.
+type TLSConfig struct {
+	CertFile     string
+	KeyFile      string
+	ClientCAFile string
+}
+
+// Configured reports whether any mTLS field is set, so the wiring can tell
+// "operator asked for mTLS" from "plain dev transport".
+func (c TLSConfig) Configured() bool {
+	return c.CertFile != "" || c.KeyFile != "" || c.ClientCAFile != ""
+}
+
+// ServerCredentials builds the gRPC transport credentials for the A2A
+// listener from the mTLS trio: the node's own certificate and key, plus the
+// client CA bundle it requires every caller's certificate to chain to
+// (RequireAndVerifyClientCert). TLS 1.2 is the floor. A partial config is
+// refused so a missing client CA can never silently leave the listener
+// accepting any client.
+func (c TLSConfig) ServerCredentials() (credentials.TransportCredentials, error) {
+	if c.CertFile == "" || c.KeyFile == "" || c.ClientCAFile == "" {
+		return nil, fmt.Errorf("%w: cert=%q key=%q client_ca=%q",
+			ErrTLSConfigIncomplete, c.CertFile, c.KeyFile, c.ClientCAFile)
+	}
+
+	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load a2a server keypair: %w", err)
+	}
+
+	clientCAs, err := loadCertPool(c.ClientCAFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCAs,
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
+}
+
+// ClientCredentials builds the credentials the local HTTP gateway dials the
+// mTLS gRPC listener with. The node presents its own certificate as the client
+// identity and trusts the same CA bundle, so the loopback gateway hop passes
+// the listener's RequireAndVerifyClientCert. ServerName is left to the dial
+// target; the gateway dials by loopback address, so cert hostname verification
+// against the connection IP is what the node's own cert must satisfy.
+func (c TLSConfig) ClientCredentials() (credentials.TransportCredentials, error) {
+	if c.CertFile == "" || c.KeyFile == "" || c.ClientCAFile == "" {
+		return nil, fmt.Errorf("%w: cert=%q key=%q client_ca=%q",
+			ErrTLSConfigIncomplete, c.CertFile, c.KeyFile, c.ClientCAFile)
+	}
+
+	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load a2a client keypair: %w", err)
+	}
+
+	roots, err := loadCertPool(c.ClientCAFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      roots,
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
+}
+
+// loadCertPool reads a PEM bundle into an x509 pool, failing when the file
+// holds no certificates so a typo'd path cannot produce an empty trust store
+// that rejects every client.
+func loadCertPool(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path) // #nosec G304 -- the CA path is the operator's own [a2a] config
+	if err != nil {
+		return nil, fmt.Errorf("read a2a client CA file: %w", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%w: %s", ErrClientCAUnreadable, path)
+	}
+
+	return pool, nil
+}

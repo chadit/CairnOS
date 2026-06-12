@@ -1,0 +1,131 @@
+{
+  "title": "CairnOS / Runner Health",
+  "uid": "cairnos-runner-health",
+  "description": "Per-runner latency, retries, breaker state, and token consumption from the cairnos_* metric catalog.",
+  "tags": ["cairnos"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Action latency p95 by runner",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, runner) (rate(cairnos_action_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{runner}} p95"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Retries by runner",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (runner) (rate(cairnos_retries_total[5m]))",
+          "legendFormat": "{{runner}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Circuit breaker state (0 closed, 1 half-open, 2 open)",
+      "type": "state-timeline",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "closed", "color": "green" },
+                "1": { "text": "half-open", "color": "yellow" },
+                "2": { "text": "open", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cairnos_circuit_state",
+          "legendFormat": "{{runner}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tokens per second by runner and kind",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (runner, kind) (rate(cairnos_tokens_total[5m]))",
+          "legendFormat": "{{runner}} {{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Cache hits vs misses by runner",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (runner) (rate(cairnos_cache_hits_total[5m]))",
+          "legendFormat": "{{runner}} hits"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (runner) (rate(cairnos_cache_misses_total[5m]))",
+          "legendFormat": "{{runner}} misses"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Breaker transitions by destination state",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (runner, to_state) (increase(cairnos_circuit_transitions_total[15m]))",
+          "legendFormat": "{{runner}} to {{to_state}}"
+        }
+      ]
+    }
+  ]
+}

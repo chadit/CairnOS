@@ -1,0 +1,73 @@
+# learning_coach.toml: weekly study suggestions from upstream release feeds.
+#
+# Run it:
+#   cairnos run examples/agents/learning_coach/learning_coach.toml
+# Put it on the weekly schedule:
+#   cairnos schedule add examples/agents/learning_coach/learning_coach.toml
+#
+# The three release actions have no dependencies between them, so the engine
+# runs them in parallel; suggest fans them back in. The log_progress action
+# is kind = "agent": it validates today but executes once the agent loop
+# lands in Phase 1c (see the README).
+
+[workflow]
+name        = "learning_coach"
+version     = "1"
+description = "Watch upstream releases, then suggest what to study next based on your goals."
+schedule    = "@weekly"
+timeout     = "10m"
+
+[workflow.inputs.goals]
+type        = "string"
+default     = "deepen Go concurrency and distributed systems fundamentals"
+description = "What you are trying to learn this quarter."
+
+[action.releases_go]
+runner     = "github"
+idempotent = true
+params     = { op = "releases", repo = "golang/go", limit = 5 }
+
+[action.releases_grpc]
+runner     = "github"
+idempotent = true
+params     = { op = "releases", repo = "grpc/grpc-go", limit = 5 }
+
+[action.releases_mcp]
+runner     = "github"
+idempotent = true
+params     = { op = "releases", repo = "modelcontextprotocol/go-sdk", limit = 5 }
+
+[action.suggest]
+runner     = "anthropic"
+depends_on = ["releases_go", "releases_grpc", "releases_mcp"]
+
+[action.suggest.params]
+system = """
+You are a study coach. Given recent releases from projects the user follows
+and the user's learning goals, suggest two or three concrete things to study
+this week. Prefer release notes that touch the goals. Be specific: name the
+release, the feature, and what to read or build.
+"""
+prompt = """
+Learning goals: ${{ inputs.goals }}
+
+Recent golang/go releases:
+${{ releases_go.output }}
+
+Recent grpc/grpc-go releases:
+${{ releases_grpc.output }}
+
+Recent modelcontextprotocol/go-sdk releases:
+${{ releases_mcp.output }}
+"""
+
+# Agent action: schema-valid now, executes once the Phase 1c agent loop
+# ships. It records the suggestion in memory so next week's run can avoid
+# repeating material.
+[action.log_progress]
+kind       = "agent"
+depends_on = ["suggest"]
+driver     = "anthropic"
+goal       = "Store this week's study suggestion in memory under the learning_coach scope so future runs do not repeat it: ${{ suggest.output }}"
+tools      = ["memory"]
+budget_usd = 0.25

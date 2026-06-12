@@ -1,0 +1,27 @@
+# Code generation for the CairnOS protos. Every plugin runs through the Go
+# tool directives in go.mod (`go get -tool ...`), so plugin versions are
+# pinned by the module graph, not by whatever happens to be on PATH.
+#
+# Regenerate with: buf generate
+# (or: go run github.com/bufbuild/buf/cmd/buf@latest generate)
+version: v2
+clean: false
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: internal/api/gen
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-go-grpc]
+    out: internal/api/gen
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-grpc-gateway]
+    out: internal/api/gen
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-openapiv2]
+    out: internal/api/gen/openapi
+    # One invocation across every package: the default per-directory strategy
+    # plus allow_merge would emit one cairnos.swagger.json per proto package
+    # and silently drop all but the first.
+    strategy: all
+    opt:
+      - allow_merge=true
+      - merge_file_name=cairnos

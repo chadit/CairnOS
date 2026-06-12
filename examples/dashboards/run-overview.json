@@ -1,0 +1,111 @@
+{
+  "title": "CairnOS / Run Overview",
+  "uid": "cairnos-run-overview",
+  "description": "Workflow throughput, success rate, cost, and run duration from the cairnos_* metric catalog.",
+  "tags": ["cairnos"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Run throughput by workflow",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (workflow) (rate(cairnos_runs_total[5m]))",
+          "legendFormat": "{{workflow}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Run success rate (15m)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "green", "value": 0.95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(cairnos_runs_total{status=\"succeeded\"}[15m])) / sum(rate(cairnos_runs_total[15m]))",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Estimated cost per hour by workflow (USD)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (workflow) (increase(cairnos_cost_usd_total[1h]))",
+          "legendFormat": "{{workflow}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Run duration p95 by workflow",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, workflow) (rate(cairnos_run_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{workflow}} p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Runs by outcome",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(cairnos_runs_total[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    }
+  ]
+}

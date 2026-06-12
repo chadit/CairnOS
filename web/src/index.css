@@ -1,0 +1,13 @@
+@import 'tailwindcss';
+
+/* reactflow ships its own stylesheet; the canvas needs it for node and edge
+   layout. Importing it here keeps all global styles in one place. */
+@import 'reactflow/dist/style.css';
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}

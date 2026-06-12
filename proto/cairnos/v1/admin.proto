@@ -1,0 +1,61 @@
+// AdminService: liveness, runner inventory, and breaker operations
+// (.agents/spec/07-api-protocols.md, "Core services"). Health carries no
+// auth in any phase; the other methods gain scope checks in Phase 4a.
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// AdminService covers operator concerns outside any single workflow.
+service AdminService {
+  // Health reports liveness and store readiness. Never requires auth.
+  rpc Health(HealthRequest) returns (HealthResponse) {
+    option (google.api.http) = {get: "/v1/health"};
+  }
+
+  // ListRunners lists the registered runner names.
+  rpc ListRunners(ListRunnersRequest) returns (ListRunnersResponse) {
+    option (google.api.http) = {get: "/v1/runners"};
+  }
+
+  // ResetBreaker resets one runner's circuit breaker.
+  rpc ResetBreaker(ResetBreakerRequest) returns (ResetBreakerResponse) {
+    option (google.api.http) = {
+      post: "/v1/runners/{runner}/breaker/reset"
+      body: "*"
+    };
+  }
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  // status is "ok" when the config loaded and the store answers.
+  string status = 1;
+}
+
+message ListRunnersRequest {}
+
+// RunnerInfo describes one registered runner.
+message RunnerInfo {
+  string name = 1;
+}
+
+message ListRunnersResponse {
+  repeated RunnerInfo runners = 1;
+}
+
+message ResetBreakerRequest {
+  string runner = 1;
+}
+
+message ResetBreakerResponse {
+  string runner = 1;
+
+  // state is the breaker position after the reset: CLOSED.
+  string state = 2;
+}

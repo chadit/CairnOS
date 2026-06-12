@@ -1,0 +1,145 @@
+// GovernanceService: budget state, workflow pause/resume, run termination,
+// and the audit log (.agents/spec/12-ui-and-governance.md, "Governance").
+// Budgets are file-defined ([workflow.budget]), so there is no SetBudget RPC;
+// this service reads the spend-versus-limit state and exposes the admin
+// control actions, every one of which is audit-logged.
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// GovernanceService covers budget visibility and the admin control actions.
+service GovernanceService {
+  // GetWorkflowBudgetState reports a workflow's current-period spend, its
+  // configured limit and period, and whether it is paused. Spend rides on
+  // estimated cost, so it is a soft ceiling, not a billed total.
+  rpc GetWorkflowBudgetState(GetWorkflowBudgetStateRequest) returns (GetWorkflowBudgetStateResponse) {
+    option (google.api.http) = {get: "/v1/governance/workflows/{workflow_name}/budget"};
+  }
+
+  // PauseWorkflow blocks new runs of a workflow until it is resumed. In-flight
+  // runs finish. Admin scope; audit-logged.
+  rpc PauseWorkflow(PauseWorkflowRequest) returns (PauseWorkflowResponse) {
+    option (google.api.http) = {
+      post: "/v1/governance/workflows/{workflow_name}/pause"
+      body: "*"
+    };
+  }
+
+  // ResumeWorkflow lifts a workflow's pause flag. Admin scope; audit-logged.
+  rpc ResumeWorkflow(ResumeWorkflowRequest) returns (ResumeWorkflowResponse) {
+    option (google.api.http) = {
+      post: "/v1/governance/workflows/{workflow_name}/resume"
+      body: "*"
+    };
+  }
+
+  // TerminateRun cancels an active run; it maps to the same machinery as
+  // CancelRun. Admin scope; audit-logged.
+  rpc TerminateRun(TerminateRunRequest) returns (TerminateRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/governance/runs/{run_id}/terminate"
+      body: "*"
+    };
+  }
+
+  // ListAudit lists governance audit rows newest-first.
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse) {
+    option (google.api.http) = {get: "/v1/governance/audit"};
+  }
+}
+
+message GetWorkflowBudgetStateRequest {
+  string workflow_name = 1;
+}
+
+message GetWorkflowBudgetStateResponse {
+  string workflow_name = 1;
+
+  // has_budget is false when the workflow declares no [workflow.budget]; the
+  // spend, limit, and period fields are then meaningless.
+  bool has_budget = 2;
+
+  // period is day, week, or month; empty when has_budget is false.
+  string period = 3;
+
+  // spend_usd is the estimated spend for the current period.
+  double spend_usd = 4;
+
+  // limit_usd is the configured ceiling; zero when has_budget is false.
+  double limit_usd = 5;
+
+  // on_exceed is pause or warn; empty when has_budget is false.
+  string on_exceed = 6;
+
+  // paused is true when an admin paused the workflow.
+  bool paused = 7;
+}
+
+message PauseWorkflowRequest {
+  string workflow_name = 1;
+
+  // reason is recorded in the audit row and on the pause flag.
+  string reason = 2;
+}
+
+message PauseWorkflowResponse {
+  string workflow_name = 1;
+
+  bool paused = 2;
+}
+
+message ResumeWorkflowRequest {
+  string workflow_name = 1;
+}
+
+message ResumeWorkflowResponse {
+  string workflow_name = 1;
+
+  // resumed is false when the workflow was not paused to begin with.
+  bool resumed = 2;
+}
+
+message TerminateRunRequest {
+  string run_id = 1;
+}
+
+message TerminateRunResponse {
+  string run_id = 1;
+
+  // status acknowledges the cancel signal; the run finalizes as canceled.
+  string status = 2;
+}
+
+message ListAuditRequest {
+  // limit caps the result count; zero means the server default.
+  int32 limit = 1;
+}
+
+// AuditEntry is one governance audit row.
+message AuditEntry {
+  string id = 1;
+
+  // actor is the auth subject when present, else "cli" or "local".
+  string actor = 2;
+
+  // action is pause, resume, or terminate.
+  string action = 3;
+
+  // target is the workflow name or run id the action applied to.
+  string target = 4;
+
+  // detail is free-form context, such as a pause reason.
+  string detail = 5;
+
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+}

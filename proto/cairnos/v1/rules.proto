@@ -1,0 +1,69 @@
+// LanguageRulesService: coding standards keyed by language and project, with
+// project overrides merged over language defaults
+// (.agents/spec/05-memory-and-knowledge.md, "Language Rules Service").
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// LanguageRulesService is the typed API over the Language Rules Service.
+service LanguageRulesService {
+  // PutRule upserts one rule keyed by (language, project, key). An empty
+  // project sets a language default.
+  rpc PutRule(PutRuleRequest) returns (PutRuleResponse) {
+    option (google.api.http) = {
+      post: "/v1/rules"
+      body: "*"
+    };
+  }
+
+  // GetRules returns the merged rule set for a language, optionally narrowed
+  // to a project: language defaults with the project's overrides applied.
+  rpc GetRules(GetRulesRequest) returns (GetRulesResponse) {
+    option (google.api.http) = {get: "/v1/rules/{language}"};
+  }
+
+  // ListLanguages returns the distinct languages with at least one rule.
+  rpc ListLanguages(ListLanguagesRequest) returns (ListLanguagesResponse) {
+    option (google.api.http) = {get: "/v1/rules"};
+  }
+}
+
+// LanguageRule is one coding-standard entry. An empty project means a language
+// default applying to every project in that language.
+message LanguageRule {
+  string language = 1;
+  string project = 2;
+  string key = 3;
+  string value = 4;
+  string description = 5;
+}
+
+message PutRuleRequest {
+  LanguageRule rule = 1;
+}
+
+message PutRuleResponse {}
+
+message GetRulesRequest {
+  string language = 1;
+  string project = 2;
+}
+
+message GetRulesResponse {
+  string language = 1;
+  string project = 2;
+
+  // rules is the merged set: language defaults with project overrides applied.
+  repeated LanguageRule rules = 3;
+}
+
+message ListLanguagesRequest {}
+
+message ListLanguagesResponse {
+  repeated string languages = 1;
+}

@@ -1,0 +1,28 @@
+// Messages shared by every CairnOS service (.agents/spec/04-execution-engine.md,
+// "Error model"). One error shape travels across the engine, gRPC status
+// details, and the HTTP gateway's error envelope, so a gRPC client and an
+// HTTP client see the same canonical code.
+
+syntax = "proto3";
+
+package cairnos.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1";
+
+// Error is the canonical engine error: a stable dotted code, a message safe
+// to surface, and structured details for programmatic consumers. It mirrors
+// internal/cairnerr.Error and rides in gRPC status details so the gateway
+// can rebuild the canonical HTTP error envelope.
+message Error {
+  // code is the canonical dotted identifier, e.g. "workflow.cycle_detected".
+  string code = 1;
+
+  // message is the human-readable explanation, safe to show users.
+  string message = 2;
+
+  // details carries structured context such as the cycle path or the
+  // missing key.
+  google.protobuf.Struct details = 3;
+}

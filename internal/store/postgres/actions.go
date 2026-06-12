@@ -1,0 +1,142 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/chadit/CairnOS/internal/store"
+)
+
+// actionColumns is the SELECT list every action query shares, in
+// scanActionResult order. The ar. prefix lets the workspace-scoped list join
+// runs without ambiguous column names.
+const actionColumns = "ar.run_id, ar.action_name, ar.runner, ar.status, ar.attempt, ar.output_json, ar.usage_json, ar.meta_json, ar.error_json, ar.started_at, ar.finished_at"
+
+// UpsertActionResult writes an action's current state. The engine calls it
+// on every transition, so the upsert overwrites the whole row: the latest
+// write is the action's truth and a crash mid-run loses nothing already
+// flushed. ON CONFLICT keys on the (run_id, action_name) primary key, same
+// as the sqlite backend.
+func (s *Store) UpsertActionResult(ctx context.Context, result *store.ActionResult) error {
+	output, err := marshalJSON(result.Output, result.Output == nil)
+	if err != nil {
+		return err
+	}
+
+	usage, err := marshalUsage(result.Usage)
+	if err != nil {
+		return err
+	}
+
+	meta, err := marshalJSON(result.Meta, result.Meta == nil)
+	if err != nil {
+		return err
+	}
+
+	actionErr, err := marshalError(result.Error)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.pool.Exec(ctx,
+		`INSERT INTO action_results (run_id, action_name, runner, status, attempt, output_json, usage_json, meta_json, error_json, started_at, finished_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (run_id, action_name) DO UPDATE SET
+		     runner = EXCLUDED.runner,
+		     status = EXCLUDED.status,
+		     attempt = EXCLUDED.attempt,
+		     output_json = EXCLUDED.output_json,
+		     usage_json = EXCLUDED.usage_json,
+		     meta_json = EXCLUDED.meta_json,
+		     error_json = EXCLUDED.error_json,
+		     started_at = EXCLUDED.started_at,
+		     finished_at = EXCLUDED.finished_at`,
+		result.RunID, result.ActionName, result.Runner, string(result.Status), result.Attempt,
+		output, usage, meta, actionErr, nullableTime(result.StartedAt), nullableTime(result.FinishedAt))
+	if err != nil {
+		return fmt.Errorf("upsert action %s/%s: %w", result.RunID, result.ActionName, err)
+	}
+
+	return nil
+}
+
+// ListActionResults returns every action row for a run, ordered by action
+// name so callers see a stable listing. The join to runs scopes the result
+// to the request workspace, so an action row whose run belongs to another
+// workspace is invisible (.agents/spec/12-ui-and-governance.md,
+// "Multi-tenancy").
+func (s *Store) ListActionResults(ctx context.Context, runID string) ([]*store.ActionResult, error) {
+	rows, err := s.pool.Query(ctx,
+		"SELECT "+actionColumns+` FROM action_results ar
+		 JOIN runs r ON r.id = ar.run_id
+		 WHERE ar.run_id = $1 AND r.workspace_id = $2
+		 ORDER BY ar.action_name`,
+		runID, store.WorkspaceFromContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("list action results for run %s: %w", runID, err)
+	}
+	defer rows.Close()
+
+	var results []*store.ActionResult
+
+	for rows.Next() {
+		result, scanErr := scanActionResult(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("list action results for run %s: %w", runID, scanErr)
+		}
+
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list action results for run %s: %w", runID, err)
+	}
+
+	return results, nil
+}
+
+// scanActionResult reads one actionColumns row back into a
+// store.ActionResult.
+func scanActionResult(row rowScanner) (*store.ActionResult, error) {
+	var (
+		result     store.ActionResult
+		status     string
+		output     []byte
+		usage      []byte
+		meta       []byte
+		actionErr  []byte
+		startedAt  *time.Time
+		finishedAt *time.Time
+	)
+
+	err := row.Scan(&result.RunID, &result.ActionName, &result.Runner, &status, &result.Attempt,
+		&output, &usage, &meta, &actionErr, &startedAt, &finishedAt)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // callers wrap with their operation and run id
+	}
+
+	result.Status = store.ActionStatus(status)
+
+	if err := unmarshalJSON(output, &result.Output); err != nil {
+		return nil, err
+	}
+
+	result.Usage, err = unmarshalUsage(usage)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := unmarshalJSON(meta, &result.Meta); err != nil {
+		return nil, err
+	}
+
+	if err := unmarshalError(actionErr, &result.Error); err != nil {
+		return nil, err
+	}
+
+	result.StartedAt = timeFromNull(startedAt)
+	result.FinishedAt = timeFromNull(finishedAt)
+
+	return &result, nil
+}

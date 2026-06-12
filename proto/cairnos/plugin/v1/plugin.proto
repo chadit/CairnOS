@@ -1,0 +1,172 @@
+// RunnerPlugin is the out-of-process runner contract
+// (.agents/spec/03-runner-interface.md, "Custom runners and plugins", path 2).
+// A plugin is a separate process serving this service over a private unix
+// socket; the engine host mirrors each call onto the pkg/runner interface, so
+// a crash or hang stays inside the child process instead of the engine.
+//
+// Open-typed fields (task params, task inputs, result output, tool input
+// schema) travel as JSON strings rather than google.protobuf.Struct. The
+// engine already persists and interpolates these values through
+// encoding/json, so a JSON string round-trips losslessly with the engine's
+// own semantics; Struct would force a second value model (no distinction the
+// engine cares about, but extra mapping code and protobuf's own JSON rules)
+// between the two encodings.
+
+syntax = "proto3";
+
+package cairnos.plugin.v1;
+
+option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/plugin/v1;pluginv1";
+
+// RunnerPlugin mirrors the pkg/runner contract for one out-of-process
+// runner: Describe is the startup handshake, Validate checks params, and
+// Execute streams incremental chunks before one terminal result or error.
+service RunnerPlugin {
+  // Describe reports the plugin's runner name and, when the plugin is usable
+  // as an agent-loop tool, its tool descriptor. The host calls it once at
+  // startup as the connection handshake.
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+
+  // Validate checks task params, mirroring runner.Validate's two-phase
+  // contract: structural checks when task.resolved is false, full checks
+  // when true. A set error field means invalid; transport errors are
+  // reserved for the connection itself.
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+
+  // Execute runs one task. Chunk events may arrive in any number while the
+  // task runs; the final event carries exactly one result or one classified
+  // error, then the stream closes. A stream that ends without a terminal
+  // event means the plugin died mid-task.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+}
+
+// Task is one action's worth of work, mirroring runner.Task.
+message Task {
+  // run_id and action_name identify where this task sits in a workflow run.
+  string run_id = 1;
+  string action_name = 2;
+
+  // params_json is the action's params map encoded as a JSON object. JSON
+  // keeps the engine's encoding/json value semantics on both ends.
+  string params_json = 3;
+
+  // inputs_json is the run-level inputs map encoded as a JSON object.
+  string inputs_json = 4;
+
+  // idempotent mirrors the action's idempotent flag; the engine, not the
+  // plugin, decides retries.
+  bool idempotent = 5;
+
+  // resolved is true once all interpolation references in params are
+  // substituted. False during load-time Validate.
+  bool resolved = 6;
+
+  // deadline_unix_ms is the absolute wall-clock deadline in milliseconds
+  // since the Unix epoch. Zero means no deadline beyond the call context.
+  int64 deadline_unix_ms = 7;
+}
+
+message DescribeRequest {}
+
+// DescribeResponse names the runner and optionally describes it as a tool.
+message DescribeResponse {
+  // name is the plugin's self-reported runner name, used in error codes and
+  // as the registry name when the host config does not override it.
+  string name = 1;
+
+  // tool_spec is present only when the plugin can serve as an agent-loop
+  // tool (the runner.Describer contract).
+  ToolSpec tool_spec = 2;
+}
+
+// ToolSpec mirrors runner.ToolSpec for agent-loop drivers.
+message ToolSpec {
+  string name = 1;
+  string description = 2;
+
+  // input_schema_json is a JSON Schema object for the tool's arguments,
+  // JSON-encoded for the same lossless round-trip as task params.
+  string input_schema_json = 3;
+}
+
+message ValidateRequest {
+  Task task = 1;
+}
+
+// ValidateResponse reports the validation verdict: an absent error means the
+// params are acceptable.
+message ValidateResponse {
+  ClassifiedError error = 1;
+}
+
+message ExecuteRequest {
+  Task task = 1;
+}
+
+// ExecuteEvent is one entry in the Execute stream: zero or more chunks, then
+// exactly one result or error.
+message ExecuteEvent {
+  oneof event {
+    Chunk chunk = 1;
+    Result result = 2;
+    ClassifiedError error = 3;
+  }
+}
+
+// Chunk mirrors runner.Chunk: one piece of incremental output.
+message Chunk {
+  // data is the raw streamed text (a token batch, a log line).
+  string data = 1;
+
+  // time_unix_ms is when the plugin produced the chunk, in milliseconds
+  // since the Unix epoch.
+  int64 time_unix_ms = 2;
+}
+
+// Result mirrors runner.Result on success.
+message Result {
+  // output_json is the action's output encoded as JSON, preserving the
+  // engine's encoding/json semantics end to end. Empty means a nil output.
+  string output_json = 1;
+
+  Usage usage = 2;
+
+  // meta carries runner-specific detail that is not the primary output.
+  map<string, string> meta = 3;
+}
+
+// Usage mirrors runner.Usage. Retries is deliberately absent: the engine
+// sets it, never the runner.
+message Usage {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  int64 cached_tokens = 3;
+  double cost_usd = 4;
+  int64 latency_ms = 5;
+}
+
+// ErrorClass mirrors runner.ErrorClass so retry decisions survive the wire.
+enum ErrorClass {
+  // ERROR_CLASS_UNSPECIFIED is treated as permanent by the host: an
+  // unclassified failure must never trigger a retry the plugin did not
+  // declare safe.
+  ERROR_CLASS_UNSPECIFIED = 0;
+  ERROR_CLASS_TRANSIENT = 1;
+  ERROR_CLASS_PERMANENT = 2;
+  ERROR_CLASS_RATE_LIMITED = 3;
+}
+
+// ClassifiedError mirrors runner.Error: a class for retry decisions, a
+// stable machine code, and a human message.
+message ClassifiedError {
+  ErrorClass class = 1;
+
+  // code is the stable machine code, e.g. "echo.bad_param".
+  string code = 2;
+
+  // message is the human explanation, safe to log.
+  string message = 3;
+
+  // retry_after_ms is the optional backoff hint for rate-limited failures.
+  int64 retry_after_ms = 4;
+}

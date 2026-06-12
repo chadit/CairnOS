@@ -1,0 +1,185 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/store"
+)
+
+// interruptedCode is the canonical error code for work lost to a restart
+// (.agents/spec/04-execution-engine.md, "State persistence").
+const interruptedCode = "engine.interrupted"
+
+// ReconcileInterrupted marks running actions of running runs as failed with
+// engine.interrupted and finalizes those runs as failed. The engine calls it
+// once at startup because CairnOS never silently resumes a runner call it
+// cannot prove is still alive. It returns the number of runs reconciled.
+//
+// On a multi-node deployment several nodes may each run this at startup. The
+// work is idempotent: a second pass finds no running runs to reconcile, so a
+// later-starting node simply reconciles nothing.
+func (s *Store) ReconcileInterrupted(ctx context.Context) (int, error) {
+	interrupted, err := marshalError(cairnerr.New(interruptedCode, "run interrupted by engine restart"))
+	if err != nil {
+		return 0, err
+	}
+
+	now := time.Now().UTC()
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile interrupted: begin: %w", err)
+	}
+	// Rollback after a successful Commit is a no-op pgx reports as
+	// ErrTxClosed; ignoring it keeps the error path covered without
+	// complicating the happy path.
+	defer rollbackQuietly(ctx, tx)
+
+	_, err = tx.Exec(ctx,
+		`UPDATE action_results
+		 SET status = $1, error_json = $2, finished_at = $3
+		 WHERE status = $4 AND run_id IN (SELECT id FROM runs WHERE status = $5)`,
+		string(store.ActionFailed), interrupted, now, string(store.ActionRunning), string(store.RunRunning))
+	if err != nil {
+		return 0, fmt.Errorf("reconcile interrupted: fail actions: %w", err)
+	}
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE runs
+		 SET status = $1, error_json = $2, finished_at = $3
+		 WHERE status = $4`,
+		string(store.RunFailed), interrupted, now, string(store.RunRunning))
+	if err != nil {
+		return 0, fmt.Errorf("reconcile interrupted: finalize runs: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("reconcile interrupted: commit: %w", err)
+	}
+
+	return int(tag.RowsAffected()), nil
+}
+
+// Prune enforces retention (.agents/spec/04-execution-engine.md, "Retention
+// and pruning"): runs with their action results and agent steps past
+// RunsOlderThan are deleted, and output_json past OutputsOlderThan is nulled
+// out while the row stays for reporting. Agent transcripts age under the
+// same outputs policy because they are the fastest-growing data in the
+// system (.agents/spec/15-agent-loop.md); truncated step rows count toward
+// OutputsTruncated alongside action rows. Age is measured from the run's
+// created_at so a run's rows age together. A zero duration disables that
+// part of the sweep, and a zero Now means the current time. Semantics match
+// the sqlite backend exactly.
+func (s *Store) Prune(ctx context.Context, opts store.PruneOptions) (store.PruneStats, error) {
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	var stats store.PruneStats
+
+	if opts.RunsOlderThan > 0 {
+		deleted, staleSuggestions, err := s.deleteRunsBefore(ctx, now.Add(-opts.RunsOlderThan))
+		if err != nil {
+			return store.PruneStats{}, err
+		}
+
+		stats.RunsDeleted = deleted
+		stats.SuggestionsDeleted = staleSuggestions
+	}
+
+	if opts.OutputsOlderThan > 0 {
+		truncated, err := s.truncateOutputsBefore(ctx, now.Add(-opts.OutputsOlderThan))
+		if err != nil {
+			return store.PruneStats{}, err
+		}
+
+		stats.OutputsTruncated = truncated
+	}
+
+	return stats, nil
+}
+
+// deleteRunsBefore removes runs created before cutoff together with their
+// action results and agent steps, in one transaction so a crash cannot
+// orphan child rows. Suggestions created before the same cutoff go with
+// them: their evidence cites runs that no longer exist, so an aged
+// suggestion is stale regardless of its review status.
+func (s *Store) deleteRunsBefore(ctx context.Context, cutoff time.Time) (int, int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune runs: begin: %w", err)
+	}
+	defer rollbackQuietly(ctx, tx)
+
+	utcCutoff := cutoff.UTC()
+
+	_, err = tx.Exec(ctx,
+		"DELETE FROM agent_steps WHERE run_id IN (SELECT id FROM runs WHERE created_at < $1)", utcCutoff)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune runs: delete agent steps: %w", err)
+	}
+
+	_, err = tx.Exec(ctx,
+		"DELETE FROM action_results WHERE run_id IN (SELECT id FROM runs WHERE created_at < $1)", utcCutoff)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune runs: delete action results: %w", err)
+	}
+
+	suggestionTag, err := tx.Exec(ctx,
+		"DELETE FROM suggestions WHERE created_at < $1", utcCutoff)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune runs: delete stale suggestions: %w", err)
+	}
+
+	runTag, err := tx.Exec(ctx, "DELETE FROM runs WHERE created_at < $1", utcCutoff)
+	if err != nil {
+		return 0, 0, fmt.Errorf("prune runs: delete runs: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("prune runs: commit: %w", err)
+	}
+
+	return int(runTag.RowsAffected()), int(suggestionTag.RowsAffected()), nil
+}
+
+// truncateOutputsBefore nulls out output_json for actions and agent steps
+// whose run was created before cutoff, keeping the rest of each row so run
+// metadata and transcript shape stay reportable after large outputs drop.
+func (s *Store) truncateOutputsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	utcCutoff := cutoff.UTC()
+
+	actionTag, err := s.pool.Exec(ctx,
+		`UPDATE action_results
+		 SET output_json = NULL
+		 WHERE output_json IS NOT NULL
+		   AND run_id IN (SELECT id FROM runs WHERE created_at < $1)`,
+		utcCutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune outputs: %w", err)
+	}
+
+	stepTag, err := s.pool.Exec(ctx,
+		`UPDATE agent_steps
+		 SET output_json = NULL
+		 WHERE output_json IS NOT NULL
+		   AND run_id IN (SELECT id FROM runs WHERE created_at < $1)`,
+		utcCutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune agent step outputs: %w", err)
+	}
+
+	return int(actionTag.RowsAffected() + stepTag.RowsAffected()), nil
+}
+
+// rollbackQuietly abandons tx; after a successful Commit this is a no-op
+// pgx reports as ErrTxClosed, which carries no signal worth surfacing.
+func rollbackQuietly(ctx context.Context, tx pgx.Tx) {
+	_ = tx.Rollback(ctx)
+}
