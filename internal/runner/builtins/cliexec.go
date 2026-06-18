@@ -277,13 +277,64 @@ func (c cliExec) classifyWait(runCtx context.Context, waitErr error, exitCode in
 			message += ": " + stderrTail
 		}
 
-		return &runner.Error{Class: runner.ClassPermanent, Code: c.code("exit"), Message: message, Cause: waitErr}
+		return c.classifyExitOutput(stderrTail, message, waitErr)
 	}
 
 	return &runner.Error{
 		Class: runner.ClassPermanent, Code: c.code("wait"),
 		Message: "wait for " + c.binary + ": " + waitErr.Error(), Cause: waitErr,
 	}
+}
+
+// classifyExitOutput reads a non-zero exit's stderr to pick the error class.
+// Rate-limit signals win first, so a throttled call is not misread as expiry;
+// only then does a re-auth signal (a dead OAuth refresh token on a subscription
+// CLI tool) classify as NeedsReauth, which holds the job for a human instead of
+// failing it (D12, .agents/spec/14-open-decisions.md). Everything else is
+// permanent: a non-zero exit the tool did not explain is not safe to repeat.
+func (c cliExec) classifyExitOutput(stderrTail, message string, cause error) error {
+	switch {
+	case looksRateLimited(stderrTail):
+		return &runner.Error{Class: runner.ClassRateLimited, Code: c.code("rate_limited"), Message: message, Cause: cause}
+	case looksReauth(stderrTail):
+		return &runner.Error{
+			Class:   runner.ClassNeedsReauth,
+			Code:    c.code("needs_reauth"),
+			Message: message + " (re-authenticate the " + c.binary + " CLI)",
+			Cause:   cause,
+		}
+	default:
+		return &runner.Error{Class: runner.ClassPermanent, Code: c.code("exit"), Message: message, Cause: cause}
+	}
+}
+
+// looksReauth spots an expired-credential signal in a CLI tool's output. The
+// strongest cross-tool marker is invalid_grant (a dead OAuth refresh token);
+// codex also surfaces 401 Unauthorized and "exceeded retry limit". Callers rule
+// out rate-limit text first, so this never sees a throttled call.
+func looksReauth(message string) bool {
+	lowered := strings.ToLower(message)
+
+	for _, marker := range []string{
+		"invalid_grant",
+		"unauthorized",
+		"exceeded retry limit",
+		"token expired",
+		"token has expired",
+		"expired credentials",
+		"re-authenticate",
+		"reauthenticate",
+		"not authenticated",
+		"log in again",
+		"login again",
+		"please log in",
+	} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // collectStdout drains the pipe line by line, forwarding to the stream when

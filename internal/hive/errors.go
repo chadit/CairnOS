@@ -38,6 +38,22 @@ var (
 	// errNilIDMinter reports an Ingester built without an id minter, a
 	// programming error caught at construction before it produces empty ids.
 	errNilIDMinter = errors.New("ingester requires a non-nil id minter")
+
+	// ErrKeyWrongSize reports a shared hive key that is not the 32 bytes
+	// AES-256 needs. The key is the private cluster's only privacy mechanism
+	// (R2/R3 in 14-open-decisions.md), so a wrong-sized key is a hard failure,
+	// never a silent downgrade.
+	ErrKeyWrongSize = errors.New("hive key must be 32 bytes (AES-256)")
+
+	// ErrBadKeyEncoding reports a shared hive key secret that is not valid
+	// standard base64. The operator distributes 32 random bytes base64-encoded
+	// through SecretSource; a malformed value fails at construction.
+	ErrBadKeyEncoding = errors.New("hive key must be base64-encoded 32 bytes")
+
+	// ErrOpenSealed reports a received envelope that did not decrypt and
+	// authenticate under the shared key: a wrong key, a truncated nonce, or a
+	// tampered ciphertext. The tip is dropped, never queued from ciphertext.
+	ErrOpenSealed = errors.New("hive sealed tip did not open under the shared key")
 )
 
 // errInvalidCategory wraps ErrInvalidCategory with the offending tag.

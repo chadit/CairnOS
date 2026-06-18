@@ -6,6 +6,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/hive"
+	"github.com/chadit/CairnOS/internal/secrets"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
@@ -69,7 +70,7 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	client, err := buildHiveClient(&cfg)
+	client, err := buildHiveClient(ctx, &cfg)
 	if err != nil {
 		a.printErrf("hive subscribe: %v\n", err)
 
@@ -165,7 +166,7 @@ func (a *App) publishSuggestion(ctx context.Context, db store.Store, cfg *config
 		return ExitFailure
 	}
 
-	client, err := buildHiveClient(cfg)
+	client, err := buildHiveClient(ctx, cfg)
 	if err != nil {
 		a.printErrf("hive publish: %v\n", err)
 
@@ -216,8 +217,10 @@ func (a *App) cmdHiveStatus(args []string) int {
 
 // buildHiveClient builds the HTTP hive client from config, minting a fresh
 // rotating pseudonym when none is configured so the node never presents a
-// stable id.
-func buildHiveClient(cfg *config.Config) (*hive.HTTPHiveClient, error) {
+// stable id. When [hive] key_ref names a shared key, the client seals outbound
+// tips and opens received envelopes under it; a configured-but-missing key is a
+// hard error rather than a silent drop to plaintext.
+func buildHiveClient(ctx context.Context, cfg *config.Config) (*hive.HTTPHiveClient, error) {
 	pseudonym := cfg.Hive.NodePseudonym
 	if pseudonym == "" {
 		minted, err := hive.NewPseudonym()
@@ -228,6 +231,11 @@ func buildHiveClient(cfg *config.Config) (*hive.HTTPHiveClient, error) {
 		pseudonym = minted
 	}
 
+	opts, err := hiveSealerOption(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := hive.NewHTTPClient(hive.Config{
 		Enabled:         cfg.Hive.Enabled,
 		Endpoint:        cfg.Hive.Endpoint,
@@ -236,12 +244,29 @@ func buildHiveClient(cfg *config.Config) (*hive.HTTPHiveClient, error) {
 		Categories:      hiveCategories(cfg.Hive.Categories),
 		KAnonymityFloor: cfg.Hive.KAnonymityFloor,
 		MinObservations: cfg.Hive.MinObservations,
-	}, nil)
+	}, nil, opts...)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller prefixes the command label
 	}
 
 	return client, nil
+}
+
+// hiveSealerOption resolves the shared key through the SecretSource seam and
+// returns the WithSealer option when [hive] key_ref is set, or no options when
+// it is empty (the plaintext, no-key mode). The key is the privacy guarantee, so
+// a lookup or decode failure stops construction.
+func hiveSealerOption(ctx context.Context, cfg *config.Config) ([]hive.Option, error) {
+	if cfg.Hive.KeyRef == "" {
+		return nil, nil
+	}
+
+	sealer, err := hive.RotatingSealerFromSecret(ctx, secrets.NewEnv(), cfg.Hive.KeyRef, cfg.Hive.PrevKeyRef)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller prefixes the command label
+	}
+
+	return []hive.Option{hive.WithSealer(sealer)}, nil
 }
 
 // hiveCategories converts the config's category strings to hive.Category,

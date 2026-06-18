@@ -90,6 +90,20 @@ type HTTPHiveClient struct {
 	cfg    Config
 	doer   HTTPClient
 	encode func(any) ([]byte, error)
+	// sealer, when set, encrypts every outbound tip and decrypts every received
+	// one under the shared cluster key (R2/R3). Nil keeps the plaintext wire
+	// format, the no-key mode the composition root chooses on SQLite or when no
+	// key is configured.
+	sealer Sealer
+}
+
+// Option configures an HTTPHiveClient at construction.
+type Option func(*HTTPHiveClient)
+
+// WithSealer turns on shared-key sealing: outbound tips are encrypted before
+// they leave the node and received envelopes are opened on the way in.
+func WithSealer(sealer Sealer) Option {
+	return func(c *HTTPHiveClient) { c.sealer = sealer }
 }
 
 // subscribeResponse is the wire shape Subscribe decodes: a tips array. Keeping
@@ -99,14 +113,30 @@ type subscribeResponse struct {
 	Tips []Tip `json:"tips"`
 }
 
-// publishRequest is the wire shape Publish encodes: the node pseudonym, the
-// observation count for the server's k-anonymity check, and the content-free
-// tip. The pseudonym is rotating, so the server cannot link two publishes to
-// one node.
+// publishRequest is the plaintext wire shape Publish encodes when no shared key
+// is configured: the node pseudonym, the observation count, and the content-free
+// tip. The pseudonym is rotating, so the server cannot link two publishes to one
+// node.
 type publishRequest struct {
 	NodePseudonym string `json:"node_pseudonym"`
 	Observations  int    `json:"observations"`
 	Tip           Tip    `json:"tip"`
+}
+
+// sealedPublishRequest is the wire shape Publish encodes under a shared key: the
+// same routing metadata, but the tip replaced by its encrypted envelope. The
+// pseudonym and observation count stay cleartext because the hive routes and
+// counts on them; the tip itself the host cannot read.
+type sealedPublishRequest struct {
+	NodePseudonym string    `json:"node_pseudonym"`
+	Observations  int       `json:"observations"`
+	SealedTip     sealedTip `json:"sealed_tip"`
+}
+
+// sealedSubscribeResponse is the sealed counterpart of subscribeResponse: a
+// list of encrypted envelopes the node opens with the shared key.
+type sealedSubscribeResponse struct {
+	Tips []sealedTip `json:"tips"`
 }
 
 // NewHTTPClient builds an HTTP hive client from the config and an injected
@@ -115,7 +145,7 @@ type publishRequest struct {
 // doer falls back to a bounded *http.Client.
 //
 //nolint:gocritic // hugeParam: NewHTTPClient runs once per process and keeps its own Config copy, so the value pass is deliberate
-func NewHTTPClient(cfg Config, doer HTTPClient) (*HTTPHiveClient, error) {
+func NewHTTPClient(cfg Config, doer HTTPClient, opts ...Option) (*HTTPHiveClient, error) {
 	if !cfg.Enabled {
 		return nil, ErrHiveDisabled
 	}
@@ -132,7 +162,13 @@ func NewHTTPClient(cfg Config, doer HTTPClient) (*HTTPHiveClient, error) {
 		doer = &http.Client{Timeout: defaultRequestTimeout}
 	}
 
-	return &HTTPHiveClient{cfg: cfg, doer: doer, encode: json.Marshal}, nil
+	client := &HTTPHiveClient{cfg: cfg, doer: doer, encode: json.Marshal}
+
+	for _, opt := range opts {
+		opt(client)
+	}
+
+	return client, nil
 }
 
 // Subscribe pulls tips for the opted-in categories intersected with the
@@ -157,12 +193,12 @@ func (c *HTTPHiveClient) Subscribe(ctx context.Context, categories []Category) (
 		return nil, fmt.Errorf("hive subscribe: build request: %w", err)
 	}
 
-	var decoded subscribeResponse
-	if err := c.do(req, &decoded); err != nil {
+	tips, err := c.decodeSubscribed(req)
+	if err != nil {
 		return nil, err
 	}
 
-	return keepShareableTips(decoded.Tips), nil
+	return keepShareableTips(tips), nil
 }
 
 // Publish sends one tip after the gate checks. The order matters: the disabled
@@ -183,15 +219,9 @@ func (c *HTTPHiveClient) Publish(ctx context.Context, tip Tip, observations int)
 		return errInvalidCategory(tip.Category)
 	}
 
-	body := publishRequest{
-		NodePseudonym: c.cfg.NodePseudonym,
-		Observations:  observations,
-		Tip:           tip,
-	}
-
-	encoded, err := c.encode(body)
+	encoded, err := c.encodePublishBody(tip, observations)
 	if err != nil {
-		return fmt.Errorf("hive publish: encode tip: %w", err)
+		return err
 	}
 
 	endpoint, err := url.JoinPath(c.cfg.Endpoint, "v1", "tips")
@@ -207,6 +237,75 @@ func (c *HTTPHiveClient) Publish(ctx context.Context, tip Tip, observations int)
 	req.Header.Set("Content-Type", "application/json")
 
 	return c.do(req, nil)
+}
+
+// encodePublishBody marshals the outbound publish body, sealing the tip first
+// when a shared key is configured. Without a sealer it falls back to the
+// plaintext wire shape, the no-key mode for SQLite or an unconfigured key.
+//
+//nolint:gocritic // hugeParam: tip stays a value to keep the content-free tip immutable, matching Publish
+func (c *HTTPHiveClient) encodePublishBody(tip Tip, observations int) ([]byte, error) {
+	if c.sealer == nil {
+		encoded, err := c.encode(publishRequest{
+			NodePseudonym: c.cfg.NodePseudonym,
+			Observations:  observations,
+			Tip:           tip,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hive publish: encode tip: %w", err)
+		}
+
+		return encoded, nil
+	}
+
+	sealed, err := c.sealer.Seal(tip)
+	if err != nil {
+		return nil, fmt.Errorf("hive publish: seal tip: %w", err)
+	}
+
+	encoded, err := c.encode(sealedPublishRequest{
+		NodePseudonym: c.cfg.NodePseudonym,
+		Observations:  observations,
+		SealedTip:     sealed,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hive publish: encode sealed tip: %w", err)
+	}
+
+	return encoded, nil
+}
+
+// decodeSubscribed reads the subscribe response, opening each sealed envelope
+// when a shared key is configured. An envelope that does not open under the key
+// is dropped, never surfaced as ciphertext, so a wrong key or a tampered tip
+// quietly yields no tip rather than poisoning the queue.
+func (c *HTTPHiveClient) decodeSubscribed(req *http.Request) ([]Tip, error) {
+	if c.sealer == nil {
+		var decoded subscribeResponse
+		if err := c.do(req, &decoded); err != nil {
+			return nil, err
+		}
+
+		return decoded.Tips, nil
+	}
+
+	var decoded sealedSubscribeResponse
+	if err := c.do(req, &decoded); err != nil {
+		return nil, err
+	}
+
+	opened := make([]Tip, 0, len(decoded.Tips))
+
+	for _, envelope := range decoded.Tips {
+		tip, openErr := c.sealer.Open(envelope)
+		if openErr != nil {
+			continue
+		}
+
+		opened = append(opened, tip)
+	}
+
+	return opened, nil
 }
 
 // allowedCategories intersects the requested categories with the node's

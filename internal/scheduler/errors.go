@@ -18,4 +18,8 @@ var (
 
 	// ErrNoStore reports a Scheduler built without a Schedules store.
 	ErrNoStore = errors.New("no schedule store configured")
+
+	// ErrWorkItemNotFound reports a queue operation (nak, hold, resume) against
+	// an id that matches no work item, or one in the wrong state for the change.
+	ErrWorkItemNotFound = errors.New("work item not found")
 )

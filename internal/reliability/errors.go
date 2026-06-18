@@ -9,4 +9,8 @@ var (
 	// slot is already taken. The engine surfaces it under the canonical
 	// engine.circuit_open code.
 	ErrCircuitOpen = errors.New("engine.circuit_open: circuit breaker is open")
+
+	// ErrNoProviders reports a Fallback call with an empty provider chain, a
+	// wiring mistake rather than a provider failure.
+	ErrNoProviders = errors.New("reliability: no providers in fallback chain")
 )

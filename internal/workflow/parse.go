@@ -266,6 +266,8 @@ func (b *builder) buildAction(name string, actionTable map[string]any) *Action {
 			action.Runner = b.str(name+".runner", value)
 		case "params":
 			action.Params = b.table(name+".params", value)
+		case "fallback":
+			action.Fallback = b.strSlice(name+".fallback", value)
 		case "driver":
 			action.Driver = b.str(name+".driver", value)
 		case "goal":

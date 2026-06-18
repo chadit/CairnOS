@@ -37,6 +37,13 @@ const (
 	metricCircuitTransitions = "cairnos_circuit_transitions_total"
 	metricBudgetSpend        = "cairnos_budget_spend_usd"
 	metricBudgetExceeded     = "cairnos_budget_exceeded_total"
+	metricQueueRuns          = "cairnos_queue_runs_total"
+	metricQueueDeadLettered  = "cairnos_queue_dead_lettered_total"
+	metricQueueHeld          = "cairnos_queue_held_total"
+	metricQueueResumed       = "cairnos_queue_resumed_total"
+	metricQueueReclaimed     = "cairnos_queue_reclaimed_total"
+	metricQueueDepth         = "cairnos_queue_depth"
+	metricQueueOldestAge     = "cairnos_queue_oldest_age_seconds"
 )
 
 // Metric label keys from the catalog.
@@ -49,6 +56,8 @@ const (
 	keyKind     = "kind"
 	keyTool     = "tool"
 	keyToState  = "to_state"
+	keyOutcome  = "outcome"
+	keyState    = "state"
 )
 
 // Span names and span-only attribute keys, mirroring the spec's example
@@ -112,20 +121,27 @@ type Recorder struct {
 	tracer trace.Tracer
 	meter  metric.Meter
 
-	runs            metric.Int64Counter
-	runDuration     metric.Float64Histogram
-	actions         metric.Int64Counter
-	actionDuration  metric.Float64Histogram
-	tokens          metric.Int64Counter
-	cost            metric.Float64Counter
-	cacheHits       metric.Int64Counter
-	cacheMisses     metric.Int64Counter
-	retries         metric.Int64Counter
-	agentIterations metric.Int64Counter
-	agentToolCalls  metric.Int64Counter
-	circuitChanges  metric.Int64Counter
-	budgetSpend     metric.Float64Gauge
-	budgetExceeded  metric.Int64Counter
+	runs              metric.Int64Counter
+	runDuration       metric.Float64Histogram
+	actions           metric.Int64Counter
+	actionDuration    metric.Float64Histogram
+	tokens            metric.Int64Counter
+	cost              metric.Float64Counter
+	cacheHits         metric.Int64Counter
+	cacheMisses       metric.Int64Counter
+	retries           metric.Int64Counter
+	agentIterations   metric.Int64Counter
+	agentToolCalls    metric.Int64Counter
+	circuitChanges    metric.Int64Counter
+	budgetSpend       metric.Float64Gauge
+	budgetExceeded    metric.Int64Counter
+	queueRuns         metric.Int64Counter
+	queueDeadLettered metric.Int64Counter
+	queueHeld         metric.Int64Counter
+	queueResumed      metric.Int64Counter
+	queueReclaimed    metric.Int64Counter
+	queueDepth        metric.Float64Gauge
+	queueOldestAge    metric.Float64Gauge
 }
 
 // NewRecorder builds a Recorder over the given tracer and meter. Exposed
@@ -194,6 +210,61 @@ func (r *Recorder) BudgetSpend(ctx context.Context, workflowName string, spend, 
 	r.budgetSpend.Record(context.WithoutCancel(ctx), spend, metric.WithAttributes(
 		attribute.String(keyWorkflow, workflowName),
 	))
+}
+
+// QueueItemRun counts one queued scheduled run on cairnos_queue_runs_total,
+// labeled ok or failed, so the dashboard tracks worker throughput and the
+// failure rate.
+func (r *Recorder) QueueItemRun(ctx context.Context, ok bool) {
+	r.queueRuns.Add(context.WithoutCancel(ctx), 1, metric.WithAttributes(
+		attribute.String(keyOutcome, queueOutcome(ok)),
+	))
+}
+
+// QueueDeadLettered counts one work item dead-lettered after exhausting its
+// deliveries, the signal a scheduled workflow keeps failing.
+func (r *Recorder) QueueDeadLettered(ctx context.Context) {
+	r.queueDeadLettered.Add(context.WithoutCancel(ctx), 1)
+}
+
+// QueueHeld counts one work item parked for re-authentication, the signal a
+// subscription CLI tool's credential expired and a human must sign in again.
+func (r *Recorder) QueueHeld(ctx context.Context) {
+	r.queueHeld.Add(context.WithoutCancel(ctx), 1)
+}
+
+// QueueResumed counts one held work item returned to ready after its credential
+// became valid again, the held-to-running recovery that closes the re-auth loop.
+func (r *Recorder) QueueResumed(ctx context.Context) {
+	r.queueResumed.Add(context.WithoutCancel(ctx), 1)
+}
+
+// QueueLeaseReclaimed counts leases the sweep returned to ready after a worker
+// crashed mid-run, so a flapping worker shows up as redelivery pressure.
+func (r *Recorder) QueueLeaseReclaimed(ctx context.Context, count int) {
+	r.queueReclaimed.Add(context.WithoutCancel(ctx), int64(count))
+}
+
+// QueueDepth records the queue-depth snapshot: one gauge sample per state plus
+// the oldest ready item's age, the panels that show backlog building up.
+func (r *Recorder) QueueDepth(ctx context.Context, ready, leased, held, dead int, oldestAgeSeconds float64) {
+	safe := context.WithoutCancel(ctx)
+
+	for _, sample := range []struct {
+		state string
+		count int
+	}{
+		{"ready", ready},
+		{"leased", leased},
+		{"held", held},
+		{"dead", dead},
+	} {
+		r.queueDepth.Record(safe, float64(sample.count), metric.WithAttributes(
+			attribute.String(keyState, sample.state),
+		))
+	}
+
+	r.queueOldestAge.Record(safe, oldestAgeSeconds)
 }
 
 // BreakerTransition records one circuit state change. The reliability
@@ -368,6 +439,13 @@ func (r *Recorder) buildInstruments(meter metric.Meter) error {
 	r.circuitChanges = newCounter(meter, &errs, metricCircuitTransitions, "Breaker state changes by destination state.")
 	r.budgetSpend = newFloatGauge(meter, &errs, metricBudgetSpend, "Workflow spend for the current budget period in US dollars, runner-estimated.")
 	r.budgetExceeded = newCounter(meter, &errs, metricBudgetExceeded, "Budget limit breaches by workflow and the action taken (pause or warn).")
+	r.queueRuns = newCounter(meter, &errs, metricQueueRuns, "Queued scheduled runs by outcome (ok or failed).")
+	r.queueDeadLettered = newCounter(meter, &errs, metricQueueDeadLettered, "Work items dead-lettered after exhausting deliveries.")
+	r.queueHeld = newCounter(meter, &errs, metricQueueHeld, "Work items held for re-authentication after a credential expired.")
+	r.queueResumed = newCounter(meter, &errs, metricQueueResumed, "Held work items resumed after their credential became valid again.")
+	r.queueReclaimed = newCounter(meter, &errs, metricQueueReclaimed, "Expired leases the sweep returned to ready for redelivery.")
+	r.queueDepth = newFloatGauge(meter, &errs, metricQueueDepth, "Work-queue depth by item state (ready, leased, held, dead).")
+	r.queueOldestAge = newFloatGauge(meter, &errs, metricQueueOldestAge, "Age in seconds of the oldest ready work item.")
 
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("build metric instruments: %w", err)
@@ -530,6 +608,15 @@ func stateLabel(state reliability.State) string {
 	default:
 		return stateClosed
 	}
+}
+
+// queueOutcome labels a queued run's result for the outcome attribute.
+func queueOutcome(ok bool) string {
+	if ok {
+		return "ok"
+	}
+
+	return "failed"
 }
 
 // stateValue renders a breaker state as the spec's gauge encoding.

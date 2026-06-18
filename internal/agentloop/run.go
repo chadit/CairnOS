@@ -38,6 +38,7 @@ const (
 	classTransient   = "transient"
 	classRateLimited = "rate_limited"
 	classPermanent   = "permanent"
+	classNeedsReauth = "needs_reauth"
 )
 
 // defaultSystemPrompt frames the loop for drivers when the action declares
@@ -432,6 +433,8 @@ func failureClass(err error) string {
 		return classTransient
 	case runner.ClassRateLimited:
 		return classRateLimited
+	case runner.ClassNeedsReauth:
+		return classNeedsReauth
 	case runner.ClassPermanent:
 		return classPermanent
 	default:

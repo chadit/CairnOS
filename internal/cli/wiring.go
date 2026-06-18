@@ -394,6 +394,32 @@ func newCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.C
 	}
 }
 
+// hiveAdvisoryLockKey is the advisory-lock key the hive primary elects on,
+// distinct from the scheduler leader's key so the two roles elect independently
+// over the same database: a node can be the scheduler leader without being the
+// hive primary. Same "CRNS" high bytes as the scheduler key, +2 in the low
+// bytes so the two never collide in pg_locks.
+const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
+
+// newHiveCoordinator picks the hive primary-election coordinator: the advisory-
+// lock PostgresCoordinator on the hive key for postgres, so exactly one node in
+// the cluster runs the hive loop (R3 in .agents/spec/14-open-decisions.md). It
+// borrows the schedule store's pool, the same shared database the scheduler
+// leader elects on. A non-postgres schedule store yields no coordinator; serve
+// already refuses the hive off postgres, so that path stays unused.
+func newHiveCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.Context)) {
+	pgScheds, ok := scheds.(*scheduler.Postgres)
+	if !ok {
+		return nil, nil
+	}
+
+	coord := scheduler.NewPostgresCoordinatorWithKey(pgScheds.Pool(), hiveAdvisoryLockKey)
+
+	return coord, func(ctx context.Context) {
+		_ = coord.Close(ctx)
+	}
+}
+
 // openStoreAt resolves the home from a --dir value and opens the run store,
 // reporting failures on stderr; the shared spine of the store-backed
 // subcommands. The ctx check keeps an already-canceled invocation from
@@ -760,6 +786,7 @@ func engineConfig(cfg *config.Config) engine.Config {
 			MaxDelay:    cfg.Engine.Retry.MaxDelay,
 			Jitter:      cfg.Engine.Retry.Jitter,
 		},
+		Fallback: cfg.Engine.Fallback,
 		Breaker: reliability.BreakerConfig{
 			FailureThreshold: breakerFailureThreshold,
 			Window:           breakerWindow,

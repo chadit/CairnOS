@@ -21,4 +21,9 @@ var (
 	// ErrNoResolver reports a server built without a workflow resolver, which
 	// run_workflow needs to turn a name into a flow.
 	ErrNoResolver = errors.New("mcp: workflow resolver is required")
+
+	// ErrNoRegistryURL reports a registry client built without a base URL. The
+	// publish and import commands gate on the configured registry URL before
+	// constructing one, so this only fires on misuse.
+	ErrNoRegistryURL = errors.New("mcp: registry url is required")
 )

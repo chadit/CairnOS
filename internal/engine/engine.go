@@ -45,12 +45,13 @@ const (
 	// it never ran. Skips never fail a run.
 	CodeActionSkipped = "action.skipped"
 
-	// CodeRunnerTransient, CodeRunnerPermanent, and CodeRunnerRateLimited
-	// carry a runner-reported failure, with the runner's own code preserved
-	// in Details under runner_code.
+	// CodeRunnerTransient, CodeRunnerPermanent, CodeRunnerRateLimited, and
+	// CodeRunnerNeedsReauth carry a runner-reported failure, with the runner's
+	// own code preserved in Details under runner_code.
 	CodeRunnerTransient   = "runner.transient"
 	CodeRunnerPermanent   = "runner.permanent"
 	CodeRunnerRateLimited = "runner.rate_limited"
+	CodeRunnerNeedsReauth = "runner.needs_reauth"
 
 	// CodeConfigInvalid marks a reference rejected by engine configuration,
 	// such as an env name outside the allowlist.
@@ -106,6 +107,12 @@ type Config struct {
 
 	// DefaultRetry applies to actions without a retry table.
 	DefaultRetry reliability.Policy
+
+	// Fallback is the mixed-model chain keyed by primary runner name: when an
+	// action's runner fails terminally, the engine tries the listed runners in
+	// order before failing the action (.agents/spec/14-open-decisions.md, D12).
+	// An absent entry means the action's runner runs alone, exactly as before.
+	Fallback map[string][]string
 
 	// Breaker is shared by every per-runner circuit breaker.
 	Breaker reliability.BreakerConfig
@@ -286,6 +293,13 @@ func (e *Engine) checkRunners(flow *workflow.Workflow, inputs map[string]any) er
 				"action %q needs runner %q, which is not registered", name, action.Runner))
 
 			continue
+		}
+
+		for _, provider := range action.Fallback {
+			if _, ok := e.registry.Get(provider); !ok {
+				errs = append(errs, errf(workflow.CodeInvalid,
+					"action %q lists fallback runner %q, which is not registered", name, provider))
+			}
 		}
 
 		task := &runner.Task{

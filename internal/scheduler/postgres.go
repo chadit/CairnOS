@@ -33,6 +33,12 @@ const advisoryLockKey int64 = 0x43524e53_00000001
 type PostgresCoordinator struct {
 	pool *pgxpool.Pool
 
+	// lockKey is the 64-bit advisory-lock key this coordinator elects on.
+	// Different roles (the scheduler leader, the hive primary) pass different
+	// keys so they elect independently: one node can be the scheduler leader
+	// and another the hive primary.
+	lockKey int64
+
 	// mu guards conn and held so concurrent Leader and Close calls do not
 	// race on the dedicated connection.
 	mu sync.Mutex
@@ -43,12 +49,20 @@ type PostgresCoordinator struct {
 	held bool
 }
 
-// NewPostgresCoordinator builds a coordinator over an existing pool. The pool
-// is the same one the store uses; the coordinator borrows one connection from
-// it while it is the leader. The caller owns the pool's lifetime; Close here
-// only releases the lock connection, never the pool.
+// NewPostgresCoordinator builds a coordinator over an existing pool, electing
+// on the default scheduler lock key. The pool is the same one the store uses;
+// the coordinator borrows one connection from it while it is the leader. The
+// caller owns the pool's lifetime; Close here only releases the lock
+// connection, never the pool.
 func NewPostgresCoordinator(pool *pgxpool.Pool) *PostgresCoordinator {
-	return &PostgresCoordinator{pool: pool}
+	return NewPostgresCoordinatorWithKey(pool, advisoryLockKey)
+}
+
+// NewPostgresCoordinatorWithKey builds a coordinator that elects on a caller-
+// chosen advisory-lock key, so a second role (the hive primary) can elect
+// independently of the scheduler leader over the same database.
+func NewPostgresCoordinatorWithKey(pool *pgxpool.Pool, lockKey int64) *PostgresCoordinator {
+	return &PostgresCoordinator{pool: pool, lockKey: lockKey}
 }
 
 // Leader reports whether this node may fire schedules right now. It is the
@@ -85,7 +99,7 @@ func (c *PostgresCoordinator) Close(ctx context.Context) error {
 		return nil
 	}
 
-	_, unlockErr := c.conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", advisoryLockKey)
+	_, unlockErr := c.conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", c.lockKey)
 	c.dropConn()
 
 	if unlockErr != nil {
@@ -125,7 +139,7 @@ func (c *PostgresCoordinator) tryAcquire(ctx context.Context) (bool, error) {
 
 	var locked bool
 
-	if scanErr := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey).Scan(&locked); scanErr != nil {
+	if scanErr := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", c.lockKey).Scan(&locked); scanErr != nil {
 		conn.Release()
 
 		return false, fmt.Errorf("postgres coordinator: try advisory lock: %w", scanErr)

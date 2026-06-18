@@ -26,6 +26,8 @@ const (
 	fnBarrier  = "barrier"
 	fnCapture  = "capture"
 	fnCancel   = "cancel_run"
+	fnBoom     = "boom"
+	outputOK   = "ok"
 
 	// agentAnswer is the canned final answer the fake agent executor
 	// returns in the seam tests.
@@ -421,7 +423,7 @@ func TestRunWorkflowRunsIndependentActionsInParallel(t *testing.T) {
 
 		select {
 		case <-bothIn:
-			return "ok", nil
+			return outputOK, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(2 * time.Second):
@@ -548,6 +550,166 @@ func TestOnErrorContinueFinishesIndependentBranch(t *testing.T) {
 
 	if got := rec.order(); !slices.Equal(got, []string{"solo"}) {
 		t.Fatalf("independent branch executions = %v, want [solo]", got)
+	}
+}
+
+// TestFallbackChainServesFailedPrimary proves the mixed-model layer: when the
+// action's runner fails terminally and a fallback is configured, the engine runs
+// the fallback and the action succeeds (D12).
+func TestFallbackChainServesFailedPrimary(t *testing.T) {
+	t.Parallel()
+
+	boom := func(_ context.Context, _ *runner.Task) (any, error) {
+		return nil, errors.New("primary provider down")
+	}
+
+	cfg := baseConfig()
+	cfg.Fallback = map[string][]string{builtins.LocalFnName: {builtins.MockName}}
+
+	eng, db := newTestEngine(t, cfg, map[string]builtins.Func{fnBoom: boom})
+
+	const fallbackTOML = `
+[workflow]
+name = "fallback"
+
+[action.work]
+runner = "local_fn"
+params = { fn = "boom" }
+`
+
+	run := mustRun(t, eng, parseFlow(t, fallbackTOML), nil)
+
+	wantRunStatus(t, run, store.RunSucceeded)
+
+	work := wantActionStatus(t, db, run.ID, "work", store.ActionSucceeded)
+	if work.Output != outputOK {
+		t.Errorf("output = %v, want the fallback runner's ok", work.Output)
+	}
+}
+
+// TestFallbackChainFailsWhenEveryProviderFails confirms the action still fails
+// when the primary and every fallback fail, so fallback is resilience, not a
+// guarantee of success.
+func TestFallbackChainFailsWhenEveryProviderFails(t *testing.T) {
+	t.Parallel()
+
+	boom := func(_ context.Context, _ *runner.Task) (any, error) {
+		return nil, errors.New("primary provider down")
+	}
+
+	cfg := baseConfig()
+	cfg.Fallback = map[string][]string{builtins.LocalFnName: {builtins.MockName}}
+
+	eng, db := newTestEngine(t, cfg, map[string]builtins.Func{fnBoom: boom})
+
+	// The fallback mock is told to fail too, so no provider can serve the action.
+	const bothFailTOML = `
+[workflow]
+name = "exhausted"
+
+[action.work]
+runner = "local_fn"
+params = { fn = "boom", fail_class = "permanent" }
+`
+
+	run := mustRun(t, eng, parseFlow(t, bothFailTOML), nil)
+
+	wantRunStatus(t, run, store.RunFailed)
+	wantActionStatus(t, db, run.ID, "work", store.ActionFailed)
+}
+
+// TestPerActionFallbackServesFailedPrimary proves the per-action override
+// (Slice 5-c): with no engine-level [engine.fallback] default, an action can
+// name its own fallback and have it serve a failed primary.
+func TestPerActionFallbackServesFailedPrimary(t *testing.T) {
+	t.Parallel()
+
+	boom := func(_ context.Context, _ *runner.Task) (any, error) {
+		return nil, errors.New("primary provider down")
+	}
+
+	eng, db := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnBoom: boom})
+
+	const fallbackTOML = `
+[workflow]
+name = "peraction"
+
+[action.work]
+runner = "local_fn"
+fallback = ["mock"]
+params = { fn = "boom" }
+`
+
+	run := mustRun(t, eng, parseFlow(t, fallbackTOML), nil)
+
+	wantRunStatus(t, run, store.RunSucceeded)
+
+	work := wantActionStatus(t, db, run.ID, "work", store.ActionSucceeded)
+	if work.Output != outputOK {
+		t.Errorf("output = %v, want the fallback runner's ok", work.Output)
+	}
+}
+
+// TestPerActionFallbackReplacesConfigDefault proves the override replaces, not
+// merges with, the engine default. The config default would route to the mock
+// (which succeeds), but the action's own fallback list points back at the
+// failing runner, so the action fails: the config default was never consulted.
+func TestPerActionFallbackReplacesConfigDefault(t *testing.T) {
+	t.Parallel()
+
+	boom := func(_ context.Context, _ *runner.Task) (any, error) {
+		return nil, errors.New("primary provider down")
+	}
+
+	cfg := baseConfig()
+	cfg.Fallback = map[string][]string{builtins.LocalFnName: {builtins.MockName}}
+
+	eng, db := newTestEngine(t, cfg, map[string]builtins.Func{fnBoom: boom})
+
+	const overrideTOML = `
+[workflow]
+name = "override"
+
+[action.work]
+runner = "local_fn"
+fallback = ["local_fn"]
+params = { fn = "boom" }
+`
+
+	run := mustRun(t, eng, parseFlow(t, overrideTOML), nil)
+
+	wantRunStatus(t, run, store.RunFailed)
+	wantActionStatus(t, db, run.ID, "work", store.ActionFailed)
+}
+
+// TestPerActionFallbackUnregisteredRejectsRun confirms a fallback name is held
+// to the same run-start registration check as the primary runner: an unknown
+// provider rejects the run before any record is created.
+func TestPerActionFallbackUnregisteredRejectsRun(t *testing.T) {
+	t.Parallel()
+
+	eng, db := newTestEngine(t, baseConfig(), nil)
+
+	const ghostFallbackTOML = `
+[workflow]
+name = "ghostfallback"
+
+[action.work]
+runner = "mock"
+fallback = ["ghost"]
+`
+
+	_, err := eng.RunWorkflow(t.Context(), parseFlow(t, ghostFallbackTOML), nil, triggerCLI)
+
+	errs, isErrs := errors.AsType[cairnerr.Errors](err)
+	if !isErrs {
+		t.Fatalf("error = %v (%T), want cairnerr.Errors", err, err)
+	}
+
+	wantErrCode(t, errs[0], workflow.CodeInvalid)
+
+	if db.runCount() != 0 {
+		t.Fatalf("runs created = %d, want 0", db.runCount())
 	}
 }
 

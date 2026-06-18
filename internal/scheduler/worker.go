@@ -1,0 +1,457 @@
+package scheduler
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+// Worker defaults, used when a WorkerConfig leaves a knob zero. They favor a
+// small, calm footprint; an operator tunes them per deployment
+// (.agents/spec/14-open-decisions.md, S8).
+const (
+	defaultConcurrency   = 4
+	defaultPrefetch      = 8
+	defaultAckWait       = 5 * time.Minute
+	defaultBackoff       = 30 * time.Second
+	defaultMaxDeliveries = 5
+	defaultSweepInterval = time.Minute
+	defaultWorkerPoll    = 2 * time.Second
+)
+
+// QueueRunner executes one claimed work item. The worker acks the item when Run
+// returns nil and naks it (backoff or dead-letter) when Run returns an error, so
+// a runner reports failure by returning rather than by touching the queue.
+type QueueRunner interface {
+	Run(ctx context.Context, item *WorkItem) error
+}
+
+// QueueMetrics receives the worker's counters so a telemetry adapter can export
+// them to the dashboard (.agents/spec/06-observability-and-tuning.md). A nil
+// metrics value disables reporting; the worker never calls a nil.
+type QueueMetrics interface {
+	// ItemRun records one item finishing, ok=false on a nak.
+	ItemRun(ok bool)
+	// ItemDeadLettered records an item exhausting its deliveries.
+	ItemDeadLettered()
+	// ItemHeld records an item parked for re-authentication (D12).
+	ItemHeld()
+	// ItemResumed records a held item returned to ready after its credential
+	// became valid again (D12).
+	ItemResumed()
+	// LeaseReclaimed records a crashed-worker lease the sweep returned to ready.
+	LeaseReclaimed(count int)
+	// Depth reports the queue-depth snapshot after a sweep.
+	Depth(stats QueueStats)
+}
+
+// WorkerConfig wires one Worker. Queue and Runner are required; every duration
+// and count falls back to a default when left zero.
+type WorkerConfig struct {
+	Queue         WorkQueue
+	Runner        QueueRunner
+	Concurrency   int
+	Prefetch      int
+	AckWait       time.Duration
+	Backoff       time.Duration
+	MaxDeliveries int
+	SweepInterval time.Duration
+	MaxAge        time.Duration
+	PollInterval  time.Duration
+	Clock         func() time.Time
+	Logger        *slog.Logger
+	Metrics       QueueMetrics
+
+	// Holdable reports whether a run error means the job should be held for a
+	// human (an expired credential) rather than redelivered or dead-lettered.
+	// The CLI wires it to runner.IsReauth; nil means no error ever holds, so the
+	// scheduler package stays free of the runner dependency (D12).
+	Holdable func(error) bool
+
+	// HoldKey derives what a held item is waiting on (the re-auth provider) from
+	// the run error, stored on the item so a resume probe knows which credential
+	// to check. nil or "" stores no key; the scheduler does not interpret it (D12).
+	HoldKey func(error) string
+
+	// OnHold runs after a job is parked for re-auth, so the CLI can alert an
+	// operator (a Discord webhook) with the tool and the remediation. nil
+	// disables notification; the scheduler package stays free of the notify and
+	// runner dependencies, the same seam as Holdable (D12).
+	OnHold func(ctx context.Context, item *WorkItem, runErr error)
+
+	// ResumeProbe reports whether a held item's credential (named by its hold
+	// key) is valid again at now, so the sweep can resume it without a human. The
+	// CLI wires it to the reauth credential probe; nil disables auto-resume, so
+	// held items wait for a manual resume, keeping the scheduler package free of
+	// the reauth dependency (D12).
+	ResumeProbe func(holdKey string, now time.Time) bool
+}
+
+// Worker drains the queue: it claims ready items up to its free capacity, runs
+// each through the QueueRunner, and acks or naks the result. A separate sweep
+// loop reclaims leases abandoned by crashed workers and dead-letters items past
+// their delivery limit, so no fire is silently lost
+// (.agents/spec/14-open-decisions.md, S8).
+type Worker struct {
+	queue         WorkQueue
+	runner        QueueRunner
+	concurrency   int
+	prefetch      int
+	ackWait       time.Duration
+	backoff       time.Duration
+	maxDeliveries int
+	sweepInterval time.Duration
+	maxAge        time.Duration
+	pollInterval  time.Duration
+	clock         func() time.Time
+	logger        *slog.Logger
+	metrics       QueueMetrics
+	holdable      func(error) bool
+	holdKey       func(error) string
+	onHold        func(ctx context.Context, item *WorkItem, runErr error)
+	resumeProbe   func(holdKey string, now time.Time) bool
+}
+
+// NewWorker builds a Worker, filling WorkerConfig defaults.
+func NewWorker(cfg *WorkerConfig) *Worker {
+	clock := cfg.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &Worker{
+		queue:         cfg.Queue,
+		runner:        cfg.Runner,
+		concurrency:   orDefault(cfg.Concurrency, defaultConcurrency),
+		prefetch:      orDefault(cfg.Prefetch, defaultPrefetch),
+		ackWait:       orDefaultDuration(cfg.AckWait, defaultAckWait),
+		backoff:       orDefaultDuration(cfg.Backoff, defaultBackoff),
+		maxDeliveries: orDefault(cfg.MaxDeliveries, defaultMaxDeliveries),
+		sweepInterval: orDefaultDuration(cfg.SweepInterval, defaultSweepInterval),
+		maxAge:        cfg.MaxAge, // zero means never purge dead items
+		pollInterval:  orDefaultDuration(cfg.PollInterval, defaultWorkerPoll),
+		clock:         clock,
+		logger:        logger,
+		metrics:       cfg.Metrics,
+		holdable:      cfg.Holdable,
+		holdKey:       cfg.HoldKey,
+		onHold:        cfg.OnHold,
+		resumeProbe:   cfg.ResumeProbe,
+	}
+}
+
+// Run drives the worker until ctx is canceled, which is the clean stop (Run
+// returns nil). It runs the sweep loop alongside the claim loop and waits for
+// both, plus any in-flight items, before returning.
+func (w *Worker) Run(ctx context.Context) error {
+	if w.queue == nil {
+		return ErrNoStore
+	}
+
+	if w.runner == nil {
+		return ErrNoRunner
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		w.sweepLoop(ctx)
+	})
+
+	w.claimLoop(ctx)
+	wg.Wait()
+
+	return nil
+}
+
+// claimLoop claims and dispatches items until ctx cancels, then waits for the
+// in-flight items it launched. It claims at most its free capacity each pass, so
+// it never leases more than it can promptly run.
+func (w *Worker) claimLoop(ctx context.Context) {
+	sem := make(chan struct{}, w.concurrency)
+
+	var inflight sync.WaitGroup
+
+	defer inflight.Wait()
+
+	for {
+		claimed := w.claimBatch(ctx, sem)
+
+		for idx := range claimed {
+			item := claimed[idx]
+
+			sem <- struct{}{}
+
+			inflight.Go(func() {
+				defer func() { <-sem }()
+
+				w.process(ctx, &item)
+			})
+		}
+
+		// An empty claim means the queue is idle: sleep before polling again. A
+		// non-empty claim loops straight back to drain the backlog quickly.
+		if len(claimed) == 0 && !sleepCtx(ctx, w.pollInterval) {
+			return
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+// claimBatch claims up to the worker's free capacity, capped by prefetch. A
+// claim error is logged and treated as an empty batch, so a transient store
+// failure pauses the worker instead of killing it. sem is receive-only here: the
+// batch only reads its length to size the claim, never sends.
+func (w *Worker) claimBatch(ctx context.Context, sem <-chan struct{}) []WorkItem {
+	free := w.concurrency - len(sem)
+	if free <= 0 {
+		return nil
+	}
+
+	claimed, err := w.queue.Claim(ctx, w.clock(), w.ackWait, min(w.prefetch, free))
+	if err != nil {
+		if ctx.Err() == nil {
+			w.logger.Error("worker claim", "error", err)
+		}
+
+		return nil
+	}
+
+	return claimed
+}
+
+// process runs one item and settles it: ack on success, nak on failure. The
+// settle uses a detached, short context so it still records the outcome when the
+// worker is shutting down and ctx is already canceled.
+func (w *Worker) process(ctx context.Context, item *WorkItem) {
+	runErr := w.runner.Run(ctx, item)
+
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.ackWait)
+	defer cancel()
+
+	if runErr == nil {
+		if err := w.queue.Ack(settleCtx, item.ID); err != nil {
+			w.logger.Error("worker ack", "item", item.ID, "error", err)
+		}
+
+		w.report(true)
+
+		return
+	}
+
+	if w.holdable != nil && w.holdable(runErr) {
+		w.holdItem(settleCtx, item, runErr)
+
+		return
+	}
+
+	w.settleFailure(settleCtx, item, runErr)
+}
+
+// holdItem parks an item whose run failed on an expired credential, so a human
+// can re-authenticate and resume it rather than the queue burning its deliveries
+// and dead-lettering a job that was never going to succeed without re-auth (D12,
+// .agents/spec/14-open-decisions.md). A failed hold falls back to a normal nak,
+// so the item is never silently stuck leased.
+func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
+	var holdKey string
+	if w.holdKey != nil {
+		holdKey = w.holdKey(runErr)
+	}
+
+	if err := w.queue.Hold(ctx, item.ID, holdKey); err != nil {
+		w.logger.Error("worker hold", "item", item.ID, "error", err)
+		w.settleFailure(ctx, item, runErr)
+
+		return
+	}
+
+	w.logger.Warn("work item held for re-authentication",
+		"item", item.ID, "dedup", item.DedupKey, "error", runErr)
+
+	if w.metrics != nil {
+		w.metrics.ItemHeld()
+	}
+
+	// Notify last and only after the hold succeeded: a held job is already safe,
+	// so a slow or failed alert never changes its fate (D12). onHold runs on the
+	// detached settle context, which carries the ack-wait timeout.
+	if w.onHold != nil {
+		w.onHold(ctx, item, runErr)
+	}
+}
+
+// settleFailure naks a failed item and logs whether it was requeued or
+// dead-lettered, so a deferral is visible on the dashboard and in the log
+// (.agents/spec/14-open-decisions.md, S8).
+func (w *Worker) settleFailure(ctx context.Context, item *WorkItem, runErr error) {
+	state, err := w.queue.Nak(ctx, item.ID, w.clock(), w.backoff, w.maxDeliveries)
+	if err != nil {
+		w.logger.Error("worker nak", "item", item.ID, "error", err)
+
+		return
+	}
+
+	w.report(false)
+
+	if state == WorkDead {
+		w.logger.Error("work item dead-lettered after retries",
+			"item", item.ID, "dedup", item.DedupKey, "deliveries", item.Deliveries, "error", runErr)
+
+		if w.metrics != nil {
+			w.metrics.ItemDeadLettered()
+		}
+
+		return
+	}
+
+	w.logger.Warn("work item deferred for retry",
+		"item", item.ID, "dedup", item.DedupKey, "deliveries", item.Deliveries,
+		"backoff", w.backoff, "error", runErr)
+}
+
+// sweepLoop reclaims expired leases and purges aged dead items on a timer until
+// ctx cancels.
+func (w *Worker) sweepLoop(ctx context.Context) {
+	ticker := time.NewTicker(w.sweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.sweepOnce(ctx)
+		}
+	}
+}
+
+// sweepOnce reclaims expired leases, purges aged dead items when MaxAge is set,
+// and publishes the depth snapshot.
+func (w *Worker) sweepOnce(ctx context.Context) {
+	now := w.clock()
+
+	reclaimed, dead, err := w.queue.SweepExpired(ctx, now, w.maxDeliveries)
+	if err != nil {
+		w.logger.Error("worker sweep", "error", err)
+
+		return
+	}
+
+	if reclaimed > 0 || dead > 0 {
+		w.logger.Warn("reclaimed expired leases", "reclaimed", reclaimed, "dead_lettered", dead)
+
+		if w.metrics != nil {
+			w.metrics.LeaseReclaimed(reclaimed)
+		}
+	}
+
+	w.resumeHeld(ctx, now)
+	w.purgeAged(ctx, now)
+	w.publishDepth(ctx, now)
+}
+
+// resumeHeld returns held items to ready once their credential is valid again, so
+// a re-authenticated tool's jobs flow without a human touching the queue (D12). A
+// probe or resume error is logged and the item is left held for the next sweep; a
+// nil probe disables auto-resume entirely.
+func (w *Worker) resumeHeld(ctx context.Context, now time.Time) {
+	if w.resumeProbe == nil {
+		return
+	}
+
+	held, err := w.queue.ListHeld(ctx)
+	if err != nil {
+		w.logger.Error("worker list held", "error", err)
+
+		return
+	}
+
+	for idx := range held {
+		item := held[idx]
+		if item.HoldKey == "" || !w.resumeProbe(item.HoldKey, now) {
+			continue
+		}
+
+		if resumeErr := w.queue.Resume(ctx, item.ID); resumeErr != nil {
+			w.logger.Error("worker resume", "item", item.ID, "error", resumeErr)
+
+			continue
+		}
+
+		w.logger.Info("held work item resumed after re-authentication",
+			"item", item.ID, "dedup", item.DedupKey, "provider", item.HoldKey)
+
+		if w.metrics != nil {
+			w.metrics.ItemResumed()
+		}
+	}
+}
+
+// purgeAged deletes dead items older than MaxAge, a no-op when MaxAge is unset.
+func (w *Worker) purgeAged(ctx context.Context, now time.Time) {
+	if w.maxAge <= 0 {
+		return
+	}
+
+	purged, err := w.queue.PurgeDead(ctx, now.Add(-w.maxAge))
+	if err != nil {
+		w.logger.Error("worker purge dead", "error", err)
+
+		return
+	}
+
+	if purged > 0 {
+		w.logger.Info("purged aged dead work items", "purged", purged)
+	}
+}
+
+// publishDepth reads the queue snapshot and hands it to the metrics sink.
+func (w *Worker) publishDepth(ctx context.Context, now time.Time) {
+	if w.metrics == nil {
+		return
+	}
+
+	stats, err := w.queue.Stats(ctx, now)
+	if err != nil {
+		w.logger.Error("worker stats", "error", err)
+
+		return
+	}
+
+	w.metrics.Depth(stats)
+}
+
+// report forwards a run outcome to the metrics sink when one is wired.
+func (w *Worker) report(ok bool) {
+	if w.metrics != nil {
+		w.metrics.ItemRun(ok)
+	}
+}
+
+// orDefault returns value when positive, else fallback.
+func orDefault(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+
+	return fallback
+}
+
+// orDefaultDuration returns value when positive, else fallback.
+func orDefaultDuration(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+
+	return fallback
+}

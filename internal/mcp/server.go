@@ -13,8 +13,9 @@ import (
 
 // serverName and serverVersion identify this MCP server in the handshake.
 const (
-	serverName    = "cairnos"
-	serverVersion = "0.1.0"
+	serverName        = "cairnos"
+	serverVersion     = "0.1.0"
+	serverDescription = "CairnOS workflow and agent orchestration node."
 )
 
 // Tool and resource names, plus the resource URIs an external client lists and
@@ -29,6 +30,15 @@ const (
 	resourceWorkflowsURI  = "cairnos://workflows"
 	resourceRunsName      = "runs"
 	resourceRunsURI       = "cairnos://runs"
+)
+
+// Tool descriptions, one source for both build (which registers them with the
+// SDK) and Catalog (which publishes them to the registry), so a published
+// record never drifts from the description an MCP client actually sees.
+const (
+	descRunWorkflow      = "Start a CairnOS run by workflow name with inputs. Returns the created run id and its status; stream progress over A2A or gRPC."
+	descQueryMemory      = "Search CairnOS memory for entries matching text, optionally narrowed by scope and tags."
+	descGetLanguageRules = "Get the merged coding rules for a language, optionally narrowed to a project. Project rules override language defaults."
 )
 
 // triggerMCP marks runs started over MCP in run history. The store reserves the
@@ -133,6 +143,14 @@ func (s *Service) AuthEnabled() bool {
 	return s.authenticator != nil
 }
 
+// Catalog returns the tool surface this node serves, the same gating build
+// applies: get_language_rules appears only when a rules store is wired. It
+// shares ServerRecord's tool list so a published record never drifts from the
+// running server (.agents/spec/10-mcp-integration.md, "MCP Registry").
+func (s *Service) Catalog() []ToolEntry {
+	return ServerRecord("", s.rules != nil).Tools
+}
+
 // build assembles a fresh *mcp.Server bound to one connection's token. Every
 // tool and resource handler closes over token so it can authorize without the
 // SDK carrying a request context: the HTTP transport extracts the token per
@@ -148,18 +166,18 @@ func (s *Service) build(token string) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        toolRunWorkflow,
-		Description: "Start a CairnOS run by workflow name with inputs. Returns the created run id and its status; stream progress over A2A or gRPC.",
+		Description: descRunWorkflow,
 	}, s.runWorkflowHandler(token))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        toolQueryMemory,
-		Description: "Search CairnOS memory for entries matching text, optionally narrowed by scope and tags.",
+		Description: descQueryMemory,
 	}, s.queryMemoryHandler(token))
 
 	if s.rules != nil {
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        toolGetLanguageRules,
-			Description: "Get the merged coding rules for a language, optionally narrowed to a project. Project rules override language defaults.",
+			Description: descGetLanguageRules,
 		}, s.getLanguageRulesHandler(token))
 	}
 

@@ -112,9 +112,59 @@ func (e *Engine) attempt(ctx context.Context, runID string, action *workflow.Act
 		return attemptOutcome{cerr: errf(CodePreconditionFailed, "action %q params: %v", action.Name, err)}
 	}
 
-	breaker := e.breakers.Get(action.Runner)
+	// The primary runs first; configured fallbacks follow only when it fails
+	// terminally. An open breaker or runner failure on one provider falls through
+	// to the next, so a dead provider does not fail an action another can serve.
+	var attempts int
+
+	result, execErr := reliability.Fallback(actCtx, e.fallbackChain(action),
+		func(callCtx context.Context, provider string) (runner.Result, error) {
+			providerResult, providerAttempts, providerErr := e.runProvider(callCtx, action, provider, task)
+			attempts = providerAttempts
+
+			return providerResult, providerErr
+		})
+	if execErr != nil {
+		return attemptOutcome{result: result, attempts: attempts, cerr: classifyFailure(ctx, actCtx, action, execErr)}
+	}
+
+	return attemptOutcome{result: result, attempts: attempts}
+}
+
+// fallbackChain is the ordered provider list for an action: its own runner
+// first, then its fallback providers (D12). A per-action fallback list replaces
+// the engine's [engine.fallback] default for that runner; with neither set the
+// chain is just the runner, so a single-provider action runs as it did before.
+func (e *Engine) fallbackChain(action *workflow.Action) []string {
+	fallbacks := action.Fallback
+	if len(fallbacks) == 0 {
+		fallbacks = e.cfg.Fallback[action.Runner]
+	}
+
+	if len(fallbacks) == 0 {
+		return []string{action.Runner}
+	}
+
+	chain := make([]string, 0, len(fallbacks)+1)
+	chain = append(chain, action.Runner)
+	chain = append(chain, fallbacks...)
+
+	return chain
+}
+
+// runProvider runs one provider through its own breaker, retry, and execute, the
+// per-provider unit the fallback chain drives. A returned error (an unregistered
+// fallback, an open breaker, or a runner failure) falls through to the next
+// provider; the breaker outcome and the attempt count belong to this provider.
+func (e *Engine) runProvider(actCtx context.Context, action *workflow.Action, provider string, task *runner.Task) (runner.Result, int, error) {
+	rnr, registered := e.registry.Get(provider)
+	if !registered {
+		return runner.Result{}, 0, errf(CodePreconditionFailed, "fallback runner %q is not registered", provider)
+	}
+
+	breaker := e.breakers.Get(provider)
 	if err := breaker.Allow(); err != nil {
-		return attemptOutcome{cerr: errf(CodeCircuitOpen, "action %q: %v", action.Name, err)}
+		return runner.Result{}, 0, fmt.Errorf("runner %q: %w", provider, err)
 	}
 
 	// Retry invokes the closure sequentially, so the bare counter is safe;
@@ -126,7 +176,7 @@ func (e *Engine) attempt(ctx context.Context, runID string, action *workflow.Act
 			attemptIndex++
 
 			callCtx, finishCall := e.cfg.Instrumentation.CallStarted(callCtx, &Call{
-				Runner:       action.Runner,
+				Runner:       provider,
 				Action:       action.Name,
 				Attempt:      attemptIndex,
 				BreakerState: breaker.State().String(),
@@ -137,7 +187,7 @@ func (e *Engine) attempt(ctx context.Context, runID string, action *workflow.Act
 			finishCall(callResult.Usage, callErr)
 
 			if callErr != nil {
-				return callResult, fmt.Errorf("runner %q: %w", action.Runner, callErr)
+				return callResult, fmt.Errorf("runner %q: %w", provider, callErr)
 			}
 
 			return callResult, nil
@@ -147,11 +197,8 @@ func (e *Engine) attempt(ctx context.Context, runID string, action *workflow.Act
 
 	result.Usage.Retries = attempts - 1
 
-	if execErr != nil {
-		return attemptOutcome{result: result, attempts: attempts, cerr: classifyFailure(ctx, actCtx, action, execErr)}
-	}
-
-	return attemptOutcome{result: result, attempts: attempts}
+	// execErr is already wrapped with the provider name inside the Retry closure.
+	return result, attempts, execErr //nolint:wrapcheck // wrapped in the closure above
 }
 
 // agentAttempt is the agent-kind counterpart of attempt: resolve the goal,
@@ -284,15 +331,23 @@ func classifyFailure(runCtx, actCtx context.Context, action *workflow.Action, er
 		return canonical
 	}
 
-	classified, isClassified := errors.AsType[*runner.Error](err)
-	if !isClassified {
-		return errf(CodeRunnerPermanent, "action %q failed: %v", action.Name, err)
+	// A classified runner failure wins over a bare circuit-open: a real
+	// rejection (or a re-auth need) from one provider is more actionable than
+	// another provider's open breaker.
+	if classified, isClassified := errors.AsType[*runner.Error](err); isClassified {
+		cerr := errf(classCode(classified.Class), "action %q: %s", action.Name, classified.Message)
+		cerr.Details = map[string]any{"runner_code": classified.Code}
+
+		return cerr
 	}
 
-	cerr := errf(classCode(classified.Class), "action %q: %s", action.Name, classified.Message)
-	cerr.Details = map[string]any{"runner_code": classified.Code}
+	// A chain that failed only because every provider's breaker was open
+	// surfaces as circuit-open rather than a generic permanent failure.
+	if errors.Is(err, reliability.ErrCircuitOpen) {
+		return errf(CodeCircuitOpen, "action %q: %v", action.Name, err)
+	}
 
-	return cerr
+	return errf(CodeRunnerPermanent, "action %q failed: %v", action.Name, err)
 }
 
 // classCode maps a runner error class to its canonical runner.* code.
@@ -302,6 +357,8 @@ func classCode(class runner.ErrorClass) string {
 		return CodeRunnerTransient
 	case runner.ClassRateLimited:
 		return CodeRunnerRateLimited
+	case runner.ClassNeedsReauth:
+		return CodeRunnerNeedsReauth
 	case runner.ClassPermanent:
 		return CodeRunnerPermanent
 	default:

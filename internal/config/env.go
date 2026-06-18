@@ -94,6 +94,8 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "MCP_TRANSPORT", set: intoString(&cfg.MCP.Transport)},
 		{suffix: "MCP_PATH", set: intoString(&cfg.MCP.Path)},
 		{suffix: "MCP_WORKFLOWS_DIR", set: intoString(&cfg.MCP.WorkflowsDir)},
+		{suffix: "MCP_REGISTRY_URL", set: intoString(&cfg.MCP.RegistryURL)},
+		{suffix: "MCP_ADVERTISE_URL", set: intoString(&cfg.MCP.AdvertiseURL)},
 		{suffix: "HIVE_ENABLED", set: intoBool(&cfg.Hive.Enabled)},
 		{suffix: "HIVE_ENDPOINT", set: intoString(&cfg.Hive.Endpoint)},
 		{suffix: "HIVE_NODE_PSEUDONYM", set: intoString(&cfg.Hive.NodePseudonym)},
@@ -101,10 +103,19 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "HIVE_CATEGORIES", set: intoList(&cfg.Hive.Categories)},
 		{suffix: "HIVE_K_ANONYMITY_FLOOR", set: intoInt(&cfg.Hive.KAnonymityFloor)},
 		{suffix: "HIVE_MIN_OBSERVATIONS", set: intoInt(&cfg.Hive.MinObservations)},
+		{suffix: "HIVE_KEY_REF", set: intoString(&cfg.Hive.KeyRef)},
+		{suffix: "HIVE_PREV_KEY_REF", set: intoString(&cfg.Hive.PrevKeyRef)},
 		{suffix: "AUTONOMIC_AUTO_APPLY_ENABLED", set: intoBool(&cfg.Autonomic.AutoApplyEnabled)},
 		{suffix: "TUNING_MIN_SAVINGS_USD", set: intoFloat(&cfg.Tuning.MinSavingsUSD)},
 		{suffix: "TUNING_EMBEDDING_MODEL", set: intoString(&cfg.Tuning.EmbeddingModel)},
 		{suffix: "TUNING_EQUIVALENCE_THRESHOLD", set: intoFloat(&cfg.Tuning.EquivalenceThreshold)},
+		{suffix: "SCHEDULER_ACK_WAIT", set: intoDuration(&cfg.Scheduler.AckWait)},
+		{suffix: "SCHEDULER_BACKOFF", set: intoDuration(&cfg.Scheduler.Backoff)},
+		{suffix: "SCHEDULER_MAX_DELIVERIES", set: intoInt(&cfg.Scheduler.MaxDeliveries)},
+		{suffix: "SCHEDULER_MAX_AGE", set: intoDuration(&cfg.Scheduler.MaxAge)},
+		{suffix: "SCHEDULER_WORKER_CONCURRENCY", set: intoInt(&cfg.Scheduler.WorkerConcurrency)},
+		{suffix: "SCHEDULER_PREFETCH", set: intoInt(&cfg.Scheduler.Prefetch)},
+		{suffix: "SCHEDULER_SWEEP_INTERVAL", set: intoDuration(&cfg.Scheduler.SweepInterval)},
 	}
 
 	return bindings

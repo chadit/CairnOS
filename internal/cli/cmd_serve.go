@@ -167,6 +167,12 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return ExitFailure
 	}
 
+	queue, closeQueue, err := openWorkQueue(ctx, dir, cfg, scheds)
+	if err != nil {
+		return a.failServe(ctx, tel, "work queue", err)
+	}
+	defer func() { _ = closeQueue() }()
+
 	// Every serve component logs through the trace-correlating handler, so
 	// records emitted inside a span carry its trace and span IDs.
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
@@ -329,13 +335,18 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	a.printOutf("serving; interrupt to stop\n")
 
 	sweepDone := startSweep(ctx, cfg, db, stores.keyStore, logger)
-	hiveDone := startHiveSubscribe(ctx, cfg, db, logger)
+	hiveDone := startHiveSubscribe(ctx, cfg, db, scheds, logger)
 
-	if hiveDone != nil {
-		a.printOutf("hive subscribe loop running every %s\n", hiveSubscribeInterval)
-	}
+	a.announceHiveSubscribe(hiveDone)
 
-	code := a.serveUntilCanceled(ctx, server, scheds, manager, db)
+	code := a.serveUntilCanceled(ctx, server, &serveSchedulerDeps{
+		scheds:  scheds,
+		manager: manager,
+		pauses:  db,
+		queue:   queue,
+		cfg:     &cfg.Scheduler,
+		metrics: &queueMetricsAdapter{rec: tel.Recorder()},
+	})
 
 	<-sweepDone
 
@@ -346,6 +357,14 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	a.closeTelemetry(ctx, tel)
 
 	return code
+}
+
+// announceHiveSubscribe prints the hive-subscribe banner when the loop is
+// running (a non-nil done channel), staying quiet when hive is off.
+func (a *App) announceHiveSubscribe(hiveDone <-chan struct{}) {
+	if hiveDone != nil {
+		a.printOutf("hive subscribe loop running every %s\n", hiveSubscribeInterval)
+	}
 }
 
 // hiveSubscribeInterval is how often the serve process pulls hive tips into the
@@ -359,14 +378,36 @@ const hiveSubscribeInterval = time.Hour
 // the hive is disabled, so the serve loop adds no overhead for the common case.
 // Subscribing is receive-only and never publishes, so the periodic loop is safe
 // regardless of the publish gate.
-func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store, logger *slog.Logger) <-chan struct{} {
+func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
 	if !cfg.Hive.Enabled {
 		return nil
 	}
 
-	client, err := buildHiveClient(cfg)
+	// The hive is a private cluster over shared state, so it enables only on
+	// Postgres; on SQLite there is no shared backend for the elected primary or
+	// the sealed multi-node model, so serve refuses rather than running a
+	// single-node hive that cannot coordinate (R2/R3 in 14-open-decisions.md).
+	if cfg.HiveNeedsPostgres() {
+		logger.Warn("hive subscribe loop not started: the hive requires the postgres store backend",
+			"store_backend", cfg.Store.Backend)
+
+		return nil
+	}
+
+	// One elected node in the cluster runs the hive loop, so a multi-node cluster
+	// presents as one hive participant rather than N. The primary election is the
+	// scheduler-leader advisory-lock pattern on its own key (R3).
+	coord, closeCoord := newHiveCoordinator(scheds)
+	if coord == nil {
+		logger.Warn("hive subscribe loop not started: no postgres coordinator for the hive primary")
+
+		return nil
+	}
+
+	client, err := buildHiveClient(ctx, cfg)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
+		closeCoord(ctx)
 
 		return nil
 	}
@@ -374,6 +415,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store,
 	ingester, err := hive.NewIngester(db, store.NewID)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
+		closeCoord(ctx)
 
 		return nil
 	}
@@ -383,8 +425,11 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store,
 
 	go func() {
 		defer close(done)
+		// Release the primary lock on shutdown so another node takes over
+		// promptly; a detached context because ctx is already canceled by then.
+		defer closeCoord(context.WithoutCancel(ctx))
 
-		runHiveSubscribeLoop(ctx, client, ingester, categories, logger)
+		runHiveSubscribeLoop(ctx, coord, client, ingester, categories, logger)
 	}()
 
 	return done
@@ -392,8 +437,9 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store,
 
 // runHiveSubscribeLoop pulls tips on the interval until ctx cancels. A failed
 // pull logs and waits for the next tick rather than tearing down serve:
-// network tips are a convenience, never load-bearing.
-func runHiveSubscribeLoop(ctx context.Context, client *hive.HTTPHiveClient, ingester *hive.Ingester, categories []hive.Category, logger *slog.Logger) {
+// network tips are a convenience, never load-bearing. Only the elected primary
+// pulls; a follower node skips the tick, so the cluster ingests each tip once.
+func runHiveSubscribeLoop(ctx context.Context, coord scheduler.Coordinator, client *hive.HTTPHiveClient, ingester *hive.Ingester, categories []hive.Category, logger *slog.Logger) {
 	ticker := time.NewTicker(hiveSubscribeInterval)
 	defer ticker.Stop()
 
@@ -402,6 +448,17 @@ func runHiveSubscribeLoop(ctx context.Context, client *hive.HTTPHiveClient, inge
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			primary, err := coord.Leader(ctx)
+			if err != nil {
+				logger.Warn("hive primary check", "error", err)
+
+				continue
+			}
+
+			if !primary {
+				continue
+			}
+
 			tips, err := client.Subscribe(ctx, categories)
 			if err != nil {
 				logger.Warn("hive subscribe", "error", err)
@@ -484,24 +541,30 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore) (*auth.Authentic
 // stuck mid-fire. The coordinator is the advisory-lock PostgresCoordinator on
 // a Postgres backend, so only one serving node fires schedules, and the
 // SoloCoordinator on sqlite (.agents/spec/14-open-decisions.md, S2).
-func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, scheds scheduleStore, manager *api.Manager, pauses api.SchedulePauseChecker) int {
-	coord, closeCoord := newCoordinator(scheds)
+func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
+	coord, closeCoord := newCoordinator(sched.scheds)
 	if closeCoord != nil {
 		defer closeCoord(context.WithoutCancel(ctx))
 	}
 
+	// The daemon enqueues each fire; the worker drains the queue and runs the
+	// workflow through the manager fire runner. A fire no worker can take right
+	// away waits in the queue rather than being skipped (S8).
 	daemon := scheduler.New(scheduler.Config{
-		Store:       scheds,
-		Runner:      api.NewFireRunner(manager, pauses, a.logger),
+		Store:       sched.scheds,
+		Runner:      &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger},
 		Coordinator: coord,
 		Logger:      a.logger,
 	})
 
-	daemonDone := make(chan error, 1)
+	fire := api.NewFireRunner(sched.manager, sched.pauses, a.logger)
+	worker := newQueueWorker(sched.queue, &queueRunnerAdapter{fire: fire}, sched.cfg, sched.metrics, a.logger)
 
-	go func() {
-		daemonDone <- daemon.Run(ctx)
-	}()
+	daemonDone := make(chan error, 1)
+	workerDone := make(chan error, 1)
+
+	go func() { daemonDone <- daemon.Run(ctx) }()
+	go func() { workerDone <- worker.Run(ctx) }()
 
 	<-ctx.Done()
 
@@ -522,5 +585,23 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, scheds
 		code = ExitFailure
 	}
 
+	if err := <-workerDone; err != nil {
+		a.printErrf("serve: worker: %v\n", err)
+
+		code = ExitFailure
+	}
+
 	return code
+}
+
+// serveSchedulerDeps bundles the scheduler and work-queue wiring serve runs: the
+// schedule store and coordinator inputs, the manager fire path the worker runs
+// jobs through, the queue both share, and the tuning plus metrics for the worker.
+type serveSchedulerDeps struct {
+	scheds  scheduleStore
+	manager *api.Manager
+	pauses  api.SchedulePauseChecker
+	queue   scheduler.WorkQueue
+	cfg     *config.Scheduler
+	metrics scheduler.QueueMetrics
 }

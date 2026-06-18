@@ -111,6 +111,48 @@ func TestPostgresCoordinatorContendForLeadership(t *testing.T) {
 	}
 }
 
+// TestPostgresCoordinatorsWithDistinctKeysElectIndependently proves the
+// parameterized key: two coordinators on different advisory-lock keys both win
+// at once, so the hive primary and the scheduler leader elect independently over
+// the same database (R3). It uses high-byte keys distinct from the default so it
+// can run alongside the contention test against one database.
+func TestPostgresCoordinatorsWithDistinctKeysElectIndependently(t *testing.T) {
+	t.Parallel()
+
+	const (
+		keyA int64 = 0x43524e53_70000001
+		keyB int64 = 0x43524e53_70000002
+	)
+
+	pool := openPool(t)
+	ctx := t.Context()
+
+	coordA := scheduler.NewPostgresCoordinatorWithKey(pool, keyA)
+	coordB := scheduler.NewPostgresCoordinatorWithKey(pool, keyB)
+
+	leaderA, err := coordA.Leader(ctx)
+	if err != nil {
+		t.Fatalf("coordinator A leader: %v", err)
+	}
+
+	leaderB, err := coordB.Leader(ctx)
+	if err != nil {
+		t.Fatalf("coordinator B leader: %v", err)
+	}
+
+	if !leaderA || !leaderB {
+		t.Fatalf("distinct-key coordinators leaderA=%t leaderB=%t, want both true (independent locks)", leaderA, leaderB)
+	}
+
+	if err := coordA.Close(ctx); err != nil {
+		t.Fatalf("close A: %v", err)
+	}
+
+	if err := coordB.Close(ctx); err != nil {
+		t.Fatalf("close B: %v", err)
+	}
+}
+
 // TestPostgresCoordinatorClosePastLeadershipIsSafe checks Close on a
 // coordinator that never led is a no-op, not a panic or error.
 func TestPostgresCoordinatorCloseWithoutLeadershipIsSafe(t *testing.T) {

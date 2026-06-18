@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -158,6 +159,42 @@ equivalence_threshold = 0.92
 
 	if cfg.Tuning.EquivalenceThreshold != 0.92 {
 		t.Fatalf("equivalence_threshold = %v, want 0.92", cfg.Tuning.EquivalenceThreshold)
+	}
+}
+
+func TestLoadEngineFallbackChainFromFile(t *testing.T) {
+	t.Parallel()
+
+	const fallbackTOML = `
+[engine.fallback]
+codex = ["qwen", "omp"]
+qwen = ["omp"]
+`
+
+	cfg, err := config.Load(writeConfig(t, fallbackTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if got := cfg.Engine.Fallback["codex"]; !slices.Equal(got, []string{"qwen", "omp"}) {
+		t.Fatalf("codex fallback = %v, want [qwen omp]", got)
+	}
+
+	if got := cfg.Engine.Fallback["qwen"]; !slices.Equal(got, []string{"omp"}) {
+		t.Errorf("qwen fallback = %v, want [omp]", got)
+	}
+}
+
+func TestLoadEngineFallbackDefaultsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(cfg.Engine.Fallback) != 0 {
+		t.Errorf("default fallback = %v, want empty", cfg.Engine.Fallback)
 	}
 }
 
@@ -400,6 +437,84 @@ func TestLoadA2ADefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadHiveKeyRefFromFile(t *testing.T) {
+	t.Parallel()
+
+	hiveTOML := `
+[hive]
+enabled = true
+endpoint = "https://hive.example"
+key_ref = "hive_key"
+prev_key_ref = "hive_prev_key"
+categories = ["job-search"]
+`
+
+	cfg, err := config.Load(writeConfig(t, hiveTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Hive.KeyRef != "hive_key" {
+		t.Fatalf("key_ref from file = %q, want hive_key", cfg.Hive.KeyRef)
+	}
+
+	if cfg.Hive.PrevKeyRef != "hive_prev_key" {
+		t.Fatalf("prev_key_ref from file = %q, want hive_prev_key", cfg.Hive.PrevKeyRef)
+	}
+}
+
+func TestLoadHiveKeyRefEnvOverride(t *testing.T) {
+	t.Setenv("CAIRNOS_HIVE_KEY_REF", "rotated_hive_key")
+
+	cfg, err := config.Load(writeConfig(t, "[hive]\nenabled = true\nkey_ref = \"hive_key\""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Hive.KeyRef != "rotated_hive_key" {
+		t.Fatalf("key_ref env override = %q, want rotated_hive_key", cfg.Hive.KeyRef)
+	}
+}
+
+func TestLoadHiveKeyRefDefaultsEmpty(t *testing.T) {
+	t.Parallel()
+
+	if ref := config.Default().Hive.KeyRef; ref != "" {
+		t.Fatalf("hive key_ref default = %q, want empty (plaintext, no-key mode)", ref)
+	}
+}
+
+func TestHiveNeedsPostgres(t *testing.T) {
+	t.Parallel()
+
+	const sqliteBackend = "sqlite"
+
+	cases := []struct {
+		name    string
+		enabled bool
+		backend string
+		want    bool
+	}{
+		{name: "enabled on sqlite is refused", enabled: true, backend: sqliteBackend, want: true},
+		{name: "enabled on postgres runs", enabled: true, backend: "postgres", want: false},
+		{name: "disabled never needs postgres", enabled: false, backend: sqliteBackend, want: false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{}
+			cfg.Hive.Enabled = testCase.enabled
+			cfg.Store.Backend = testCase.backend
+
+			if got := cfg.HiveNeedsPostgres(); got != testCase.want {
+				t.Errorf("HiveNeedsPostgres() = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestLoadMCPBlockFromFile(t *testing.T) {
 	t.Parallel()
 
@@ -409,6 +524,8 @@ enabled = true
 transport = "stdio"
 path = "/tools"
 workflows_dir = "/srv/flows"
+registry_url = "https://registry.example/v0"
+advertise_url = "https://node.example/mcp"
 `
 
 	cfg, err := config.Load(writeConfig(t, mcpTOML))
@@ -426,6 +543,84 @@ workflows_dir = "/srv/flows"
 
 	if cfg.MCP.Path != "/tools" || cfg.MCP.WorkflowsDir != "/srv/flows" {
 		t.Errorf("mcp overlay missing: %+v", cfg.MCP)
+	}
+
+	if cfg.MCP.RegistryURL != "https://registry.example/v0" || cfg.MCP.AdvertiseURL != "https://node.example/mcp" {
+		t.Errorf("mcp registry overlay missing: %+v", cfg.MCP)
+	}
+}
+
+func TestLoadMCPRegistryDefaultsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+
+	if cfg.MCP.RegistryURL != "" || cfg.MCP.AdvertiseURL != "" {
+		t.Errorf("registry settings should default empty: %+v", cfg.MCP)
+	}
+}
+
+func TestLoadSchedulerDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+
+	if cfg.Scheduler.AckWait != 5*time.Minute || cfg.Scheduler.Backoff != 30*time.Second {
+		t.Errorf("scheduler duration defaults wrong: %+v", cfg.Scheduler)
+	}
+
+	if cfg.Scheduler.MaxDeliveries != 5 || cfg.Scheduler.WorkerConcurrency != 4 || cfg.Scheduler.Prefetch != 8 {
+		t.Errorf("scheduler count defaults wrong: %+v", cfg.Scheduler)
+	}
+
+	if cfg.Scheduler.MaxAge != 0 {
+		t.Errorf("max_age should default to 0 (keep dead items): %v", cfg.Scheduler.MaxAge)
+	}
+}
+
+func TestLoadSchedulerBlockFromFile(t *testing.T) {
+	t.Parallel()
+
+	schedTOML := `
+[scheduler]
+ack_wait = "2m"
+backoff = "10s"
+max_deliveries = 7
+max_age = "24h"
+worker_concurrency = 16
+prefetch = 32
+sweep_interval = "45s"
+`
+
+	cfg, err := config.Load(writeConfig(t, schedTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Scheduler.AckWait != 2*time.Minute || cfg.Scheduler.Backoff != 10*time.Second {
+		t.Errorf("scheduler durations not applied: %+v", cfg.Scheduler)
+	}
+
+	if cfg.Scheduler.MaxDeliveries != 7 || cfg.Scheduler.WorkerConcurrency != 16 || cfg.Scheduler.Prefetch != 32 {
+		t.Errorf("scheduler counts not applied: %+v", cfg.Scheduler)
+	}
+
+	if cfg.Scheduler.MaxAge != 24*time.Hour || cfg.Scheduler.SweepInterval != 45*time.Second {
+		t.Errorf("scheduler max_age/sweep not applied: %+v", cfg.Scheduler)
+	}
+}
+
+func TestLoadSchedulerEnvOverrides(t *testing.T) {
+	t.Setenv("CAIRNOS_SCHEDULER_WORKER_CONCURRENCY", "12")
+	t.Setenv("CAIRNOS_SCHEDULER_ACK_WAIT", "90s")
+
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Scheduler.WorkerConcurrency != 12 || cfg.Scheduler.AckWait != 90*time.Second {
+		t.Fatalf("scheduler env overrides missing: %+v", cfg.Scheduler)
 	}
 }
 
@@ -451,6 +646,8 @@ func TestLoadMCPEnvOverrides(t *testing.T) {
 	t.Setenv("CAIRNOS_MCP_ENABLED", "true")
 	t.Setenv("CAIRNOS_MCP_TRANSPORT", "stdio")
 	t.Setenv("CAIRNOS_MCP_PATH", "/env-mcp")
+	t.Setenv("CAIRNOS_MCP_REGISTRY_URL", "https://env-registry/v0")
+	t.Setenv("CAIRNOS_MCP_ADVERTISE_URL", "https://env-node/mcp")
 
 	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
 	if err != nil {
@@ -459,6 +656,10 @@ func TestLoadMCPEnvOverrides(t *testing.T) {
 
 	if !cfg.MCP.Enabled || cfg.MCP.Transport != config.MCPTransportStdio || cfg.MCP.Path != "/env-mcp" {
 		t.Fatalf("mcp env overrides missing: %+v", cfg.MCP)
+	}
+
+	if cfg.MCP.RegistryURL != "https://env-registry/v0" || cfg.MCP.AdvertiseURL != "https://env-node/mcp" {
+		t.Fatalf("mcp registry env overrides missing: %+v", cfg.MCP)
 	}
 }
 

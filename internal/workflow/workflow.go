@@ -103,6 +103,11 @@ type Action struct {
 	// Task-action fields.
 	Runner string
 	Params map[string]any
+	// Fallback is the per-action provider override (D12 mixed-model). When set,
+	// it replaces the engine's [engine.fallback] default for this action's
+	// runner: the action's own runner runs first, then these providers in order
+	// only when it fails terminally. Empty means "use the engine default".
+	Fallback []string
 
 	// Agent-action fields (.agents/spec/15-agent-loop.md).
 	Driver        string

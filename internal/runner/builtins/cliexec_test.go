@@ -118,6 +118,48 @@ exit 1`)
 	}
 }
 
+func TestCLIClassifiesReauthAndRateLimit(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	reauth := writeShim(t, tmpDir, "reauth", `echo "error: invalid_grant" >&2
+exit 1`)
+	throttled := writeShim(t, tmpDir, "throttled", `echo "429 too many requests; exceeded retry limit" >&2
+exit 1`)
+
+	cases := []struct {
+		name      string
+		binary    string
+		wantClass runner.ErrorClass
+		wantCode  string
+	}{
+		{name: "invalid_grant is needs-reauth", binary: reauth, wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
+		{name: "rate-limit text wins over reauth", binary: throttled, wantClass: runner.ClassRateLimited, wantCode: "codex.rate_limited"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cli, err := builtins.NewCLI(builtins.CodexName, tt.binary, nil)
+			if err != nil {
+				t.Fatalf("new cli: %v", err)
+			}
+
+			_, err = cli.Execute(t.Context(), cliTask())
+
+			classified, isClassified := errors.AsType[*runner.Error](err)
+			if !isClassified {
+				t.Fatalf("error %v is not a runner.Error", err)
+			}
+
+			if classified.Class != tt.wantClass || classified.Code != tt.wantCode {
+				t.Fatalf("class/code = %v/%q, want %v/%q", classified.Class, classified.Code, tt.wantClass, tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 	t.Parallel()
 

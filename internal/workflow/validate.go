@@ -218,8 +218,8 @@ func (b *builder) checkAgentAction(action *Action) {
 		b.addf(CodeAgentFields, "agent action %q must declare tools (an empty list means reasoning only)", action.Name)
 	}
 
-	if action.Runner != "" || action.Params != nil {
-		b.addf(CodeAgentFields, "agent action %q cannot use runner or params; those belong to task actions", action.Name)
+	if action.Runner != "" || action.Params != nil || len(action.Fallback) > 0 {
+		b.addf(CodeAgentFields, "agent action %q cannot use runner, params, or fallback; those belong to task actions", action.Name)
 	}
 
 	if action.MaxIterations < 0 {

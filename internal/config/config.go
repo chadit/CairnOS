@@ -29,6 +29,7 @@ type Config struct {
 	Hive      Hive
 	Autonomic Autonomic
 	Tuning    Tuning
+	Scheduler Scheduler
 	Chat      Chat
 	// Runners carries each [runner.<name>] block verbatim for the registry's
 	// factories, including nested tables like circuit_breaker.
@@ -40,6 +41,12 @@ type Engine struct {
 	MaxConcurrentActions int
 	DefaultTimeout       time.Duration
 	Retry                Retry
+
+	// Fallback is the mixed-model chain, keyed by primary runner name: when an
+	// action's runner fails terminally, the engine tries the listed runners in
+	// order before the action fails (.agents/spec/14-open-decisions.md, D12). An
+	// absent or empty entry means the action's runner has no fallback.
+	Fallback map[string][]string
 }
 
 // Retry is the engine-wide default policy; actions override it per file.
@@ -264,6 +271,18 @@ type MCP struct {
 	// falls back to the node's workflows directory, the same one run and serve
 	// resolve names in.
 	WorkflowsDir string
+
+	// RegistryURL is the base URL of the MCP registry this node publishes to and
+	// imports from (.agents/spec/10-mcp-integration.md, "MCP Registry"). Empty
+	// disables both: mcp publish and mcp import report it must be set. The
+	// registry token is a secret read from CAIRNOS_MCP_REGISTRY_TOKEN, never this
+	// struct.
+	RegistryURL string
+
+	// AdvertiseURL is this node's externally reachable MCP http endpoint, the
+	// address mcp publish registers so other nodes can import and call its tools.
+	// Empty leaves nothing publishable, so publish requires it.
+	AdvertiseURL string
 }
 
 // MCP transport values.
@@ -308,6 +327,32 @@ type Hive struct {
 	// MinObservations is the local floor: the node refuses to publish a pattern
 	// it has seen fewer than this many times, ahead of the server's k.
 	MinObservations int
+
+	// KeyRef is the secret name of the shared cluster key, resolved through the
+	// SecretSource seam (R2/R3 in .agents/spec/14-open-decisions.md). Empty means
+	// no key: the client keeps the plaintext wire format, the no-key mode for
+	// SQLite or an unconfigured cluster. When set, published tips are sealed and
+	// received envelopes opened under the resolved 32-byte key.
+	KeyRef string
+
+	// PrevKeyRef is the secret name of the previous shared key, still accepted
+	// during a key rotation so opening keeps working. Empty when no rotation is
+	// in flight. A node seals under KeyRef and opens under KeyRef or PrevKeyRef,
+	// so a cluster rotates keys without a flag day (R2/R3 in
+	// .agents/spec/14-open-decisions.md).
+	PrevKeyRef string
+}
+
+// hiveBackend is the only store backend that can run the hive: it is a private
+// cluster over shared state, so the elected primary and the sealed multi-node
+// model need Postgres (R2/R3 in .agents/spec/14-open-decisions.md).
+const hiveBackend = "postgres"
+
+// HiveNeedsPostgres reports a hive that is enabled but configured on a store
+// backend that cannot run it. serve uses this to refuse the hive on SQLite
+// rather than start a single node that cannot coordinate.
+func (c *Config) HiveNeedsPostgres() bool {
+	return c.Hive.Enabled && c.Store.Backend != hiveBackend
 }
 
 // Autonomic gates the Phase 6 auto-apply path
@@ -338,6 +383,48 @@ type Tuning struct {
 	// conservative default; only consulted when EmbeddingModel is set.
 	EquivalenceThreshold float64
 }
+
+// Scheduler tunes the durable work-queue the scheduler enqueues into and the
+// worker drains (.agents/spec/14-open-decisions.md, S8). A cron fire enqueues a
+// work item; a worker claims and runs it. A fire no worker can take right away
+// is not dropped, it waits in the queue for the next free worker.
+type Scheduler struct {
+	// AckWait is the lease an item holds while a worker runs it. A worker that
+	// crashes mid-run leaves the lease to expire, and the sweep reclaims it.
+	AckWait time.Duration
+
+	// Backoff is how long a failed item waits before it can be redelivered.
+	Backoff time.Duration
+
+	// MaxDeliveries caps redelivery attempts; an item past it dead-letters
+	// instead of looping forever.
+	MaxDeliveries int
+
+	// MaxAge bounds how long a dead-lettered item is kept for inspection before
+	// the sweep purges it. Zero keeps dead items indefinitely.
+	MaxAge time.Duration
+
+	// WorkerConcurrency is the most items one node runs at once.
+	WorkerConcurrency int
+
+	// Prefetch caps how many items one claim leases at a time.
+	Prefetch int
+
+	// SweepInterval is how often the worker reclaims expired leases and purges
+	// aged dead items.
+	SweepInterval time.Duration
+}
+
+// Scheduler work-queue defaults, chosen for a small calm node; an operator tunes
+// them per deployment (.agents/spec/14-open-decisions.md, S8).
+const (
+	defaultSchedulerAckWait       = 5 * time.Minute
+	defaultSchedulerBackoff       = 30 * time.Second
+	defaultSchedulerMaxDeliveries = 5
+	defaultSchedulerConcurrency   = 4
+	defaultSchedulerPrefetch      = 8
+	defaultSchedulerSweepInterval = time.Minute
+)
 
 // Chat configures the Phase 9 conversational interface
 // (.agents/spec/13-roadmap.md, Phase 9). Off by default; when enabled the
@@ -419,6 +506,14 @@ func Default() Config {
 		},
 		MCP:    MCP{Transport: MCPTransportHTTP, Path: defaultMCPPath},
 		Tuning: Tuning{MinSavingsUSD: defaultMinSavingsUSD},
+		Scheduler: Scheduler{
+			AckWait:           defaultSchedulerAckWait,
+			Backoff:           defaultSchedulerBackoff,
+			MaxDeliveries:     defaultSchedulerMaxDeliveries,
+			WorkerConcurrency: defaultSchedulerConcurrency,
+			Prefetch:          defaultSchedulerPrefetch,
+			SweepInterval:     defaultSchedulerSweepInterval,
+		},
 		Chat: Chat{
 			Driver:             defaultChatDriver,
 			DefaultPersonality: defaultChatPersonality,
@@ -593,9 +688,10 @@ func validOAuthRole(role string) bool {
 // parsing (including the day suffix) goes through workflow.ParseDuration.
 type fileConfig struct {
 	Engine struct {
-		MaxConcurrentActions *int       `toml:"max_concurrent_actions"`
-		DefaultTimeout       *string    `toml:"default_timeout"`
-		Retry                *fileRetry `toml:"retry"`
+		MaxConcurrentActions *int                `toml:"max_concurrent_actions"`
+		DefaultTimeout       *string             `toml:"default_timeout"`
+		Retry                *fileRetry          `toml:"retry"`
+		Fallback             map[string][]string `toml:"fallback"`
 	} `toml:"engine"`
 	Store struct {
 		Backend *string `toml:"backend"`
@@ -666,6 +762,8 @@ type fileConfig struct {
 		Transport    *string `toml:"transport"`
 		Path         *string `toml:"path"`
 		WorkflowsDir *string `toml:"workflows_dir"`
+		RegistryURL  *string `toml:"registry_url"`
+		AdvertiseURL *string `toml:"advertise_url"`
 	} `toml:"mcp"`
 	Hive struct {
 		Enabled         *bool    `toml:"enabled"`
@@ -675,6 +773,8 @@ type fileConfig struct {
 		Categories      []string `toml:"categories"`
 		KAnonymityFloor *int     `toml:"k_anonymity_floor"`
 		MinObservations *int     `toml:"min_observations"`
+		KeyRef          *string  `toml:"key_ref"`
+		PrevKeyRef      *string  `toml:"prev_key_ref"`
 	} `toml:"hive"`
 	Autonomic struct {
 		AutoApplyEnabled *bool `toml:"auto_apply_enabled"`
@@ -684,6 +784,15 @@ type fileConfig struct {
 		EmbeddingModel       *string  `toml:"embedding_model"`
 		EquivalenceThreshold *float64 `toml:"equivalence_threshold"`
 	} `toml:"tuning"`
+	Scheduler struct {
+		AckWait           *string `toml:"ack_wait"`
+		Backoff           *string `toml:"backoff"`
+		MaxDeliveries     *int    `toml:"max_deliveries"`
+		MaxAge            *string `toml:"max_age"`
+		WorkerConcurrency *int    `toml:"worker_concurrency"`
+		Prefetch          *int    `toml:"prefetch"`
+		SweepInterval     *string `toml:"sweep_interval"`
+	} `toml:"scheduler"`
 	Chat struct {
 		Enabled            *bool             `toml:"enabled"`
 		Driver             *string           `toml:"driver"`
@@ -766,16 +875,23 @@ func applyScalars(cfg *Config, file *fileConfig) {
 	setIf(&cfg.MCP.Transport, file.MCP.Transport)
 	setIf(&cfg.MCP.Path, file.MCP.Path)
 	setIf(&cfg.MCP.WorkflowsDir, file.MCP.WorkflowsDir)
+	setIf(&cfg.MCP.RegistryURL, file.MCP.RegistryURL)
+	setIf(&cfg.MCP.AdvertiseURL, file.MCP.AdvertiseURL)
 	setIf(&cfg.Hive.Enabled, file.Hive.Enabled)
 	setIf(&cfg.Hive.Endpoint, file.Hive.Endpoint)
 	setIf(&cfg.Hive.NodePseudonym, file.Hive.NodePseudonym)
 	setIf(&cfg.Hive.PublishEnabled, file.Hive.PublishEnabled)
 	setIf(&cfg.Hive.KAnonymityFloor, file.Hive.KAnonymityFloor)
 	setIf(&cfg.Hive.MinObservations, file.Hive.MinObservations)
+	setIf(&cfg.Hive.KeyRef, file.Hive.KeyRef)
+	setIf(&cfg.Hive.PrevKeyRef, file.Hive.PrevKeyRef)
 	setIf(&cfg.Autonomic.AutoApplyEnabled, file.Autonomic.AutoApplyEnabled)
 	setIf(&cfg.Tuning.MinSavingsUSD, file.Tuning.MinSavingsUSD)
 	setIf(&cfg.Tuning.EmbeddingModel, file.Tuning.EmbeddingModel)
 	setIf(&cfg.Tuning.EquivalenceThreshold, file.Tuning.EquivalenceThreshold)
+	setIf(&cfg.Scheduler.MaxDeliveries, file.Scheduler.MaxDeliveries)
+	setIf(&cfg.Scheduler.WorkerConcurrency, file.Scheduler.WorkerConcurrency)
+	setIf(&cfg.Scheduler.Prefetch, file.Scheduler.Prefetch)
 	setIf(&cfg.Chat.Enabled, file.Chat.Enabled)
 	setIf(&cfg.Chat.Driver, file.Chat.Driver)
 	setIf(&cfg.Chat.DefaultPersonality, file.Chat.DefaultPersonality)
@@ -810,6 +926,10 @@ func applyScalars(cfg *Config, file *fileConfig) {
 		setIf(&cfg.Engine.Retry.Backoff, file.Engine.Retry.Backoff)
 		setIf(&cfg.Engine.Retry.Jitter, file.Engine.Retry.Jitter)
 	}
+
+	if file.Engine.Fallback != nil {
+		cfg.Engine.Fallback = file.Engine.Fallback
+	}
 }
 
 // durTarget pairs one optional file value with its destination so duration
@@ -829,6 +949,10 @@ func applyDurations(cfg *Config, file *fileConfig) error {
 		{name: "auth.access_token_ttl", raw: file.Auth.AccessTokenTTL, dst: &cfg.Auth.AccessTokenTTL},
 		{name: "auth.stream_recheck", raw: file.Auth.StreamRecheck, dst: &cfg.Auth.StreamRecheck},
 		{name: "auth.clock_skew", raw: file.Auth.ClockSkew, dst: &cfg.Auth.ClockSkew},
+		{name: "scheduler.ack_wait", raw: file.Scheduler.AckWait, dst: &cfg.Scheduler.AckWait},
+		{name: "scheduler.backoff", raw: file.Scheduler.Backoff, dst: &cfg.Scheduler.Backoff},
+		{name: "scheduler.max_age", raw: file.Scheduler.MaxAge, dst: &cfg.Scheduler.MaxAge},
+		{name: "scheduler.sweep_interval", raw: file.Scheduler.SweepInterval, dst: &cfg.Scheduler.SweepInterval},
 	}
 
 	if file.Engine.Retry != nil {

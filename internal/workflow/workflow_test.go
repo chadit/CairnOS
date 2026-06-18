@@ -102,6 +102,22 @@ func TestParseAcceptsFullWorkflow(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsActionFallback(t *testing.T) {
+	t.Parallel()
+
+	const toml = "[workflow]\nname = \"w\"\n[action.work]\nrunner = \"primary\"\nfallback = [\"second\", \"third\"]"
+
+	flow, err := workflow.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	got := flow.Actions["work"].Fallback
+	if want := []string{"second", "third"}; !slices.Equal(got, want) {
+		t.Fatalf("fallback = %v, want %v", got, want)
+	}
+}
+
 func TestParseAcceptsBudget(t *testing.T) {
 	t.Parallel()
 
@@ -314,6 +330,11 @@ func TestParseRejectsRuleViolations(t *testing.T) {
 		{
 			name:     "agent with runner",
 			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"agent\"\ndriver = \"m\"\ngoal = \"g\"\ntools = []\nbudget_usd = 1.0\nrunner = \"mock\"",
+			wantCode: workflow.CodeAgentFields,
+		},
+		{
+			name:     "agent with fallback",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"agent\"\ndriver = \"m\"\ngoal = \"g\"\ntools = []\nbudget_usd = 1.0\nfallback = [\"mock\"]",
 			wantCode: workflow.CodeAgentFields,
 		},
 		{

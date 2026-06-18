@@ -283,6 +283,11 @@ func classToProto(class runner.ErrorClass) pluginv1.ErrorClass {
 		return pluginv1.ErrorClass_ERROR_CLASS_PERMANENT
 	case runner.ClassRateLimited:
 		return pluginv1.ErrorClass_ERROR_CLASS_RATE_LIMITED
+	case runner.ClassNeedsReauth:
+		// The plugin wire enum has no reauth value: re-auth is a built-in
+		// CLI-tool concern (codex, qwen), not an external plugin one, so a
+		// plugin that somehow reports it degrades to permanent on the wire.
+		return pluginv1.ErrorClass_ERROR_CLASS_PERMANENT
 	default:
 		return pluginv1.ErrorClass_ERROR_CLASS_PERMANENT
 	}

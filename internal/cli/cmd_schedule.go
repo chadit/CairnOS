@@ -240,8 +240,23 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		eng: engine.New(engCfg, registry, db),
 	}
 
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		a.printErrf("schedule run: %v\n", err)
+
+		return ExitFailure
+	}
+
+	queue, closeQueue, err := openWorkQueue(ctx, dir, &cfg, scheds)
+	if err != nil {
+		a.printErrf("schedule run: %v\n", err)
+
+		return ExitFailure
+	}
+	defer func() { _ = closeQueue() }()
+
 	// On a Postgres backend this is the advisory-lock coordinator, so two
-	// `cairnos schedule run` nodes against one database never double-fire; on
+	// `cairnos schedule run` nodes against one database never double-enqueue; on
 	// sqlite it is the single-node SoloCoordinator
 	// (.agents/spec/14-open-decisions.md, S2).
 	coord, closeCoord := newCoordinator(scheds)
@@ -249,16 +264,21 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		defer closeCoord(context.WithoutCancel(ctx))
 	}
 
+	// The daemon enqueues each fire; the worker drains the queue and runs the
+	// workflow through the engine fire runner. A fire no worker can take right
+	// away waits in the queue instead of being skipped (S8).
 	daemon := scheduler.New(scheduler.Config{
 		Store:       scheds,
-		Runner:      fireRunner,
+		Runner:      &scheduleEnqueueRunner{queue: queue, logger: a.logger},
 		Coordinator: coord,
 		Logger:      a.logger,
 	})
 
+	worker := newQueueWorker(queue, &queueRunnerAdapter{fire: fireRunner}, &cfg.Scheduler, nil, a.logger)
+
 	a.printOutf("scheduler running; interrupt to stop\n")
 
-	if err := daemon.Run(ctx); err != nil {
+	if err := runProducerAndWorker(ctx, daemon, worker); err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
 		return ExitFailure
