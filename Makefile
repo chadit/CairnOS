@@ -4,18 +4,20 @@
 
 BINARY := bin/cairnos
 
-.PHONY: help build test integration lint tidy proto
+.PHONY: help build test test-unit test-integration lint tidy proto
 
 help: ## List available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-8s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-17s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build: ## Build the cairnos binary into bin/
 	go build -o $(BINARY) ./cmd/cairnos
 
-test: ## Run unit and integration tests with the race detector (integration starts a Postgres container)
-	./scripts/integration.sh ./...
+test: test-unit test-integration ## Run unit then integration tests with the race detector
 
-integration: ## Run only the integration tests (starts a Postgres container via testcontainers)
+test-unit: ## Run unit tests only with the race detector (no container)
+	go test -race ./...
+
+test-integration: ## Run integration tests only (starts a Postgres container via testcontainers)
 	./scripts/integration.sh ./tests/integration/...
 
 lint: ## Run golangci-lint, then gosec standalone (its golangci integration deadlocks on multi-package runs)

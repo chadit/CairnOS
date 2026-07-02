@@ -28,10 +28,16 @@ const (
 	pgReadyOccurrences = 2
 	pgStartupTimeout   = 2 * time.Minute
 
-	// pgMaxConnections lifts the image's default 100-connection ceiling. The
-	// conformance suites open a pool per parallel subtest across every domain,
-	// which blows past 100 on one shared container.
-	pgMaxConnections = "300"
+	// pgMaxConnections sets the server connection ceiling. Each parallel subtest
+	// opens its own pool against this one container; with pgPoolMaxConns capping
+	// each pool, the realistic peak stays well under this.
+	pgMaxConnections = "100"
+
+	// pgPoolMaxConns caps every per-test pgxpool. pgxpool reads pool_max_conns
+	// from the DSN, so baking it into the shared DSN bounds the parallel fan-out
+	// from one place instead of raising the server ceiling to hide it. A
+	// conformance subtest queries sequentially, so a few connections is plenty.
+	pgPoolMaxConns = "4"
 )
 
 // pgShared holds the one Postgres container the whole integration package runs
@@ -78,8 +84,8 @@ func Stop() {
 
 // startPostgres launches the throwaway Postgres container and records its DSN.
 // It owns its own context so callers in _test files never reach for
-// context.Background, and tunes the server for a test workload (more
-// connections, fsync off) since the data does not outlive the run.
+// context.Background, and tunes for a test workload (fsync off, capped per-pool
+// connections) since the data does not outlive the run.
 func startPostgres() {
 	ctx := context.Background()
 
@@ -101,7 +107,7 @@ func startPostgres() {
 		return
 	}
 
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "pool_max_conns="+pgPoolMaxConns)
 	if err != nil {
 		pgShared.err = fmt.Errorf("postgres connection string: %w", err)
 		_ = container.Terminate(ctx)
