@@ -438,6 +438,88 @@ func TestUnknownPersonalityRejected(t *testing.T) {
 	}
 }
 
+// TestTurnDoneCarriesUsage proves the turn's accumulated token spend lands on
+// the turn-done event, the field the OpenAI-compatible adapter reports as its
+// usage block (.agents/spec/parity/openai-compat.md, "Real usage numbers").
+func TestTurnDoneCarriesUsage(t *testing.T) {
+	t.Parallel()
+
+	answered := runner.Result{
+		Output: plainAnswer,
+		Usage:  runner.Usage{InputTokens: 812, OutputTokens: 96, CostUSD: 0.02},
+		Meta:   map[string]string{runner.MetaStopReason: runner.StopReasonEndTurn},
+	}
+	driver := &scriptedDriver{turns: []runner.Result{answered}}
+	agent, _, _ := newAgent(t, driver, 0)
+	sessionID := newSession(t, agent)
+
+	events, err := sendMessage(t, agent, sessionID, "how is the budget")
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	done := turnDoneEvent(t, events)
+	if done.Usage.InputTokens != 812 || done.Usage.OutputTokens != 96 {
+		t.Errorf("turn-done usage = %+v, want input 812 output 96", done.Usage)
+	}
+}
+
+// TestPersonalityNamesSortedNoDuplicates proves Names() lists the built-ins plus
+// any config-added personalities in sorted order, and that a config entry that
+// overrides a built-in name appears once, not twice (the overlay shares the map
+// key). GET /v1/models renders this list.
+func TestPersonalityNamesSortedNoDuplicates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		configured map[string]string
+		want       []string
+	}{
+		{
+			name:       "builtins_only",
+			configured: nil,
+			want:       []string{chat.PersonalityAssistant, chat.PersonalityOps},
+		},
+		{
+			name:       "config_adds_name",
+			configured: map[string]string{"support": "be helpful"},
+			want:       []string{chat.PersonalityAssistant, chat.PersonalityOps, "support"},
+		},
+		{
+			name:       "override_builtin_no_duplicate",
+			configured: map[string]string{chat.PersonalityAssistant: "reshaped assistant"},
+			want:       []string{chat.PersonalityAssistant, chat.PersonalityOps},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := chat.NewPersonalities(tt.configured, "").Names()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("Names() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// turnDoneEvent pulls the terminating turn-done event out of a stream.
+func turnDoneEvent(t *testing.T, events []chat.Event) chat.Event {
+	t.Helper()
+
+	for idx := range events {
+		if events[idx].Type == chat.EventTurnDone {
+			return events[idx]
+		}
+	}
+
+	t.Fatal("no turn-done event in the stream")
+
+	return chat.Event{}
+}
+
 // assertLastAssistant checks the most recent assistant message content.
 func assertLastAssistant(t *testing.T, db *sqlite.Store, sessionID, want string) {
 	t.Helper()

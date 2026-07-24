@@ -34,6 +34,12 @@ const maxRegistryError = 4 << 10 // 4 KiB
 // stdio server is spawned locally, not addressed over a URL).
 const transportHTTP = "http"
 
+// runnerTypeMCPClient is the type value every imported block carries. It is
+// also a reserved runner name: the CLI wiring treats a block literally named
+// mcp_client as configuration for the built-in instance, so import must never
+// emit that name (see ImportConfig).
+const runnerTypeMCPClient = "mcp_client"
+
 // slugPattern collapses every run of non-slug characters to one underscore when
 // turning a server and tool name into a runner key.
 var slugPattern = regexp.MustCompile(`[^a-z0-9]+`)
@@ -217,11 +223,15 @@ func ServerRecord(endpoint string, includeRules bool) ServerEntry {
 
 // ImportConfig renders registry server records as mcp_client runner blocks, one
 // per tool, in the TOML an operator pastes into their config. Each block points
-// an mcp_client runner at the server's endpoint and tool, the runner the shipped
-// client already executes, so import is config generation rather than new
-// runtime code (.agents/spec/10-mcp-integration.md, "MCP Registry"). A server
-// whose endpoint matches selfEndpoint is skipped, so a node does not import its
-// own published tools. Returns the rendered TOML and the runner names it defined.
+// an mcp_client runner at the server's endpoint and tool; the CLI wiring
+// registers a per-block instance of the built-in client factory under each
+// block's name (.agents/spec/10-mcp-integration.md, "MCP Registry"). The name
+// mcp_client itself is never emitted: the wiring's skip rule makes a block with
+// that literal name plain configuration for the built-in instance, so a
+// generated block using it would silently reconfigure the built-in instead of
+// registering a new runner. A server whose endpoint matches selfEndpoint is
+// skipped, so a node does not import its own published tools. Returns the
+// rendered TOML and the runner names it defined.
 func ImportConfig(servers []ServerEntry, selfEndpoint string) (string, []string) {
 	self := strings.TrimRight(strings.TrimSpace(selfEndpoint), "/")
 
@@ -230,10 +240,15 @@ func ImportConfig(servers []ServerEntry, selfEndpoint string) (string, []string)
 		names   []string
 	)
 
-	seen := map[string]bool{}
+	// Seeding the reserved name pushes a record slugging to mcp_client onto the
+	// existing _2 suffix path instead of emitting the built-in's own name.
+	seen := map[string]bool{runnerTypeMCPClient: true}
 
 	builder.WriteString("# Imported from the MCP registry. Review before use.\n")
-	builder.WriteString("# If a server needs auth, set CAIRNOS_RUNNER_<NAME>_TOKEN for that runner.\n")
+	builder.WriteString("# Authenticated MCP servers aren't supported yet: the mcp_client runner\n")
+	builder.WriteString("# sends no Authorization header.\n")
+	builder.WriteString("# Endpoints on private or loopback addresses need\n")
+	builder.WriteString("# allow_private_targets = true on that runner block.\n")
 
 	for idx := range servers {
 		server := &servers[idx]
@@ -246,7 +261,7 @@ func ImportConfig(servers []ServerEntry, selfEndpoint string) (string, []string)
 			names = append(names, name)
 
 			fmt.Fprintf(&builder, "\n[runner.%s]\n", name)
-			fmt.Fprintf(&builder, "type       = %s\n", tomlString("mcp_client"))
+			fmt.Fprintf(&builder, "type       = %s\n", tomlString(runnerTypeMCPClient))
 			fmt.Fprintf(&builder, "server_url = %s\n", tomlString(server.Endpoint))
 			fmt.Fprintf(&builder, "tool       = %s\n", tomlString(tool.Name))
 		}

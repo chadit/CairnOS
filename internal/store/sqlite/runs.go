@@ -13,7 +13,7 @@ import (
 )
 
 // runColumns is the SELECT list every run query shares, in scanRun order.
-const runColumns = "id, workflow_name, workflow_hash, workspace_id, status, inputs_json, trigger, error_json, created_at, started_at, finished_at"
+const runColumns = "id, workflow_name, workflow_hash, workspace_id, status, inputs_json, trigger, error_json, created_at, started_at, finished_at, parent_run_id"
 
 // CreateRun persists a new run in its initial state. A zero CreatedAt is
 // stamped with the current time and an empty WorkspaceID becomes "default",
@@ -45,10 +45,10 @@ func (s *Store) CreateRun(ctx context.Context, run *store.Run) error {
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO runs (id, workflow_name, workflow_hash, workspace_id, status, inputs_json, trigger, error_json, created_at, started_at, finished_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO runs (id, workflow_name, workflow_hash, workspace_id, status, inputs_json, trigger, error_json, created_at, started_at, finished_at, parent_run_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.WorkflowName, run.WorkflowHash, workspace, string(run.Status), inputs, run.Trigger,
-		runErr, formatTime(createdAt), formatTime(run.StartedAt), formatTime(run.FinishedAt))
+		runErr, formatTime(createdAt), formatTime(run.StartedAt), formatTime(run.FinishedAt), run.ParentRunID)
 	if err != nil {
 		return fmt.Errorf("insert run %s: %w", run.ID, err)
 	}
@@ -182,22 +182,26 @@ type rowScanner interface {
 // scanRun reads one runColumns row back into a store.Run.
 func scanRun(row rowScanner) (*store.Run, error) {
 	var (
-		run        store.Run
-		status     string
-		inputs     sql.NullString
-		runErr     sql.NullString
-		createdAt  sql.NullTime
-		startedAt  sql.NullTime
-		finishedAt sql.NullTime
+		run         store.Run
+		status      string
+		inputs      sql.NullString
+		runErr      sql.NullString
+		createdAt   sql.NullTime
+		startedAt   sql.NullTime
+		finishedAt  sql.NullTime
+		parentRunID sql.NullString
 	)
 
 	err := row.Scan(&run.ID, &run.WorkflowName, &run.WorkflowHash, &run.WorkspaceID, &status,
-		&inputs, &run.Trigger, &runErr, &createdAt, &startedAt, &finishedAt)
+		&inputs, &run.Trigger, &runErr, &createdAt, &startedAt, &finishedAt, &parentRunID)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // callers wrap with their operation and run id
 	}
 
 	run.Status = store.RunStatus(status)
+	// A pre-upgrade row (added by the guarded ALTER) reads NULL here, which is
+	// the same "root run" the empty string means, so both map to "".
+	run.ParentRunID = parentRunID.String
 
 	if err := unmarshalJSON(inputs, &run.Inputs); err != nil {
 		return nil, err

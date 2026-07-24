@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { server } from '@/test/server';
 import { isCairnApiError } from './client';
+import { base64Encode } from './endpoints';
 import { streamRunEvents } from './stream';
 
 // The gateway delivers RunWorkflow as newline-delimited JSON, one
@@ -97,6 +98,36 @@ describe('streamRunEvents', () => {
     if (isCairnApiError(caught)) {
       expect(caught.code).toBe('workflow.cycle_detected');
     }
+  });
+
+  it('sends the inline definition as base64 toml only when the option is set', async () => {
+    const bodies: { inputs: Record<string, string>; toml?: string }[] = [];
+    server.use(
+      http.post('/v1/workflows/hello/runs', async ({ request }) => {
+        bodies.push((await request.json()) as { inputs: Record<string, string>; toml?: string });
+        return ndjsonResponse([
+          JSON.stringify({
+            result: {
+              runId: 'r',
+              type: 'RUN_EVENT_TYPE_RUN_FINISHED',
+              run: { runId: 'r', workflowName: 'hello', status: 'succeeded' },
+            },
+          }),
+        ]);
+      }),
+    );
+
+    for await (const _event of streamRunEvents('hello', { a: '1' })) {
+      void _event;
+    }
+    for await (const _event of streamRunEvents('hello', { a: '1' }, { toml: 'name = "x"\n' })) {
+      void _event;
+    }
+
+    // No option: the body is just the inputs, no toml key at all.
+    expect(bodies[0]).toEqual({ inputs: { a: '1' } });
+    // With the option: the same inputs plus the base64-encoded definition.
+    expect(bodies[1]).toEqual({ inputs: { a: '1' }, toml: base64Encode('name = "x"\n') });
   });
 
   it('surfaces a non-2xx start as a CairnApiError with the envelope code', async () => {

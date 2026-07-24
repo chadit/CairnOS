@@ -97,6 +97,7 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	}{
 		{"SatisfiesInterface", testSatisfiesInterface},
 		{"RunActionRoundTrip", testRunActionRoundTrip},
+		{"ParentRunIDRoundTrip", testParentRunIDRoundTrip},
 		{"UpdateRunStatusStampsTimestamps", testUpdateRunStatusStampsTimestamps},
 		{"RunNotFound", testRunNotFound},
 		{"ListRunsFiltersAndOrdersNewestFirst", testListRunsFiltersAndOrdersNewestFirst},
@@ -130,9 +131,26 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 		{"WorkflowVersionListNewestFirst", testWorkflowVersionListNewestFirst},
 		{"PruneLeavesWorkflowVersions", testPruneLeavesWorkflowVersions},
 		{"ChatSessionRoundTrip", testChatSessionRoundTrip},
+		{"ChatSessionSeedsSystemRole", testChatSessionSeedsSystemRole},
 		{"ChatSessionNotFound", testChatSessionNotFound},
 		{"ChatSessionListNewestFirst", testChatSessionListNewestFirst},
 		{"ChatSessionIsolatesByWorkspace", testChatSessionIsolatesByWorkspace},
+		{"ChatSearchRanksBestMatchFirst", testChatSearchRanksBestMatchFirst},
+		{"ChatSearchFiltersBySession", testChatSearchFiltersBySession},
+		{"ChatSearchLimitsResults", testChatSearchLimitsResults},
+		{"ChatSearchIsolatesByWorkspace", testChatSearchIsolatesByWorkspace},
+		{"ChatSearchTreatsQuerySyntaxLiterally", testChatSearchTreatsQuerySyntaxLiterally},
+		{"ChatSearchEmptyTextReturnsNothing", testChatSearchEmptyTextReturnsNothing},
+		{"ApprovalRoundTrip", testApprovalRoundTrip},
+		{"ApprovalNotFound", testApprovalNotFound},
+		{"ApprovalDecideOnce", testApprovalDecideOnce},
+		{"ApprovalListPending", testApprovalListPending},
+		{"ApprovalIsolatesByWorkspace", testApprovalIsolatesByWorkspace},
+		{"ApprovalHeldSurvivesReconcile", testApprovalHeldSurvivesReconcile},
+		{"BridgeSessionRoundTrip", testBridgeSessionRoundTrip},
+		{"BridgeSessionRebindUpserts", testBridgeSessionRebindUpserts},
+		{"BridgeSessionNotFound", testBridgeSessionNotFound},
+		{"BridgeSessionIsolatesByWorkspace", testBridgeSessionIsolatesByWorkspace},
 	}
 
 	for _, tt := range cases {
@@ -284,6 +302,54 @@ func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("action result = %#v, want %#v", got, want)
+	}
+}
+
+// testParentRunIDRoundTrip proves runs.parent_run_id survives the store: a
+// child run created with ParentRunID set reads it back, while a root run reads
+// the empty string. Replay, workflow-call, and error-workflow children all
+// rely on this link (.agents/spec/parity/workflow-language.md).
+func testParentRunIDRoundTrip(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	ctx := t.Context()
+
+	parentID := newID()
+	childID := newID()
+	created := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	createRun(t, db, parentID, workflowAlpha, store.RunFailed, created)
+
+	err := db.CreateRun(ctx, &store.Run{
+		ID:           childID,
+		WorkflowName: workflowAlpha,
+		WorkflowHash: hashFixture,
+		Status:       store.RunPending,
+		Trigger:      "replay",
+		ParentRunID:  parentID,
+		CreatedAt:    created.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create child run: %v", err)
+	}
+
+	child, err := db.GetRun(ctx, childID)
+	if err != nil {
+		t.Fatalf("get child run: %v", err)
+	}
+
+	if child.ParentRunID != parentID {
+		t.Errorf("child parent_run_id = %q, want %q", child.ParentRunID, parentID)
+	}
+
+	parent, err := db.GetRun(ctx, parentID)
+	if err != nil {
+		t.Fatalf("get parent run: %v", err)
+	}
+
+	if parent.ParentRunID != "" {
+		t.Errorf("root run parent_run_id = %q, want empty", parent.ParentRunID)
 	}
 }
 

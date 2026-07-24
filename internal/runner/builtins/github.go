@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,13 +37,31 @@ const (
 	paramLimit  = "limit"
 	paramTitle  = "title"
 	paramLabels = "labels"
+	paramSince  = "since"
+	paramState  = "state"
 
 	opReleases    = "releases"
 	opCreateIssue = "create_issue"
+	opListIssues  = "list_issues"
+)
+
+// list_issues output keys. title, body, and url reuse the shared param names so
+// the surviving-issue map speaks the same vocabulary poll.GitHubIssues reads.
+const (
+	keyNumber    = "number"
+	keyAuthor    = "author"
+	keyCreatedAt = "created_at"
 )
 
 // defaultReleaseLimit caps the releases listing when no limit param is given.
 const defaultReleaseLimit = 10
+
+// defaultIssueState scopes list_issues when the state param is absent, and
+// issuesPerPage caps one poll's page at GitHub's per_page maximum.
+const (
+	defaultIssueState = "open"
+	issuesPerPage     = 100
+)
 
 // metaStatusCode is the Meta key carrying the HTTP status of the API call.
 const metaStatusCode = "status_code"
@@ -51,13 +70,15 @@ const metaStatusCode = "status_code"
 // short, unlike model generations.
 const defaultGitHubTimeout = 30 * time.Second
 
-// GitHub reads release feeds and creates issues over the REST v3 API,
-// backing the Phase 8 release monitor (.agents/spec/03-runner-interface.md).
+// GitHub reads release feeds, lists issues, and creates issues over the REST v3
+// API, backing the Phase 8 release monitor and the github_issues poll source
+// (.agents/spec/03-runner-interface.md, .agents/spec/parity/triggers-webhooks.md).
 //
-// Config: base_url (default https://api.github.com). Params: op (releases or
-// create_issue) and repo as owner/name, plus limit for releases and
-// title/body/labels for create_issue. The token comes from
-// CAIRNOS_RUNNER_GITHUB_TOKEN at call time and is optional for public reads.
+// Config: base_url (default https://api.github.com). Params: op (releases,
+// list_issues, or create_issue) and repo as owner/name, plus limit for
+// releases, since/state for list_issues, and title/body/labels for
+// create_issue. The token comes from CAIRNOS_RUNNER_GITHUB_TOKEN at call time
+// and is optional for public reads.
 type GitHub struct {
 	baseURL string
 	client  *http.Client
@@ -111,6 +132,12 @@ func (*GitHub) Validate(task *runner.Task) error {
 		}
 
 		return validateReleaseLimit(task)
+	case opListIssues:
+		if err := validateGitHubRepo(task); err != nil {
+			return err
+		}
+
+		return validateListIssuesParams(task)
 	case opCreateIssue:
 		if err := validateGitHubRepo(task); err != nil {
 			return err
@@ -119,7 +146,7 @@ func (*GitHub) Validate(task *runner.Task) error {
 		return validateIssueParams(task)
 	default:
 		return runner.NewError(runner.ClassPermanent, GitHubName+".bad_op",
-			fmt.Sprintf("op must be %s or %s, got %q", opReleases, opCreateIssue, opText))
+			fmt.Sprintf("op must be %s, %s, or %s, got %q", opReleases, opListIssues, opCreateIssue, opText))
 	}
 }
 
@@ -130,11 +157,15 @@ func (g *GitHub) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 	}
 
 	op, _ := task.Params[paramOp].(string)
-	if op == opCreateIssue {
-		return g.createIssue(ctx, task)
-	}
 
-	return g.listReleases(ctx, task)
+	switch op {
+	case opCreateIssue:
+		return g.createIssue(ctx, task)
+	case opListIssues:
+		return g.listIssues(ctx, task)
+	default:
+		return g.listReleases(ctx, task)
+	}
 }
 
 // listReleases handles op = releases: GET the repo's release feed and map
@@ -210,10 +241,113 @@ func (g *GitHub) createIssue(ctx context.Context, task *runner.Task) (runner.Res
 	}
 
 	return runner.Result{
-		Output: map[string]any{"number": issue.Number, paramURL: issue.HTMLURL},
+		Output: map[string]any{keyNumber: issue.Number, paramURL: issue.HTMLURL},
 		Usage:  runner.Usage{Latency: time.Since(start)},
 		Meta:   map[string]string{metaStatusCode: strconv.Itoa(status)},
 	}, nil
+}
+
+// listIssues handles op = list_issues: GET the repo's open (or state-scoped)
+// issues and map each new one onto the fields the github_issues poll source
+// offers a workflow. Two GitHub quirks are absorbed here because the API won't:
+// its since filter matches updated_at, so a fresh comment resurfaces an old
+// issue, which the created_at check below drops; and pull requests come back as
+// issue rows carrying a pull_request field, which are skipped
+// (.agents/spec/parity/triggers-webhooks.md, "Sources").
+func (g *GitHub) listIssues(ctx context.Context, task *runner.Task) (runner.Result, error) {
+	repo, _ := task.Params[paramRepo].(string)
+
+	state := defaultIssueState
+	if value, ok := task.Params[paramState].(string); ok && value != "" {
+		state = value
+	}
+
+	since, _ := task.Params[paramSince].(string)
+
+	query := neturl.Values{}
+	query.Set("state", state)
+	query.Set("per_page", strconv.Itoa(issuesPerPage))
+
+	if since != "" {
+		query.Set(paramSince, since)
+	}
+
+	requestURL := g.baseURL + "/repos/" + repo + "/issues?" + query.Encode()
+	start := time.Now()
+
+	body, status, err := g.send(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return runner.Result{}, err
+	}
+
+	var issues []githubIssue
+	if err := json.Unmarshal(body, &issues); err != nil {
+		return runner.Result{}, &runner.Error{
+			Class: runner.ClassPermanent, Code: GitHubName + codeSuffixBadResponse,
+			Message: "decode issues: " + err.Error(), Cause: err,
+		}
+	}
+
+	return runner.Result{
+		Output: issueItems(issues, since),
+		Usage:  runner.Usage{Latency: time.Since(start)},
+		Meta:   map[string]string{metaStatusCode: strconv.Itoa(status)},
+	}, nil
+}
+
+// issueItems drops PR rows and, when since is set, issues whose created_at is
+// not strictly newer than since, then projects each survivor onto the poll
+// source's input keys.
+func issueItems(issues []githubIssue, since string) []any {
+	items := make([]any, 0, len(issues))
+
+	for _, issue := range issues {
+		if len(issue.PullRequest) > 0 {
+			continue
+		}
+
+		if since != "" && !createdAfter(issue.CreatedAt, since) {
+			continue
+		}
+
+		items = append(items, map[string]any{
+			keyNumber:    issue.Number,
+			paramTitle:   issue.Title,
+			paramBody:    issue.Body,
+			paramURL:     issue.HTMLURL,
+			keyAuthor:    issue.User.Login,
+			keyCreatedAt: issue.CreatedAt,
+		})
+	}
+
+	return items
+}
+
+// createdAfter reports whether the created RFC3339 timestamp is strictly newer
+// than since. An unparseable created stamp reads as not-after so a row we can't
+// order never re-fires; an unparseable since reads as no lower bound.
+func createdAfter(created, since string) bool {
+	createdAt, err := time.Parse(time.RFC3339, created)
+	if err != nil {
+		return false
+	}
+
+	lowerBound, err := time.Parse(time.RFC3339, since)
+	if err != nil {
+		return true
+	}
+
+	return createdAt.After(lowerBound)
+}
+
+// validateListIssuesParams checks the op = list_issues params: since and state
+// are optional strings (since is RFC3339, resolved at run time by the source).
+func validateListIssuesParams(task *runner.Task) error {
+	if err := optionalStringParam(task, paramSince, GitHubName); err != nil {
+		return err
+	}
+
+	return optionalStringParam(task, paramState, GitHubName)
 }
 
 // send runs one REST call and returns the response body and status with
@@ -414,6 +548,24 @@ type githubRelease struct {
 	Name        string `json:"name"`
 	PublishedAt string `json:"published_at"`
 	Body        string `json:"body"`
+}
+
+// githubIssue is the subset of an issues-list row list_issues reads. A
+// non-empty PullRequest marks a pull request, which GitHub returns on the
+// issues endpoint and the poll source drops.
+type githubIssue struct {
+	Number      int64           `json:"number"`
+	Title       string          `json:"title"`
+	Body        string          `json:"body"`
+	HTMLURL     string          `json:"html_url"`
+	CreatedAt   string          `json:"created_at"`
+	User        githubUser      `json:"user"`
+	PullRequest json.RawMessage `json:"pull_request"`
+}
+
+// githubUser is the subset of an issue's author the output carries.
+type githubUser struct {
+	Login string `json:"login"`
 }
 
 // githubIssueRequest is the create-issue request body.

@@ -1,6 +1,6 @@
 # Sample agents
 
-Seven small workflows that ship with Phase 1. They aren't finished products;
+Eight small workflows that ship with Phase 1. They aren't finished products;
 each one exists to show how actions compose, how data passes between them,
 and which runner fits which job. Every directory holds one workflow TOML
 and a README with its config block, env keys, and run commands.
@@ -20,6 +20,7 @@ or any listing site.
 | housing_monitor | cron schedule, field condition | webhook, local_fn, email |
 | language_rules_assistant | single-action workflow | language_rules_service |
 | release_monitor | parallel fan-in, sentinel condition | github, anthropic |
+| browser_snapshot | agent action, MCP tool | browser_nav, anthropic |
 
 ## What each sample needs
 
@@ -35,6 +36,7 @@ Env keys below are all prefixed `CAIRNOS_RUNNER_`; runner config blocks
 | housing_monitor | EMAIL_PASSWORD |
 | language_rules_assistant | none; set dir in its config block |
 | release_monitor | GITHUB_TOKEN, ANTHROPIC_API_KEY |
+| browser_snapshot | ANTHROPIC_API_KEY |
 
 ## Notes
 
@@ -43,6 +45,10 @@ Env keys below are all prefixed `CAIRNOS_RUNNER_`; runner config blocks
   functions at build time; each README documents the contract.
 - `learning_coach` ends with a `kind = "agent"` action. It validates today
   and starts executing when the agent loop lands in Phase 1c.
+- `browser_snapshot` drives a containerized Playwright MCP server through a
+  named `mcp_client` runner. Its `[runner.browser_nav]` block goes in
+  `config.toml` (see that sample's README) and needs the `mcp_client`
+  named-instance path from `parity/mcp-import-fix.md` slice 1.
 - Every file here passes `cairnos validate`. Start with
   `examples/hello.toml` (created by `cairnos init`) if you want the bare
   minimum first.

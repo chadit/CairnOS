@@ -231,12 +231,40 @@ func (m *Manager) Shutdown() {
 	}
 }
 
+// launcher runs one workflow on the engine and returns its terminal record.
+// StartRun and StartReplay differ only in this closure: RunWorkflow for a
+// fresh run, ReplayRun for a replay of a prior one. Everything around it (the
+// reservation, the watcher wiring, the workspace scoping) is identical, so the
+// two share launchRun.
+type launcher func(ctx context.Context, eng *engine.Engine) (*store.Run, error)
+
 // StartRun launches one run on the bound engine in its own goroutine and
 // returns once the engine has accepted it (the run record exists) or
 // rejected it (validation failed; the error returns here). The run's
 // lifetime detaches from ctx: a dropped client does not kill a run, only
 // Cancel, Shutdown, or completion ends it.
 func (m *Manager) StartRun(ctx context.Context, flow *workflow.Workflow, inputs map[string]any, watch bool, trigger string) (*RunHandle, error) {
+	return m.launchRun(ctx, watch, func(runCtx context.Context, eng *engine.Engine) (*store.Run, error) {
+		return eng.RunWorkflow(runCtx, flow, inputs, trigger)
+	})
+}
+
+// StartReplay replays a prior run on the bound engine: its succeeded actions
+// seed forward and the rest re-execute, watchable and cancelable like any run
+// (.agents/spec/parity/workflow-language.md, "Replay from failed action"). It
+// always watches, since the replay RPC streams the new run's events.
+func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResults []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
+	return m.launchRun(ctx, true, func(runCtx context.Context, eng *engine.Engine) (*store.Run, error) {
+		return eng.ReplayRun(runCtx, prior, priorResults, flow)
+	})
+}
+
+// launchRun runs the reservation handshake shared by StartRun and StartReplay:
+// it reserves the next run ID, wires the watcher before the engine emits, and
+// returns once the engine accepts the run (the record exists) or rejects it
+// (the error returns here). The run's lifetime detaches from ctx: a dropped
+// client does not kill a run, only Cancel, Shutdown, or completion ends it.
+func (m *Manager) launchRun(ctx context.Context, watch bool, launch launcher) (*RunHandle, error) {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
 
@@ -256,7 +284,7 @@ func (m *Manager) StartRun(ctx context.Context, flow *workflow.Workflow, inputs 
 
 	outcome := make(chan RunOutcome, 1)
 
-	go m.execute(runCtx, eng, res.id, flow, inputs, trigger, outcome)
+	go m.execute(runCtx, res.id, eng, launch, outcome)
 
 	select {
 	case <-res.taken:
@@ -316,11 +344,11 @@ func (m *Manager) register(res *reservation, cancel context.CancelFunc, workspac
 	return events
 }
 
-// execute runs the workflow to completion and releases the run's routing
+// execute runs the launcher to completion and releases the run's routing
 // state. Closing the events channel is safe here: every engine emission for
-// the run happens before RunWorkflow returns.
-func (m *Manager) execute(ctx context.Context, eng *engine.Engine, id string, flow *workflow.Workflow, inputs map[string]any, trigger string, outcome chan<- RunOutcome) {
-	run, err := eng.RunWorkflow(ctx, flow, inputs, trigger)
+// the run happens before the launcher returns.
+func (m *Manager) execute(ctx context.Context, id string, eng *engine.Engine, launch launcher, outcome chan<- RunOutcome) {
+	run, err := launch(ctx, eng)
 
 	m.release(id)
 

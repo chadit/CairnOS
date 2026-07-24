@@ -64,6 +64,11 @@ service ChatService {
   rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse) {
     option (google.api.http) = {get: "/v1/chat/sessions/{session_id}/messages"};
   }
+
+  // SearchMessages runs full-text search over the workspace's transcripts.
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse) {
+    option (google.api.http) = {get: "/v1/chat/search"};
+  }
 }
 
 // ChatSession is one persisted conversation.
@@ -83,6 +88,10 @@ message ChatMessage {
 
   string content = 3;
   google.protobuf.Timestamp created_at = 4;
+
+  // session_id names the conversation the message belongs to, so a search
+  // hit identifies its session without a separate lookup.
+  string session_id = 5;
 }
 
 // ChatEventType says what a ChatEvent describes.
@@ -169,5 +178,20 @@ message ListMessagesRequest {
 }
 
 message ListMessagesResponse {
+  repeated ChatMessage messages = 1;
+}
+
+message SearchMessagesRequest {
+  // text is the full-text query; empty is InvalidArgument.
+  string text = 1;
+
+  // session_id optionally narrows hits to one session.
+  string session_id = 2;
+
+  // limit caps the result count; zero means no cap, matching SearchMemory.
+  int32 limit = 3;
+}
+
+message SearchMessagesResponse {
   repeated ChatMessage messages = 1;
 }

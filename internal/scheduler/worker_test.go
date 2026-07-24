@@ -177,6 +177,119 @@ func TestWorkerDeadLettersAfterMaxDeliveries(t *testing.T) {
 	}
 }
 
+// TestWorkerOnDeadLetterFiresOnlyOnDeadLetter proves OnDeadLetter fires on the
+// terminal dead-letter and not on the intermediate requeue nak, so the Discord
+// fan-out posts one dead_lettered line per item, not one per delivery
+// (.agents/spec/parity/messaging-bridge.md, decision 7).
+func TestWorkerOnDeadLetterFiresOnlyOnDeadLetter(t *testing.T) {
+	t.Parallel()
+
+	queue := openWorkerQueue(t)
+	metrics := newSignalMetrics()
+
+	enqueueWorkerItem(t, queue, 0)
+
+	runner := &recordingQueueRunner{failAll: true}
+
+	// deadLettered carries the item each OnDeadLetter call saw. Buffered wide so a
+	// wrongly-repeated call would be observable rather than blocking.
+	deadLettered := make(chan string, 8)
+
+	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
+		Queue:         queue,
+		Runner:        runner,
+		Concurrency:   1,
+		Prefetch:      1,
+		Backoff:       time.Millisecond,
+		MaxDeliveries: 2,
+		PollInterval:  2 * time.Millisecond,
+		SweepInterval: time.Hour,
+		Logger:        discardLogger(),
+		Metrics:       metrics,
+		OnDeadLetter: func(_ context.Context, item *scheduler.WorkItem, _ error) {
+			deadLettered <- item.DedupKey
+		},
+	})
+
+	stop := runWorker(t, worker)
+	defer stop()
+
+	select {
+	case <-metrics.deadLetter:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for dead-letter")
+	}
+
+	select {
+	case key := <-deadLettered:
+		if key != "item-a" {
+			t.Errorf("OnDeadLetter saw dedup %q, want item-a", key)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for OnDeadLetter")
+	}
+
+	// The first delivery naked into a requeue without firing OnDeadLetter, so no
+	// second call arrives even though the runner ran at least twice.
+	select {
+	case key := <-deadLettered:
+		t.Fatalf("OnDeadLetter fired twice (saw %q); it must fire only on the terminal dead-letter", key)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if got := runner.count(); got < 2 {
+		t.Errorf("runner saw %d deliveries, want at least 2 before dead-letter", got)
+	}
+}
+
+// TestWorkerOnDeadLetterSkippedOnHold proves a held item never reaches
+// OnDeadLetter: the hold path settles the item without dead-lettering, so no
+// dead_lettered line is fanned out for a job parked for re-auth.
+func TestWorkerOnDeadLetterSkippedOnHold(t *testing.T) {
+	t.Parallel()
+
+	queue := openWorkerQueue(t)
+	metrics := newSignalMetrics()
+
+	enqueueWorkerItem(t, queue, 0)
+
+	reauthErr := errors.New("needs reauth")
+	runner := &recordingQueueRunner{failWith: reauthErr}
+	deadLettered := make(chan string, 1)
+
+	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
+		Queue:         queue,
+		Runner:        runner,
+		Concurrency:   1,
+		Prefetch:      1,
+		Backoff:       time.Millisecond,
+		MaxDeliveries: 2,
+		PollInterval:  2 * time.Millisecond,
+		SweepInterval: time.Hour,
+		Logger:        discardLogger(),
+		Metrics:       metrics,
+		Holdable:      func(err error) bool { return errors.Is(err, reauthErr) },
+		OnDeadLetter: func(_ context.Context, item *scheduler.WorkItem, _ error) {
+			deadLettered <- item.DedupKey
+		},
+	})
+
+	stop := runWorker(t, worker)
+	defer stop()
+
+	select {
+	case <-metrics.held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for hold")
+	}
+
+	select {
+	case key := <-deadLettered:
+		t.Fatalf("OnDeadLetter fired for a held item (saw %q); a hold is not a dead-letter", key)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestWorkerHoldsHoldableError(t *testing.T) {
 	t.Parallel()
 

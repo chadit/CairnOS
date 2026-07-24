@@ -11,7 +11,7 @@ and the issue step is skipped, not failed. Same pattern career_scout uses with
 
 ## What it does
 
-1. `releases_n8n` and `releases_mcp` each pull one repo's recent releases through
+1. `releases_otel` and `releases_mcp` each pull one repo's recent releases through
    the `github` runner. They share no dependency, so the engine runs them in
    parallel.
 2. `compare` feeds both release lists plus a roadmap summary to `anthropic` and

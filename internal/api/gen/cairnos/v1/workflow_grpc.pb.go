@@ -28,7 +28,9 @@ const (
 	WorkflowService_GetRun_FullMethodName           = "/cairnos.v1.WorkflowService/GetRun"
 	WorkflowService_ListRuns_FullMethodName         = "/cairnos.v1.WorkflowService/ListRuns"
 	WorkflowService_CancelRun_FullMethodName        = "/cairnos.v1.WorkflowService/CancelRun"
+	WorkflowService_ReplayRun_FullMethodName        = "/cairnos.v1.WorkflowService/ReplayRun"
 	WorkflowService_ValidateWorkflow_FullMethodName = "/cairnos.v1.WorkflowService/ValidateWorkflow"
+	WorkflowService_SaveWorkflow_FullMethodName     = "/cairnos.v1.WorkflowService/SaveWorkflow"
 )
 
 // WorkflowServiceClient is the client API for WorkflowService service.
@@ -47,9 +49,19 @@ type WorkflowServiceClient interface {
 	ListRuns(ctx context.Context, in *ListRunsRequest, opts ...grpc.CallOption) (*ListRunsResponse, error)
 	// CancelRun cancels an in-flight run started through this server.
 	CancelRun(ctx context.Context, in *CancelRunRequest, opts ...grpc.CallOption) (*CancelRunResponse, error)
+	// ReplayRun reruns a prior run from its first failed action: prior
+	// succeeded actions keep their outputs and the rest re-execute, streaming
+	// the new run's events like RunWorkflow. A workflow-hash mismatch is
+	// refused unless force is set.
+	ReplayRun(ctx context.Context, in *ReplayRunRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunEvent], error)
 	// ValidateWorkflow parses and validates a workflow file without running
 	// it, returning every canonical validation error found in one pass.
 	ValidateWorkflow(ctx context.Context, in *ValidateWorkflowRequest, opts ...grpc.CallOption) (*ValidateWorkflowResponse, error)
+	// SaveWorkflow validates a workflow definition and writes it into the
+	// server's workflows directory. Overwriting an existing workflow captures
+	// the prior definition in the version store first, so the save is
+	// rollbackable via the suggestions revert path.
+	SaveWorkflow(ctx context.Context, in *SaveWorkflowRequest, opts ...grpc.CallOption) (*SaveWorkflowResponse, error)
 }
 
 type workflowServiceClient struct {
@@ -109,10 +121,39 @@ func (c *workflowServiceClient) CancelRun(ctx context.Context, in *CancelRunRequ
 	return out, nil
 }
 
+func (c *workflowServiceClient) ReplayRun(ctx context.Context, in *ReplayRunRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &WorkflowService_ServiceDesc.Streams[1], WorkflowService_ReplayRun_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReplayRunRequest, RunEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkflowService_ReplayRunClient = grpc.ServerStreamingClient[RunEvent]
+
 func (c *workflowServiceClient) ValidateWorkflow(ctx context.Context, in *ValidateWorkflowRequest, opts ...grpc.CallOption) (*ValidateWorkflowResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ValidateWorkflowResponse)
 	err := c.cc.Invoke(ctx, WorkflowService_ValidateWorkflow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workflowServiceClient) SaveWorkflow(ctx context.Context, in *SaveWorkflowRequest, opts ...grpc.CallOption) (*SaveWorkflowResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveWorkflowResponse)
+	err := c.cc.Invoke(ctx, WorkflowService_SaveWorkflow_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -135,9 +176,19 @@ type WorkflowServiceServer interface {
 	ListRuns(context.Context, *ListRunsRequest) (*ListRunsResponse, error)
 	// CancelRun cancels an in-flight run started through this server.
 	CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error)
+	// ReplayRun reruns a prior run from its first failed action: prior
+	// succeeded actions keep their outputs and the rest re-execute, streaming
+	// the new run's events like RunWorkflow. A workflow-hash mismatch is
+	// refused unless force is set.
+	ReplayRun(*ReplayRunRequest, grpc.ServerStreamingServer[RunEvent]) error
 	// ValidateWorkflow parses and validates a workflow file without running
 	// it, returning every canonical validation error found in one pass.
 	ValidateWorkflow(context.Context, *ValidateWorkflowRequest) (*ValidateWorkflowResponse, error)
+	// SaveWorkflow validates a workflow definition and writes it into the
+	// server's workflows directory. Overwriting an existing workflow captures
+	// the prior definition in the version store first, so the save is
+	// rollbackable via the suggestions revert path.
+	SaveWorkflow(context.Context, *SaveWorkflowRequest) (*SaveWorkflowResponse, error)
 	mustEmbedUnimplementedWorkflowServiceServer()
 }
 
@@ -160,8 +211,14 @@ func (UnimplementedWorkflowServiceServer) ListRuns(context.Context, *ListRunsReq
 func (UnimplementedWorkflowServiceServer) CancelRun(context.Context, *CancelRunRequest) (*CancelRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelRun not implemented")
 }
+func (UnimplementedWorkflowServiceServer) ReplayRun(*ReplayRunRequest, grpc.ServerStreamingServer[RunEvent]) error {
+	return status.Error(codes.Unimplemented, "method ReplayRun not implemented")
+}
 func (UnimplementedWorkflowServiceServer) ValidateWorkflow(context.Context, *ValidateWorkflowRequest) (*ValidateWorkflowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ValidateWorkflow not implemented")
+}
+func (UnimplementedWorkflowServiceServer) SaveWorkflow(context.Context, *SaveWorkflowRequest) (*SaveWorkflowResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveWorkflow not implemented")
 }
 func (UnimplementedWorkflowServiceServer) mustEmbedUnimplementedWorkflowServiceServer() {}
 func (UnimplementedWorkflowServiceServer) testEmbeddedByValue()                         {}
@@ -249,6 +306,17 @@ func _WorkflowService_CancelRun_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkflowService_ReplayRun_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReplayRunRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(WorkflowServiceServer).ReplayRun(m, &grpc.GenericServerStream[ReplayRunRequest, RunEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type WorkflowService_ReplayRunServer = grpc.ServerStreamingServer[RunEvent]
+
 func _WorkflowService_ValidateWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ValidateWorkflowRequest)
 	if err := dec(in); err != nil {
@@ -263,6 +331,24 @@ func _WorkflowService_ValidateWorkflow_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WorkflowServiceServer).ValidateWorkflow(ctx, req.(*ValidateWorkflowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkflowService_SaveWorkflow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveWorkflowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkflowServiceServer).SaveWorkflow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkflowService_SaveWorkflow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkflowServiceServer).SaveWorkflow(ctx, req.(*SaveWorkflowRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -290,11 +376,20 @@ var WorkflowService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ValidateWorkflow",
 			Handler:    _WorkflowService_ValidateWorkflow_Handler,
 		},
+		{
+			MethodName: "SaveWorkflow",
+			Handler:    _WorkflowService_SaveWorkflow_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "RunWorkflow",
 			Handler:       _WorkflowService_RunWorkflow_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReplayRun",
+			Handler:       _WorkflowService_ReplayRun_Handler,
 			ServerStreams: true,
 		},
 	},

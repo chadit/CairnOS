@@ -1185,6 +1185,100 @@ func wantErrCode(t *testing.T, cerr *cairnerr.Error, want string) {
 	}
 }
 
+// listIndexTOML exercises numeric path segments: a list index in a param, a
+// list index in a condition, and a map whose literal "0" key stays a field.
+const listIndexTOML = `
+[workflow]
+name = "list_index_ok"
+
+[action.up]
+runner = "mock"
+params = { output = { items = [ { name = "alice" }, { name = "bob" } ], nums = [ 10, 20, 30 ], bykey = { "0" = "zero-field" } } }
+
+[action.down]
+runner = "local_fn"
+depends_on = ["up"]
+condition = "${{ up.output.nums.1 }} > 15"
+params = { fn = "capture", picked = "${{ up.output.items.0.name }}", third = "${{ up.output.nums.2 }}", mapfield = "${{ up.output.bykey.0 }}" }
+`
+
+func TestListIndexResolvesInParamsAndCondition(t *testing.T) {
+	t.Parallel()
+
+	sink := &paramSink{}
+	eng, db := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnCapture: sink.capture})
+
+	run := mustRun(t, eng, parseFlow(t, listIndexTOML), nil)
+
+	wantRunStatus(t, run, store.RunSucceeded)
+
+	// down running at all proves the list index resolved inside the condition;
+	// a failed resolve there would skip or fail it instead.
+	wantActionStatus(t, db, run.ID, "down", store.ActionSucceeded)
+
+	got := sink.snapshot()
+
+	if got["picked"] != "alice" {
+		t.Fatalf("picked = %v, want alice from items.0.name", got["picked"])
+	}
+
+	if got["third"] != int64(30) {
+		t.Fatalf("third = %v (%T), want int64 30 from nums.2", got["third"], got["third"])
+	}
+
+	// A numeric segment on a map stays a field name, so {"0": ...} keeps meaning.
+	if got["mapfield"] != "zero-field" {
+		t.Fatalf("mapfield = %v, want the literal 0 key read as a field", got["mapfield"])
+	}
+}
+
+func TestListIndexMisuseFailsBeforeRunner(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		ref  string
+	}{
+		{name: "out of range", ref: "${{ up.output.nums.9 }}"},
+		{name: "negative index", ref: "${{ up.output.nums.-1 }}"},
+		{name: "index into non-list", ref: "${{ up.output.field.0 }}"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			flowTOML := `
+[workflow]
+name = "list_index_bad"
+
+[action.up]
+runner = "mock"
+params = { output = { nums = [ 10, 20, 30 ], field = "x" } }
+
+[action.down]
+runner = "local_fn"
+depends_on = ["up"]
+params = { fn = "capture", bad = "` + tt.ref + `" }
+`
+
+			sink := &paramSink{}
+			eng, db := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnCapture: sink.capture})
+
+			run := mustRun(t, eng, parseFlow(t, flowTOML), nil)
+
+			wantRunStatus(t, run, store.RunFailed)
+
+			failed := wantActionStatus(t, db, run.ID, "down", store.ActionFailed)
+			wantErrCode(t, failed.Error, engine.CodePreconditionFailed)
+
+			if sink.snapshot() != nil {
+				t.Fatalf("capture ran with %v, want the runner untouched on a resolve failure", sink.snapshot())
+			}
+		})
+	}
+}
+
 // assertAllTerminal checks the run persisted a terminal row for every action
 // and that the run row itself is terminal.
 func assertAllTerminal(t *testing.T, db *fakeStore, runID string, count int) {
@@ -1202,7 +1296,7 @@ func assertAllTerminal(t *testing.T, db *fakeStore, runID string, count int) {
 	for _, result := range results {
 		switch result.Status {
 		case store.ActionSucceeded, store.ActionFailed, store.ActionSkipped:
-		case store.ActionPending, store.ActionReady, store.ActionRunning:
+		case store.ActionPending, store.ActionReady, store.ActionRunning, store.ActionWaiting:
 			t.Fatalf("action %q ended %q, want a terminal status", result.ActionName, result.Status)
 		default:
 			t.Fatalf("action %q has unknown status %q", result.ActionName, result.Status)
@@ -1216,7 +1310,7 @@ func assertAllTerminal(t *testing.T, db *fakeStore, runID string, count int) {
 
 	switch stored.Status {
 	case store.RunSucceeded, store.RunFailed, store.RunCanceled:
-	case store.RunPending, store.RunRunning:
+	case store.RunPending, store.RunRunning, store.RunHeld:
 		t.Fatalf("run status = %q, want a terminal status", stored.Status)
 	default:
 		t.Fatalf("run has unknown status %q", stored.Status)

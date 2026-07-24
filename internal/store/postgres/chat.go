@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -209,6 +210,49 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]*store.Ch
 	}
 
 	return messages, nil
+}
+
+// SearchMessages runs tsvector full-text search over the request workspace's
+// transcripts, best match first (ts_rank DESC) with (session_id, seq) as the
+// stable tie-break, matching the sqlite backend's FTS5 semantics.
+// plainto_tsquery treats the input as plain words, the same injection-safety
+// property ftsPhrase gives the sqlite backend, and the 'simple' config
+// matches internal/memory's Postgres search. The doubled session parameter
+// makes that filter optional without assembling SQL at runtime, and a NULL
+// limit means "all".
+func (s *Store) SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error) {
+	// The sqlite backend returns nothing on empty text before touching SQL;
+	// short-circuiting here keeps the backends behaviorally identical.
+	terms := strings.TrimSpace(query.Text)
+	if terms == "" {
+		return nil, nil
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT m.session_id, m.seq, m.role, m.content, m.created_at
+		 FROM chat_messages m
+		 JOIN chat_sessions s ON s.id = m.session_id
+		 WHERE to_tsvector('simple', m.content) @@ plainto_tsquery('simple', $1)
+		   AND s.workspace_id = $2
+		   AND ($3 = '' OR m.session_id = $3)
+		 ORDER BY ts_rank(to_tsvector('simple', m.content), plainto_tsquery('simple', $1)) DESC,
+		          m.session_id, m.seq
+		 LIMIT $4`,
+		terms, store.WorkspaceFromContext(ctx), query.SessionID, limitOrNull(query.Limit))
+	if err != nil {
+		return nil, fmt.Errorf("search chat messages: %w", err)
+	}
+
+	return collectRows(rows, "search chat messages", scanChatMessage)
+}
+
+// limitOrNull maps "no limit requested" onto a NULL LIMIT (all rows).
+func limitOrNull(limit int) any {
+	if limit <= 0 {
+		return nil
+	}
+
+	return limit
 }
 
 // scanChatSession reads one chatSessionColumns row back into a ChatSession.

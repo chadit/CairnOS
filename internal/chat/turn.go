@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"time"
@@ -12,8 +13,14 @@ import (
 )
 
 // keyError is the output key a tool result carries when it failed, so the
-// driver sees the failure as data it can react to.
-const keyError = "error"
+// driver sees the failure as data it can react to. keyCode carries the
+// classified runner error's stable code alongside it, so the transcript names
+// which failure it was (skill.not_found, memory.bad_op) rather than the message
+// text alone.
+const (
+	keyError = "error"
+	keyCode  = "code"
+)
 
 // SendMessage runs one conversation turn for a new user message and streams
 // its events to out, closing out when the turn ends (.agents/spec/13-roadmap.md,
@@ -44,12 +51,25 @@ func (a *Agent) SendMessage(ctx context.Context, sessionID, userMessage string, 
 	}
 
 	systemPrompt, _ := a.cfg.Personalities.Resolve(session.Personality)
+	systemPrompt = appendSkillListing(systemPrompt, a.cfg.Skills)
 
 	turn := &chatTurn{
 		agent:   a,
 		out:     out,
 		session: session,
 		system:  systemPrompt,
+	}
+
+	if err := turn.loadContext(ctx); err != nil {
+		return err
+	}
+
+	if err := turn.inlineFileRefs(ctx, userMessage); err != nil {
+		return err
+	}
+
+	if err := turn.loadSlashSkill(ctx, userMessage); err != nil {
+		return err
 	}
 
 	return turn.run(ctx)
@@ -64,6 +84,15 @@ type chatTurn struct {
 	session *store.ChatSession
 	system  string
 	usage   runner.Usage
+
+	// skill is the turn-scoped skill a slash invocation loaded, rendered into
+	// every driver prompt of this turn; nil when none loaded.
+	skill *loadedSkill
+
+	// contextDoc is the per-workspace context doc read once at the top of the
+	// turn, rendered into every driver prompt of this turn; empty when no doc
+	// loaded or the feature is off.
+	contextDoc string
 }
 
 // run drives driver iterations until a final answer, a workflow proposal, or a
@@ -155,7 +184,7 @@ func (t *chatTurn) finishAnswer(ctx context.Context, result runner.Result) error
 		return err
 	}
 
-	return emit(ctx, t.out, &Event{Type: EventTurnDone, Text: answer})
+	return emit(ctx, t.out, &Event{Type: EventTurnDone, Text: answer, Usage: t.usage})
 }
 
 // runReadTool executes one allowed read tool (memory, vault_query) inline,
@@ -170,7 +199,7 @@ func (t *chatTurn) runReadTool(ctx context.Context, tool string, arguments map[s
 
 	output := t.executeTool(ctx, tool, arguments)
 
-	record := fmt.Sprintf("called %s(%s) -> %s", tool, renderValue(arguments), truncateResult(renderValue(output)))
+	record := toolExchangeRecord(tool, arguments, output)
 
 	if err := t.agent.cfg.Store.AppendMessage(ctx, &store.ChatMessage{
 		SessionID: t.session.ID,
@@ -207,10 +236,24 @@ func (t *chatTurn) executeTool(ctx context.Context, tool string, arguments map[s
 	t.usage = addUsage(t.usage, result.Usage)
 
 	if err != nil {
-		return map[string]any{keyError: err.Error()}
+		return toolError(err)
 	}
 
 	return result.Output
+}
+
+// toolError renders a tool failure as a transcript value the driver reads. It
+// carries the message and, for a classified runner error, the stable code, so
+// the durable transcript names the failure (the skill tool's skill.not_found,
+// for one) rather than showing the message alone.
+func toolError(err error) map[string]any {
+	out := map[string]any{keyError: err.Error()}
+
+	if classified, ok := errors.AsType[*runner.Error](err); ok {
+		out[keyCode] = classified.Code
+	}
+
+	return out
 }
 
 // raiseGate is the D9 confirmation step: a run_workflow call does not run a
@@ -244,7 +287,7 @@ func (t *chatTurn) raiseGate(ctx context.Context, arguments map[string]any) erro
 		return err
 	}
 
-	return emit(ctx, t.out, &Event{Type: EventTurnDone})
+	return emit(ctx, t.out, &Event{Type: EventTurnDone, Usage: t.usage})
 }
 
 // checkBudget ends the turn when the estimated driver-and-tool spend reaches
@@ -264,8 +307,49 @@ func (t *chatTurn) checkBudget(iteration int) error {
 	return nil
 }
 
-// prompt assembles one driver turn's user text: the persisted conversation so
-// far, rendered as plain text so every ToolCaller sees the same input
+// loadSlashSkill resolves a leading /name invocation to a turn-scoped skill and
+// records an honest tool-role note. An inert message or a nil Skills source
+// loads nothing and writes no note. A load failure is additive: the note
+// records it and the turn proceeds as a plain message, so a skill problem never
+// fails a turn. The persisted user message keeps the raw /name text untouched.
+func (t *chatTurn) loadSlashSkill(ctx context.Context, userMessage string) error {
+	name, ok := slashSkill(userMessage)
+	if !ok || t.agent.cfg.Skills == nil {
+		return nil
+	}
+
+	body, err := t.agent.cfg.Skills.Load(name)
+	if err != nil {
+		return t.persistToolNote(ctx, skillLoadFailureNote(name, err))
+	}
+
+	if err := t.persistToolNote(ctx, fmt.Sprintf("loaded skill %q for this turn", name)); err != nil {
+		return err
+	}
+
+	t.skill = &loadedSkill{name: name, body: body}
+
+	return nil
+}
+
+// persistToolNote records one tool-role line so the durable history stays
+// honest about what the driver saw this turn: a loaded (or failed) skill, an
+// inlined (or refused) @-file reference, or the @-reference limit note.
+func (t *chatTurn) persistToolNote(ctx context.Context, note string) error {
+	if err := t.agent.cfg.Store.AppendMessage(ctx, &store.ChatMessage{
+		SessionID: t.session.ID,
+		Role:      store.ChatRoleTool,
+		Content:   note,
+	}); err != nil {
+		return fmt.Errorf("persist tool note: %w", err)
+	}
+
+	return nil
+}
+
+// prompt assembles one driver turn's user text: an optional leading skill
+// section a slash invocation loaded this turn, then the persisted conversation
+// so far, rendered as plain text so every ToolCaller sees the same input
 // regardless of its wire format.
 func (t *chatTurn) prompt(ctx context.Context) (string, error) {
 	messages, err := t.agent.cfg.Store.ListMessages(ctx, t.session.ID)
@@ -273,7 +357,8 @@ func (t *chatTurn) prompt(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("load chat history: %w", err)
 	}
 
-	return "Conversation so far:\n" + joinHistory(messages), nil
+	return renderSkillSection(t.skill) + renderContextSection(t.contextDoc) +
+		"Conversation so far:\n" + joinHistory(messages), nil
 }
 
 // readToolCall reads the driver convention out of one result: a tool call when

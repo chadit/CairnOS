@@ -42,14 +42,21 @@ type PauseChecker interface {
 	GetWorkflowPause(ctx context.Context, workflowName string) (*store.WorkflowPause, bool, error)
 }
 
-// BudgetNotifier is fired when a warn-mode budget is exceeded, so the serve
-// wiring can route to the notify runners. Nil falls back to a slog warning;
-// the metric fires either way through Instrumentation.
+// BudgetNotifier is fired on a budget breach so the serve wiring can route to
+// the notify runners. Nil on Config keeps the pre-governance behavior: warn
+// falls back to a slog warning and denial notifies nothing beyond the returned
+// error. The metric fires either way through Instrumentation.
 type BudgetNotifier interface {
 	// BudgetWarn reports that workflow passed limitUSD with spend over the
 	// current period, while its budget's on_exceed is warn so the run
 	// proceeds.
 	BudgetWarn(ctx context.Context, workflowName string, spend, limitUSD float64)
+
+	// BudgetDenied reports that workflow passed limitUSD with spend over the
+	// current period and its budget's on_exceed is pause, so the run was
+	// refused. Fired on the pause path only, alongside the refusal error the
+	// engine returns.
+	BudgetDenied(ctx context.Context, workflowName string, spend, limitUSD float64)
 }
 
 // checkGovernance applies the pre-creation governance gate: a paused workflow
@@ -122,6 +129,7 @@ func (e *Engine) checkBudget(ctx context.Context, flow *workflow.Workflow) error
 func (e *Engine) budgetExceeded(ctx context.Context, flow *workflow.Workflow, spend float64) error {
 	if flow.Budget.OnExceed == workflow.BudgetOnExceedPause {
 		e.cfg.Instrumentation.BudgetExceeded(ctx, flow.Name, workflow.BudgetOnExceedPause)
+		e.notifyBudgetDenied(ctx, flow.Name, spend, flow.Budget.LimitUSD)
 
 		return errf(CodeBudgetExceeded,
 			"workflow %q spent $%.2f this %s, at or over its $%.2f budget; new runs are paused until the period resets or an admin lifts it",
@@ -145,6 +153,19 @@ func (e *Engine) notifyBudgetWarn(ctx context.Context, workflowName string, spen
 
 	slog.Warn("workflow over its warn budget; run proceeding",
 		"workflow", workflowName, "spend_usd", spend, "limit_usd", limitUSD)
+}
+
+// notifyBudgetDenied routes a pause-mode refusal to the configured notifier so
+// the serve fan-out can post a budget_denied line. A nil notifier is the
+// pre-governance default: the refusal is already returned as an error and
+// counted, so no notifier means no extra signal, unlike the warn path which
+// always surfaces a warning.
+func (e *Engine) notifyBudgetDenied(ctx context.Context, workflowName string, spend, limitUSD float64) {
+	if e.cfg.Notifier == nil {
+		return
+	}
+
+	e.cfg.Notifier.BudgetDenied(ctx, workflowName, spend, limitUSD)
 }
 
 // PeriodStart returns the inclusive lower bound of the budget period

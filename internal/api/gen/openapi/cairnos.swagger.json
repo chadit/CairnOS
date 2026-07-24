@@ -269,6 +269,53 @@
         ]
       }
     },
+    "/v1/chat/search": {
+      "get": {
+        "summary": "SearchMessages runs full-text search over the workspace's transcripts.",
+        "operationId": "ChatService_SearchMessages",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SearchMessagesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "text",
+            "description": "text is the full-text query; empty is InvalidArgument.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "sessionId",
+            "description": "session_id optionally narrows hits to one session.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "description": "limit caps the result count; zero means no cap, matching SearchMemory.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "ChatService"
+        ]
+      }
+    },
     "/v1/chat/sessions": {
       "get": {
         "summary": "ListSessions lists the workspace's sessions, most-recently-updated first.",
@@ -1185,6 +1232,54 @@
         ]
       }
     },
+    "/v1/runs/{runId}/replay": {
+      "post": {
+        "summary": "ReplayRun reruns a prior run from its first failed action: prior\nsucceeded actions keep their outputs and the rest re-execute, streaming\nthe new run's events like RunWorkflow. A workflow-hash mismatch is\nrefused unless force is set.",
+        "operationId": "WorkflowService_ReplayRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "result": {
+                  "$ref": "#/definitions/v1RunEvent"
+                },
+                "error": {
+                  "$ref": "#/definitions/rpcStatus"
+                }
+              },
+              "title": "Stream result of v1RunEvent"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceReplayRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/v1/suggestions": {
       "get": {
         "summary": "ListSuggestions lists suggestions newest-first, filterable by status.",
@@ -1464,6 +1559,45 @@
         ]
       }
     },
+    "/v1/workflows/{workflowName}": {
+      "put": {
+        "summary": "SaveWorkflow validates a workflow definition and writes it into the\nserver's workflows directory. Overwriting an existing workflow captures\nthe prior definition in the version store first, so the save is\nrollbackable via the suggestions revert path.",
+        "operationId": "WorkflowService_SaveWorkflow",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SaveWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "workflowName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSaveWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/v1/workflows/{workflowName}/runs": {
       "post": {
         "summary": "RunWorkflow starts a run by workflow name and streams run and action\nevents as they happen. The HTTP gateway delivers the stream as chunked\nnewline-delimited JSON, one event per line.",
@@ -1569,14 +1703,39 @@
     "WorkflowServiceCancelRunBody": {
       "type": "object"
     },
+    "WorkflowServiceReplayRunBody": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "force replays even when the current workflow file's hash differs from the\nhash the prior run recorded."
+        }
+      },
+      "description": "ReplayRunRequest names the prior run to replay and whether to override the\nworkflow-hash guard when the file has changed since the original run."
+    },
     "WorkflowServiceRunWorkflowBody": {
       "type": "object",
       "properties": {
         "inputs": {
           "type": "object"
+        },
+        "toml": {
+          "type": "string",
+          "format": "byte",
+          "description": "toml, when set, runs this definition inline instead of resolving by name,\nthe builder's test-action path. Over HTTP/JSON the bytes are\nbase64-encoded, per proto3 JSON mapping."
         }
       },
       "description": "RunWorkflowRequest names the workflow (resolved against the server's\nworkflows directory) and supplies its declared inputs."
+    },
+    "WorkflowServiceSaveWorkflowBody": {
+      "type": "object",
+      "properties": {
+        "toml": {
+          "type": "string",
+          "format": "byte"
+        }
+      },
+      "description": "SaveWorkflowRequest carries the target workflow name (from the URL path) and\nthe raw definition bytes (TOML). Over HTTP/JSON the bytes field is\nbase64-encoded, per proto3 JSON mapping. The definition's own name must\nmatch workflow_name or the save is refused."
     },
     "cairnosA2aV1Task": {
       "type": "object",
@@ -1871,6 +2030,10 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "session_id names the conversation the message belongs to, so a search\nhit identifies its session without a separate lookup."
         }
       },
       "description": "ChatMessage is one entry in a conversation."
@@ -2500,6 +2663,27 @@
       },
       "description": "RunnerInfo describes one registered runner."
     },
+    "v1SaveWorkflowResponse": {
+      "type": "object",
+      "properties": {
+        "workflowName": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string",
+          "description": "hash is the hex SHA-256 of the new file bytes."
+        },
+        "priorHash": {
+          "type": "string",
+          "description": "prior_hash is the hash of the replaced definition; empty on create."
+        },
+        "created": {
+          "type": "boolean",
+          "description": "created is true when no file carried this name before the save."
+        }
+      },
+      "description": "SaveWorkflowResponse reports the written definition's identity and whether\nthe save replaced a prior file."
+    },
     "v1Savings": {
       "type": "object",
       "properties": {
@@ -2531,6 +2715,18 @@
         "fallback": {
           "type": "boolean",
           "description": "fallback is true when semantic search was requested but keyword search\nanswered because no vector backend is configured."
+        }
+      }
+    },
+    "v1SearchMessagesResponse": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ChatMessage"
+          }
         }
       }
     },

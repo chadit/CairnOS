@@ -80,6 +80,13 @@ type WorkerConfig struct {
 	// runner dependencies, the same seam as Holdable (D12).
 	OnHold func(ctx context.Context, item *WorkItem, runErr error)
 
+	// OnDeadLetter runs after an item exhausts its deliveries and settles
+	// WorkDead, so the CLI can fan a dead_lettered line out to Discord. It fires
+	// only on the terminal dead-letter, never on an intermediate requeue. nil
+	// disables the notification; the item is still logged and counted the same
+	// way (.agents/spec/parity/messaging-bridge.md, decision 7).
+	OnDeadLetter func(ctx context.Context, item *WorkItem, runErr error)
+
 	// ResumeProbe reports whether a held item's credential (named by its hold
 	// key) is valid again at now, so the sweep can resume it without a human. The
 	// CLI wires it to the reauth credential probe; nil disables auto-resume, so
@@ -110,6 +117,7 @@ type Worker struct {
 	holdable      func(error) bool
 	holdKey       func(error) string
 	onHold        func(ctx context.Context, item *WorkItem, runErr error)
+	onDeadLetter  func(ctx context.Context, item *WorkItem, runErr error)
 	resumeProbe   func(holdKey string, now time.Time) bool
 }
 
@@ -142,6 +150,7 @@ func NewWorker(cfg *WorkerConfig) *Worker {
 		holdable:      cfg.Holdable,
 		holdKey:       cfg.HoldKey,
 		onHold:        cfg.OnHold,
+		onDeadLetter:  cfg.OnDeadLetter,
 		resumeProbe:   cfg.ResumeProbe,
 	}
 }
@@ -309,6 +318,13 @@ func (w *Worker) settleFailure(ctx context.Context, item *WorkItem, runErr error
 
 		if w.metrics != nil {
 			w.metrics.ItemDeadLettered()
+		}
+
+		// Notify last and only on the terminal dead-letter: the item is already
+		// settled, so a slow or failed fan-out never changes its fate. Fired on the
+		// detached settle context, which carries the ack-wait timeout.
+		if w.onDeadLetter != nil {
+			w.onDeadLetter(ctx, item, runErr)
 		}
 
 		return

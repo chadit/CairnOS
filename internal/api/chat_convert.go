@@ -31,6 +31,7 @@ func protoChatMessage(message *store.ChatMessage) *cairnosv1.ChatMessage {
 		Role:      message.Role,
 		Content:   message.Content,
 		CreatedAt: protoTime(message.CreatedAt),
+		SessionId: message.SessionID,
 	}
 }
 

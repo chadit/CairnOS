@@ -12,16 +12,21 @@ import (
 	"github.com/chadit/CairnOS/internal/agentloop"
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/hive"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/notify"
+	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/scheduler"
+	"github.com/chadit/CairnOS/internal/secrets"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/sweep"
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/internal/vault"
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 const serveUsage = "usage: cairnos serve [--dir D]\n"
@@ -110,6 +115,12 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 		defer a.closeStore(tenants)
 	}
 
+	source, closeSource, code, proceed := a.openServeSecretSourceAt(ctx, &cfg, dir)
+	if !proceed {
+		return code
+	}
+	defer func() { _ = closeSource() }()
+
 	return a.runServe(ctx, &cfg, dir, &serveStores{
 		db:       db,
 		mem:      mem,
@@ -118,6 +129,7 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 		scheds:   scheds,
 		keyStore: keyStore,
 		tenants:  tenants,
+		secrets:  source,
 	})
 }
 
@@ -132,6 +144,10 @@ type serveStores struct {
 	scheds   scheduleStore
 	keyStore authStore
 	tenants  tenancyStore
+	// secrets is the shared secret source for the whole serve process: the
+	// engine and the webhook ingress both resolve through it, so a store secret
+	// is not visible to one and hidden from the other.
+	secrets secrets.Source
 }
 
 // runServe wires telemetry, the manager, the engine, the API server, the
@@ -146,6 +162,11 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	if err != nil {
 		a.printErrf("serve: auth: %v\n", err)
 
+		return ExitFailure
+	}
+
+	credManager, proceed := a.buildServeCredentials(ctx, cfg, stores.secrets)
+	if !proceed {
 		return ExitFailure
 	}
 
@@ -177,7 +198,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// records emitted inside a span carry its trace and span IDs.
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, stores.rules)
+	registry, err := newRegistry(ctx, cfg.Runners, mem, stores.rules, credManager)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}
@@ -187,29 +208,28 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// engine config; every run in this process starts through the manager.
 	manager := api.NewManager(logger)
 
-	engCfg := engineConfig(cfg)
-	engCfg.NewID = manager.NewID
-	engCfg.OnEvent = manager.Dispatch
-	engCfg.Instrumentation = tel.Recorder()
-	engCfg.AgentExecutor = agentloop.New(registry, mem, db, tel.Recorder())
-	// Governance enforcement reads the store's spend and pause state. A
-	// warn-mode budget breach raises the budget metric through the recorder
-	// and, with no notifier wired here, an engine-side slog warning; routing
-	// warn alerts to a workflow's notify runners needs the workflow's notify
-	// targets at the breach point, which the warn-budget callback does not yet
-	// carry, so that path stays a follow-up (.agents/spec/12-ui-and-governance.md,
-	// "Budgets").
-	engCfg.Budget = db
-	engCfg.Pause = db
-
-	eng := engine.New(engCfg, registry, db)
-	manager.Bind(eng)
-
-	if err := wireBreakerTelemetry(ctx, eng, tel.Recorder()); err != nil {
-		return a.failServe(ctx, tel, "telemetry", err)
-	}
-
 	workflowsDir := filepath.Join(dir, workflowsDirName)
+
+	// The Discord event fan-out is one drainer over the shipped webhook, shared
+	// by the engine producers (run_failed, budget_denied) and the queue producers
+	// (held, dead_lettered). Nil when the webhook secret is unset, which disables
+	// every producer (decision 7).
+	fanout := BuildDiscordFanout(cfg, logger)
+
+	eng, err := buildServeEngine(ctx, cfg, &serveEngineDeps{
+		manager:      manager,
+		tel:          tel,
+		registry:     registry,
+		db:           db,
+		mem:          mem,
+		workflowsDir: workflowsDir,
+		fanout:       fanout,
+		secrets:      stores.secrets,
+		logger:       logger,
+	})
+	if err != nil {
+		return a.failServe(ctx, tel, "engine", err)
+	}
 
 	apiCfg := &api.Config{
 		GRPCAddr:     cfg.API.GRPC,
@@ -233,15 +253,29 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		MaxRecvMsgBytes: cfg.API.MaxRecvMsgBytes,
 	}
 
-	if code, mounted := a.attachChat(ctx, cfg, tel, apiCfg, &chatDeps{
+	chatAgent, personalities, code, mounted := a.attachChat(ctx, cfg, tel, apiCfg, &chatDeps{
 		store:        db,
 		memory:       mem,
 		vault:        stores.vault,
 		registry:     registry,
 		manager:      manager,
 		workflowsDir: workflowsDir,
+		skillsDir:    filepath.Join(dir, skillsDirName),
+		contextDir:   filepath.Join(dir, contextDirName),
 		logger:       logger,
-	}); !mounted {
+	})
+	if !mounted {
+		return code
+	}
+
+	// The bridge builds right after chat because it drives the chat agent: an
+	// enabled bridge with chat off fails fast here, before any listener binds.
+	telegramBridge, code, bridgeMounted := a.buildTelegramBridge(ctx, cfg, tel, &bridgeDeps{
+		chat:   chatAgent,
+		store:  db,
+		logger: logger,
+	})
+	if !bridgeMounted {
 		return code
 	}
 
@@ -256,47 +290,44 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		apiCfg.StreamRecheck = cfg.Auth.StreamRecheck
 	}
 
-	bundle, err := buildA2ABundle(cfg, manager, api.NewWorkflowResolver(workflowsDir, logger), db, logger)
-	if err != nil {
-		a.printErrf("serve: %v\n", err)
-		a.closeTelemetry(ctx, tel)
-
-		return ExitFailure
-	}
-
-	if bundle != nil {
-		if err := bundle.Attach(apiCfg); err != nil {
-			a.printErrf("serve: a2a: %v\n", err)
-			a.closeTelemetry(ctx, tel)
-
-			return ExitFailure
-		}
-
-		a.printOutf("a2a card published at %s%s\n", "http://"+cfg.API.HTTP, a2aWellKnownPath)
+	if code, a2aMounted := a.attachA2AServe(ctx, cfg, tel, apiCfg, &a2aServeDeps{
+		manager:      manager,
+		store:        db,
+		workflowsDir: workflowsDir,
+		logger:       logger,
+	}); !a2aMounted {
+		return code
 	}
 
 	// OAuth human login mounts when configured and auth is on: a minted
 	// CairnOS token is only useful if the interceptor verifies it, which needs
 	// authn. tenants is the membership store the callback resolves roles in.
-	if cfg.OAuth.Enabled {
-		ext, oauthErr := buildOAuthExtension(ctx, cfg, authn, stores.tenants, logger)
-		if oauthErr != nil {
-			a.printErrf("serve: oauth: %v\n", oauthErr)
-			a.closeTelemetry(ctx, tel)
-
-			return ExitFailure
-		}
-
-		apiCfg.Extensions = append(apiCfg.Extensions, ext)
-
-		a.printOutf("oauth login available at %s%s\n", "http://"+cfg.API.HTTP, oauthloginPath)
+	if code, oauthMounted := a.attachOAuthServe(ctx, cfg, tel, authn, stores.tenants, apiCfg, logger); !oauthMounted {
+		return code
 	}
+
+	// Webhook ingress mounts only when [webhook] enabled is true; unregistered
+	// workflows stay unreachable and the default posture exposes no public
+	// webhook route. The routes sit on the root mux outside the gRPC interceptor
+	// by design, so scopeForMethod is untouched. The closer releases the
+	// registration store's handle at shutdown.
+	closeHooks, code, hooksMounted := a.attachWebhookServe(ctx, cfg, tel, dir, apiCfg, &webhookDeps{
+		scheds:  scheds,
+		manager: manager,
+		pauses:  db,
+		secrets: stores.secrets,
+		logger:  logger,
+	})
+	if !hooksMounted {
+		return code
+	}
+	defer func() { _ = closeHooks() }()
 
 	// The MCP http transport mounts on the same mux as A2A and OAuth: the MCP
 	// handlers enforce auth themselves (the same authn the interceptor uses), so
 	// they sit on a root HTTP route outside the gateway interceptor
 	// (.agents/spec/10-mcp-integration.md, "MCP Server").
-	mcpPath, mcpErr := attachMCP(cfg, &mcpServeDeps{
+	if code, mcpMounted := a.attachMCPServe(ctx, cfg, tel, apiCfg, &mcpServeDeps{
 		manager:      manager,
 		store:        db,
 		memory:       mem,
@@ -304,16 +335,21 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		workflowsDir: workflowsDir,
 		authn:        authn,
 		logger:       logger,
-	}, apiCfg)
-	if mcpErr != nil {
-		a.printErrf("serve: mcp: %v\n", mcpErr)
-		a.closeTelemetry(ctx, tel)
-
-		return ExitFailure
+	}); !mcpMounted {
+		return code
 	}
 
-	if mcpPath != "" {
-		a.printOutf("mcp server available at %s%s\n", "http://"+cfg.API.HTTP, mcpPath)
+	// The OpenAI-compatible adapter mounts on the same root mux, its explicit
+	// method patterns winning over the gateway catch-all. It reuses the chat
+	// agent and the personality set built above (.agents/spec/parity/openai-compat.md).
+	if code, compatMounted := a.attachOpenAICompatServe(ctx, cfg, tel, apiCfg, &openaiCompatDeps{
+		agent:         chatAgent,
+		personalities: personalities,
+		store:         db,
+		authn:         authn,
+		logger:        logger,
+	}); !compatMounted {
+		return code
 	}
 
 	server := api.NewServer(apiCfg)
@@ -332,20 +368,56 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		a.printOutf("metrics listening on %s\n", addr)
 	}
 
+	return a.serveAndDrain(ctx, cfg, stores, logger, &serveRuntime{
+		server:         server,
+		telegramBridge: telegramBridge,
+		manager:        manager,
+		queue:          queue,
+		registry:       registry,
+		tel:            tel,
+		fanout:         fanout,
+		secrets:        stores.secrets,
+	})
+}
+
+// serveRuntime bundles what serveAndDrain runs the background loops and the
+// scheduler daemon over, so the helper takes one argument instead of a long
+// parameter list.
+type serveRuntime struct {
+	server         *api.Server
+	telegramBridge *bridge.Bridge
+	manager        *api.Manager
+	queue          scheduler.WorkQueue
+	registry       *runner.Registry
+	tel            *telemetry.Telemetry
+	fanout         *notify.Fanout
+	secrets        secrets.Source
+}
+
+// serveAndDrain starts the retention sweep, hive subscribe, and Telegram bridge
+// background loops, prints the ready banner, serves until ctx cancels, then
+// drains every loop and flushes telemetry, returning the exit code. Split out of
+// runServe so that composition root stays under the maintainability ceiling.
+func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *serveStores, logger *slog.Logger, deps *serveRuntime) int {
+	bridgeDone := a.startTelegramBridge(ctx, deps.telegramBridge, logger)
+	fanoutDone := StartFanout(ctx, deps.fanout)
+
 	a.printOutf("serving; interrupt to stop\n")
 
-	sweepDone := startSweep(ctx, cfg, db, stores.keyStore, logger)
-	hiveDone := startHiveSubscribe(ctx, cfg, db, scheds, logger)
+	sweepDone := startSweep(ctx, cfg, stores.db, stores.keyStore, logger)
+	hiveDone := startHiveSubscribe(ctx, cfg, deps.secrets, stores.db, stores.scheds, logger)
 
 	a.announceHiveSubscribe(hiveDone)
 
-	code := a.serveUntilCanceled(ctx, server, &serveSchedulerDeps{
-		scheds:  scheds,
-		manager: manager,
-		pauses:  db,
-		queue:   queue,
+	code := a.serveUntilCanceled(ctx, deps.server, &serveSchedulerDeps{
+		scheds:  stores.scheds,
+		manager: deps.manager,
+		pauses:  stores.db,
+		queue:   deps.queue,
+		sources: buildPollSources(deps.registry),
 		cfg:     &cfg.Scheduler,
-		metrics: &queueMetricsAdapter{rec: tel.Recorder()},
+		metrics: &queueMetricsAdapter{rec: deps.tel.Recorder()},
+		fanout:  deps.fanout,
 	})
 
 	<-sweepDone
@@ -354,9 +426,81 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		<-hiveDone
 	}
 
-	a.closeTelemetry(ctx, tel)
+	<-bridgeDone
+	<-fanoutDone
+
+	a.closeTelemetry(ctx, deps.tel)
 
 	return code
+}
+
+// openServeSecretSourceAt builds the serve process's shared secret source, the
+// openStoreAt shape, so cmdServe opens it alongside the other stores and hands
+// runServe one bundle. Reporting a key or store failure on stderr here keeps the
+// failure ahead of any listener binding. The returned closer releases the store
+// handle at shutdown; the default env backend opens nothing.
+func (a *App) openServeSecretSourceAt(ctx context.Context, cfg *config.Config, dir string) (secrets.Source, func() error, int, bool) {
+	source, closeSource, err := a.buildSecretSource(ctx, dir, cfg)
+	if err != nil {
+		a.printErrf("serve: %v\n", err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	return source, closeSource, ExitOK, true
+}
+
+// serveEngineDeps bundles what buildServeEngine wires onto the serve-mode
+// engine, so the helper takes one argument instead of a long parameter list.
+type serveEngineDeps struct {
+	manager      *api.Manager
+	tel          *telemetry.Telemetry
+	registry     *runner.Registry
+	db           store.Store
+	mem          memory.Store
+	workflowsDir string
+	fanout       *notify.Fanout
+	secrets      secrets.Source
+	logger       *slog.Logger
+}
+
+// buildServeEngine assembles and wires the serve-mode engine: the file-config
+// tuning plus the manager hooks, telemetry, agent loop, governance, and the
+// directory-backed workflow resolver a workflow-call action resolves its child
+// through. It binds the engine to the manager and wires breaker telemetry,
+// returning an error so runServe can drain and exit on a wiring failure.
+func buildServeEngine(ctx context.Context, cfg *config.Config, deps *serveEngineDeps) (*engine.Engine, error) {
+	engCfg := engineConfig(cfg, deps.secrets)
+	engCfg.NewID = deps.manager.NewID
+	// The manager dispatch runs first and unchanged; the fan-out wrapper adds a
+	// run_failed line on a failed finish when that event is selected (decision 7).
+	engCfg.OnEvent = WrapRunFailedFanout(ctx, deps.manager.Dispatch, deps.fanout)
+	engCfg.Instrumentation = deps.tel.Recorder()
+	engCfg.AgentExecutor = agentloop.New(deps.registry, deps.mem, deps.db, deps.tel.Recorder())
+	// A workflow-call action resolves its child by name from the same
+	// directory-backed resolver serve mode resolves run names in
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	engCfg.Workflows = api.NewWorkflowResolver(deps.workflowsDir, deps.logger)
+	// Governance enforcement reads the store's spend and pause state. The
+	// fan-out-backed notifier reproduces the engine's nil-fallback warn log, so
+	// warn-mode behavior is unchanged, and emits a budget_denied line on the
+	// pause path when that event is selected (decision 7). A nil fan-out leaves
+	// the notifier unset, keeping the pre-fan-out slog fallback.
+	if notifier := NewBudgetFanoutNotifier(deps.fanout, deps.logger); notifier != nil {
+		engCfg.Notifier = notifier
+	}
+
+	engCfg.Budget = deps.db
+	engCfg.Pause = deps.db
+
+	eng := engine.New(engCfg, deps.registry, deps.db)
+	deps.manager.Bind(eng)
+
+	if err := wireBreakerTelemetry(ctx, eng, deps.tel.Recorder()); err != nil {
+		return nil, fmt.Errorf("telemetry: %w", err)
+	}
+
+	return eng, nil
 }
 
 // announceHiveSubscribe prints the hive-subscribe banner when the loop is
@@ -378,7 +522,7 @@ const hiveSubscribeInterval = time.Hour
 // the hive is disabled, so the serve loop adds no overhead for the common case.
 // Subscribing is receive-only and never publishes, so the periodic loop is safe
 // regardless of the publish gate.
-func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
+func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.Source, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
 	if !cfg.Hive.Enabled {
 		return nil
 	}
@@ -404,7 +548,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, db store.Store,
 		return nil
 	}
 
-	client, err := buildHiveClient(ctx, cfg)
+	client, err := buildHiveClient(ctx, source, cfg)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
 		closeCoord(ctx)
@@ -549,16 +693,21 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 
 	// The daemon enqueues each fire; the worker drains the queue and runs the
 	// workflow through the manager fire runner. A fire no worker can take right
-	// away waits in the queue rather than being skipped (S8).
+	// away waits in the queue rather than being skipped (S8). The poll-aware
+	// wrapper turns a [workflow.poll] fire into per-event enqueues and leaves a
+	// plain schedule untouched.
+	enqueue := &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}
+	pollRunner := newPollAwareRunner(enqueue, sched.queue, sched.sources, sched.pauses, a.logger)
+
 	daemon := scheduler.New(scheduler.Config{
 		Store:       sched.scheds,
-		Runner:      &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger},
+		Runner:      pollRunner,
 		Coordinator: coord,
 		Logger:      a.logger,
 	})
 
 	fire := api.NewFireRunner(sched.manager, sched.pauses, a.logger)
-	worker := newQueueWorker(sched.queue, &queueRunnerAdapter{fire: fire}, sched.cfg, sched.metrics, a.logger)
+	worker := newQueueWorker(sched.queue, &queueRunnerAdapter{fire: fire}, sched.cfg, sched.metrics, sched.fanout, a.logger)
 
 	daemonDone := make(chan error, 1)
 	workerDone := make(chan error, 1)
@@ -602,6 +751,8 @@ type serveSchedulerDeps struct {
 	manager *api.Manager
 	pauses  api.SchedulePauseChecker
 	queue   scheduler.WorkQueue
+	sources poll.Sources
 	cfg     *config.Scheduler
 	metrics scheduler.QueueMetrics
+	fanout  *notify.Fanout
 }

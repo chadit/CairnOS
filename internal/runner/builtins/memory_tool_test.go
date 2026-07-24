@@ -82,6 +82,11 @@ func (f *fakeMemoryStore) Search(_ context.Context, query memory.Query) (memory.
 	return memory.SearchResult{Entries: f.entries}, nil
 }
 
+// List implements memory.Store; the tool never calls it.
+func (f *fakeMemoryStore) List(_ context.Context, _ string) ([]memory.Entry, error) {
+	return nil, f.failWith
+}
+
 // Load implements memory.Store.
 func (f *fakeMemoryStore) Load(_ context.Context, scope string, _ int) ([]memory.Entry, error) {
 	f.mu.Lock()

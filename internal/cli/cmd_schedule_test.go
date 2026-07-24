@@ -135,3 +135,67 @@ func TestScheduleAddRejectsUnparseableWorkflow(t *testing.T) {
 		t.Fatalf("schedule add exited %d, want %d", code, cli.ExitUsage)
 	}
 }
+
+const pollAddKnownSource = `
+[workflow]
+name     = "poller_known"
+schedule = "@hourly"
+
+[workflow.poll]
+source = "github_issues"
+
+[action.tick]
+runner = "mock"
+params = { output = "tick" }
+`
+
+const pollAddUnknownSource = `
+[workflow]
+name     = "poller_unknown"
+schedule = "@hourly"
+
+[workflow.poll]
+source = "not_a_real_source"
+
+[action.tick]
+runner = "mock"
+params = { output = "tick" }
+`
+
+func TestScheduleAddWarnsOnUnknownPollSource(t *testing.T) {
+	t.Parallel()
+
+	dir := initDir(t)
+	path := writeWorkflow(t, dir, pollAddUnknownSource)
+
+	// An unknown source parses fine (it fails only at fire time), so add still
+	// succeeds; the warning is the operator's early heads-up.
+	code, _, stderr := runCLI(t, scheduleCmd, scheduleArgAdd, path, flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("schedule add exited %d, want OK with a warning: %s", code, stderr)
+	}
+
+	if !strings.Contains(stderr, "unknown poll source") {
+		t.Fatalf("stderr missing the unknown-source warning:\n%s", stderr)
+	}
+}
+
+func TestScheduleAddAcceptsKnownPollSourceQuietly(t *testing.T) {
+	t.Parallel()
+
+	dir := initDir(t)
+	path := writeWorkflow(t, dir, pollAddKnownSource)
+
+	code, stdout, stderr := runCLI(t, scheduleCmd, scheduleArgAdd, path, flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("schedule add exited %d: %s", code, stderr)
+	}
+
+	if strings.Contains(stderr, "unknown poll source") {
+		t.Fatalf("known poll source warned unexpectedly:\n%s", stderr)
+	}
+
+	if strings.TrimSpace(stdout) == "" {
+		t.Fatal("schedule add printed no id for a valid poll workflow")
+	}
+}

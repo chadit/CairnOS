@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
@@ -56,9 +57,20 @@ const (
 // simplicity; session pooling across calls is future work for when
 // per-call handshakes show up in latency numbers.
 type MCPClient struct {
+	// name is the registered identifier this instance answers to: the
+	// built-in registers as MCPClientName, while imported blocks
+	// (MCPClientFactoryFor) register one instance per block name.
+	name string
+
 	serverURL string
 	command   []string
 	tool      string
+
+	// httpClient carries the shared egress guard for the streamable HTTP
+	// transport, so registry-supplied server_url values cannot reach
+	// loopback, link-local, or private addresses without an explicit
+	// opt-in. Nil on the stdio path: its boundary is the process, not HTTP.
+	httpClient *http.Client
 
 	// mu guards spec, the schema cached by Describe after its first
 	// successful fetch.
@@ -66,10 +78,27 @@ type MCPClient struct {
 	spec *runner.ToolSpec
 }
 
-// NewMCPClient builds the runner from its config block. An empty block still
-// builds (the registry constructs every built-in at startup); Validate
-// reports the missing settings when a workflow references the runner.
+// NewMCPClient builds the runner from its config block with no credential
+// lookup. An empty block still builds (the registry constructs every built-in
+// at startup); Validate reports the missing settings when a workflow references
+// the runner. A credential key has no lookup to resolve against and fails the
+// build.
 func NewMCPClient(cfg map[string]any) (*MCPClient, error) {
+	return buildMCPClient(MCPClientName, cfg, nil)
+}
+
+// NewMCPClientWithCredentials builds the runner with an optional credential
+// lookup. When the config sets a credential key, lookup must know it (Has) or
+// construction fails, and the streamable HTTP transport carries a bearer token
+// minted per request.
+func NewMCPClientWithCredentials(cfg map[string]any, lookup TokenLookup) (*MCPClient, error) {
+	return buildMCPClient(MCPClientName, cfg, lookup)
+}
+
+// buildMCPClient is the shared constructor. name is the registered identifier
+// the instance answers to; error codes and Meta always keep the mcp_client
+// prefix. lookup is nil on the no-credential path.
+func buildMCPClient(name string, cfg map[string]any, lookup TokenLookup) (*MCPClient, error) {
 	serverURL, err := configValue(cfg, cfgKeyServerURL, "")
 	if err != nil {
 		return nil, wrapConfigErr(MCPClientName, err)
@@ -85,21 +114,90 @@ func NewMCPClient(cfg map[string]any) (*MCPClient, error) {
 		return nil, wrapConfigErr(MCPClientName, err)
 	}
 
+	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
+	if err != nil {
+		return nil, wrapConfigErr(MCPClientName, err)
+	}
+
 	if serverURL != "" && len(command) > 0 {
 		return nil, fmt.Errorf("%w: set server_url or command, not both", ErrConfigValue)
 	}
 
-	return &MCPClient{serverURL: serverURL, command: command, tool: tool}, nil
+	credential, err := requireCredential(cfg, lookup)
+	if err != nil {
+		return nil, wrapConfigErr(MCPClientName, err)
+	}
+
+	// A credential targets a request Authorization header, which only the
+	// streamable HTTP transport has. A stdio command child gets its environment
+	// from the process, so pairing credential with command is a config error
+	// rather than a silently ignored key.
+	if credential != "" && len(command) > 0 {
+		return nil, fmt.Errorf("%w: credential requires server_url; a stdio command has no request headers for a bearer token", ErrConfigValue)
+	}
+
+	client := &MCPClient{name: name, serverURL: serverURL, command: command, tool: tool}
+
+	if serverURL != "" {
+		// Timeout 0 is deliberate: streamable HTTP holds a stream open for
+		// the session, and a hard http.Client.Timeout would cut long tool
+		// calls mid-stream. Every call is already ctx-bounded: Execute runs
+		// under the engine's action timeout and Describe under
+		// describeTimeout.
+		client.httpClient = safeHTTPClient(MCPClientName, 0, allowPrivate)
+
+		if credential != "" {
+			// The bearer round-tripper wraps the guarded transport, so every
+			// request the session makes carries the token while the client's
+			// dial and redirect guards stay in force.
+			client.httpClient.Transport = &bearerRoundTripper{
+				base:       client.httpClient.Transport,
+				lookup:     lookup,
+				credential: credential,
+			}
+		}
+	}
+
+	return client, nil
 }
 
-// MCPClientFactory adapts NewMCPClient to the registry contract.
+// MCPClientFactory adapts buildMCPClient to the registry contract with no
+// credential lookup. It is MCPClientFactoryWithCredentials with a nil lookup.
 func MCPClientFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewMCPClient(cfg)
+	return buildMCPClient(MCPClientName, cfg, nil)
 }
 
-// Name implements runner.Runner.
-func (*MCPClient) Name() string {
-	return MCPClientName
+// MCPClientFactoryWithCredentials returns a registry factory that wires lookup
+// into the built-in mcp_client instance, so a block with a credential key sends
+// Authorization: Bearer over the streamable HTTP transport.
+func MCPClientFactoryWithCredentials(lookup TokenLookup) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		return buildMCPClient(MCPClientName, cfg, lookup)
+	}
+}
+
+// MCPClientFactoryFor builds MCP client instances registered under name with no
+// credential lookup, the path CLI wiring takes for [runner.<name>] blocks with
+// type = "mcp_client" (the shape `cairnos mcp import` emits). Only the reported
+// Name changes; error codes and Meta keep the mcp_client prefix, matching the
+// other builtins' type-level codes.
+func MCPClientFactoryFor(name string) runner.Factory {
+	return MCPClientFactoryForWithCredentials(name, nil)
+}
+
+// MCPClientFactoryForWithCredentials is MCPClientFactoryFor with a credential
+// lookup, so an imported mcp_client block can bind a credential too.
+func MCPClientFactoryForWithCredentials(name string, lookup TokenLookup) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		return buildMCPClient(name, cfg, lookup)
+	}
+}
+
+// Name implements runner.Runner: the registered identifier workflow files
+// reference, so an imported instance answers with its block name, not the
+// shared built-in name.
+func (m *MCPClient) Name() string {
+	return m.name
 }
 
 // Validate implements runner.Runner. Params carry no fixed schema here: they
@@ -114,6 +212,14 @@ func (m *MCPClient) Validate(_ *runner.Task) error {
 	if m.serverURL == "" && len(m.command) == 0 {
 		return runner.NewError(runner.ClassPermanent, codeMCPNotConfigured,
 			"runner config must set server_url or command")
+	}
+
+	// The scheme allowlist runs here so a file:// or gopher:// endpoint
+	// fails as a permanent blocked_target before any dial happens.
+	if m.serverURL != "" {
+		if err := guardTarget(MCPClientName, m.serverURL); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -190,10 +296,12 @@ func (m *MCPClient) connect(ctx context.Context) (*mcp.ClientSession, error) {
 	return session, nil
 }
 
-// transport picks streamable HTTP for server_url and stdio for command.
+// transport picks streamable HTTP for server_url and stdio for command. The
+// HTTP path rides the guarded client so every dial, including redirect hops,
+// passes the egress checks.
 func (m *MCPClient) transport(ctx context.Context) mcp.Transport {
 	if m.serverURL != "" {
-		return &mcp.StreamableClientTransport{Endpoint: m.serverURL}
+		return &mcp.StreamableClientTransport{Endpoint: m.serverURL, HTTPClient: m.httpClient}
 	}
 
 	// #nosec G204 -- the argv array comes from the operator's own runner
@@ -278,11 +386,20 @@ func joinMCPText(blocks []mcp.Content) string {
 	return strings.Join(texts, "\n")
 }
 
-// classifyMCPError maps a protocol-level failure. Wire errors came from the
+// classifyMCPError maps a protocol-level failure. A dial the egress guard
+// refused is permanent and checked first. Wire errors came from the
 // server, so retrying only helps when the message signals throttling;
 // -32602 is the spec's invalid-params code. Everything else is transport,
 // classified by the shared network/timeout rules.
 func classifyMCPError(ctx context.Context, err error) error {
+	// The guard's refused dial rides under the SDK's "rejected by
+	// transport" wire error (-32005), so the blocked-dial check has to run
+	// before the wire split or it would classify as a retryable transport
+	// failure that never succeeds.
+	if blocked := classifyBlockedDial(MCPClientName, err); blocked != nil {
+		return blocked
+	}
+
 	wireErr, isWire := errors.AsType[*jsonrpc.Error](err)
 	if !isWire {
 		if looksRateLimited(err.Error()) {

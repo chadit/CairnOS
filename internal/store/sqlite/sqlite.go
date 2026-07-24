@@ -131,12 +131,52 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     PRIMARY KEY (session_id, seq)
 );
 
+CREATE TABLE IF NOT EXISTS run_approvals (
+    run_id       TEXT NOT NULL,
+    action_name  TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    status       TEXT NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    actor        TEXT NOT NULL DEFAULT '',
+    comment      TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMP NOT NULL,
+    decided_at   TIMESTAMP,
+    PRIMARY KEY (run_id, action_name)
+);
+
+CREATE TABLE IF NOT EXISTS bridge_sessions (
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    transport    TEXT NOT NULL,
+    chat_key     TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    updated_at   TIMESTAMP NOT NULL,
+    PRIMARY KEY (workspace_id, transport, chat_key)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
+    content, content='chat_messages', content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS chat_messages_fts_insert AFTER INSERT ON chat_messages BEGIN
+    INSERT INTO chat_messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chat_messages_fts_delete AFTER DELETE ON chat_messages BEGIN
+    INSERT INTO chat_messages_fts(chat_messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chat_messages_fts_update AFTER UPDATE ON chat_messages BEGIN
+    INSERT INTO chat_messages_fts(chat_messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+    INSERT INTO chat_messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
 CREATE INDEX IF NOT EXISTS idx_runs_workflow ON runs(workflow_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(workspace_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(workspace_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_versions_workflow ON workflow_versions(workflow_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_run_approvals_pending ON run_approvals(workspace_id, run_id, status);
 `
 
 // Store is the SQLite-backed implementation of store.Store. It is safe for
@@ -161,11 +201,107 @@ func Open(path string) (*Store, error) {
 	// inherit a context from; Open's contract carries no ctx on purpose.
 	setupCtx := context.Background()
 
+	// Databases created before transcript search hold chat_messages rows the
+	// FTS triggers never saw, so probe for the index table before the schema
+	// runs: absent-then-created means this open must backfill it once.
+	ftsPresent, probeErr := chatSearchIndexPresent(setupCtx, db)
+	if probeErr != nil {
+		return nil, fmt.Errorf("probe chat search index: %w", errors.Join(probeErr, db.Close()))
+	}
+
 	if _, execErr := db.ExecContext(setupCtx, schemaSQL); execErr != nil {
 		return nil, fmt.Errorf("create schema: %w", errors.Join(execErr, db.Close()))
 	}
 
+	// runs.parent_run_id rides a guarded ALTER because the schema has no
+	// migration framework: CREATE TABLE IF NOT EXISTS never adds a column to a
+	// database an older binary already created, and sqlite lacks ADD COLUMN IF
+	// NOT EXISTS, so this probes first (.agents/spec/parity/workflow-language.md).
+	if alterErr := addRunsParentColumn(setupCtx, db); alterErr != nil {
+		return nil, fmt.Errorf("upgrade runs schema: %w", errors.Join(alterErr, db.Close()))
+	}
+
+	if !ftsPresent {
+		// FTS5's 'rebuild' reindexes the whole table, so it only runs on the
+		// one open that created the index; a reopen finds the table present
+		// and skips it, keeping startup cheap.
+		if _, rebuildErr := db.ExecContext(setupCtx,
+			"INSERT INTO chat_messages_fts(chat_messages_fts) VALUES ('rebuild')"); rebuildErr != nil {
+			return nil, fmt.Errorf("backfill chat search index: %w", errors.Join(rebuildErr, db.Close()))
+		}
+	}
+
 	return &Store{db: db}, nil
+}
+
+// chatSearchIndexPresent reports whether the chat_messages_fts table already
+// exists, the guard that decides if Open owes the one-time search backfill.
+func chatSearchIndexPresent(ctx context.Context, db *sql.DB) (bool, error) {
+	var count int
+
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages_fts'").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("query sqlite_master: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// addRunsParentColumn adds runs.parent_run_id when a pre-upgrade database
+// lacks it. sqlite has no ADD COLUMN IF NOT EXISTS, so it probes
+// pragma table_info first and only ALTERs when the column is missing, which
+// keeps a reopen of an already-upgraded database a no-op.
+func addRunsParentColumn(ctx context.Context, db *sql.DB) error {
+	present, err := runsHasParentColumn(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	if present {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, "ALTER TABLE runs ADD COLUMN parent_run_id TEXT"); err != nil {
+		return fmt.Errorf("add runs.parent_run_id: %w", err)
+	}
+
+	return nil
+}
+
+// runsHasParentColumn reports whether the runs table already carries the
+// parent_run_id column, the guard that decides if Open owes the one-time ALTER.
+func runsHasParentColumn(ctx context.Context, db *sql.DB) (bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(runs)")
+	if err != nil {
+		return false, fmt.Errorf("probe runs columns: %w", err)
+	}
+	defer closeQuietly(rows)
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			colType   string
+			notNull   int
+			dflt      sql.NullString
+			primaryPK int
+		)
+
+		if scanErr := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &primaryPK); scanErr != nil {
+			return false, fmt.Errorf("scan runs column: %w", scanErr)
+		}
+
+		if name == "parent_run_id" {
+			return true, nil
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("probe runs columns: %w", err)
+	}
+
+	return false, nil
 }
 
 // NewID returns a ULID: time-sortable so "list recent runs" is an index

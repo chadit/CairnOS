@@ -22,8 +22,9 @@ const configTemplate = `# CairnOS configuration.
 # CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS, store.dsn becomes CAIRNOS_STORE_DSN.
 # The environment wins over this file.
 #
-# Secrets never live here. A ${{ secrets.name }} reference in a workflow
-# reads the CAIRNOS_SECRET_NAME environment variable.
+# Secret values never live here. A ${{ secrets.name }} reference reads the
+# CAIRNOS_SECRET_NAME environment variable by default; set [secrets] backend =
+# "store" to also resolve from the encrypted store (env still wins).
 
 [engine]
 max_concurrent_actions = %d     # in-flight runner calls across the engine
@@ -40,6 +41,9 @@ jitter       = %t
 [store]
 backend = "%s"                  # sqlite (postgres arrives in a later phase)
 dsn     = "%s"                  # relative paths resolve against this directory
+
+[secrets]
+backend = "%s"                  # env (default; CAIRNOS_SECRET_<NAME>) | store (encrypted store, env first)
 
 [memory]
 backend = "%s"                  # sqlite keyword search; vector backends come later
@@ -99,6 +103,22 @@ depends_on = ["greet"]
 params     = { output = "echo: ${{ greet.output }}" }
 `
 
+// exampleSkill is the out-of-the-box skill: drop-in Markdown a chat turn can
+// invoke with /summarize, or the driver can load by its description. The
+// frontmatter carries the name and description; everything after it is the
+// body injected into the driver prompt.
+const exampleSkill = `---
+name: summarize
+description: Summarize the conversation into five bullets.
+---
+Summarize the conversation so far into at most five concise bullet points,
+each a single sentence. Lead with the most important decision or open
+question, and skip pleasantries and restated context.
+`
+
+// exampleSkillFileName is the example skill init writes under skills/.
+const exampleSkillFileName = "summarize.md"
+
 func (a *App) cmdInit(args []string) int {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -130,16 +150,21 @@ func (a *App) cmdInit(args []string) int {
 }
 
 // scaffold creates the init layout (.agents/spec/11-deployment-and-config.md,
-// "cairnos init"): config.toml, data/, workflows/, examples/. Existing files
-// are kept so re-running init never clobbers an edited config.
+// "cairnos init"): config.toml, data/, workflows/, examples/, skills/, and
+// context/ (per-workspace chat context docs). Existing files are kept so
+// re-running init never clobbers an edited config or skill.
 func scaffold(dir string) error {
-	for _, sub := range []string{dataDirName, workflowsDirName, examplesDirName} {
+	for _, sub := range []string{dataDirName, workflowsDirName, examplesDirName, skillsDirName, contextDirName} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), dirPerm); err != nil {
 			return fmt.Errorf("create %s: %w", sub, err)
 		}
 	}
 
 	if err := writeIfAbsent(filepath.Join(dir, configFileName), renderConfig()); err != nil {
+		return err
+	}
+
+	if err := writeIfAbsent(filepath.Join(dir, skillsDirName, exampleSkillFileName), exampleSkill); err != nil {
 		return err
 	}
 
@@ -175,6 +200,7 @@ func renderConfig() string {
 		def.Engine.Retry.Jitter,
 		def.Store.Backend,
 		def.Store.DSN,
+		def.Secrets.Backend,
 		def.Memory.Backend,
 		def.Memory.Vector,
 		formatDuration(def.Retention.Runs),

@@ -19,6 +19,17 @@ lint:
     # a Service suffix would put the docs and the wire name out of step.
     SERVICE_SUFFIX:
       - proto/cairnos/plugin/v1/plugin.proto
+    # SendMessage and ConfirmAction both stream ChatEvent by design: an
+    # approved confirmation continues the same event stream a turn produces,
+    # so the web and CLI consumers fold one event union
+    # (.agents/spec/13-roadmap.md, "Phase 9 backend").
+    RPC_REQUEST_RESPONSE_UNIQUE:
+      - proto/cairnos/v1/chat.proto
+      # ReplayRun re-runs a workflow from its first failed action and streams
+      # the same RunEvent stream RunWorkflow produces; a replay is a run, so a
+      # separate response type would only duplicate the event union
+      # (.agents/spec/parity/workflow-language.md, replay slice).
+      - proto/cairnos/v1/workflow.proto
 breaking:
   use:
     - FILE

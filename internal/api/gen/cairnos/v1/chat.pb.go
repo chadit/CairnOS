@@ -166,9 +166,12 @@ type ChatMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Seq   int32                  `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
 	// role is user, assistant, or tool.
-	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
-	Content       string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Role      string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	Content   string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// session_id names the conversation the message belongs to, so a search
+	// hit identifies its session without a separate lookup.
+	SessionId     string `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -229,6 +232,13 @@ func (x *ChatMessage) GetCreatedAt() *timestamppb.Timestamp {
 		return x.CreatedAt
 	}
 	return nil
+}
+
+func (x *ChatMessage) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 // WorkflowProposal is the D9 confirmation payload: the workflow the agent wants
@@ -852,6 +862,113 @@ func (x *ListMessagesResponse) GetMessages() []*ChatMessage {
 	return nil
 }
 
+type SearchMessagesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// text is the full-text query; empty is InvalidArgument.
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// session_id optionally narrows hits to one session.
+	SessionId string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// limit caps the result count; zero means no cap, matching SearchMemory.
+	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchMessagesRequest) Reset() {
+	*x = SearchMessagesRequest{}
+	mi := &file_cairnos_v1_chat_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchMessagesRequest) ProtoMessage() {}
+
+func (x *SearchMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_chat_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SearchMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_chat_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SearchMessagesRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *SearchMessagesRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SearchMessagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type SearchMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Messages      []*ChatMessage         `protobuf:"bytes,1,rep,name=messages,proto3" json:"messages,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchMessagesResponse) Reset() {
+	*x = SearchMessagesResponse{}
+	mi := &file_cairnos_v1_chat_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchMessagesResponse) ProtoMessage() {}
+
+func (x *SearchMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_chat_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SearchMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_chat_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SearchMessagesResponse) GetMessages() []*ChatMessage {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
 var File_cairnos_v1_chat_proto protoreflect.FileDescriptor
 
 const file_cairnos_v1_chat_proto_rawDesc = "" +
@@ -864,13 +981,15 @@ const file_cairnos_v1_chat_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x88\x01\n" +
+	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xa7\x01\n" +
 	"\vChatMessage\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x05R\x03seq\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x03 \x01(\tR\acontent\x129\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x9a\x01\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\"\x9a\x01\n" +
 	"\x10WorkflowProposal\x12#\n" +
 	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12/\n" +
 	"\x06inputs\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06inputs\x120\n" +
@@ -910,6 +1029,13 @@ const file_cairnos_v1_chat_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"K\n" +
 	"\x14ListMessagesResponse\x123\n" +
+	"\bmessages\x18\x01 \x03(\v2\x17.cairnos.v1.ChatMessageR\bmessages\"`\n" +
+	"\x15SearchMessagesRequest\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"M\n" +
+	"\x16SearchMessagesResponse\x123\n" +
 	"\bmessages\x18\x01 \x03(\v2\x17.cairnos.v1.ChatMessageR\bmessages*\x81\x02\n" +
 	"\rChatEventType\x12\x1f\n" +
 	"\x1bCHAT_EVENT_TYPE_UNSPECIFIED\x10\x00\x12#\n" +
@@ -918,7 +1044,7 @@ const file_cairnos_v1_chat_proto_rawDesc = "" +
 	"%CHAT_EVENT_TYPE_CONFIRMATION_REQUIRED\x10\x03\x12\x1f\n" +
 	"\x1bCHAT_EVENT_TYPE_RUN_STARTED\x10\x04\x12 \n" +
 	"\x1cCHAT_EVENT_TYPE_RUN_FINISHED\x10\x05\x12\x1d\n" +
-	"\x19CHAT_EVENT_TYPE_TURN_DONE\x10\x062\xe4\x05\n" +
+	"\x19CHAT_EVENT_TYPE_TURN_DONE\x10\x062\xd6\x06\n" +
 	"\vChatService\x12r\n" +
 	"\rCreateSession\x12 .cairnos.v1.CreateSessionRequest\x1a!.cairnos.v1.CreateSessionResponse\"\x1c\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/v1/chat/sessions\x12z\n" +
 	"\vSendMessage\x12\x1e.cairnos.v1.SendMessageRequest\x1a\x15.cairnos.v1.ChatEvent\"2\x82\xd3\xe4\x93\x02,:\x01*\"'/v1/chat/sessions/{session_id}/messages0\x01\x12}\n" +
@@ -926,7 +1052,8 @@ const file_cairnos_v1_chat_proto_rawDesc = "" +
 	"\n" +
 	"GetSession\x12\x1d.cairnos.v1.GetSessionRequest\x1a\x1e.cairnos.v1.GetSessionResponse\"&\x82\xd3\xe4\x93\x02 \x12\x1e/v1/chat/sessions/{session_id}\x12l\n" +
 	"\fListSessions\x12\x1f.cairnos.v1.ListSessionsRequest\x1a .cairnos.v1.ListSessionsResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/v1/chat/sessions\x12\x82\x01\n" +
-	"\fListMessages\x12\x1f.cairnos.v1.ListMessagesRequest\x1a .cairnos.v1.ListMessagesResponse\"/\x82\xd3\xe4\x93\x02)\x12'/v1/chat/sessions/{session_id}/messagesBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
+	"\fListMessages\x12\x1f.cairnos.v1.ListMessagesRequest\x1a .cairnos.v1.ListMessagesResponse\"/\x82\xd3\xe4\x93\x02)\x12'/v1/chat/sessions/{session_id}/messages\x12p\n" +
+	"\x0eSearchMessages\x12!.cairnos.v1.SearchMessagesRequest\x1a\".cairnos.v1.SearchMessagesResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/v1/chat/searchBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
 
 var (
 	file_cairnos_v1_chat_proto_rawDescOnce sync.Once
@@ -941,55 +1068,60 @@ func file_cairnos_v1_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_cairnos_v1_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cairnos_v1_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_cairnos_v1_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_cairnos_v1_chat_proto_goTypes = []any{
-	(ChatEventType)(0),            // 0: cairnos.v1.ChatEventType
-	(*ChatSession)(nil),           // 1: cairnos.v1.ChatSession
-	(*ChatMessage)(nil),           // 2: cairnos.v1.ChatMessage
-	(*WorkflowProposal)(nil),      // 3: cairnos.v1.WorkflowProposal
-	(*ChatEvent)(nil),             // 4: cairnos.v1.ChatEvent
-	(*CreateSessionRequest)(nil),  // 5: cairnos.v1.CreateSessionRequest
-	(*CreateSessionResponse)(nil), // 6: cairnos.v1.CreateSessionResponse
-	(*SendMessageRequest)(nil),    // 7: cairnos.v1.SendMessageRequest
-	(*ConfirmActionRequest)(nil),  // 8: cairnos.v1.ConfirmActionRequest
-	(*GetSessionRequest)(nil),     // 9: cairnos.v1.GetSessionRequest
-	(*GetSessionResponse)(nil),    // 10: cairnos.v1.GetSessionResponse
-	(*ListSessionsRequest)(nil),   // 11: cairnos.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),  // 12: cairnos.v1.ListSessionsResponse
-	(*ListMessagesRequest)(nil),   // 13: cairnos.v1.ListMessagesRequest
-	(*ListMessagesResponse)(nil),  // 14: cairnos.v1.ListMessagesResponse
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 16: google.protobuf.Struct
+	(ChatEventType)(0),             // 0: cairnos.v1.ChatEventType
+	(*ChatSession)(nil),            // 1: cairnos.v1.ChatSession
+	(*ChatMessage)(nil),            // 2: cairnos.v1.ChatMessage
+	(*WorkflowProposal)(nil),       // 3: cairnos.v1.WorkflowProposal
+	(*ChatEvent)(nil),              // 4: cairnos.v1.ChatEvent
+	(*CreateSessionRequest)(nil),   // 5: cairnos.v1.CreateSessionRequest
+	(*CreateSessionResponse)(nil),  // 6: cairnos.v1.CreateSessionResponse
+	(*SendMessageRequest)(nil),     // 7: cairnos.v1.SendMessageRequest
+	(*ConfirmActionRequest)(nil),   // 8: cairnos.v1.ConfirmActionRequest
+	(*GetSessionRequest)(nil),      // 9: cairnos.v1.GetSessionRequest
+	(*GetSessionResponse)(nil),     // 10: cairnos.v1.GetSessionResponse
+	(*ListSessionsRequest)(nil),    // 11: cairnos.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),   // 12: cairnos.v1.ListSessionsResponse
+	(*ListMessagesRequest)(nil),    // 13: cairnos.v1.ListMessagesRequest
+	(*ListMessagesResponse)(nil),   // 14: cairnos.v1.ListMessagesResponse
+	(*SearchMessagesRequest)(nil),  // 15: cairnos.v1.SearchMessagesRequest
+	(*SearchMessagesResponse)(nil), // 16: cairnos.v1.SearchMessagesResponse
+	(*timestamppb.Timestamp)(nil),  // 17: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 18: google.protobuf.Struct
 }
 var file_cairnos_v1_chat_proto_depIdxs = []int32{
-	15, // 0: cairnos.v1.ChatSession.created_at:type_name -> google.protobuf.Timestamp
-	15, // 1: cairnos.v1.ChatSession.updated_at:type_name -> google.protobuf.Timestamp
-	15, // 2: cairnos.v1.ChatMessage.created_at:type_name -> google.protobuf.Timestamp
-	16, // 3: cairnos.v1.WorkflowProposal.inputs:type_name -> google.protobuf.Struct
+	17, // 0: cairnos.v1.ChatSession.created_at:type_name -> google.protobuf.Timestamp
+	17, // 1: cairnos.v1.ChatSession.updated_at:type_name -> google.protobuf.Timestamp
+	17, // 2: cairnos.v1.ChatMessage.created_at:type_name -> google.protobuf.Timestamp
+	18, // 3: cairnos.v1.WorkflowProposal.inputs:type_name -> google.protobuf.Struct
 	0,  // 4: cairnos.v1.ChatEvent.type:type_name -> cairnos.v1.ChatEventType
-	16, // 5: cairnos.v1.ChatEvent.tool_input:type_name -> google.protobuf.Struct
+	18, // 5: cairnos.v1.ChatEvent.tool_input:type_name -> google.protobuf.Struct
 	3,  // 6: cairnos.v1.ChatEvent.proposal:type_name -> cairnos.v1.WorkflowProposal
 	1,  // 7: cairnos.v1.CreateSessionResponse.session:type_name -> cairnos.v1.ChatSession
 	1,  // 8: cairnos.v1.GetSessionResponse.session:type_name -> cairnos.v1.ChatSession
 	1,  // 9: cairnos.v1.ListSessionsResponse.sessions:type_name -> cairnos.v1.ChatSession
 	2,  // 10: cairnos.v1.ListMessagesResponse.messages:type_name -> cairnos.v1.ChatMessage
-	5,  // 11: cairnos.v1.ChatService.CreateSession:input_type -> cairnos.v1.CreateSessionRequest
-	7,  // 12: cairnos.v1.ChatService.SendMessage:input_type -> cairnos.v1.SendMessageRequest
-	8,  // 13: cairnos.v1.ChatService.ConfirmAction:input_type -> cairnos.v1.ConfirmActionRequest
-	9,  // 14: cairnos.v1.ChatService.GetSession:input_type -> cairnos.v1.GetSessionRequest
-	11, // 15: cairnos.v1.ChatService.ListSessions:input_type -> cairnos.v1.ListSessionsRequest
-	13, // 16: cairnos.v1.ChatService.ListMessages:input_type -> cairnos.v1.ListMessagesRequest
-	6,  // 17: cairnos.v1.ChatService.CreateSession:output_type -> cairnos.v1.CreateSessionResponse
-	4,  // 18: cairnos.v1.ChatService.SendMessage:output_type -> cairnos.v1.ChatEvent
-	4,  // 19: cairnos.v1.ChatService.ConfirmAction:output_type -> cairnos.v1.ChatEvent
-	10, // 20: cairnos.v1.ChatService.GetSession:output_type -> cairnos.v1.GetSessionResponse
-	12, // 21: cairnos.v1.ChatService.ListSessions:output_type -> cairnos.v1.ListSessionsResponse
-	14, // 22: cairnos.v1.ChatService.ListMessages:output_type -> cairnos.v1.ListMessagesResponse
-	17, // [17:23] is the sub-list for method output_type
-	11, // [11:17] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	2,  // 11: cairnos.v1.SearchMessagesResponse.messages:type_name -> cairnos.v1.ChatMessage
+	5,  // 12: cairnos.v1.ChatService.CreateSession:input_type -> cairnos.v1.CreateSessionRequest
+	7,  // 13: cairnos.v1.ChatService.SendMessage:input_type -> cairnos.v1.SendMessageRequest
+	8,  // 14: cairnos.v1.ChatService.ConfirmAction:input_type -> cairnos.v1.ConfirmActionRequest
+	9,  // 15: cairnos.v1.ChatService.GetSession:input_type -> cairnos.v1.GetSessionRequest
+	11, // 16: cairnos.v1.ChatService.ListSessions:input_type -> cairnos.v1.ListSessionsRequest
+	13, // 17: cairnos.v1.ChatService.ListMessages:input_type -> cairnos.v1.ListMessagesRequest
+	15, // 18: cairnos.v1.ChatService.SearchMessages:input_type -> cairnos.v1.SearchMessagesRequest
+	6,  // 19: cairnos.v1.ChatService.CreateSession:output_type -> cairnos.v1.CreateSessionResponse
+	4,  // 20: cairnos.v1.ChatService.SendMessage:output_type -> cairnos.v1.ChatEvent
+	4,  // 21: cairnos.v1.ChatService.ConfirmAction:output_type -> cairnos.v1.ChatEvent
+	10, // 22: cairnos.v1.ChatService.GetSession:output_type -> cairnos.v1.GetSessionResponse
+	12, // 23: cairnos.v1.ChatService.ListSessions:output_type -> cairnos.v1.ListSessionsResponse
+	14, // 24: cairnos.v1.ChatService.ListMessages:output_type -> cairnos.v1.ListMessagesResponse
+	16, // 25: cairnos.v1.ChatService.SearchMessages:output_type -> cairnos.v1.SearchMessagesResponse
+	19, // [19:26] is the sub-list for method output_type
+	12, // [12:19] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_cairnos_v1_chat_proto_init() }
@@ -1004,7 +1136,7 @@ func file_cairnos_v1_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cairnos_v1_chat_proto_rawDesc), len(file_cairnos_v1_chat_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

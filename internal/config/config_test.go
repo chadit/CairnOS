@@ -62,6 +62,10 @@ func TestLoadMissingFileServesDefaults(t *testing.T) {
 		t.Fatalf("defaults not served: %+v", cfg.Engine)
 	}
 
+	if cfg.Engine.MaxCallDepth != 3 {
+		t.Fatalf("engine.max_call_depth default = %d, want 3", cfg.Engine.MaxCallDepth)
+	}
+
 	if cfg.Retention.Runs != 90*24*time.Hour {
 		t.Fatalf("retention.runs default = %v", cfg.Retention.Runs)
 	}
@@ -113,6 +117,7 @@ func TestLoadOverlaysFileOnDefaults(t *testing.T) {
 
 func TestLoadEnvOverridesBeatFile(t *testing.T) {
 	t.Setenv("CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS", "16")
+	t.Setenv("CAIRNOS_ENGINE_MAX_CALL_DEPTH", "5")
 	t.Setenv("CAIRNOS_STORE_DSN", "file:/tmp/env.db")
 	t.Setenv("CAIRNOS_ENV_ALLOWLIST", "HOME, USER")
 	t.Setenv("CAIRNOS_RETENTION_SWEEP", "1d")
@@ -124,6 +129,10 @@ func TestLoadEnvOverridesBeatFile(t *testing.T) {
 
 	if cfg.Engine.MaxConcurrentActions != 16 {
 		t.Fatalf("env did not beat file: %d", cfg.Engine.MaxConcurrentActions)
+	}
+
+	if cfg.Engine.MaxCallDepth != 5 {
+		t.Fatalf("engine.max_call_depth env override = %d, want 5", cfg.Engine.MaxCallDepth)
 	}
 
 	if cfg.Store.DSN != "file:/tmp/env.db" {
@@ -663,6 +672,131 @@ func TestLoadMCPEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadChatOpenAICompat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default_off", func(t *testing.T) {
+		t.Parallel()
+
+		if config.Default().Chat.OpenAICompat {
+			t.Error("chat.openai_compat should default off")
+		}
+	})
+
+	t.Run("toml_parse", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := config.Load(writeConfig(t, "[chat]\nenabled = true\nopenai_compat = true"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+
+		if !cfg.Chat.OpenAICompat {
+			t.Error("chat.openai_compat = false from TOML, want true")
+		}
+	})
+}
+
+func TestLoadChatOpenAICompatEnvOverride(t *testing.T) {
+	t.Setenv("CAIRNOS_CHAT_OPENAI_COMPAT", "true")
+
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !cfg.Chat.OpenAICompat {
+		t.Error("CAIRNOS_CHAT_OPENAI_COMPAT override did not set chat.openai_compat")
+	}
+}
+
+func TestLoadWebhookDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+
+	if cfg.Webhook.Enabled {
+		t.Error("webhook should default off so no public ingress route mounts")
+	}
+
+	if cfg.Webhook.RatePerMinute != 60 {
+		t.Errorf("webhook rate_per_minute default = %d, want 60", cfg.Webhook.RatePerMinute)
+	}
+
+	if cfg.Webhook.TestWait != 30*time.Second {
+		t.Errorf("webhook test_wait default = %v, want 30s", cfg.Webhook.TestWait)
+	}
+
+	if cfg.Webhook.SignatureSkew != 5*time.Minute {
+		t.Errorf("webhook signature_skew default = %v, want 5m", cfg.Webhook.SignatureSkew)
+	}
+}
+
+func TestLoadWebhookBlockFromFile(t *testing.T) {
+	t.Parallel()
+
+	webhookTOML := `
+[webhook]
+enabled         = true
+rate_per_minute = 120
+test_wait       = "10s"
+signature_skew  = "2m"
+`
+
+	cfg, err := config.Load(writeConfig(t, webhookTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !cfg.Webhook.Enabled {
+		t.Error("webhook.enabled = false from TOML, want true")
+	}
+
+	if cfg.Webhook.RatePerMinute != 120 {
+		t.Errorf("webhook rate_per_minute = %d, want 120", cfg.Webhook.RatePerMinute)
+	}
+
+	if cfg.Webhook.TestWait != 10*time.Second {
+		t.Errorf("webhook test_wait = %v, want 10s", cfg.Webhook.TestWait)
+	}
+
+	if cfg.Webhook.SignatureSkew != 2*time.Minute {
+		t.Errorf("webhook signature_skew = %v, want 2m", cfg.Webhook.SignatureSkew)
+	}
+}
+
+func TestLoadWebhookEnvOverrides(t *testing.T) {
+	t.Setenv("CAIRNOS_WEBHOOK_ENABLED", "true")
+	t.Setenv("CAIRNOS_WEBHOOK_RATE_PER_MINUTE", "240")
+	t.Setenv("CAIRNOS_WEBHOOK_TEST_WAIT", "45s")
+	t.Setenv("CAIRNOS_WEBHOOK_SIGNATURE_SKEW", "90s")
+
+	// The env override must beat a file that sets the same keys, so the file
+	// carries different values than the environment.
+	fileWithWebhook := "[webhook]\nenabled = false\nrate_per_minute = 60\ntest_wait = \"30s\"\nsignature_skew = \"5m\""
+
+	cfg, err := config.Load(writeConfig(t, fileWithWebhook))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !cfg.Webhook.Enabled {
+		t.Error("CAIRNOS_WEBHOOK_ENABLED override did not win over the file")
+	}
+
+	if cfg.Webhook.RatePerMinute != 240 {
+		t.Errorf("webhook rate_per_minute env override = %d, want 240", cfg.Webhook.RatePerMinute)
+	}
+
+	if cfg.Webhook.TestWait != 45*time.Second {
+		t.Errorf("webhook test_wait env override = %v, want 45s", cfg.Webhook.TestWait)
+	}
+
+	if cfg.Webhook.SignatureSkew != 90*time.Second {
+		t.Errorf("webhook signature_skew env override = %v, want 90s", cfg.Webhook.SignatureSkew)
+	}
+}
+
 func TestLoadHiveAndAutonomicDefaultGated(t *testing.T) {
 	t.Parallel()
 
@@ -798,5 +932,120 @@ func TestLoadRejectsBadEnvValue(t *testing.T) {
 	_, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
 	if !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadChatFileRefsDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(cfg.Chat.FileAllowlist) != 0 {
+		t.Fatalf("file_allowlist default = %v, want empty", cfg.Chat.FileAllowlist)
+	}
+
+	if cfg.Chat.MaxFileBytes != 65536 {
+		t.Fatalf("max_file_bytes default = %d, want 65536", cfg.Chat.MaxFileBytes)
+	}
+}
+
+func TestLoadChatFileRefsFromFile(t *testing.T) {
+	t.Parallel()
+
+	chatTOML := `
+[chat]
+enabled = true
+file_allowlist = ["/data/docs", "/data/runbooks"]
+max_file_bytes = 4096
+`
+
+	cfg, err := config.Load(writeConfig(t, chatTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !slices.Equal(cfg.Chat.FileAllowlist, []string{"/data/docs", "/data/runbooks"}) {
+		t.Fatalf("file_allowlist from file = %v", cfg.Chat.FileAllowlist)
+	}
+
+	if cfg.Chat.MaxFileBytes != 4096 {
+		t.Fatalf("max_file_bytes from file = %d, want 4096", cfg.Chat.MaxFileBytes)
+	}
+}
+
+func TestLoadChatFileRefsEnvOverrides(t *testing.T) {
+	t.Setenv("CAIRNOS_CHAT_FILE_ALLOWLIST", "/srv/one, /srv/two")
+	t.Setenv("CAIRNOS_CHAT_MAX_FILE_BYTES", "128")
+
+	chatTOML := `
+[chat]
+enabled = true
+file_allowlist = ["/data/docs"]
+max_file_bytes = 4096
+`
+
+	cfg, err := config.Load(writeConfig(t, chatTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !slices.Equal(cfg.Chat.FileAllowlist, []string{"/srv/one", "/srv/two"}) {
+		t.Fatalf("file_allowlist env override = %v", cfg.Chat.FileAllowlist)
+	}
+
+	if cfg.Chat.MaxFileBytes != 128 {
+		t.Fatalf("max_file_bytes env override = %d, want 128", cfg.Chat.MaxFileBytes)
+	}
+}
+
+func TestLoadSecretsBackendDefaultsToEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Secrets.Backend != config.SecretsBackendEnv {
+		t.Fatalf("secrets.backend default = %q, want %q", cfg.Secrets.Backend, config.SecretsBackendEnv)
+	}
+}
+
+func TestLoadSecretsBackendFromFile(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(writeConfig(t, "[secrets]\nbackend = \"store\"\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Secrets.Backend != config.SecretsBackendStore {
+		t.Fatalf("secrets.backend from file = %q, want %q", cfg.Secrets.Backend, config.SecretsBackendStore)
+	}
+}
+
+func TestLoadSecretsBackendEnvOverridesFile(t *testing.T) {
+	t.Setenv("CAIRNOS_SECRETS_BACKEND", "store")
+
+	// The file asks for env; the environment wins, so the store backend takes.
+	cfg, err := config.Load(writeConfig(t, "[secrets]\nbackend = \"env\"\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Secrets.Backend != config.SecretsBackendStore {
+		t.Fatalf("secrets.backend env override = %q, want %q", cfg.Secrets.Backend, config.SecretsBackendStore)
+	}
+}
+
+func TestLoadSecretsBackendRejectsUnknown(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Load(writeConfig(t, "[secrets]\nbackend = \"vault\"\n"))
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("unknown secrets.backend error = %v, want ErrInvalidConfig", err)
 	}
 }

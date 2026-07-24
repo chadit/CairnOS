@@ -15,9 +15,11 @@ const defaultMaxIterations = 10
 // start instead, because the registry is runtime state, not file state.
 func (b *builder) validate(flow *Workflow) {
 	b.checkWorkflowName(flow)
+	b.checkErrorWorkflow(flow)
 	b.checkSchedule(flow)
 	b.checkInputs(flow)
 	b.checkBudget(flow)
+	b.checkPoll(flow)
 
 	for _, name := range slices.Sorted(maps.Keys(flow.Actions)) {
 		b.checkAction(flow, flow.Actions[name])
@@ -35,6 +37,28 @@ func (b *builder) checkWorkflowName(flow *Workflow) {
 
 	if !isValidName(flow.Name) {
 		b.addf(CodeBadName, "workflow.name %q must match a lowercase identifier", flow.Name)
+	}
+}
+
+// checkErrorWorkflow enforces the error_workflow rules: an empty value means no
+// error handler, a set value must match the workflow-name pattern, and it
+// cannot point back at the workflow that declares it, because a run triggered
+// as "error" never fires its own error workflow anyway and a self-reference
+// only ever signals a mistake (.agents/spec/parity/workflow-language.md,
+// "Error workflow").
+func (b *builder) checkErrorWorkflow(flow *Workflow) {
+	if flow.ErrorWorkflow == "" {
+		return
+	}
+
+	if !isValidName(flow.ErrorWorkflow) {
+		b.addf(CodeBadName, "workflow.error_workflow %q must match a lowercase identifier", flow.ErrorWorkflow)
+
+		return
+	}
+
+	if flow.ErrorWorkflow == flow.Name {
+		b.addf(CodeInvalid, "workflow.error_workflow cannot reference the workflow itself")
 	}
 }
 
@@ -101,6 +125,25 @@ func (b *builder) checkBudget(flow *Workflow) {
 	if flow.Budget.OnExceed == "" {
 		b.addf(CodeBadBudget, "workflow.budget.on_exceed is required (%q or %q)",
 			BudgetOnExceedPause, BudgetOnExceedWarn)
+	}
+}
+
+// checkPoll enforces the [workflow.poll] rules: source is required, and a poll
+// needs a top-level schedule because a poll with no cadence never fires
+// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers"). Whether the
+// source name resolves is a runtime concern, checked at fire time against the
+// registered source map, so an unknown source is not a load error.
+func (b *builder) checkPoll(flow *Workflow) {
+	if flow.Poll == nil {
+		return
+	}
+
+	if flow.Poll.Source == "" {
+		b.addf(CodeBadPoll, "workflow.poll.source is required")
+	}
+
+	if flow.Schedule == "" {
+		b.addf(CodeBadPoll, "workflow.poll needs a schedule; a poll with no cadence never fires")
 	}
 }
 
@@ -177,8 +220,193 @@ func (b *builder) checkAction(flow *Workflow, action *Action) {
 		b.checkTaskAction(action)
 	}
 
+	if action.Kind == KindWorkflow {
+		b.checkWorkflowAction(flow, action)
+	}
+
+	if action.Kind == KindApproval {
+		b.checkApprovalAction(flow, action)
+	}
+
+	if action.Kind != KindApproval && action.Message != "" {
+		b.addf(CodeInvalid, "action %q sets message, which belongs to an approval action", action.Name)
+	}
+
 	b.checkCondition(action)
+	b.checkForeach(flow, action)
 	b.checkActionRefs(flow, action)
+}
+
+// checkWorkflowAction enforces the workflow-call kind's rules: it names a child
+// workflow by the shared identifier pattern, uses none of the task or agent
+// fields, and its inputs table interpolates upstream data but never a secret,
+// because those inputs become the child run's persisted inputs
+// (.agents/spec/parity/workflow-language.md, "Workflow call").
+func (b *builder) checkWorkflowAction(flow *Workflow, action *Action) {
+	switch {
+	case action.Workflow == "":
+		b.addf(CodeInvalid, "workflow-call action %q is missing its workflow", action.Name)
+	case !isValidName(action.Workflow):
+		b.addf(CodeBadName, "workflow-call action %q workflow %q must match a lowercase identifier", action.Name, action.Workflow)
+	}
+
+	if action.Runner != "" || action.Params != nil || len(action.Fallback) > 0 {
+		b.addf(CodeInvalid, "workflow-call action %q cannot use runner, params, or fallback; those belong to task actions", action.Name)
+	}
+
+	agentOnly := action.Driver != "" || action.Goal != "" || action.HasTools ||
+		action.BudgetUSD != 0 || action.MaxIterations != 0 ||
+		action.SystemPrompt != "" || action.MemoryScope != ""
+	if agentOnly {
+		b.addf(CodeAgentFields,
+			"workflow-call action %q cannot use driver, goal, tools, max_iterations, budget_usd, system_prompt, or memory_scope; those are agent-only",
+			action.Name)
+	}
+
+	b.checkWorkflowCallInputs(flow, action)
+}
+
+// checkWorkflowCallInputs walks the inputs table a workflow-call action passes
+// to its child and applies two rules: rule 5 (an action-output ref names a
+// declared dependency) and the secret ban (a ${{ secrets.* }} ref is rejected,
+// since the resolved value would be written to the child's runs.inputs_json).
+func (b *builder) checkWorkflowCallInputs(flow *Workflow, action *Action) {
+	for _, text := range collectValueTexts(action.Inputs) {
+		refs, refErrs := ExtractRefs(text)
+
+		for _, err := range refErrs {
+			b.addf(CodeBadReference, "action %q: %v", action.Name, err)
+		}
+
+		for _, ref := range refs {
+			if ref.Kind == RefSecret {
+				b.addf(CodeSecretNotAllowed,
+					"action %q inputs read %s: secret refs are not allowed in workflow-call inputs; the child workflow resolves its own secrets",
+					action.Name, ref.Raw)
+
+				continue
+			}
+
+			b.checkRef(flow, action, ref)
+		}
+	}
+}
+
+// checkApprovalAction enforces the human-approval kind's rules: it uses none of
+// the task, agent, or workflow-call fields, and its optional message
+// interpolates upstream data but never a secret, because the resolved message is
+// persisted to the approval record (.agents/spec/parity/workflow-language.md,
+// "Human approval"). The foreach ban rides checkForeach, which rejects a
+// non-task foreach for every kind.
+func (b *builder) checkApprovalAction(flow *Workflow, action *Action) {
+	if action.Runner != "" || action.Params != nil || len(action.Fallback) > 0 {
+		b.addf(CodeInvalid, "approval action %q cannot use runner, params, or fallback; those belong to task actions", action.Name)
+	}
+
+	agentOnly := action.Driver != "" || action.Goal != "" || action.HasTools ||
+		action.BudgetUSD != 0 || action.MaxIterations != 0 ||
+		action.SystemPrompt != "" || action.MemoryScope != ""
+	if agentOnly {
+		b.addf(CodeAgentFields,
+			"approval action %q cannot use driver, goal, tools, max_iterations, budget_usd, system_prompt, or memory_scope; those are agent-only",
+			action.Name)
+	}
+
+	if action.Workflow != "" || action.Inputs != nil {
+		b.addf(CodeInvalid, "approval action %q cannot use workflow or inputs; those belong to a workflow-call action", action.Name)
+	}
+
+	b.checkApprovalMessage(flow, action)
+}
+
+// checkApprovalMessage walks the approval message and applies two rules: rule 5
+// (an action-output ref names a declared dependency) and the secret ban (a
+// ${{ secrets.* }} ref is rejected, since the resolved message is persisted to
+// run_approvals.message).
+func (b *builder) checkApprovalMessage(flow *Workflow, action *Action) {
+	refs, refErrs := ExtractRefs(action.Message)
+
+	for _, err := range refErrs {
+		b.addf(CodeBadReference, "action %q: %v", action.Name, err)
+	}
+
+	for _, ref := range refs {
+		if ref.Kind == RefSecret {
+			b.addf(CodeSecretNotAllowed,
+				"action %q message reads %s: secret refs are not allowed in an approval message; it is persisted to the approval record",
+				action.Name, ref.Raw)
+
+			continue
+		}
+
+		b.checkRef(flow, action, ref)
+	}
+}
+
+// checkForeach enforces the foreach rules: it only rides a task action,
+// max_parallel stays at least one, and items is either one whole reference
+// (bound by rule 5) or a literal array
+// (.agents/spec/parity/workflow-language.md, "foreach").
+func (b *builder) checkForeach(flow *Workflow, action *Action) {
+	if action.Foreach == nil {
+		return
+	}
+
+	if action.Kind != KindTask {
+		b.addf(CodeBadForeach, "action %q is kind %q; foreach is only valid on a task action", action.Name, action.Kind)
+	}
+
+	if action.Foreach.MaxParallel < 1 {
+		b.addf(CodeBadForeach, "action %q foreach max_parallel must be >= 1, got %d", action.Name, action.Foreach.MaxParallel)
+	}
+
+	b.checkForeachItems(flow, action)
+}
+
+// checkForeachItems validates the items source: a whole ${{ }} reference or a
+// literal array. A reference must follow rule 5, and item/index cannot seed
+// their own list.
+func (b *builder) checkForeachItems(flow *Workflow, action *Action) {
+	switch items := action.Foreach.Items.(type) {
+	case string:
+		ref, whole := WholeRef(items)
+		if !whole {
+			b.addf(CodeBadForeach,
+				"action %q foreach items must be exactly one ${{ }} reference or a literal array", action.Name)
+
+			return
+		}
+
+		b.checkForeachItemsRef(flow, action, ref)
+	case []any:
+		// A literal array is a fixed list; any references inside its elements
+		// resolve at launch through the same resolver as params, so a bad ref
+		// there surfaces as a precondition failure rather than a load error.
+	case nil:
+		b.addf(CodeBadForeach, "action %q foreach is missing its items", action.Name)
+	default:
+		b.addf(CodeBadForeach,
+			"action %q foreach items must be a ${{ }} reference or a literal array, got %T", action.Name, items)
+	}
+}
+
+// checkForeachItemsRef applies rule 5 to a whole-reference items source: an
+// action-output ref must name a declared dependency, an input ref must be
+// declared, and item/index are illegal here since the list precedes any
+// per-element context.
+func (b *builder) checkForeachItemsRef(flow *Workflow, action *Action, ref Ref) {
+	switch ref.Kind {
+	case RefAction:
+		b.checkActionOutputRef(flow, action, ref)
+	case RefInput:
+		if _, declared := flow.Inputs[ref.Target]; !declared {
+			b.addf(CodeUnknownInput, "action %q foreach items references undeclared input %q", action.Name, ref.Target)
+		}
+	case RefItem, RefIndex:
+		b.addf(CodeBadForeach, "action %q foreach items cannot reference %s", action.Name, ref.Raw)
+	case RefEnv, RefSecret:
+		// Shape checked at parse time; runtime resolves the value.
+	}
 }
 
 // checkTaskAction enforces rule 11's mirror image: task actions use runner
@@ -195,6 +423,10 @@ func (b *builder) checkTaskAction(action *Action) {
 		b.addf(CodeAgentFields,
 			"action %q is a task action; driver, goal, tools, max_iterations, budget_usd, system_prompt, and memory_scope are agent-only",
 			action.Name)
+	}
+
+	if action.Workflow != "" || action.Inputs != nil {
+		b.addf(CodeInvalid, "action %q is a task action; workflow and inputs belong to a workflow-call action", action.Name)
 	}
 }
 
@@ -220,6 +452,10 @@ func (b *builder) checkAgentAction(action *Action) {
 
 	if action.Runner != "" || action.Params != nil || len(action.Fallback) > 0 {
 		b.addf(CodeAgentFields, "agent action %q cannot use runner, params, or fallback; those belong to task actions", action.Name)
+	}
+
+	if action.Workflow != "" || action.Inputs != nil {
+		b.addf(CodeAgentFields, "agent action %q cannot use workflow or inputs; those belong to a workflow-call action", action.Name)
 	}
 
 	if action.MaxIterations < 0 {
@@ -267,7 +503,20 @@ func (b *builder) checkActionRefs(flow *Workflow, action *Action) {
 }
 
 func collectRefTexts(action *Action) []string {
-	texts := []string{action.Goal, action.Condition}
+	nested := collectValueTexts(action.Params)
+
+	texts := make([]string, 0, len(nested)+2)
+	texts = append(texts, action.Goal, action.Condition)
+	texts = append(texts, nested...)
+
+	return texts
+}
+
+// collectValueTexts gathers every string reachable inside a params- or
+// inputs-shaped value, recursing through lists and tables so a reference buried
+// in a nested structure still reaches validation.
+func collectValueTexts(value any) []string {
+	var texts []string
 
 	var walk func(value any)
 
@@ -286,7 +535,7 @@ func collectRefTexts(action *Action) []string {
 		}
 	}
 
-	walk(action.Params)
+	walk(value)
 
 	return texts
 }
@@ -298,6 +547,12 @@ func (b *builder) checkRef(flow *Workflow, action *Action, ref Ref) {
 	case RefInput:
 		if _, declared := flow.Inputs[ref.Target]; !declared {
 			b.addf(CodeUnknownInput, "action %q references undeclared input %q", action.Name, ref.Target)
+		}
+	case RefItem, RefIndex:
+		// item and index only mean something inside a fan-out, so a reference
+		// to either from an action with no foreach is a load-time error.
+		if action.Foreach == nil {
+			b.addf(CodeBadForeach, "action %q reads %s but declares no foreach", action.Name, ref.Raw)
 		}
 	case RefEnv, RefSecret:
 		// Shape was checked at parse time. Allowlist and secret existence are

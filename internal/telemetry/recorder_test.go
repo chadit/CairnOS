@@ -46,6 +46,19 @@ const (
 	nameCircuitState    = "cairnos_circuit_state"
 )
 
+// Bridge catalog names and the labels the bridge-metric assertions read; the
+// "error" outcome is shared by the update and turn series, so it is hoisted
+// here rather than repeated as a literal.
+const (
+	nameBridgeUpdates      = "cairnos_bridge_updates_total"
+	nameBridgeTurns        = "cairnos_bridge_turns_total"
+	nameBridgeConfirms     = "cairnos_bridge_confirms_total"
+	nameBridgeSendFailures = "cairnos_bridge_send_failures_total"
+
+	labelOutcome = "outcome"
+	outcomeError = "error"
+)
+
 // Span fixture names.
 const (
 	flakyAction = "flaky"
@@ -400,6 +413,56 @@ func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 	for _, tt := range tests {
 		if got := gaugeFor(t, &data, nameCircuitState, tt.runnerName); got != tt.want {
 			t.Fatalf("%s{runner=%s} = %d, want %d", nameCircuitState, tt.runnerName, got, tt.want)
+		}
+	}
+}
+
+// TestBridgeMetricsRecorded drives the four Telegram-bridge recorder methods
+// through the manual reader and asserts each lands on the right Prometheus
+// series with the right outcome label, so the bridge dashboard panels have
+// data behind them (S3). BridgeConfirm's refused outcome is checked explicitly
+// because it is the counter behind the confirm-time grant refusals S5 enforces.
+func TestBridgeMetricsRecorded(t *testing.T) {
+	t.Parallel()
+
+	rec, reader, _ := newTestRecorder(t)
+	ctx := t.Context()
+
+	rec.BridgeUpdate(ctx, "handled")
+	rec.BridgeUpdate(ctx, "unauthorized")
+	rec.BridgeUpdate(ctx, outcomeError)
+	rec.BridgeTurn(ctx, true)
+	rec.BridgeTurn(ctx, false)
+	rec.BridgeConfirm(ctx, "approved")
+	rec.BridgeConfirm(ctx, "denied")
+	rec.BridgeConfirm(ctx, "expired")
+	rec.BridgeConfirm(ctx, "refused")
+	rec.BridgeSendFailure(ctx)
+
+	data := collect(t, reader)
+
+	tests := []struct {
+		name   string
+		metric string
+		key    string
+		value  string
+		want   int64
+	}{
+		{"update handled", nameBridgeUpdates, labelOutcome, "handled", 1},
+		{"update unauthorized", nameBridgeUpdates, labelOutcome, "unauthorized", 1},
+		{"update error", nameBridgeUpdates, labelOutcome, outcomeError, 1},
+		{"turn ok", nameBridgeTurns, labelOutcome, "ok", 1},
+		{"turn error", nameBridgeTurns, labelOutcome, outcomeError, 1},
+		{"confirm approved", nameBridgeConfirms, labelOutcome, "approved", 1},
+		{"confirm denied", nameBridgeConfirms, labelOutcome, "denied", 1},
+		{"confirm expired", nameBridgeConfirms, labelOutcome, "expired", 1},
+		{"confirm refused", nameBridgeConfirms, labelOutcome, "refused", 1},
+		{"send failures", nameBridgeSendFailures, "", "", 1},
+	}
+
+	for _, tt := range tests {
+		if got := sumIntFiltered(t, &data, tt.metric, tt.key, tt.value); got != tt.want {
+			t.Errorf("%s: %s{%s=%s} = %d, want %d", tt.name, tt.metric, tt.key, tt.value, got, tt.want)
 		}
 	}
 }

@@ -20,6 +20,7 @@ import (
 const (
 	runCmd       = "run"
 	memoryCmd    = "memory"
+	serveCmd     = "serve"
 	flagDirArg   = "--dir"
 	flagInputArg = "--input"
 
@@ -302,6 +303,70 @@ func TestRunsListAndShowDisplayRun(t *testing.T) {
 	}
 }
 
+const replayableWorkflow = `
+[workflow]
+name = "replayme"
+
+[action.greet]
+runner = "mock"
+params = { output = "hi" }
+`
+
+const replayableWorkflowEdited = `
+[workflow]
+name = "replayme"
+
+[action.greet]
+runner = "mock"
+params = { output = "hi there" }
+`
+
+// TestRunsReplayHashGuard proves the replay hash check: after the workflow file
+// changes, a bare replay is refused with the mismatch explained, and --force
+// overrides it and mints a new run.
+func TestRunsReplayHashGuard(t *testing.T) {
+	t.Parallel()
+
+	dir := initDir(t)
+	path := writeWorkflow(t, dir, replayableWorkflow)
+
+	code, _, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("run exited %d: %s", code, stderr)
+	}
+
+	db := openRunStore(t, dir)
+
+	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("list runs: %v (%d rows)", err, len(runs))
+	}
+
+	runID := runs[0].ID
+
+	// Editing the file changes its hash, so a bare replay must refuse.
+	writeWorkflow(t, dir, replayableWorkflowEdited)
+
+	code, _, stderr = runCLI(t, "runs", "replay", runID, flagDirArg, dir)
+	if code != cli.ExitFailure {
+		t.Fatalf("replay of a changed workflow exited %d, want %d (stderr: %s)", code, cli.ExitFailure, stderr)
+	}
+
+	if !strings.Contains(stderr, "changed since run") {
+		t.Fatalf("replay error does not explain the hash mismatch:\n%s", stderr)
+	}
+
+	// --force overrides the guard and replays, minting a fresh run.
+	code, stdout, stderr := runCLI(t, "runs", "replay", runID, "--force", flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("forced replay exited %d: %s", code, stderr)
+	}
+
+	if !strings.Contains(stdout, "replaying run "+runID) {
+		t.Fatalf("forced replay did not report the new run:\n%s", stdout)
+	}
+}
+
 func TestMemoryLifecycle(t *testing.T) {
 	t.Parallel()
 
@@ -336,6 +401,59 @@ func TestMemoryLifecycle(t *testing.T) {
 	code, _, _ = runCLI(t, memoryCmd, "get", id, flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("memory get after rm exited %d, want %d", code, cli.ExitFailure)
+	}
+}
+
+func TestMemoryExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := initDir(t)
+	exportDir := filepath.Join(t.TempDir(), "export")
+
+	code, stdout, stderr := runCLI(t, memoryCmd, "add",
+		"--scope", "global", "--content", "prefer table tests", "--tags", "style,go", flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("memory add exited %d: %s", code, stderr)
+	}
+
+	id := strings.TrimSpace(stdout)
+	if id == "" {
+		t.Fatal("memory add printed no id")
+	}
+
+	code, stdout, stderr = runCLI(t, memoryCmd, "export", "--out", exportDir, flagDirArg, dir)
+	if code != cli.ExitOK || !strings.Contains(stdout, "exported 1 entries") {
+		t.Fatalf("memory export (exit %d) stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	// Editing the exported file on disk is the whole point of file-based memory:
+	// grep and edit offline, then import the change back.
+	mdPath := filepath.Join(exportDir, id+".md")
+
+	data, err := os.ReadFile(mdPath) //nolint:gosec // test-owned temp path
+	if err != nil {
+		t.Fatalf("read exported file: %v", err)
+	}
+
+	edited := strings.Replace(string(data), "prefer table tests", "prefer external test packages", 1)
+	if err := os.WriteFile(mdPath, []byte(edited), 0o600); err != nil {
+		t.Fatalf("rewrite exported file: %v", err)
+	}
+
+	code, stdout, stderr = runCLI(t, memoryCmd, "import", "--from", exportDir, flagDirArg, dir)
+	if code != cli.ExitOK || !strings.Contains(stdout, "updated 1") {
+		t.Fatalf("memory import (exit %d) stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	code, stdout, _ = runCLI(t, memoryCmd, "get", id, flagDirArg, dir)
+	if code != cli.ExitOK || !strings.Contains(stdout, "prefer external test packages") {
+		t.Fatalf("memory get (exit %d) missing the offline edit:\n%s", code, stdout)
+	}
+
+	// A second import with no further edits must report everything unchanged.
+	code, stdout, _ = runCLI(t, memoryCmd, "import", "--from", exportDir, flagDirArg, dir)
+	if code != cli.ExitOK || !strings.Contains(stdout, "unchanged 1") {
+		t.Fatalf("second import (exit %d) is not a no-op:\n%s", code, stdout)
 	}
 }
 

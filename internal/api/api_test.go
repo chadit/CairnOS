@@ -26,6 +26,7 @@ import (
 	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
+	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 	"github.com/chadit/CairnOS/internal/vault"
 	"github.com/chadit/CairnOS/pkg/runner"
@@ -81,18 +82,19 @@ params = { delay_ms = 60000 }
 // fixture is one running API server plus the clients to poke it; db is the
 // store underneath the server, exposed for seeding rows directly.
 type fixture struct {
-	server     *api.Server
-	conn       *grpc.ClientConn
-	db         *sqlite.Store
-	workflow   cairnosv1.WorkflowServiceClient
-	memory     cairnosv1.MemoryServiceClient
-	vault      cairnosv1.VaultServiceClient
-	rules      cairnosv1.LanguageRulesServiceClient
-	suggestion cairnosv1.SuggestionServiceClient
-	admin      cairnosv1.AdminServiceClient
-	governance cairnosv1.GovernanceServiceClient
-	breakers   *reliability.BreakerSet
-	httpBase   string
+	server       *api.Server
+	conn         *grpc.ClientConn
+	db           *sqlite.Store
+	workflowsDir string
+	workflow     cairnosv1.WorkflowServiceClient
+	memory       cairnosv1.MemoryServiceClient
+	vault        cairnosv1.VaultServiceClient
+	rules        cairnosv1.LanguageRulesServiceClient
+	suggestion   cairnosv1.SuggestionServiceClient
+	admin        cairnosv1.AdminServiceClient
+	governance   cairnosv1.GovernanceServiceClient
+	breakers     *reliability.BreakerSet
+	httpBase     string
 }
 
 // breakerAdmin adapts a reliability.BreakerSet to the api.BreakerAdmin
@@ -211,18 +213,19 @@ func startServer(t *testing.T) *fixture {
 	t.Cleanup(func() { _ = conn.Close() })
 
 	return &fixture{
-		server:     server,
-		conn:       conn,
-		db:         db,
-		workflow:   cairnosv1.NewWorkflowServiceClient(conn),
-		memory:     cairnosv1.NewMemoryServiceClient(conn),
-		vault:      cairnosv1.NewVaultServiceClient(conn),
-		rules:      cairnosv1.NewLanguageRulesServiceClient(conn),
-		suggestion: cairnosv1.NewSuggestionServiceClient(conn),
-		admin:      cairnosv1.NewAdminServiceClient(conn),
-		governance: cairnosv1.NewGovernanceServiceClient(conn),
-		breakers:   breakers,
-		httpBase:   "http://" + server.HTTPAddr(),
+		server:       server,
+		conn:         conn,
+		db:           db,
+		workflowsDir: workflowsDir,
+		workflow:     cairnosv1.NewWorkflowServiceClient(conn),
+		memory:       cairnosv1.NewMemoryServiceClient(conn),
+		vault:        cairnosv1.NewVaultServiceClient(conn),
+		rules:        cairnosv1.NewLanguageRulesServiceClient(conn),
+		suggestion:   cairnosv1.NewSuggestionServiceClient(conn),
+		admin:        cairnosv1.NewAdminServiceClient(conn),
+		governance:   cairnosv1.NewGovernanceServiceClient(conn),
+		breakers:     breakers,
+		httpBase:     "http://" + server.HTTPAddr(),
 	}
 }
 
@@ -466,6 +469,100 @@ func TestGetRunAndListRunsRoundTrip(t *testing.T) {
 	_, err = fix.workflow.GetRun(t.Context(), &cairnosv1.GetRunRequest{RunId: "missing"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("GetRun(missing) code = %v, want NotFound", status.Code(err))
+	}
+}
+
+func TestReplayRunRerunsPriorRun(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+
+	stream, err := fix.workflow.RunWorkflow(t.Context(), &cairnosv1.RunWorkflowRequest{WorkflowName: helloName})
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+
+	runID := collectEvents(t, stream)[0].GetRunId()
+
+	replayStream, err := fix.workflow.ReplayRun(t.Context(), &cairnosv1.ReplayRunRequest{RunId: runID})
+	if err != nil {
+		t.Fatalf("ReplayRun: %v", err)
+	}
+
+	events := collectEvents(t, replayStream)
+	if len(events) == 0 {
+		t.Fatal("replay produced no events")
+	}
+
+	last := events[len(events)-1]
+	if last.GetType() != cairnosv1.RunEventType_RUN_EVENT_TYPE_RUN_FINISHED {
+		t.Fatalf("last replay event type = %v, want RUN_FINISHED", last.GetType())
+	}
+
+	if got := last.GetRun().GetStatus(); got != statusSucceeded {
+		t.Fatalf("replay run status = %q, want %q (error: %v)", got, statusSucceeded, last.GetError())
+	}
+
+	newRunID := events[0].GetRunId()
+	if newRunID == runID {
+		t.Fatal("replay reused the prior run id, want a fresh run")
+	}
+
+	// The new run links back to the one it replayed, under trigger "replay".
+	replayRun, err := fix.db.GetRun(t.Context(), newRunID)
+	if err != nil {
+		t.Fatalf("get replay run: %v", err)
+	}
+
+	if replayRun.ParentRunID != runID {
+		t.Fatalf("replay parent_run_id = %q, want %q", replayRun.ParentRunID, runID)
+	}
+
+	if replayRun.Trigger != "replay" {
+		t.Fatalf("replay trigger = %q, want replay", replayRun.Trigger)
+	}
+}
+
+func TestReplayRunRefusesHashMismatch(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+
+	// A run whose recorded hash predates the current hello file: replay must
+	// refuse it unless force is set.
+	runID := "stale-hash-run"
+
+	err := fix.db.CreateRun(t.Context(), &store.Run{
+		ID:           runID,
+		WorkflowName: helloName,
+		WorkflowHash: "deadbeef",
+		Status:       store.RunFailed,
+		Trigger:      "cli",
+		CreatedAt:    time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("seed stale run: %v", err)
+	}
+
+	stream, err := fix.workflow.ReplayRun(t.Context(), &cairnosv1.ReplayRunRequest{RunId: runID})
+	if err != nil {
+		t.Fatalf("ReplayRun: %v", err)
+	}
+
+	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("replay of a changed workflow code = %v (%v), want FailedPrecondition", status.Code(err), err)
+	}
+
+	forced, err := fix.workflow.ReplayRun(t.Context(), &cairnosv1.ReplayRunRequest{RunId: runID, Force: true})
+	if err != nil {
+		t.Fatalf("forced ReplayRun: %v", err)
+	}
+
+	events := collectEvents(t, forced)
+	last := events[len(events)-1]
+
+	if got := last.GetRun().GetStatus(); got != statusSucceeded {
+		t.Fatalf("forced replay status = %q, want %q", got, statusSucceeded)
 	}
 }
 

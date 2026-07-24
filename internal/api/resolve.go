@@ -35,9 +35,21 @@ func NewWorkflowResolver(dir string, logger *slog.Logger) *WorkflowResolver {
 // when no file in the directory carries that name. Files that fail to load are
 // skipped with a log line so one broken file cannot mask the others.
 func (r *WorkflowResolver) Resolve(name string) (*workflow.Workflow, error) {
+	_, flow, err := r.ResolvePath(name)
+
+	return flow, err
+}
+
+// ResolvePath returns the path of the .toml file whose workflow name matches
+// name, plus the loaded workflow. The error contract matches Resolve: a
+// canonical NotFound when no file carries the name, and unloadable files
+// skipped with a log line. Save goes through this so internal/api holds one
+// name-to-file scan rather than a second copy for writes
+// (.agents/spec/parity/builder-ops.md, "One resolver, no third scan").
+func (r *WorkflowResolver) ResolvePath(name string) (string, *workflow.Workflow, error) {
 	entries, err := os.ReadDir(r.dir)
 	if err != nil {
-		return nil, errorStatus(codes.NotFound,
+		return "", nil, errorStatus(codes.NotFound,
 			cairnerr.Newf(codeWorkflowNotFound, "no workflow named %q: workflows directory unreadable: %v", name, err))
 	}
 
@@ -56,10 +68,10 @@ func (r *WorkflowResolver) Resolve(name string) (*workflow.Workflow, error) {
 		}
 
 		if flow.Name == name {
-			return flow, nil
+			return path, flow, nil
 		}
 	}
 
-	return nil, errorStatus(codes.NotFound,
+	return "", nil, errorStatus(codes.NotFound,
 		cairnerr.Newf(codeWorkflowNotFound, "no workflow named %q in %s", name, r.dir))
 }

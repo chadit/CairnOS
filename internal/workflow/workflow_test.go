@@ -118,6 +118,148 @@ func TestParseAcceptsActionFallback(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsForeach(t *testing.T) {
+	t.Parallel()
+
+	const toml = `[workflow]
+name = "w"
+[action.fetch]
+runner = "mock"
+[action.score]
+runner = "mock"
+depends_on = ["fetch"]
+params = { body = "${{ item }}", tag = "${{ index }}" }
+[action.score.foreach]
+items = "${{ fetch.output.items }}"
+max_parallel = 2`
+
+	flow, err := workflow.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	spec := flow.Actions["score"].Foreach
+	if spec == nil {
+		t.Fatal("foreach was not parsed")
+	}
+
+	if spec.MaxParallel != 2 {
+		t.Errorf("max_parallel = %d, want 2", spec.MaxParallel)
+	}
+
+	got, isString := spec.Items.(string)
+	if !isString || got != "${{ fetch.output.items }}" {
+		t.Errorf("items = %v, want the whole reference string", spec.Items)
+	}
+}
+
+func TestParseAcceptsWorkflowCall(t *testing.T) {
+	t.Parallel()
+
+	const toml = `[workflow]
+name = "parent"
+[action.fetch]
+runner = "mock"
+[action.enrich]
+kind = "workflow"
+workflow = "enrich_contact"
+depends_on = ["fetch"]
+[action.enrich.inputs]
+email = "${{ fetch.output.email }}"
+mode = "full"`
+
+	flow, err := workflow.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	enrich := flow.Actions["enrich"]
+	if enrich.Kind != workflow.KindWorkflow {
+		t.Fatalf("kind = %q, want %q", enrich.Kind, workflow.KindWorkflow)
+	}
+
+	if enrich.Workflow != "enrich_contact" {
+		t.Errorf("workflow = %q, want enrich_contact", enrich.Workflow)
+	}
+
+	if enrich.Inputs["email"] != "${{ fetch.output.email }}" || enrich.Inputs["mode"] != "full" {
+		t.Errorf("inputs = %v, want the email ref and mode literal", enrich.Inputs)
+	}
+}
+
+func TestParseAcceptsErrorWorkflow(t *testing.T) {
+	t.Parallel()
+
+	const toml = `[workflow]
+name = "sync_crm"
+error_workflow = "on_sync_failure"
+[action.a]
+runner = "mock"`
+
+	flow, err := workflow.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.ErrorWorkflow != "on_sync_failure" {
+		t.Fatalf("error_workflow = %q, want on_sync_failure", flow.ErrorWorkflow)
+	}
+}
+
+func TestParseForeachDefaultsMaxParallelToOne(t *testing.T) {
+	t.Parallel()
+
+	const toml = `[workflow]
+name = "w"
+[action.a]
+runner = "mock"
+params = { v = "${{ item }}" }
+[action.a.foreach]
+items = ["x", "y"]`
+
+	flow, err := workflow.Parse([]byte(toml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	spec := flow.Actions["a"].Foreach
+	if spec == nil {
+		t.Fatal("foreach was not parsed")
+	}
+
+	if spec.MaxParallel != 1 {
+		t.Errorf("max_parallel = %d, want the default 1 when the key is absent", spec.MaxParallel)
+	}
+
+	if _, isArray := spec.Items.([]any); !isArray {
+		t.Errorf("items = %T, want a literal array", spec.Items)
+	}
+}
+
+func TestExtractRefsClassifiesForeachNamespaces(t *testing.T) {
+	t.Parallel()
+
+	refs, errs := workflow.ExtractRefs("a=${{ item }} b=${{ item.email }} c=${{ index }}")
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	wantKinds := []workflow.RefKind{workflow.RefItem, workflow.RefItem, workflow.RefIndex}
+	if len(refs) != len(wantKinds) {
+		t.Fatalf("got %d refs, want %d", len(refs), len(wantKinds))
+	}
+
+	for idx, ref := range refs {
+		if ref.Kind != wantKinds[idx] {
+			t.Errorf("ref %d kind = %v, want %v", idx, ref.Kind, wantKinds[idx])
+		}
+	}
+
+	if len(refs[1].Path) != 1 || refs[1].Path[0] != "email" {
+		t.Errorf("item field path = %v, want [email]", refs[1].Path)
+	}
+}
+
 func TestParseAcceptsBudget(t *testing.T) {
 	t.Parallel()
 
@@ -176,6 +318,56 @@ func TestParseAcceptsBudget(t *testing.T) {
 				t.Errorf("on_exceed = %q, want %q", flow.Budget.OnExceed, tt.wantExceed)
 			}
 		})
+	}
+}
+
+func TestParseAcceptsPoll(t *testing.T) {
+	t.Parallel()
+
+	const src = `
+[workflow]
+name     = "gh_issue_triage"
+schedule = "*/5 * * * *"
+
+[workflow.poll]
+source = "github_issues"
+
+[workflow.poll.params]
+repo  = "octocat/hello-world"
+state = "open"
+
+[action.triage]
+runner = "mock"
+`
+
+	flow, err := workflow.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.Poll == nil {
+		t.Fatal("poll was not parsed")
+	}
+
+	if flow.Poll.Source != "github_issues" {
+		t.Errorf("source = %q, want github_issues", flow.Poll.Source)
+	}
+
+	if flow.Poll.Params["repo"] != "octocat/hello-world" || flow.Poll.Params["state"] != "open" {
+		t.Errorf("params = %#v, want repo/state passed through", flow.Poll.Params)
+	}
+}
+
+func TestParseLeavesPollNilWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	flow, err := workflow.Parse([]byte("[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\""))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.Poll != nil {
+		t.Fatalf("poll = %+v, want nil when no [workflow.poll] table", flow.Poll)
 	}
 }
 
@@ -313,9 +505,115 @@ func TestParseRejectsRuleViolations(t *testing.T) {
 			wantCode: workflow.CodeReserved,
 		},
 		{
-			name:     "foreach reserved",
+			name:     "foreach not a table",
 			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nforeach = \"items\"",
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name:     "action budget reserved",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nbudget = \"x\"",
 			wantCode: workflow.CodeReserved,
+		},
+		{
+			name: "foreach on agent kind",
+			toml: `[workflow]
+name = "w"
+[action.a]
+kind = "agent"
+driver = "m"
+goal = "g"
+tools = []
+budget_usd = 1.0
+[action.a.foreach]
+items = ["x"]`,
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name:     "workflow-call missing workflow",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"workflow\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "workflow-call bad workflow name",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"workflow\"\nworkflow = \"Bad-Name\"",
+			wantCode: workflow.CodeBadName,
+		},
+		{
+			name:     "workflow-call with runner",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"workflow\"\nworkflow = \"child\"\nrunner = \"mock\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name: "secret ref in workflow-call inputs",
+			toml: `[workflow]
+name = "w"
+[action.a]
+kind = "workflow"
+workflow = "child"
+[action.a.inputs]
+token = "${{ secrets.api_key }}"`,
+			wantCode: workflow.CodeSecretNotAllowed,
+		},
+		{
+			name: "workflow-call inputs reference undeclared dependency",
+			toml: `[workflow]
+name = "w"
+[action.up]
+runner = "mock"
+[action.a]
+kind = "workflow"
+workflow = "child"
+[action.a.inputs]
+v = "${{ up.output }}"`,
+			wantCode: workflow.CodeBadReference,
+		},
+		{
+			name:     "task with workflow-call keys",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nworkflow = \"child\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name: "foreach max_parallel below one",
+			toml: `[workflow]
+name = "w"
+[action.a]
+runner = "mock"
+[action.a.foreach]
+items = ["x"]
+max_parallel = 0`,
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name: "foreach missing items",
+			toml: `[workflow]
+name = "w"
+[action.a]
+runner = "mock"
+[action.a.foreach]
+max_parallel = 2`,
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name:     "item ref outside foreach",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nparams = { x = \"${{ item }}\" }",
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name:     "index ref outside foreach",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nparams = { x = \"${{ index }}\" }",
+			wantCode: workflow.CodeBadForeach,
+		},
+		{
+			name: "foreach items references undeclared dependency",
+			toml: `[workflow]
+name = "w"
+[action.up]
+runner = "mock"
+[action.a]
+runner = "mock"
+[action.a.foreach]
+items = "${{ up.output }}"`,
+			wantCode: workflow.CodeBadReference,
 		},
 		{
 			name:     "agent missing required fields",
@@ -387,6 +685,31 @@ func TestParseRejectsRuleViolations(t *testing.T) {
 			toml:     "[workflow]\nname = \"w\"\n[workflow.budget]\nperiod = \"day\"\nlimit_usd = 5.0\non_exceed = \"warn\"\nmystery = true\n[action.a]\nrunner = \"mock\"",
 			wantCode: workflow.CodeBadBudget,
 		},
+		{
+			name:     "error_workflow bad name",
+			toml:     "[workflow]\nname = \"w\"\nerror_workflow = \"Bad-Name\"\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeBadName,
+		},
+		{
+			name:     "error_workflow references itself",
+			toml:     "[workflow]\nname = \"w\"\nerror_workflow = \"w\"\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "poll missing source",
+			toml:     "[workflow]\nname = \"w\"\nschedule = \"@daily\"\n[workflow.poll]\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeBadPoll,
+		},
+		{
+			name:     "poll without schedule",
+			toml:     "[workflow]\nname = \"w\"\n[workflow.poll]\nsource = \"github_issues\"\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeBadPoll,
+		},
+		{
+			name:     "poll unknown key",
+			toml:     "[workflow]\nname = \"w\"\nschedule = \"@daily\"\n[workflow.poll]\nsource = \"github_issues\"\nmystery = true\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeBadPoll,
+		},
 	}
 
 	for _, tt := range cases {
@@ -406,11 +729,78 @@ func TestParseRejectsRuleViolations(t *testing.T) {
 	}
 }
 
+func TestParseApprovalKind(t *testing.T) {
+	t.Parallel()
+
+	rejects := []struct {
+		name     string
+		toml     string
+		wantCode string
+	}{
+		{
+			name: "secret ref in approval message",
+			toml: "[workflow]\nname = \"w\"\n[action.a]\nkind = \"approval\"\n" +
+				"message = \"approve with ${{ secrets.api_key }}?\"",
+			wantCode: workflow.CodeSecretNotAllowed,
+		},
+		{
+			name:     "approval action with runner",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nkind = \"approval\"\nrunner = \"mock\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name: "approval message references undeclared dependency",
+			toml: "[workflow]\nname = \"w\"\n[action.up]\nrunner = \"mock\"\n" +
+				"[action.a]\nkind = \"approval\"\nmessage = \"approve ${{ up.output.count }}?\"",
+			wantCode: workflow.CodeBadReference,
+		},
+		{
+			name:     "message on a task action",
+			toml:     "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nmessage = \"hi\"",
+			wantCode: workflow.CodeInvalid,
+		},
+	}
+
+	for _, tt := range rejects {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := workflow.Parse([]byte(tt.toml))
+			if err == nil {
+				t.Fatal("parse succeeded, want validation error")
+			}
+
+			if codes := codesOf(t, err); !slices.Contains(codes, tt.wantCode) {
+				t.Fatalf("codes = %v, want %s present", codes, tt.wantCode)
+			}
+		})
+	}
+
+	// A valid approval action needs no fields of its own; the message is
+	// optional and may read a declared upstream output.
+	good := "[workflow]\nname = \"w\"\n[action.draft]\nrunner = \"mock\"\n" +
+		"[action.signoff]\nkind = \"approval\"\ndepends_on = [\"draft\"]\n" +
+		"message = \"approve ${{ draft.output.count }} emails?\""
+
+	flow, err := workflow.Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("valid approval workflow rejected: %v", err)
+	}
+
+	if flow.Actions["signoff"].Kind != workflow.KindApproval {
+		t.Errorf("signoff kind = %q, want %q", flow.Actions["signoff"].Kind, workflow.KindApproval)
+	}
+
+	if flow.Actions["signoff"].Message == "" {
+		t.Error("approval message not captured")
+	}
+}
+
 func TestParseAccumulatesEveryError(t *testing.T) {
 	t.Parallel()
 
 	// One file, three independent problems: bad name, unknown dependency,
-	// and a reserved key. Authors should see all of them in one pass.
+	// and a malformed foreach. Authors should see all of them in one pass.
 	bad := "[workflow]\nname = \"Bad\"\n" +
 		"[action.a]\nrunner = \"mock\"\ndepends_on = [\"ghost\"]\nforeach = \"x\""
 

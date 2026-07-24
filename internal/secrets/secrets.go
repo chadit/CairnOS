@@ -2,6 +2,29 @@
 // Phase 0 ships the environment-variable source; file, Vault, and cloud
 // sources implement the same shape later and are chosen by config
 // (.agents/spec/11-deployment-and-config.md, "Secrets").
+//
+// The encrypted store adds AES-256-GCM at-rest sealing (Sealer) under a 32-byte
+// master key loaded from the environment (LoadKeys). A row binds its workspace,
+// name, and a recency stamp as authenticated data, so a dumped row cannot be
+// re-pointed at another secret or rolled back to an older value without the open
+// failing.
+//
+// Threat model (three boundaries, stated so a reader does not over-trust the
+// word "encrypted"):
+//   - The store defends a database-dump / read-at-rest attacker only, never a
+//     process that can inject environment variables. Env stays trusted in the
+//     single-operator model, and Chain(env, store) puts env first, so an env
+//     value always wins.
+//   - A secret interpolated into an action's output is recoverable in plaintext
+//     from run history. This package encrypts the secret store, not the run
+//     store; run-output redaction is a separate concern.
+//   - Env-sourced secrets stay visible to child CLI runners through the
+//     inherited process environment.
+//
+// The master key must come from a CSPRNG (GenerateKey / cairnos secrets keygen).
+// LoadKeys checks length, never entropy, so a low-entropy 32-byte key passes yet
+// is insecure. Key compromise loses the whole store; the previous-key rotation
+// window is the only partial mitigation.
 package secrets
 
 import (

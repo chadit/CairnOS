@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,14 +16,17 @@ import (
 
 // Shared fixture names for the GitHub runner tests.
 const (
-	opKey       = "op"
-	repoKey     = "repo"
-	titleKey    = "title"
-	limitKey    = "limit"
-	testRepo    = "chadit/CairnOS"
-	opReleases  = "releases"
-	opNewIssue  = "create_issue"
-	actionWatch = "watch"
+	opKey        = "op"
+	repoKey      = "repo"
+	titleKey     = "title"
+	limitKey     = "limit"
+	sinceKey     = "since"
+	stateKey     = "state"
+	testRepo     = "chadit/CairnOS"
+	opReleases   = "releases"
+	opNewIssue   = "create_issue"
+	opListIssues = "list_issues"
+	actionWatch  = "watch"
 )
 
 // githubReleasesBody is the golden release-feed response.
@@ -132,6 +136,85 @@ func TestGitHubCreatesIssue(t *testing.T) {
 	}
 }
 
+// githubIssuesBody mixes a fresh issue, a stale-but-recently-updated issue that
+// GitHub's since (updated_at) filter would still return, and a pull request that
+// arrives as an issue row. list_issues should keep only the fresh issue.
+const githubIssuesBody = `[
+	{"number": 10, "title": "new bug", "body": "found it", "html_url": "https://github.test/chadit/CairnOS/issues/10", "created_at": "2026-06-20T00:00:00Z", "user": {"login": "octocat"}},
+	{"number": 9, "title": "old comment churn", "body": "still open", "html_url": "https://github.test/chadit/CairnOS/issues/9", "created_at": "2026-06-01T00:00:00Z", "user": {"login": "hubber"}},
+	{"number": 8, "title": "a pull request", "body": "code", "html_url": "https://github.test/chadit/CairnOS/pull/8", "created_at": "2026-06-25T00:00:00Z", "user": {"login": "octocat"}, "pull_request": {"url": "https://github.test/pulls/8"}}
+]`
+
+func TestGitHubListsIssues(t *testing.T) {
+	t.Parallel()
+
+	queries := make(chan string, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries <- r.URL.RawQuery
+
+		_, _ = io.WriteString(w, githubIssuesBody)
+	}))
+	defer server.Close()
+
+	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
+		opKey:    opListIssues,
+		repoKey:  testRepo,
+		sinceKey: "2026-06-15T00:00:00Z",
+		stateKey: "all",
+	}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	query := <-queries
+	if !strings.Contains(query, "state=all") || !strings.Contains(query, "since=2026-06-15") {
+		t.Fatalf("query = %q, want state and since passed through", query)
+	}
+
+	items, isList := result.Output.([]any)
+	if !isList {
+		t.Fatalf("output = %#v, want a list", result.Output)
+	}
+
+	if len(items) != 1 {
+		t.Fatalf("kept %d issues, want 1 (stale created_at and the PR row dropped)", len(items))
+	}
+
+	issue, isMap := items[0].(map[string]any)
+	if !isMap {
+		t.Fatalf("issue = %#v, want a map", items[0])
+	}
+
+	if issue["number"] != int64(10) || issue[titleKey] != "new bug" || issue[bodyKey] != "found it" ||
+		issue[urlKey] != "https://github.test/chadit/CairnOS/issues/10" ||
+		issue["author"] != "octocat" || issue["created_at"] != "2026-06-20T00:00:00Z" {
+		t.Fatalf("issue = %#v", issue)
+	}
+}
+
+func TestGitHubListsIssuesEmptySinceKeepsAll(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, githubIssuesBody)
+	}))
+	defer server.Close()
+
+	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
+		opKey:   opListIssues,
+		repoKey: testRepo,
+	}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	items, _ := result.Output.([]any)
+	if len(items) != 2 {
+		t.Fatalf("kept %d issues, want 2 (no since filter, PR row still dropped)", len(items))
+	}
+}
+
 func TestGitHubClassifiesStatusCodes(t *testing.T) {
 	t.Parallel()
 
@@ -220,6 +303,10 @@ func TestGitHubValidate(t *testing.T) {
 		{name: "issue missing body", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x"}, resolved: true, wantErr: true},
 		{name: "non-string label", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x", bodyKey: "y", "labels": []any{int64(1)}}, resolved: true, wantErr: true},
 		{name: "issue ok", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x", bodyKey: "y"}, resolved: true, wantErr: false},
+		{name: "list_issues missing repo", params: map[string]any{opKey: opListIssues}, resolved: true, wantErr: true},
+		{name: "list_issues ok", params: map[string]any{opKey: opListIssues, repoKey: testRepo}, resolved: true, wantErr: false},
+		{name: "list_issues with since and state", params: map[string]any{opKey: opListIssues, repoKey: testRepo, sinceKey: "2026-06-01T00:00:00Z", stateKey: "all"}, resolved: true, wantErr: false},
+		{name: "list_issues non-string since", params: map[string]any{opKey: opListIssues, repoKey: testRepo, sinceKey: int64(1)}, resolved: true, wantErr: true},
 	}
 
 	for _, tt := range cases {

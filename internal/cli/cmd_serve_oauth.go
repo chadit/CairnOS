@@ -12,7 +12,31 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/oauth"
+	"github.com/chadit/CairnOS/internal/telemetry"
 )
+
+// attachOAuthServe mounts the OIDC login extension when [oauth] is enabled,
+// appending it to apiCfg and printing the login banner. It returns the failure
+// exit code and false only when the extension cannot be built (telemetry
+// flushed); a disabled config mounts nothing and returns true. Kept out of
+// runServe so that function stays under the complexity ceiling, the same shape
+// as attachMCPServe and attachWebhookServe.
+func (a *App) attachOAuthServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, authn *auth.Authenticator, members oauth.Tenancy, apiCfg *api.Config, logger *slog.Logger) (int, bool) {
+	if !cfg.OAuth.Enabled {
+		return ExitOK, true
+	}
+
+	ext, err := buildOAuthExtension(ctx, cfg, authn, members, logger)
+	if err != nil {
+		return a.failServe(ctx, tel, "oauth", err), false
+	}
+
+	apiCfg.Extensions = append(apiCfg.Extensions, ext)
+
+	a.printOutf("oauth login available at %s%s\n", "http://"+cfg.API.HTTP, oauthloginPath)
+
+	return ExitOK, true
+}
 
 // oauthloginPath echoes the handler's login route for the serve banner.
 const oauthloginPath = oauth.LoginPath

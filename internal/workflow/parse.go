@@ -90,6 +90,8 @@ func (b *builder) buildMeta(flow *Workflow, metaRaw map[string]any) {
 			flow.Schedule = b.str("workflow.schedule", value)
 		case "on_error":
 			b.buildOnError(flow, value)
+		case "error_workflow":
+			flow.ErrorWorkflow = b.str("workflow.error_workflow", value)
 		case "notify":
 			flow.Notify = b.strSlice("workflow.notify", value)
 		case "timeout":
@@ -98,6 +100,8 @@ func (b *builder) buildMeta(flow *Workflow, metaRaw map[string]any) {
 			b.buildInputs(flow, value)
 		case "budget":
 			b.buildBudget(flow, value)
+		case "poll":
+			b.buildPoll(flow, value)
 		case "imports":
 			b.addf(CodeReserved, "workflow key %q is reserved for a future phase", key)
 		default:
@@ -221,6 +225,34 @@ func (b *builder) buildBudgetOnExceed(budget *BudgetSpec, value any) {
 	}
 }
 
+// buildPoll maps the [workflow.poll] table. Params pass through untouched so a
+// source reads its own arguments; the source name and the schedule requirement
+// are checked in validate so they join the one-pass error list. Unknown keys
+// are rejected here, the house parser style.
+func (b *builder) buildPoll(flow *Workflow, value any) {
+	table, ok := value.(map[string]any)
+	if !ok {
+		b.addf(CodeBadPoll, "workflow.poll must be a table")
+
+		return
+	}
+
+	poll := &PollSpec{}
+
+	for key, fieldValue := range table {
+		switch key {
+		case "source":
+			poll.Source = b.str("workflow.poll.source", fieldValue)
+		case "params":
+			poll.Params = b.table("workflow.poll.params", fieldValue)
+		default:
+			b.addf(CodeBadPoll, "workflow.poll has unknown key %q", key)
+		}
+	}
+
+	flow.Poll = poll
+}
+
 func (b *builder) buildActions(flow *Workflow, actionsRaw any) {
 	if actionsRaw == nil {
 		return
@@ -268,42 +300,93 @@ func (b *builder) buildAction(name string, actionTable map[string]any) *Action {
 			action.Params = b.table(name+".params", value)
 		case "fallback":
 			action.Fallback = b.strSlice(name+".fallback", value)
-		case "driver":
-			action.Driver = b.str(name+".driver", value)
-		case "goal":
-			action.Goal = b.str(name+".goal", value)
-		case "tools":
-			action.Tools = b.strSlice(name+".tools", value)
-			action.HasTools = true
-		case "max_iterations":
-			action.MaxIterations = b.integer(name+".max_iterations", value)
-		case "budget_usd":
-			action.BudgetUSD = b.number(name+".budget_usd", value)
-		case "system_prompt":
-			action.SystemPrompt = b.str(name+".system_prompt", value)
-		case "memory_scope":
-			action.MemoryScope = b.str(name+".memory_scope", value)
-		case "foreach", "budget":
+		case "workflow":
+			action.Workflow = b.str(name+".workflow", value)
+		case "inputs":
+			action.Inputs = b.table(name+".inputs", value)
+		case "message":
+			action.Message = b.str(name+".message", value)
+		case "foreach":
+			action.Foreach = b.buildForeach(name, value)
+		case "budget":
 			b.addf(CodeReserved, "action %q key %q is reserved for a future phase", name, key)
 		default:
-			b.addf(CodeInvalid, "action %q has unknown key %q", name, key)
+			if !b.buildAgentKey(action, name, key, value) {
+				b.addf(CodeInvalid, "action %q has unknown key %q", name, key)
+			}
 		}
 	}
 
 	return action
 }
 
+// buildAgentKey maps the agent-action keys, reporting whether it handled key.
+// Split from buildAction so the per-key switch stays under the complexity
+// ceiling now that task and workflow-call keys share the same table.
+func (b *builder) buildAgentKey(action *Action, name, key string, value any) bool {
+	switch key {
+	case "driver":
+		action.Driver = b.str(name+".driver", value)
+	case "goal":
+		action.Goal = b.str(name+".goal", value)
+	case "tools":
+		action.Tools = b.strSlice(name+".tools", value)
+		action.HasTools = true
+	case "max_iterations":
+		action.MaxIterations = b.integer(name+".max_iterations", value)
+	case "budget_usd":
+		action.BudgetUSD = b.number(name+".budget_usd", value)
+	case "system_prompt":
+		action.SystemPrompt = b.str(name+".system_prompt", value)
+	case "memory_scope":
+		action.MemoryScope = b.str(name+".memory_scope", value)
+	default:
+		return false
+	}
+
+	return true
+}
+
 func (b *builder) buildKind(action *Action, value any) {
 	kind := b.str(action.Name+".kind", value)
 
 	switch kind {
-	case KindTask, KindAgent, "":
+	case KindTask, KindAgent, KindWorkflow, KindApproval, "":
 		if kind != "" {
 			action.Kind = kind
 		}
 	default:
-		b.addf(CodeInvalid, "action %q kind must be %q or %q, got %q", action.Name, KindTask, KindAgent, kind)
+		b.addf(CodeInvalid, "action %q kind must be %q, %q, %q, or %q, got %q",
+			action.Name, KindTask, KindAgent, KindWorkflow, KindApproval, kind)
 	}
+}
+
+// buildForeach maps the [action.<name>.foreach] table. It captures the items
+// source untyped (a string ref or a literal array) and the parallelism, both
+// checked in validate; max_parallel defaults to one so an absent key runs the
+// elements serially.
+func (b *builder) buildForeach(name string, value any) *ForeachSpec {
+	table, ok := value.(map[string]any)
+	if !ok {
+		b.addf(CodeBadForeach, "action %q foreach must be a table, got %T", name, value)
+
+		return nil
+	}
+
+	spec := &ForeachSpec{MaxParallel: 1}
+
+	for key, fieldValue := range table {
+		switch key {
+		case "items":
+			spec.Items = fieldValue
+		case "max_parallel":
+			spec.MaxParallel = b.integer(name+".foreach.max_parallel", fieldValue)
+		default:
+			b.addf(CodeBadForeach, "action %q foreach has unknown key %q", name, key)
+		}
+	}
+
+	return spec
 }
 
 func (b *builder) buildRetry(name string, value any) *RetryPolicy {

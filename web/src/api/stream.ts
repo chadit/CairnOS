@@ -1,6 +1,16 @@
 import type { RunEvent, StreamEnvelope } from './types';
 import { CairnApiError } from './client';
+import { base64Encode } from './endpoints';
 import { clearToken, getToken } from './token';
+
+/**
+ * RunStreamOptions carries an inline test definition. When `toml` is set the
+ * gateway runs those bytes directly instead of resolving the workflow by name,
+ * the builder's single-action test path.
+ */
+export interface RunStreamOptions {
+  toml?: string;
+}
 
 /**
  * streamRunEvents starts a run and yields each RunEvent from the gateway's
@@ -12,6 +22,7 @@ import { clearToken, getToken } from './token';
 export async function* streamRunEvents(
   workflowName: string,
   inputs: Record<string, string>,
+  options?: RunStreamOptions,
   signal?: AbortSignal,
 ): AsyncGenerator<RunEvent, void, void> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -20,10 +31,17 @@ export async function* streamRunEvents(
     headers.Authorization = `Bearer ${token}`;
   }
 
+  const body: { inputs: Record<string, string>; toml?: string } = { inputs };
+  if (options?.toml !== undefined) {
+    // grpc-gateway maps the proto `bytes` field as base64 in JSON, the same
+    // encoding saveWorkflow and validateWorkflow use.
+    body.toml = base64Encode(options.toml);
+  }
+
   const init: RequestInit = {
     method: 'POST',
     headers,
-    body: JSON.stringify({ inputs }),
+    body: JSON.stringify(body),
   };
   if (signal) {
     init.signal = signal;

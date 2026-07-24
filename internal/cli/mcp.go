@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -11,7 +12,25 @@ import (
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/store"
+	"github.com/chadit/CairnOS/internal/telemetry"
 )
+
+// attachMCPServe mounts the MCP http transport and logs its endpoint, returning
+// an exit code and false on a wiring failure so the serve flow stays under the
+// complexity ceiling, the same shape attachChat uses. With MCP disabled or set
+// to stdio, nothing mounts and it reports success.
+func (a *App) attachMCPServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *mcpServeDeps) (int, bool) {
+	path, err := attachMCP(cfg, deps, apiCfg)
+	if err != nil {
+		return a.failServe(ctx, tel, "mcp", err), false
+	}
+
+	if path != "" {
+		a.printOutf("mcp server available at %s%s\n", "http://"+cfg.API.HTTP, path)
+	}
+
+	return ExitOK, true
+}
 
 // mcpServeDeps groups the seams the MCP http transport shares with the rest of
 // the serve process, so attachMCP takes one argument rather than a long

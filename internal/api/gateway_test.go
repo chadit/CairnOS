@@ -124,7 +124,7 @@ func TestGatewayErrorEnvelope(t *testing.T) {
 		t.Fatalf("parse error envelope: %v", err)
 	}
 
-	if envelope.Status != "error" {
+	if envelope.Status != statusError {
 		t.Fatalf("envelope status = %q, want error", envelope.Status)
 	}
 
@@ -158,7 +158,7 @@ func TestGatewayErrorEnvelopeNotFound(t *testing.T) {
 		t.Fatalf("parse error envelope %q: %v", body, err)
 	}
 
-	if envelope.Status != "error" || envelope.Error.Code != "api.run_not_found" {
+	if envelope.Status != statusError || envelope.Error.Code != "api.run_not_found" {
 		t.Fatalf("envelope = %s, want status error with code api.run_not_found", body)
 	}
 }

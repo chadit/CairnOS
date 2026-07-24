@@ -64,7 +64,8 @@ func scopeForMethod(fullMethod string) (string, bool) {
 	switch fullMethod {
 	case "/cairnos.v1.AdminService/Health", "/cairnos.v1.LoginService/Login":
 		return "", true
-	case "/cairnos.v1.WorkflowService/RunWorkflow", "/cairnos.v1.WorkflowService/CancelRun":
+	case "/cairnos.v1.WorkflowService/RunWorkflow", "/cairnos.v1.WorkflowService/CancelRun",
+		"/cairnos.v1.WorkflowService/ReplayRun", "/cairnos.v1.WorkflowService/SaveWorkflow":
 		return auth.ScopeWriteWorkflow, false
 	case "/cairnos.v1.WorkflowService/ValidateWorkflow", "/cairnos.v1.AdminService/ListRunners":
 		return auth.ScopeReadWorkflow, false
@@ -89,7 +90,8 @@ func scopeForMethod(fullMethod string) (string, bool) {
 		return auth.ScopeWriteVault, false
 	case "/cairnos.v1.ChatService/CreateSession", "/cairnos.v1.ChatService/SendMessage",
 		"/cairnos.v1.ChatService/ConfirmAction", "/cairnos.v1.ChatService/GetSession",
-		"/cairnos.v1.ChatService/ListSessions", "/cairnos.v1.ChatService/ListMessages":
+		"/cairnos.v1.ChatService/ListSessions", "/cairnos.v1.ChatService/ListMessages",
+		"/cairnos.v1.ChatService/SearchMessages":
 		// Every chat method takes chat:session (.agents/spec/13-roadmap.md,
 		// Phase 9). Approving a workflow trigger additionally needs
 		// write:workflow, which ConfirmAction checks in-handler from the

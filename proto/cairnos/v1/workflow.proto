@@ -44,11 +44,33 @@ service WorkflowService {
     };
   }
 
+  // ReplayRun reruns a prior run from its first failed action: prior
+  // succeeded actions keep their outputs and the rest re-execute, streaming
+  // the new run's events like RunWorkflow. A workflow-hash mismatch is
+  // refused unless force is set.
+  rpc ReplayRun(ReplayRunRequest) returns (stream RunEvent) {
+    option (google.api.http) = {
+      post: "/v1/runs/{run_id}/replay"
+      body: "*"
+    };
+  }
+
   // ValidateWorkflow parses and validates a workflow file without running
   // it, returning every canonical validation error found in one pass.
   rpc ValidateWorkflow(ValidateWorkflowRequest) returns (ValidateWorkflowResponse) {
     option (google.api.http) = {
       post: "/v1/workflows/validate"
+      body: "*"
+    };
+  }
+
+  // SaveWorkflow validates a workflow definition and writes it into the
+  // server's workflows directory. Overwriting an existing workflow captures
+  // the prior definition in the version store first, so the save is
+  // rollbackable via the suggestions revert path.
+  rpc SaveWorkflow(SaveWorkflowRequest) returns (SaveWorkflowResponse) {
+    option (google.api.http) = {
+      put: "/v1/workflows/{workflow_name}"
       body: "*"
     };
   }
@@ -59,6 +81,11 @@ service WorkflowService {
 message RunWorkflowRequest {
   string workflow_name = 1;
   google.protobuf.Struct inputs = 2;
+
+  // toml, when set, runs this definition inline instead of resolving by name,
+  // the builder's test-action path. Over HTTP/JSON the bytes are
+  // base64-encoded, per proto3 JSON mapping.
+  bytes toml = 3;
 }
 
 // RunEventType says what a RunEvent describes.
@@ -169,6 +196,16 @@ message CancelRunRequest {
   string run_id = 1;
 }
 
+// ReplayRunRequest names the prior run to replay and whether to override the
+// workflow-hash guard when the file has changed since the original run.
+message ReplayRunRequest {
+  string run_id = 1;
+
+  // force replays even when the current workflow file's hash differs from the
+  // hash the prior run recorded.
+  bool force = 2;
+}
+
 // CancelRunResponse acknowledges the cancel signal; the run finalizes
 // asynchronously and lands in run history as canceled.
 message CancelRunResponse {
@@ -188,4 +225,28 @@ message ValidateWorkflowResponse {
   // errors lists every canonical validation problem found, so authors fix a
   // file in one pass.
   repeated Error errors = 2;
+}
+
+// SaveWorkflowRequest carries the target workflow name (from the URL path) and
+// the raw definition bytes (TOML). Over HTTP/JSON the bytes field is
+// base64-encoded, per proto3 JSON mapping. The definition's own name must
+// match workflow_name or the save is refused.
+message SaveWorkflowRequest {
+  string workflow_name = 1;
+  bytes toml = 2;
+}
+
+// SaveWorkflowResponse reports the written definition's identity and whether
+// the save replaced a prior file.
+message SaveWorkflowResponse {
+  string workflow_name = 1;
+
+  // hash is the hex SHA-256 of the new file bytes.
+  string hash = 2;
+
+  // prior_hash is the hash of the replaced definition; empty on create.
+  string prior_hash = 3;
+
+  // created is true when no file carried this name before the save.
+  bool created = 4;
 }

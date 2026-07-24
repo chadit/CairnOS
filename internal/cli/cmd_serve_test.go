@@ -128,7 +128,7 @@ func TestServeSmoke(t *testing.T) {
 	exit := make(chan int, 1)
 
 	go func() {
-		exit <- cli.New(stdout, &stderr).Run(ctx, []string{"serve", flagDirArg, dir})
+		exit <- cli.New(stdout, &stderr).Run(ctx, []string{serveCmd, flagDirArg, dir})
 	}()
 
 	select {
@@ -249,6 +249,218 @@ func dialServe(t *testing.T, addr string) *grpc.ClientConn {
 	return conn
 }
 
+// bridgeTokenEnv is the env key the Telegram bot token rides, mirrored from the
+// wiring's unexported const so the tests can set and clear it.
+const bridgeTokenEnv = "CAIRNOS_BRIDGE_TELEGRAM_TOKEN" // #nosec G101 -- env var name, not a credential
+
+// bridgeEnabledWithChatTOML turns the bridge and chat on with one allowlisted
+// user, the wiring the running banner proves. The short poll timeout bounds the
+// one Bot API call the loop attempts before the test cancels it.
+const bridgeEnabledWithChatTOML = `
+[api]
+grpc = "127.0.0.1:0"
+http = "127.0.0.1:0"
+
+[telemetry]
+enabled    = true
+prometheus = "127.0.0.1:0"
+
+[chat]
+enabled = true
+driver  = "openai"
+
+[bridge.telegram]
+enabled      = true
+poll_timeout = "1s"
+
+[bridge.telegram.users.123456789]
+workspace = "default"
+`
+
+// bridgeEnabledNoChatTOML turns the bridge on while chat stays off, the
+// cross-check serve must reject at wiring once the token is set.
+const bridgeEnabledNoChatTOML = `
+[api]
+grpc = "127.0.0.1:0"
+http = "127.0.0.1:0"
+
+[telemetry]
+enabled = false
+
+[bridge.telegram]
+enabled = true
+
+[bridge.telegram.users.123456789]
+workspace = "default"
+`
+
+// bridgeEnabledNoUsersTOML turns the bridge on with an empty allowlist, which
+// config load rejects before serve wiring is reached.
+const bridgeEnabledNoUsersTOML = `
+[api]
+grpc = "127.0.0.1:0"
+http = "127.0.0.1:0"
+
+[telemetry]
+enabled = false
+
+[bridge.telegram]
+enabled = true
+`
+
+// bridgeServeDir writes cfgTOML into a fresh home with a workflows directory, so
+// serve boots against a real layout.
+func bridgeServeDir(t *testing.T, cfgTOML string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(cfgTOML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "workflows"), 0o750); err != nil {
+		t.Fatalf("create workflows dir: %v", err)
+	}
+
+	return dir
+}
+
+// serveUntilReady boots serve in dir on a goroutine and blocks until the ready
+// marker prints or serve exits early. The returned buffers are safe to read once
+// exit is drained, since the exit send happens-after every serve write.
+func serveUntilReady(t *testing.T, dir string) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	stdout := newSignalWriter()
+	stderr := &bytes.Buffer{}
+	exit := make(chan int, 1)
+
+	go func() {
+		exit <- cli.New(stdout, stderr).Run(ctx, []string{serveCmd, flagDirArg, dir})
+	}()
+
+	select {
+	case <-stdout.ready:
+	case code := <-exit:
+		cancel()
+		t.Fatalf("serve exited early with %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	return stdout, stderr, exit, cancel
+}
+
+// TestServeStartsBridgeWhenEnabled proves the bridge wiring end to end: enabled
+// with a token and chat prints the running banner, and serve exits cleanly on
+// interrupt after draining the poll loop (acceptance 5, the started case).
+func TestServeStartsBridgeWhenEnabled(t *testing.T) {
+	// t.Setenv forbids t.Parallel; the token env is process-global.
+	t.Setenv(bridgeTokenEnv, "fake-not-a-real-token")
+
+	dir := bridgeServeDir(t, bridgeEnabledWithChatTOML)
+
+	stdout, _, exit, cancel := serveUntilReady(t, dir)
+
+	cancel()
+
+	if code := <-exit; code != cli.ExitOK {
+		t.Fatalf("serve exit = %d, want %d", code, cli.ExitOK)
+	}
+
+	if !strings.Contains(stdout.String(), "telegram bridge running") {
+		t.Fatalf("stdout missing the bridge banner:\n%s", stdout.String())
+	}
+}
+
+// TestServeSkipsBridgeWhenDisabled proves the default posture: no bridge block
+// starts no goroutine and logs one clear line, while serve runs normally.
+func TestServeSkipsBridgeWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	dir := bridgeServeDir(t, serveConfigTOML)
+
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+
+	cancel()
+
+	if code := <-exit; code != cli.ExitOK {
+		t.Fatalf("serve exit = %d, want %d", code, cli.ExitOK)
+	}
+
+	if strings.Contains(stdout.String(), "telegram bridge running") {
+		t.Fatalf("bridge banner printed with the bridge disabled:\n%s", stdout.String())
+	}
+
+	if !strings.Contains(stderr.String(), "telegram bridge disabled") {
+		t.Fatalf("stderr missing the disabled log line:\n%s", stderr.String())
+	}
+}
+
+// TestServeSkipsBridgeWhenTokenUnset proves an enabled bridge with an unset token
+// is treated as off: one log line, no goroutine, serve runs normally. The chat
+// cross-check never fires because the token gate short-circuits first.
+func TestServeSkipsBridgeWhenTokenUnset(t *testing.T) {
+	// Force the token empty regardless of ambient env; t.Setenv forbids Parallel.
+	t.Setenv(bridgeTokenEnv, "")
+
+	dir := bridgeServeDir(t, bridgeEnabledNoChatTOML)
+
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+
+	cancel()
+
+	if code := <-exit; code != cli.ExitOK {
+		t.Fatalf("serve exit = %d, want %d", code, cli.ExitOK)
+	}
+
+	if strings.Contains(stdout.String(), "telegram bridge running") {
+		t.Fatalf("bridge banner printed with the token unset:\n%s", stdout.String())
+	}
+
+	if !strings.Contains(stderr.String(), "token env unset") {
+		t.Fatalf("stderr missing the token-unset log line:\n%s", stderr.String())
+	}
+}
+
+// TestServeFailsWhenBridgeWithoutChat proves the cross-check: an enabled bridge
+// with a token but chat off fails serve startup with config.ErrInvalidConfig,
+// since the bridge has no agent to drive (acceptance 5).
+func TestServeFailsWhenBridgeWithoutChat(t *testing.T) {
+	t.Setenv(bridgeTokenEnv, "fake-not-a-real-token")
+
+	dir := bridgeServeDir(t, bridgeEnabledNoChatTOML)
+
+	code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir)
+
+	if code != cli.ExitFailure {
+		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
+	}
+
+	if !strings.Contains(stderr, "requires [chat] enabled") {
+		t.Fatalf("stderr missing the cross-check error:\n%s", stderr)
+	}
+}
+
+// TestServeFailsWhenBridgeWithoutUsers proves the empty-allowlist guard: an
+// enabled bridge with no users fails at config load, before serve wiring.
+func TestServeFailsWhenBridgeWithoutUsers(t *testing.T) {
+	t.Parallel()
+
+	dir := bridgeServeDir(t, bridgeEnabledNoUsersTOML)
+
+	code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir)
+
+	if code != cli.ExitFailure {
+		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
+	}
+
+	if !strings.Contains(stderr, "must list at least one user") {
+		t.Fatalf("stderr missing the empty-allowlist error:\n%s", stderr)
+	}
+}
+
 // TestServeRefusesNetworkBind proves the network guard reaches the CLI: a
 // non-loopback bind with auth off fails fast with a failure exit code and
 // names the flag that would allow it deliberately.
@@ -266,7 +478,7 @@ func TestServeRefusesNetworkBind(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).Run(t.Context(), []string{"serve", flagDirArg, dir})
+	code := cli.New(&stdout, &stderr).Run(t.Context(), []string{serveCmd, flagDirArg, dir})
 	if code != cli.ExitFailure {
 		t.Fatalf("exit code = %d, want %d for a refused network bind", code, cli.ExitFailure)
 	}

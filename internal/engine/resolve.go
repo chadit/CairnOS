@@ -28,18 +28,69 @@ func (e *Engine) resolver(ctx context.Context, inputs, outputs map[string]any) w
 			return e.resolveEnv(ref)
 		case workflow.RefSecret:
 			return e.resolveSecret(ctx, ref)
+		case workflow.RefItem, workflow.RefIndex:
+			// item and index only exist inside a fan-out, layered on by
+			// foreachResolver; the base resolver never binds them. Validation
+			// rejects them elsewhere, so reaching here is a precondition bug.
+			return nil, errf(CodePreconditionFailed, "%s is only available inside a foreach action", ref.Raw)
 		default:
 			return nil, errf(CodePreconditionFailed, "unsupported reference %s", ref.Raw)
 		}
 	}
 }
 
+// foreachResolver layers the current element and its position over the base
+// resolver so ${{ item }} and ${{ index }} bind during a fan-out; every other
+// reference falls through unchanged.
+func (e *Engine) foreachResolver(ctx context.Context, inputs, outputs map[string]any, item any, index int) workflow.Resolver {
+	base := e.resolver(ctx, inputs, outputs)
+
+	return func(ref workflow.Ref) (any, error) {
+		if ref.Kind == workflow.RefItem {
+			return resolveItemRef(ref, item)
+		}
+
+		if ref.Kind == workflow.RefIndex {
+			return index, nil
+		}
+
+		return base(ref)
+	}
+}
+
+// resolveItemRef reads the current foreach element, traversing the reference
+// path through structured fields the same way an action output does.
+func resolveItemRef(ref workflow.Ref, item any) (any, error) {
+	value := item
+
+	for _, field := range ref.Path {
+		object, isObject := value.(map[string]any)
+		if !isObject {
+			return nil, errf(CodePreconditionFailed,
+				"%s: cannot read field %q of a %T value", ref.Raw, field, value)
+		}
+
+		next, exists := object[field]
+		if !exists {
+			return nil, errf(CodePreconditionFailed, "%s: item has no field %q", ref.Raw, field)
+		}
+
+		value = next
+	}
+
+	return value, nil
+}
+
 // resolveParams interpolates every reference in an action's params at launch
 // time, after upstream results are persisted
 // (.agents/spec/02-workflow-schema.md, "Interpolation and data passing").
 func (e *Engine) resolveParams(ctx context.Context, params, inputs, outputs map[string]any) (map[string]any, error) {
-	resolve := e.resolver(ctx, inputs, outputs)
+	return resolveParamsWith(params, e.resolver(ctx, inputs, outputs))
+}
 
+// resolveParamsWith interpolates params against a supplied resolver, so a
+// foreach item can reuse the same walk with item and index bound on top.
+func resolveParamsWith(params map[string]any, resolve workflow.Resolver) (map[string]any, error) {
 	resolved := make(map[string]any, len(params))
 
 	for key, value := range params {
@@ -223,19 +274,54 @@ func resolveActionRef(ref workflow.Ref, outputs map[string]any) (any, error) {
 	}
 
 	for _, field := range ref.Path {
-		object, isObject := value.(map[string]any)
-		if !isObject {
-			return nil, errf(CodePreconditionFailed,
-				"%s: cannot read field %q of a %T value", ref.Raw, field, value)
+		next, err := stepActionPath(value, field, ref.Raw)
+		if err != nil {
+			return nil, err
 		}
 
-		value, exists = object[field]
-		if !exists {
-			return nil, errf(CodePreconditionFailed, "%s: output has no field %q", ref.Raw, field)
-		}
+		value = next
 	}
 
 	return value, nil
+}
+
+// stepActionPath advances one path segment. A map reads by field name even when
+// the segment is numeric, so an output shaped {"0": ...} keeps its meaning. A
+// non-negative in-range numeric segment on a list indexes it. Every other case
+// fails as a precondition before the runner runs.
+func stepActionPath(value any, field, raw string) (any, error) {
+	switch container := value.(type) {
+	case map[string]any:
+		next, exists := container[field]
+		if !exists {
+			return nil, errf(CodePreconditionFailed, "%s: output has no field %q", raw, field)
+		}
+
+		return next, nil
+	case []any:
+		return indexActionList(container, field, raw)
+	default:
+		return nil, errf(CodePreconditionFailed,
+			"%s: cannot read field %q of a %T value", raw, field, value)
+	}
+}
+
+// indexActionList indexes a list by a numeric segment. A negative or
+// non-numeric segment keeps the field-shaped error so a list and a scalar read
+// alike on misuse; an out-of-range index names the index and the length.
+func indexActionList(list []any, field, raw string) (any, error) {
+	index, err := strconv.Atoi(field)
+	if err != nil || index < 0 {
+		return nil, errf(CodePreconditionFailed,
+			"%s: cannot read field %q of a %T value", raw, field, list)
+	}
+
+	if index >= len(list) {
+		return nil, errf(CodePreconditionFailed,
+			"%s: index %d out of range for a list of length %d", raw, index, len(list))
+	}
+
+	return list[index], nil
 }
 
 // resolveInputRef reads a validated run input. A declared optional input

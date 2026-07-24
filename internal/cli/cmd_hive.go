@@ -70,7 +70,22 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	client, err := buildHiveClient(ctx, &cfg)
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		a.printErrf("hive subscribe: %v\n", err)
+
+		return ExitFailure
+	}
+
+	source, closeSource, err := a.buildSecretSource(ctx, dir, &cfg)
+	if err != nil {
+		a.printErrf("hive subscribe: %v\n", err)
+
+		return ExitFailure
+	}
+	defer func() { _ = closeSource() }()
+
+	client, err := buildHiveClient(ctx, source, &cfg)
 	if err != nil {
 		a.printErrf("hive subscribe: %v\n", err)
 
@@ -131,12 +146,19 @@ func (a *App) cmdHivePublish(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(db)
 
-	return a.publishSuggestion(ctx, db, &cfg, id, *obsFlag)
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		a.printErrf("hive publish: %v\n", err)
+
+		return ExitFailure
+	}
+
+	return a.publishSuggestion(ctx, dir, db, &cfg, id, *obsFlag)
 }
 
 // publishSuggestion loads the suggestion, transforms it to a content-free tip,
 // and publishes it through the gated client.
-func (a *App) publishSuggestion(ctx context.Context, db store.Store, cfg *config.Config, id string, observations int) int {
+func (a *App) publishSuggestion(ctx context.Context, dir string, db store.Store, cfg *config.Config, id string, observations int) int {
 	if !cfg.Hive.Enabled {
 		a.printErrf("hive publish: hive is disabled; set [hive] enabled = true\n")
 
@@ -166,7 +188,15 @@ func (a *App) publishSuggestion(ctx context.Context, db store.Store, cfg *config
 		return ExitFailure
 	}
 
-	client, err := buildHiveClient(ctx, cfg)
+	source, closeSource, err := a.buildSecretSource(ctx, dir, cfg)
+	if err != nil {
+		a.printErrf("hive publish: %v\n", err)
+
+		return ExitFailure
+	}
+	defer func() { _ = closeSource() }()
+
+	client, err := buildHiveClient(ctx, source, cfg)
 	if err != nil {
 		a.printErrf("hive publish: %v\n", err)
 
@@ -220,7 +250,7 @@ func (a *App) cmdHiveStatus(args []string) int {
 // stable id. When [hive] key_ref names a shared key, the client seals outbound
 // tips and opens received envelopes under it; a configured-but-missing key is a
 // hard error rather than a silent drop to plaintext.
-func buildHiveClient(ctx context.Context, cfg *config.Config) (*hive.HTTPHiveClient, error) {
+func buildHiveClient(ctx context.Context, source secrets.Source, cfg *config.Config) (*hive.HTTPHiveClient, error) {
 	pseudonym := cfg.Hive.NodePseudonym
 	if pseudonym == "" {
 		minted, err := hive.NewPseudonym()
@@ -231,7 +261,7 @@ func buildHiveClient(ctx context.Context, cfg *config.Config) (*hive.HTTPHiveCli
 		pseudonym = minted
 	}
 
-	opts, err := hiveSealerOption(ctx, cfg)
+	opts, err := hiveSealerOption(ctx, source, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -256,12 +286,12 @@ func buildHiveClient(ctx context.Context, cfg *config.Config) (*hive.HTTPHiveCli
 // returns the WithSealer option when [hive] key_ref is set, or no options when
 // it is empty (the plaintext, no-key mode). The key is the privacy guarantee, so
 // a lookup or decode failure stops construction.
-func hiveSealerOption(ctx context.Context, cfg *config.Config) ([]hive.Option, error) {
+func hiveSealerOption(ctx context.Context, source secrets.Source, cfg *config.Config) ([]hive.Option, error) {
 	if cfg.Hive.KeyRef == "" {
 		return nil, nil
 	}
 
-	sealer, err := hive.RotatingSealerFromSecret(ctx, secrets.NewEnv(), cfg.Hive.KeyRef, cfg.Hive.PrevKeyRef)
+	sealer, err := hive.RotatingSealerFromSecret(ctx, source, cfg.Hive.KeyRef, cfg.Hive.PrevKeyRef)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller prefixes the command label
 	}

@@ -13,11 +13,15 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// attemptOutcome is everything one action execution produced.
+// attemptOutcome is everything one action execution produced. waiting is set
+// only by an approval action that parked pending a human decision: the action
+// neither succeeded nor failed, so runAction records it as ActionWaiting and
+// the run quiesces to held (.agents/spec/parity/workflow-language.md).
 type attemptOutcome struct {
 	result   runner.Result
 	attempts int
 	cerr     *cairnerr.Error
+	waiting  bool
 }
 
 // runAction is the worker side of one action once it holds a semaphore
@@ -43,6 +47,10 @@ func (e *Engine) runAction(ctx context.Context, runID string, action *workflow.A
 	})
 
 	outcome := e.attemptFor(ctx, runID, action, inputs, outputs)
+
+	if outcome.waiting {
+		return e.parkAction(ctx, runID, action, started, finishAction)
+	}
 
 	status := store.ActionSucceeded
 	if outcome.cerr != nil {
@@ -76,6 +84,18 @@ func (e *Engine) attemptFor(ctx context.Context, runID string, action *workflow.
 		return e.agentAttempt(ctx, runID, action, inputs, outputs)
 	}
 
+	if action.Kind == workflow.KindWorkflow {
+		return e.workflowCallAttempt(ctx, runID, action, inputs, outputs)
+	}
+
+	if action.Kind == workflow.KindApproval {
+		return e.approvalAttempt(ctx, runID, action, inputs, outputs)
+	}
+
+	if action.Foreach != nil {
+		return e.foreachAttempt(ctx, runID, action, inputs, outputs)
+	}
+
 	return e.attempt(ctx, runID, action, inputs, outputs)
 }
 
@@ -88,6 +108,14 @@ func (e *Engine) attempt(ctx context.Context, runID string, action *workflow.Act
 		return attemptOutcome{cerr: asPrecondition(resolveErr)}
 	}
 
+	return e.runResolvedParams(ctx, runID, action, inputs, params)
+}
+
+// runResolvedParams is the runner half of a task attempt once params are
+// resolved: look up the runner, validate the params, and run the fallback
+// chain with retry and breaker. Split from attempt so a foreach item can
+// share it after resolving item and index into its own params.
+func (e *Engine) runResolvedParams(ctx context.Context, runID string, action *workflow.Action, inputs, params map[string]any) attemptOutcome {
 	rnr, registered := e.registry.Get(action.Runner)
 	if !registered {
 		// checked at run start; a runner vanishing mid-run is still a launch

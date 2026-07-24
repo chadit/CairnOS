@@ -108,10 +108,12 @@ func (r *budgetRecorder) lastSpend() (float64, bool) {
 	return r.spends[len(r.spends)-1], true
 }
 
-// budgetNotifier records warn-mode notifications.
+// budgetNotifier records warn-mode and pause-mode budget notifications so a test
+// can prove which path fired.
 type budgetNotifier struct {
 	mu     sync.Mutex
 	warned []float64
+	denied []float64
 }
 
 func (n *budgetNotifier) BudgetWarn(_ context.Context, _ string, spend, _ float64) {
@@ -121,11 +123,36 @@ func (n *budgetNotifier) BudgetWarn(_ context.Context, _ string, spend, _ float6
 	n.warned = append(n.warned, spend)
 }
 
+func (n *budgetNotifier) BudgetDenied(_ context.Context, _ string, spend, _ float64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	n.denied = append(n.denied, spend)
+}
+
 func (n *budgetNotifier) count() int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	return len(n.warned)
+}
+
+func (n *budgetNotifier) deniedCount() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	return len(n.denied)
+}
+
+func (n *budgetNotifier) lastDenied() (float64, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if len(n.denied) == 0 {
+		return 0, false
+	}
+
+	return n.denied[len(n.denied)-1], true
 }
 
 // newGovernedEngine builds an engine whose Budget and Pause checkers are the
@@ -280,8 +307,49 @@ func TestBudgetWarnAllowsAndNotifies(t *testing.T) {
 		t.Errorf("notifier fired %d times, want 1", notifier.count())
 	}
 
+	// The warn path never denies: BudgetDenied is the pause-only signal.
+	if got := notifier.deniedCount(); got != 0 {
+		t.Errorf("BudgetDenied fired %d times on warn, want 0", got)
+	}
+
 	if actions := rec.exceededActions(); len(actions) != 1 || actions[0] != workflow.BudgetOnExceedWarn {
 		t.Errorf("exceeded actions = %v, want one warn", actions)
+	}
+}
+
+func TestBudgetPauseDeniesAndNotifies(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	rec := &budgetRecorder{}
+	notifier := &budgetNotifier{}
+	eng, db := newGovernedEngine(t, rec, notifier, now)
+
+	// $15 spent this month, over the $10 pause ceiling.
+	seedSpend(t, db, "over", 15.0, time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC))
+
+	_, err := eng.RunWorkflow(t.Context(), parseFlow(t, budgetPauseTOML), nil, triggerCLI)
+	if err == nil {
+		t.Fatal("over-budget pause run was accepted, want refusal")
+	}
+
+	cerr, ok := errors.AsType[*cairnerr.Error](err)
+	if !ok || cerr.Code != engine.CodeBudgetExceeded {
+		t.Fatalf("error = %v, want code %s", err, engine.CodeBudgetExceeded)
+	}
+
+	// The pause refusal fires BudgetDenied once with the over-limit spend, and
+	// never BudgetWarn: denial and warning are distinct signals.
+	if got := notifier.deniedCount(); got != 1 {
+		t.Errorf("BudgetDenied fired %d times, want 1", got)
+	}
+
+	if spend, denied := notifier.lastDenied(); !denied || spend != 15.0 {
+		t.Errorf("BudgetDenied spend = %v (fired %v), want 15.0", spend, denied)
+	}
+
+	if got := notifier.count(); got != 0 {
+		t.Errorf("BudgetWarn fired %d times on pause, want 0", got)
 	}
 }
 

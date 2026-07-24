@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/store"
 )
 
 // Shared fixture values; goconst applies to tests in this repo's lint policy.
@@ -61,6 +62,7 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 		{"ReplaceAndDelete", testReplaceAndDelete},
 		{"LoadRespectsBudgetAndImportance", testLoadRespectsBudgetAndImportance},
 		{"LoadBreaksImportanceTiesByCreation", testLoadBreaksTiesByCreation},
+		{"ListFiltersScopeAndIsolatesWorkspaceInStableOrder", testListScopeWorkspaceAndOrder},
 		{"SearchFindsByContentAndTag", testSearchFindsByContentAndTag},
 		{"SemanticSearchFallsBackToKeyword", testSemanticFallsBack},
 		{"SearchIndexStaysInSyncAfterReplaceAndDelete", testSearchIndexStaysInSync},
@@ -98,6 +100,24 @@ func searchIDs(t *testing.T, mem memory.Store, query memory.Query) []string {
 	ids := make([]string, len(result.Entries))
 	for idx := range result.Entries {
 		ids[idx] = result.Entries[idx].ID
+	}
+
+	return ids
+}
+
+// listIDs lists a scope in the default workspace and returns the entry ids in
+// result order, so an ordering assertion reads as a slice comparison.
+func listIDs(t *testing.T, mem memory.Store, scope string) []string {
+	t.Helper()
+
+	entries, err := mem.List(t.Context(), scope)
+	if err != nil {
+		t.Fatalf("list scope %q: %v", scope, err)
+	}
+
+	ids := make([]string, len(entries))
+	for idx := range entries {
+		ids[idx] = entries[idx].ID
 	}
 
 	return ids
@@ -270,6 +290,51 @@ func testLoadBreaksTiesByCreation(t *testing.T, openFn OpenFunc) {
 
 	if len(loaded) != 2 || loaded[0].ID != olderID || loaded[1].ID != newerID {
 		t.Errorf("tie-break order wrong: got %+v, want older %s before newer %s", loaded, olderID, newerID)
+	}
+}
+
+func testListScopeWorkspaceAndOrder(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	// Explicit ids so the created_at tie-break is checkable: idA and idB share
+	// a timestamp, so only id ordering can put idA first. Referencing named
+	// constants instead of repeating the literals keeps goconst quiet.
+	const (
+		idA = "list-entry-a"
+		idB = "list-entry-b"
+		idC = "list-entry-c"
+		idD = "list-entry-d"
+		idX = "list-entry-x"
+	)
+
+	mem := openFn(t)
+	early := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	mid := early.Add(time.Hour)
+	late := mid.Add(time.Hour)
+
+	// Inserted out of created_at order so the result order can only come from
+	// the query's ORDER BY, never insertion order.
+	addEntry(t, mem, &memory.Entry{ID: idC, Scope: scopeGlobal, Content: "third by time", CreatedAt: mid})
+	addEntry(t, mem, &memory.Entry{ID: idB, Scope: scopeGlobal, Content: "second by id", CreatedAt: early})
+	addEntry(t, mem, &memory.Entry{ID: idA, Scope: scopeGlobal, Content: "first by id", CreatedAt: early})
+	addEntry(t, mem, &memory.Entry{ID: idD, Scope: scopeProject, Content: "other scope", CreatedAt: late})
+
+	// An entry in another workspace must never surface in the default one, so
+	// exports stay tenant-scoped.
+	otherCtx := store.ContextWithWorkspace(t.Context(), "tenant-b")
+	if _, err := mem.Add(otherCtx, &memory.Entry{ID: idX, Scope: scopeGlobal, Content: "other tenant", CreatedAt: early}); err != nil {
+		t.Fatalf("add in other workspace: %v", err)
+	}
+
+	// Empty scope lists every entry in the request workspace, created_at then
+	// id, without crossing the workspace boundary.
+	if got := listIDs(t, mem, ""); !reflect.DeepEqual(got, []string{idA, idB, idC, idD}) {
+		t.Errorf("list all = %v, want created_at then id across scopes without the other tenant", got)
+	}
+
+	// A scope filter narrows to that scope only, keeping the same ordering.
+	if got := listIDs(t, mem, scopeGlobal); !reflect.DeepEqual(got, []string{idA, idB, idC}) {
+		t.Errorf("list scope = %v, want the three global entries in created_at then id order", got)
 	}
 }
 

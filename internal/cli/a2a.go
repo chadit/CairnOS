@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/ed25519"
 	"fmt"
 	"log/slog"
@@ -11,7 +12,42 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/store"
+	"github.com/chadit/CairnOS/internal/telemetry"
 )
+
+// a2aServeDeps groups the seams attachA2AServe wires the A2A bundle over, so the
+// helper takes one argument rather than a long parameter list (gocritic
+// paramTypeCombine, varnamelen on a wide signature).
+type a2aServeDeps struct {
+	manager      *api.Manager
+	store        store.Store
+	workflowsDir string
+	logger       *slog.Logger
+}
+
+// attachA2AServe builds the A2A bundle and, when enabled, mounts it on the API
+// server and prints the card banner. It returns the failure exit code and false
+// only when the bundle cannot be built or attached (telemetry flushed); a
+// disabled A2A mounts nothing and returns true. Kept out of runServe so that
+// function stays under the complexity ceiling, the same shape as attachMCPServe.
+func (a *App) attachA2AServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *a2aServeDeps) (int, bool) {
+	bundle, err := buildA2ABundle(cfg, deps.manager, api.NewWorkflowResolver(deps.workflowsDir, deps.logger), deps.store, deps.logger)
+	if err != nil {
+		return a.failServe(ctx, tel, "a2a", err), false
+	}
+
+	if bundle == nil {
+		return ExitOK, true
+	}
+
+	if err := bundle.Attach(apiCfg); err != nil {
+		return a.failServe(ctx, tel, "a2a", err), false
+	}
+
+	a.printOutf("a2a card published at %s%s\n", "http://"+cfg.API.HTTP, a2aWellKnownPath)
+
+	return ExitOK, true
+}
 
 // a2aGRPCScheme prefixes the endpoint a card advertises when the config gives
 // no explicit endpoint_advertise; the card points at the gRPC listener.

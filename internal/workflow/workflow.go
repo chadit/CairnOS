@@ -23,6 +23,14 @@ const (
 	CodeReserved          = "workflow.reserved"
 	CodeAgentFields       = "workflow.agent_fields"
 	CodeBadBudget         = "workflow.bad_budget"
+	CodeBadForeach        = "workflow.bad_foreach"
+	CodeBadPoll           = "workflow.bad_poll"
+	// CodeSecretNotAllowed marks a ${{ secrets.* }} reference in a place the
+	// value would be persisted: a workflow-call action's inputs (which become
+	// the child run's stored inputs) or, from parity slice 5, an approval
+	// message. Both round-trip through the store, so a secret there would leak
+	// (.agents/spec/parity/workflow-language.md).
+	CodeSecretNotAllowed = "workflow.secret_not_allowed" // #nosec G101 -- canonical error code, not a credential
 )
 
 // Budget periods and on-exceed actions (.agents/spec/12-ui-and-governance.md,
@@ -41,6 +49,16 @@ const (
 	KindAgent       = "agent"
 	OnErrorHalt     = "halt"
 	OnErrorContinue = "continue"
+
+	// KindWorkflow runs another workflow as a child action, resolving it by
+	// name and passing an interpolated inputs table
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	KindWorkflow = "workflow"
+	// KindApproval names the human-approval kind a later parity slice adds.
+	// Reserved here by name so a file using it ahead of that slice fails with a
+	// clear "reserved" message rather than a bare "unknown kind", and so
+	// foreach rejects it.
+	KindApproval = "approval"
 )
 
 // Declared input types.
@@ -64,14 +82,40 @@ type Workflow struct {
 	Hash     string
 	Schedule string
 	OnError  string
-	Notify   []string
-	Timeout  time.Duration
-	Inputs   map[string]InputDecl
-	Actions  map[string]*Action
+	// ErrorWorkflow names a workflow fired once, synchronously, when a run of
+	// this workflow fails. Empty means no error handler. It must match the
+	// workflow-name pattern and cannot point back at this workflow
+	// (.agents/spec/parity/workflow-language.md, "Error workflow").
+	ErrorWorkflow string
+	Notify        []string
+	Timeout       time.Duration
+	Inputs        map[string]InputDecl
+	Actions       map[string]*Action
 	// Budget is the optional per-workflow cost ceiling
 	// (.agents/spec/12-ui-and-governance.md, "Budgets"). Nil means no budget,
 	// so the engine never accumulates spend or refuses a run for this workflow.
 	Budget *BudgetSpec
+	// Poll is the optional [workflow.poll] table that turns this scheduled
+	// workflow into a poll trigger: each cron fire polls an app event source
+	// and enqueues one run per new event. Nil means an ordinary schedule
+	// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers").
+	Poll *PollSpec
+}
+
+// PollSpec is one workflow's [workflow.poll] table: which app event source to
+// poll on the workflow's schedule and the source-specific params that scope the
+// poll. A poll workflow is an ordinary scheduled workflow, so it needs a
+// non-empty top-level schedule; the fire path in internal/cli wraps the
+// scheduler runner and turns one cron fire into zero or more enqueued events
+// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers").
+type PollSpec struct {
+	// Source names the registered poll source (github_issues is the first).
+	// An unknown source fails at fire time with poll.ErrUnknownSource, not at
+	// load, because the source registry is runtime state, not file state.
+	Source string
+	// Params are the source-specific arguments (repo, state, ...) passed
+	// through to the source untouched.
+	Params map[string]any
 }
 
 // BudgetSpec is one workflow's [workflow.budget] table: a cost ceiling over a
@@ -100,6 +144,11 @@ type Action struct {
 	CondExpr   Expr
 	Retry      *RetryPolicy
 
+	// Foreach fans a task action over a list, running one attempt per element
+	// with ${{ item }} and ${{ index }} bound. Nil means the action runs once.
+	// Only legal on a task action (.agents/spec/parity/workflow-language.md).
+	Foreach *ForeachSpec
+
 	// Task-action fields.
 	Runner string
 	Params map[string]any
@@ -108,6 +157,21 @@ type Action struct {
 	// runner: the action's own runner runs first, then these providers in order
 	// only when it fails terminally. Empty means "use the engine default".
 	Fallback []string
+
+	// Workflow-call fields (kind = "workflow"). Workflow names the child
+	// workflow to run; Inputs is the interpolatable table passed as the child
+	// run's inputs. Secret refs are banned in Inputs at validate time because
+	// the resolved values become the child run's persisted inputs
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	Workflow string
+	Inputs   map[string]any
+
+	// Message is the optional, interpolated prompt an approval action
+	// (kind = "approval") shows the operator. It can reference upstream outputs
+	// but never a secret: validation bans secret refs because the resolved
+	// message is persisted to the approval record
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	Message string
 
 	// Agent-action fields (.agents/spec/15-agent-loop.md).
 	Driver        string
@@ -118,6 +182,18 @@ type Action struct {
 	BudgetUSD     float64
 	SystemPrompt  string
 	MemoryScope   string
+}
+
+// ForeachSpec is one action's [action.<name>.foreach] table: the list to fan
+// over and how many elements may run at once.
+type ForeachSpec struct {
+	// Items is the list to iterate. It holds either a string carrying exactly
+	// one whole ${{ }} reference (resolved to a list at launch) or a literal
+	// array from the file.
+	Items any
+	// MaxParallel bounds how many elements run concurrently within the action;
+	// it defaults to 1 and must be >= 1.
+	MaxParallel int
 }
 
 // RetryPolicy mirrors the per-action retry table; zero value means "use the
@@ -154,10 +230,19 @@ func Load(path string) (*Workflow, error) {
 		return nil, err
 	}
 
-	sum := sha256.Sum256(data)
-	flow.Hash = hex.EncodeToString(sum[:])
+	flow.Hash = HashBytes(data)
 
 	return flow, nil
+}
+
+// HashBytes returns the hex SHA-256 of definition bytes, the same identity
+// Load stamps onto a workflow's Hash. Inline runs share it so a run started
+// from unsaved bytes records the same hash a saved file would
+// (.agents/spec/parity/builder-ops.md, "Inline run").
+func HashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+
+	return hex.EncodeToString(sum[:])
 }
 
 // isValidName checks the identifier pattern shared by workflow and action

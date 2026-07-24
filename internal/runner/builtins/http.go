@@ -69,11 +69,26 @@ type HTTP struct {
 	baseURL        string
 	defaultHeaders map[string]string
 	client         *http.Client
+
+	// lookup mints the credential's bearer token per request; nil when no
+	// credential manager is wired. credential is the [credential.<name>] block
+	// this runner binds to, or "" for the no-credential path.
+	lookup     TokenLookup
+	credential string
 }
 
 // NewHTTP builds the runner over an injected HTTP client so tests can point it
-// at httptest servers.
+// at httptest servers. It is the no-credential path: a credential config key
+// has no lookup to resolve against and fails the build.
 func NewHTTP(cfg map[string]any, client *http.Client) (*HTTP, error) {
+	return NewHTTPWithCredentials(cfg, client, nil)
+}
+
+// NewHTTPWithCredentials builds the runner over an injected client and an
+// optional credential lookup. When the config sets a credential key, lookup
+// must know it (Has) or construction fails, so an unknown or unwired credential
+// surfaces at build time rather than on the first request.
+func NewHTTPWithCredentials(cfg map[string]any, client *http.Client, lookup TokenLookup) (*HTTP, error) {
 	baseURL, err := configValue(cfg, cfgKeyBaseURL, "")
 	if err != nil {
 		return nil, wrapConfigErr(HTTPName, err)
@@ -84,34 +99,52 @@ func NewHTTP(cfg map[string]any, client *http.Client) (*HTTP, error) {
 		return nil, wrapConfigErr(HTTPName, err)
 	}
 
+	credential, err := requireCredential(cfg, lookup)
+	if err != nil {
+		return nil, wrapConfigErr(HTTPName, err)
+	}
+
 	return &HTTP{
 		baseURL:        strings.TrimSuffix(baseURL, "/"),
 		defaultHeaders: headers,
 		client:         client,
+		lookup:         lookup,
+		credential:     credential,
 	}, nil
 }
 
-// HTTPFactory adapts NewHTTP to the registry contract with the shared egress
-// guard wrapping the client: the timeout comes from the config or the default,
-// and allow_private_targets opts out of the IP guard for operators that call
-// internal endpoints on purpose.
+// HTTPFactory adapts the runner to the registry contract with no credential
+// lookup, so a credential key fails the build. It is HTTPFactoryWithCredentials
+// with a nil lookup.
 func HTTPFactory(cfg map[string]any) (runner.Runner, error) {
-	timeout, has, err := configInt(cfg, cfgKeyTimeout)
-	if err != nil {
-		return nil, wrapConfigErr(HTTPName, err)
-	}
+	return HTTPFactoryWithCredentials(nil)(cfg)
+}
 
-	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
-	if err != nil {
-		return nil, wrapConfigErr(HTTPName, err)
-	}
+// HTTPFactoryWithCredentials returns a registry factory that wires lookup into
+// each built HTTP runner, so a [runner.<name>] block with a credential key
+// sends Authorization: Bearer. The shared egress guard wraps the client: the
+// timeout comes from the config or the default, and allow_private_targets opts
+// out of the IP guard for operators that call internal endpoints on purpose. A
+// nil lookup keeps the runner exactly as the bare factory.
+func HTTPFactoryWithCredentials(lookup TokenLookup) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		timeout, has, err := configInt(cfg, cfgKeyTimeout)
+		if err != nil {
+			return nil, wrapConfigErr(HTTPName, err)
+		}
 
-	clientTimeout := defaultHTTPTimeout
-	if has && timeout > 0 {
-		clientTimeout = time.Duration(timeout) * time.Second
-	}
+		allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
+		if err != nil {
+			return nil, wrapConfigErr(HTTPName, err)
+		}
 
-	return NewHTTP(cfg, safeHTTPClient(HTTPName, clientTimeout, allowPrivate))
+		clientTimeout := defaultHTTPTimeout
+		if has && timeout > 0 {
+			clientTimeout = time.Duration(timeout) * time.Second
+		}
+
+		return NewHTTPWithCredentials(cfg, safeHTTPClient(HTTPName, clientTimeout, allowPrivate), lookup)
+	}
 }
 
 // Name implements runner.Runner.
@@ -267,7 +300,32 @@ func (h *HTTP) buildRequest(ctx context.Context, task *runner.Task) (*http.Reque
 		return nil, err
 	}
 
+	if err := h.applyCredential(ctx, request); err != nil {
+		return nil, err
+	}
+
 	return request, nil
+}
+
+// applyCredential mints the bound credential's bearer token and sets it as the
+// Authorization header, after the config defaults and per-call headers so an
+// explicit Authorization from either wins. A mint failure is transient: a token
+// endpoint is usually briefly unavailable and the engine retries. The error
+// carries a credential name and status only, never the token or the secret that
+// minted it.
+func (h *HTTP) applyCredential(ctx context.Context, request *http.Request) error {
+	if h.credential == "" {
+		return nil
+	}
+
+	if err := setBearerIfAbsent(ctx, request, h.lookup, h.credential); err != nil {
+		return &runner.Error{
+			Class: runner.ClassTransient, Code: HTTPName + ".credential",
+			Message: "attach credential token: " + err.Error(), Cause: err,
+		}
+	}
+
+	return nil
 }
 
 // resolveURL picks and assembles the target: the url param when set, otherwise

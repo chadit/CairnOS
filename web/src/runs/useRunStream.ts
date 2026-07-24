@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import type { RunStreamOptions } from '@/api/stream';
 import type { ApiError, RunEvent } from '@/api/types';
 import { isCairnApiError } from '@/api/client';
 import { streamRunEvents } from '@/api/stream';
@@ -43,30 +44,38 @@ export function useRunStream() {
     abortRef.current?.abort();
   }, []);
 
-  const start = useCallback(async (workflowName: string, inputs: Record<string, string>) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const start = useCallback(
+    async (workflowName: string, inputs: Record<string, string>, options?: RunStreamOptions) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setState({ ...INITIAL, running: true });
+      setState({ ...INITIAL, running: true });
 
-    try {
-      for await (const event of streamRunEvents(workflowName, inputs, controller.signal)) {
-        setState((prev) => fold(prev, event));
-      }
-      setState((prev) => ({ ...prev, running: false }));
-    } catch (err) {
-      // An abort is a deliberate cancel, not an error to surface.
-      if (controller.signal.aborted) {
+      try {
+        for await (const event of streamRunEvents(
+          workflowName,
+          inputs,
+          options,
+          controller.signal,
+        )) {
+          setState((prev) => fold(prev, event));
+        }
         setState((prev) => ({ ...prev, running: false }));
-        return;
+      } catch (err) {
+        // An abort is a deliberate cancel, not an error to surface.
+        if (controller.signal.aborted) {
+          setState((prev) => ({ ...prev, running: false }));
+          return;
+        }
+        const apiError: ApiError = isCairnApiError(err)
+          ? { code: err.code, message: err.message }
+          : { code: 'stream.error', message: String(err) };
+        setState((prev) => ({ ...prev, running: false, error: apiError }));
       }
-      const apiError: ApiError = isCairnApiError(err)
-        ? { code: err.code, message: err.message }
-        : { code: 'stream.error', message: String(err) };
-      setState((prev) => ({ ...prev, running: false, error: apiError }));
-    }
-  }, []);
+    },
+    [],
+  );
 
   return { state, start, cancel };
 }

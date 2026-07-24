@@ -270,6 +270,30 @@ func (s *Postgres) Load(ctx context.Context, scope string, tokenBudget int) ([]E
 	return loaded, nil
 }
 
+// List returns every entry in the request workspace, optionally narrowed to
+// one scope (an empty scope lists all), ordered by created_at then id so a
+// repeated export writes the same files in the same order. Behavior matches
+// the sqlite backend exactly: no importance ordering and no token budget, so
+// one conformance suite proves both.
+func (s *Postgres) List(ctx context.Context, scope string) ([]Entry, error) {
+	rows, err := s.pool.Query(ctx,
+		"SELECT "+pgEntryColumns+` FROM memory_entries
+		 WHERE workspace_id = $1 AND ($2 = '' OR scope = $2)
+		 ORDER BY created_at ASC, id ASC`,
+		workspaceFromContext(ctx), scope)
+	if err != nil {
+		return nil, fmt.Errorf("list memory entries: %w", err)
+	}
+	defer rows.Close()
+
+	entries, err := collectPGEntries(rows)
+	if err != nil {
+		return nil, fmt.Errorf("list memory entries: %w", err)
+	}
+
+	return entries, nil
+}
+
 // listByImportance is the no-keywords Search path: the scope's entries in
 // Load order, optionally capped.
 func (s *Postgres) listByImportance(ctx context.Context, scope string, limit int) ([]Entry, error) {

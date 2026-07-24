@@ -18,8 +18,9 @@ import (
 
 // Sentinels for the fakes.
 var (
-	errRunNotFound    = errors.New("run not found")
-	errSecretNotFound = errors.New("secret not found")
+	errRunNotFound      = errors.New("run not found")
+	errSecretNotFound   = errors.New("secret not found")
+	errWorkflowNotFound = errors.New("workflow not found")
 )
 
 // fakeStore is an in-memory store.Store. The engine writing against this
@@ -34,6 +35,7 @@ type fakeStore struct {
 	suggestions map[string]*store.Suggestion
 	audit       []*store.AuditEntry
 	pauses      map[string]*store.WorkflowPause
+	approvals   map[string]*store.Approval
 }
 
 var _ store.Store = (*fakeStore)(nil)
@@ -46,6 +48,7 @@ func newFakeStore() *fakeStore {
 		agentSteps:  map[string][]*store.AgentStep{},
 		suggestions: map[string]*store.Suggestion{},
 		pauses:      map[string]*store.WorkflowPause{},
+		approvals:   map[string]*store.Approval{},
 	}
 }
 
@@ -403,6 +406,107 @@ func (*fakeStore) ListMessages(_ context.Context, _ string) ([]*store.ChatMessag
 	return nil, nil
 }
 
+// SearchMessages implements store.Store.
+func (*fakeStore) SearchMessages(_ context.Context, _ store.ChatSearchQuery) ([]*store.ChatMessage, error) {
+	return nil, nil
+}
+
+// approvalKey keys one gate by run and action.
+func approvalKey(runID, actionName string) string {
+	return runID + "/" + actionName
+}
+
+// CreateApproval implements store.Store, defaulting workspace, status, and
+// timestamp the way the real backends do.
+func (f *fakeStore) CreateApproval(ctx context.Context, approval *store.Approval) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	copied := *approval
+
+	if copied.WorkspaceID == "" {
+		copied.WorkspaceID = store.WorkspaceFromContext(ctx)
+	}
+
+	if copied.Status == "" {
+		copied.Status = store.ApprovalPending
+	}
+
+	if copied.CreatedAt.IsZero() {
+		copied.CreatedAt = time.Now()
+	}
+
+	f.approvals[approvalKey(approval.RunID, approval.ActionName)] = &copied
+
+	return nil
+}
+
+// GetApproval implements store.Store, scoped to the request workspace.
+func (f *fakeStore) GetApproval(ctx context.Context, runID, actionName string) (*store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	approval, exists := f.approvals[approvalKey(runID, actionName)]
+	if !exists || approval.WorkspaceID != store.WorkspaceFromContext(ctx) {
+		return nil, fmt.Errorf("%w: %s/%s", store.ErrApprovalNotFound, runID, actionName)
+	}
+
+	copied := *approval
+
+	return &copied, nil
+}
+
+// ListPendingApprovals implements store.Store, ordered by action name.
+func (f *fakeStore) ListPendingApprovals(ctx context.Context, runID string) ([]*store.Approval, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	workspace := store.WorkspaceFromContext(ctx)
+
+	var out []*store.Approval
+
+	for _, key := range slices.Sorted(maps.Keys(f.approvals)) {
+		approval := f.approvals[key]
+		if approval.RunID != runID || approval.WorkspaceID != workspace || approval.Status != store.ApprovalPending {
+			continue
+		}
+
+		copied := *approval
+		out = append(out, &copied)
+	}
+
+	return out, nil
+}
+
+// DecideApproval implements store.Store, moving a pending gate once.
+func (f *fakeStore) DecideApproval(ctx context.Context, runID, actionName string, status store.ApprovalStatus, actor, comment string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	approval, exists := f.approvals[approvalKey(runID, actionName)]
+	if !exists || approval.WorkspaceID != store.WorkspaceFromContext(ctx) || approval.Status != store.ApprovalPending {
+		return fmt.Errorf("%w: %s/%s", store.ErrApprovalNotFound, runID, actionName)
+	}
+
+	approval.Status = status
+	approval.Actor = actor
+	approval.Comment = comment
+	approval.DecidedAt = time.Now()
+
+	return nil
+}
+
+// BindBridgeSession implements store.Store; the engine never touches the
+// messaging bridge.
+func (*fakeStore) BindBridgeSession(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// LookupBridgeSession implements store.Store.
+func (*fakeStore) LookupBridgeSession(_ context.Context, transport, chatKey string) (string, error) {
+	return "", fmt.Errorf("%w: %s/%s", store.ErrBridgeSessionNotFound, transport, chatKey)
+}
+
 // ReconcileInterrupted implements store.Store; the fake never has
 // interrupted runs to reconcile.
 func (*fakeStore) ReconcileInterrupted(_ context.Context) (int, error) {
@@ -539,6 +643,25 @@ func (f *fakeAgentExecutor) captured() (*workflow.Action, *runner.Task) {
 	defer f.mu.Unlock()
 
 	return f.gotAction, f.gotTask
+}
+
+// fakeWorkflowSource is a map-backed engine.WorkflowSource: it resolves a child
+// workflow-call target by name from a fixed set of parsed workflows, so a
+// workflow-call action runs a real child run without touching the filesystem.
+type fakeWorkflowSource struct {
+	flows map[string]*workflow.Workflow
+}
+
+var _ engine.WorkflowSource = (*fakeWorkflowSource)(nil)
+
+// Resolve implements engine.WorkflowSource.
+func (f *fakeWorkflowSource) Resolve(name string) (*workflow.Workflow, error) {
+	flow, exists := f.flows[name]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", errWorkflowNotFound, name)
+	}
+
+	return flow, nil
 }
 
 // fakeSecrets is a map-backed SecretSource.

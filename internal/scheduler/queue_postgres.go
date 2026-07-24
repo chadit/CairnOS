@@ -54,6 +54,12 @@ func NewPostgresQueue(ctx context.Context, pool *pgxpool.Pool) (*PostgresQueue, 
 		return nil, fmt.Errorf("create work-queue schema: %w", err)
 	}
 
+	// The poll-cursor table rides the same pool as the work-item table, so a
+	// poll fire persists its cursor through the one queue handle it enqueues on.
+	if _, err := pool.Exec(ctx, pgPollCursorSchema); err != nil {
+		return nil, fmt.Errorf("create poll-cursor schema: %w", err)
+	}
+
 	return &PostgresQueue{pool: pool}, nil
 }
 

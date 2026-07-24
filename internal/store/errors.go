@@ -22,4 +22,15 @@ var (
 	// that has no row in the request workspace, either never created, pruned,
 	// or owned by another tenant.
 	ErrChatSessionNotFound = errors.New("chat session not found")
+
+	// ErrApprovalNotFound reports a GetApproval or DecideApproval against a
+	// (run, action) gate that has no pending row in the request workspace,
+	// either never created, already decided, or owned by another tenant.
+	ErrApprovalNotFound = errors.New("approval not found")
+
+	// ErrBridgeSessionNotFound reports a LookupBridgeSession against a
+	// (transport, chatKey) that has no binding in the request workspace, the
+	// signal the messaging bridge reads as first contact so it creates and
+	// binds a session (.agents/spec/parity/messaging-bridge.md).
+	ErrBridgeSessionNotFound = errors.New("bridge session not found")
 )

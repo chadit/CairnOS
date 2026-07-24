@@ -85,9 +85,13 @@ func (RunEventType) EnumDescriptor() ([]byte, []int) {
 // RunWorkflowRequest names the workflow (resolved against the server's
 // workflows directory) and supplies its declared inputs.
 type RunWorkflowRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName  string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
-	Inputs        *structpb.Struct       `protobuf:"bytes,2,opt,name=inputs,proto3" json:"inputs,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowName string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
+	Inputs       *structpb.Struct       `protobuf:"bytes,2,opt,name=inputs,proto3" json:"inputs,omitempty"`
+	// toml, when set, runs this definition inline instead of resolving by name,
+	// the builder's test-action path. Over HTTP/JSON the bytes are
+	// base64-encoded, per proto3 JSON mapping.
+	Toml          []byte `protobuf:"bytes,3,opt,name=toml,proto3" json:"toml,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -132,6 +136,13 @@ func (x *RunWorkflowRequest) GetWorkflowName() string {
 func (x *RunWorkflowRequest) GetInputs() *structpb.Struct {
 	if x != nil {
 		return x.Inputs
+	}
+	return nil
+}
+
+func (x *RunWorkflowRequest) GetToml() []byte {
+	if x != nil {
+		return x.Toml
 	}
 	return nil
 }
@@ -841,6 +852,62 @@ func (x *CancelRunRequest) GetRunId() string {
 	return ""
 }
 
+// ReplayRunRequest names the prior run to replay and whether to override the
+// workflow-hash guard when the file has changed since the original run.
+type ReplayRunRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// force replays even when the current workflow file's hash differs from the
+	// hash the prior run recorded.
+	Force         bool `protobuf:"varint,2,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplayRunRequest) Reset() {
+	*x = ReplayRunRequest{}
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplayRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplayRunRequest) ProtoMessage() {}
+
+func (x *ReplayRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplayRunRequest.ProtoReflect.Descriptor instead.
+func (*ReplayRunRequest) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ReplayRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ReplayRunRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
 // CancelRunResponse acknowledges the cancel signal; the run finalizes
 // asynchronously and lands in run history as canceled.
 type CancelRunResponse struct {
@@ -853,7 +920,7 @@ type CancelRunResponse struct {
 
 func (x *CancelRunResponse) Reset() {
 	*x = CancelRunResponse{}
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[11]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -865,7 +932,7 @@ func (x *CancelRunResponse) String() string {
 func (*CancelRunResponse) ProtoMessage() {}
 
 func (x *CancelRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[11]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -878,7 +945,7 @@ func (x *CancelRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRunResponse.ProtoReflect.Descriptor instead.
 func (*CancelRunResponse) Descriptor() ([]byte, []int) {
-	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{11}
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CancelRunResponse) GetRunId() string {
@@ -906,7 +973,7 @@ type ValidateWorkflowRequest struct {
 
 func (x *ValidateWorkflowRequest) Reset() {
 	*x = ValidateWorkflowRequest{}
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[12]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +985,7 @@ func (x *ValidateWorkflowRequest) String() string {
 func (*ValidateWorkflowRequest) ProtoMessage() {}
 
 func (x *ValidateWorkflowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[12]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +998,7 @@ func (x *ValidateWorkflowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateWorkflowRequest.ProtoReflect.Descriptor instead.
 func (*ValidateWorkflowRequest) Descriptor() ([]byte, []int) {
-	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{12}
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ValidateWorkflowRequest) GetToml() []byte {
@@ -953,7 +1020,7 @@ type ValidateWorkflowResponse struct {
 
 func (x *ValidateWorkflowResponse) Reset() {
 	*x = ValidateWorkflowResponse{}
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[13]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -965,7 +1032,7 @@ func (x *ValidateWorkflowResponse) String() string {
 func (*ValidateWorkflowResponse) ProtoMessage() {}
 
 func (x *ValidateWorkflowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cairnos_v1_workflow_proto_msgTypes[13]
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -978,7 +1045,7 @@ func (x *ValidateWorkflowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidateWorkflowResponse.ProtoReflect.Descriptor instead.
 func (*ValidateWorkflowResponse) Descriptor() ([]byte, []int) {
-	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{13}
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ValidateWorkflowResponse) GetValid() bool {
@@ -995,15 +1062,145 @@ func (x *ValidateWorkflowResponse) GetErrors() []*Error {
 	return nil
 }
 
+// SaveWorkflowRequest carries the target workflow name (from the URL path) and
+// the raw definition bytes (TOML). Over HTTP/JSON the bytes field is
+// base64-encoded, per proto3 JSON mapping. The definition's own name must
+// match workflow_name or the save is refused.
+type SaveWorkflowRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowName  string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
+	Toml          []byte                 `protobuf:"bytes,2,opt,name=toml,proto3" json:"toml,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveWorkflowRequest) Reset() {
+	*x = SaveWorkflowRequest{}
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveWorkflowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveWorkflowRequest) ProtoMessage() {}
+
+func (x *SaveWorkflowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveWorkflowRequest.ProtoReflect.Descriptor instead.
+func (*SaveWorkflowRequest) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SaveWorkflowRequest) GetWorkflowName() string {
+	if x != nil {
+		return x.WorkflowName
+	}
+	return ""
+}
+
+func (x *SaveWorkflowRequest) GetToml() []byte {
+	if x != nil {
+		return x.Toml
+	}
+	return nil
+}
+
+// SaveWorkflowResponse reports the written definition's identity and whether
+// the save replaced a prior file.
+type SaveWorkflowResponse struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowName string                 `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
+	// hash is the hex SHA-256 of the new file bytes.
+	Hash string `protobuf:"bytes,2,opt,name=hash,proto3" json:"hash,omitempty"`
+	// prior_hash is the hash of the replaced definition; empty on create.
+	PriorHash string `protobuf:"bytes,3,opt,name=prior_hash,json=priorHash,proto3" json:"prior_hash,omitempty"`
+	// created is true when no file carried this name before the save.
+	Created       bool `protobuf:"varint,4,opt,name=created,proto3" json:"created,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveWorkflowResponse) Reset() {
+	*x = SaveWorkflowResponse{}
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveWorkflowResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveWorkflowResponse) ProtoMessage() {}
+
+func (x *SaveWorkflowResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveWorkflowResponse.ProtoReflect.Descriptor instead.
+func (*SaveWorkflowResponse) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SaveWorkflowResponse) GetWorkflowName() string {
+	if x != nil {
+		return x.WorkflowName
+	}
+	return ""
+}
+
+func (x *SaveWorkflowResponse) GetHash() string {
+	if x != nil {
+		return x.Hash
+	}
+	return ""
+}
+
+func (x *SaveWorkflowResponse) GetPriorHash() string {
+	if x != nil {
+		return x.PriorHash
+	}
+	return ""
+}
+
+func (x *SaveWorkflowResponse) GetCreated() bool {
+	if x != nil {
+		return x.Created
+	}
+	return false
+}
+
 var File_cairnos_v1_workflow_proto protoreflect.FileDescriptor
 
 const file_cairnos_v1_workflow_proto_rawDesc = "" +
 	"\n" +
 	"\x19cairnos/v1/workflow.proto\x12\n" +
-	"cairnos.v1\x1a\x17cairnos/v1/common.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"j\n" +
+	"cairnos.v1\x1a\x17cairnos/v1/common.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"~\n" +
 	"\x12RunWorkflowRequest\x12#\n" +
 	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12/\n" +
-	"\x06inputs\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06inputs\"S\n" +
+	"\x06inputs\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06inputs\x12\x12\n" +
+	"\x04toml\x18\x03 \x01(\fR\x04toml\"S\n" +
 	"\vActionState\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x18\n" +
@@ -1061,7 +1258,10 @@ const file_cairnos_v1_workflow_proto_rawDesc = "" +
 	"\x10ListRunsResponse\x12#\n" +
 	"\x04runs\x18\x01 \x03(\v2\x0f.cairnos.v1.RunR\x04runs\")\n" +
 	"\x10CancelRunRequest\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"B\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"?\n" +
+	"\x10ReplayRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x14\n" +
+	"\x05force\x18\x02 \x01(\bR\x05force\"B\n" +
 	"\x11CancelRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\"-\n" +
@@ -1069,19 +1269,30 @@ const file_cairnos_v1_workflow_proto_rawDesc = "" +
 	"\x04toml\x18\x01 \x01(\fR\x04toml\"[\n" +
 	"\x18ValidateWorkflowResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12)\n" +
-	"\x06errors\x18\x02 \x03(\v2\x11.cairnos.v1.ErrorR\x06errors*\x95\x01\n" +
+	"\x06errors\x18\x02 \x03(\v2\x11.cairnos.v1.ErrorR\x06errors\"N\n" +
+	"\x13SaveWorkflowRequest\x12#\n" +
+	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12\x12\n" +
+	"\x04toml\x18\x02 \x01(\fR\x04toml\"\x88\x01\n" +
+	"\x14SaveWorkflowResponse\x12#\n" +
+	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12\x12\n" +
+	"\x04hash\x18\x02 \x01(\tR\x04hash\x12\x1d\n" +
+	"\n" +
+	"prior_hash\x18\x03 \x01(\tR\tpriorHash\x12\x18\n" +
+	"\acreated\x18\x04 \x01(\bR\acreated*\x95\x01\n" +
 	"\fRunEventType\x12\x1e\n" +
 	"\x1aRUN_EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aRUN_EVENT_TYPE_RUN_STARTED\x10\x01\x12$\n" +
 	" RUN_EVENT_TYPE_ACTION_TRANSITION\x10\x02\x12\x1f\n" +
-	"\x1bRUN_EVENT_TYPE_RUN_FINISHED\x10\x032\xae\x04\n" +
+	"\x1bRUN_EVENT_TYPE_RUN_FINISHED\x10\x032\x93\x06\n" +
 	"\x0fWorkflowService\x12t\n" +
 	"\vRunWorkflow\x12\x1e.cairnos.v1.RunWorkflowRequest\x1a\x14.cairnos.v1.RunEvent\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/workflows/{workflow_name}/runs0\x01\x12Z\n" +
 	"\x06GetRun\x12\x19.cairnos.v1.GetRunRequest\x1a\x1a.cairnos.v1.GetRunResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/v1/runs/{run_id}\x12W\n" +
 	"\bListRuns\x12\x1b.cairnos.v1.ListRunsRequest\x1a\x1c.cairnos.v1.ListRunsResponse\"\x10\x82\xd3\xe4\x93\x02\n" +
 	"\x12\b/v1/runs\x12m\n" +
-	"\tCancelRun\x12\x1c.cairnos.v1.CancelRunRequest\x1a\x1d.cairnos.v1.CancelRunResponse\"#\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/v1/runs/{run_id}/cancel\x12\x80\x01\n" +
-	"\x10ValidateWorkflow\x12#.cairnos.v1.ValidateWorkflowRequest\x1a$.cairnos.v1.ValidateWorkflowResponse\"!\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/v1/workflows/validateBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
+	"\tCancelRun\x12\x1c.cairnos.v1.CancelRunRequest\x1a\x1d.cairnos.v1.CancelRunResponse\"#\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/v1/runs/{run_id}/cancel\x12f\n" +
+	"\tReplayRun\x12\x1c.cairnos.v1.ReplayRunRequest\x1a\x14.cairnos.v1.RunEvent\"#\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/v1/runs/{run_id}/replay0\x01\x12\x80\x01\n" +
+	"\x10ValidateWorkflow\x12#.cairnos.v1.ValidateWorkflowRequest\x1a$.cairnos.v1.ValidateWorkflowResponse\"!\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/v1/workflows/validate\x12{\n" +
+	"\fSaveWorkflow\x12\x1f.cairnos.v1.SaveWorkflowRequest\x1a .cairnos.v1.SaveWorkflowResponse\"(\x82\xd3\xe4\x93\x02\":\x01*\x1a\x1d/v1/workflows/{workflow_name}BAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
 
 var (
 	file_cairnos_v1_workflow_proto_rawDescOnce sync.Once
@@ -1096,7 +1307,7 @@ func file_cairnos_v1_workflow_proto_rawDescGZIP() []byte {
 }
 
 var file_cairnos_v1_workflow_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cairnos_v1_workflow_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_cairnos_v1_workflow_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_cairnos_v1_workflow_proto_goTypes = []any{
 	(RunEventType)(0),                // 0: cairnos.v1.RunEventType
 	(*RunWorkflowRequest)(nil),       // 1: cairnos.v1.RunWorkflowRequest
@@ -1110,46 +1321,53 @@ var file_cairnos_v1_workflow_proto_goTypes = []any{
 	(*ListRunsRequest)(nil),          // 9: cairnos.v1.ListRunsRequest
 	(*ListRunsResponse)(nil),         // 10: cairnos.v1.ListRunsResponse
 	(*CancelRunRequest)(nil),         // 11: cairnos.v1.CancelRunRequest
-	(*CancelRunResponse)(nil),        // 12: cairnos.v1.CancelRunResponse
-	(*ValidateWorkflowRequest)(nil),  // 13: cairnos.v1.ValidateWorkflowRequest
-	(*ValidateWorkflowResponse)(nil), // 14: cairnos.v1.ValidateWorkflowResponse
-	(*structpb.Struct)(nil),          // 15: google.protobuf.Struct
-	(*Error)(nil),                    // 16: cairnos.v1.Error
-	(*timestamppb.Timestamp)(nil),    // 17: google.protobuf.Timestamp
-	(*structpb.Value)(nil),           // 18: google.protobuf.Value
+	(*ReplayRunRequest)(nil),         // 12: cairnos.v1.ReplayRunRequest
+	(*CancelRunResponse)(nil),        // 13: cairnos.v1.CancelRunResponse
+	(*ValidateWorkflowRequest)(nil),  // 14: cairnos.v1.ValidateWorkflowRequest
+	(*ValidateWorkflowResponse)(nil), // 15: cairnos.v1.ValidateWorkflowResponse
+	(*SaveWorkflowRequest)(nil),      // 16: cairnos.v1.SaveWorkflowRequest
+	(*SaveWorkflowResponse)(nil),     // 17: cairnos.v1.SaveWorkflowResponse
+	(*structpb.Struct)(nil),          // 18: google.protobuf.Struct
+	(*Error)(nil),                    // 19: cairnos.v1.Error
+	(*timestamppb.Timestamp)(nil),    // 20: google.protobuf.Timestamp
+	(*structpb.Value)(nil),           // 21: google.protobuf.Value
 }
 var file_cairnos_v1_workflow_proto_depIdxs = []int32{
-	15, // 0: cairnos.v1.RunWorkflowRequest.inputs:type_name -> google.protobuf.Struct
+	18, // 0: cairnos.v1.RunWorkflowRequest.inputs:type_name -> google.protobuf.Struct
 	0,  // 1: cairnos.v1.RunEvent.type:type_name -> cairnos.v1.RunEventType
 	2,  // 2: cairnos.v1.RunEvent.action:type_name -> cairnos.v1.ActionState
 	4,  // 3: cairnos.v1.RunEvent.run:type_name -> cairnos.v1.Run
-	16, // 4: cairnos.v1.RunEvent.error:type_name -> cairnos.v1.Error
-	15, // 5: cairnos.v1.Run.inputs:type_name -> google.protobuf.Struct
-	16, // 6: cairnos.v1.Run.error:type_name -> cairnos.v1.Error
-	17, // 7: cairnos.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	17, // 8: cairnos.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	17, // 9: cairnos.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	18, // 10: cairnos.v1.ActionResult.output:type_name -> google.protobuf.Value
+	19, // 4: cairnos.v1.RunEvent.error:type_name -> cairnos.v1.Error
+	18, // 5: cairnos.v1.Run.inputs:type_name -> google.protobuf.Struct
+	19, // 6: cairnos.v1.Run.error:type_name -> cairnos.v1.Error
+	20, // 7: cairnos.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	20, // 8: cairnos.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	20, // 9: cairnos.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	21, // 10: cairnos.v1.ActionResult.output:type_name -> google.protobuf.Value
 	6,  // 11: cairnos.v1.ActionResult.usage:type_name -> cairnos.v1.Usage
-	16, // 12: cairnos.v1.ActionResult.error:type_name -> cairnos.v1.Error
-	17, // 13: cairnos.v1.ActionResult.started_at:type_name -> google.protobuf.Timestamp
-	17, // 14: cairnos.v1.ActionResult.finished_at:type_name -> google.protobuf.Timestamp
+	19, // 12: cairnos.v1.ActionResult.error:type_name -> cairnos.v1.Error
+	20, // 13: cairnos.v1.ActionResult.started_at:type_name -> google.protobuf.Timestamp
+	20, // 14: cairnos.v1.ActionResult.finished_at:type_name -> google.protobuf.Timestamp
 	4,  // 15: cairnos.v1.GetRunResponse.run:type_name -> cairnos.v1.Run
 	5,  // 16: cairnos.v1.GetRunResponse.actions:type_name -> cairnos.v1.ActionResult
 	4,  // 17: cairnos.v1.ListRunsResponse.runs:type_name -> cairnos.v1.Run
-	16, // 18: cairnos.v1.ValidateWorkflowResponse.errors:type_name -> cairnos.v1.Error
+	19, // 18: cairnos.v1.ValidateWorkflowResponse.errors:type_name -> cairnos.v1.Error
 	1,  // 19: cairnos.v1.WorkflowService.RunWorkflow:input_type -> cairnos.v1.RunWorkflowRequest
 	7,  // 20: cairnos.v1.WorkflowService.GetRun:input_type -> cairnos.v1.GetRunRequest
 	9,  // 21: cairnos.v1.WorkflowService.ListRuns:input_type -> cairnos.v1.ListRunsRequest
 	11, // 22: cairnos.v1.WorkflowService.CancelRun:input_type -> cairnos.v1.CancelRunRequest
-	13, // 23: cairnos.v1.WorkflowService.ValidateWorkflow:input_type -> cairnos.v1.ValidateWorkflowRequest
-	3,  // 24: cairnos.v1.WorkflowService.RunWorkflow:output_type -> cairnos.v1.RunEvent
-	8,  // 25: cairnos.v1.WorkflowService.GetRun:output_type -> cairnos.v1.GetRunResponse
-	10, // 26: cairnos.v1.WorkflowService.ListRuns:output_type -> cairnos.v1.ListRunsResponse
-	12, // 27: cairnos.v1.WorkflowService.CancelRun:output_type -> cairnos.v1.CancelRunResponse
-	14, // 28: cairnos.v1.WorkflowService.ValidateWorkflow:output_type -> cairnos.v1.ValidateWorkflowResponse
-	24, // [24:29] is the sub-list for method output_type
-	19, // [19:24] is the sub-list for method input_type
+	12, // 23: cairnos.v1.WorkflowService.ReplayRun:input_type -> cairnos.v1.ReplayRunRequest
+	14, // 24: cairnos.v1.WorkflowService.ValidateWorkflow:input_type -> cairnos.v1.ValidateWorkflowRequest
+	16, // 25: cairnos.v1.WorkflowService.SaveWorkflow:input_type -> cairnos.v1.SaveWorkflowRequest
+	3,  // 26: cairnos.v1.WorkflowService.RunWorkflow:output_type -> cairnos.v1.RunEvent
+	8,  // 27: cairnos.v1.WorkflowService.GetRun:output_type -> cairnos.v1.GetRunResponse
+	10, // 28: cairnos.v1.WorkflowService.ListRuns:output_type -> cairnos.v1.ListRunsResponse
+	13, // 29: cairnos.v1.WorkflowService.CancelRun:output_type -> cairnos.v1.CancelRunResponse
+	3,  // 30: cairnos.v1.WorkflowService.ReplayRun:output_type -> cairnos.v1.RunEvent
+	15, // 31: cairnos.v1.WorkflowService.ValidateWorkflow:output_type -> cairnos.v1.ValidateWorkflowResponse
+	17, // 32: cairnos.v1.WorkflowService.SaveWorkflow:output_type -> cairnos.v1.SaveWorkflowResponse
+	26, // [26:33] is the sub-list for method output_type
+	19, // [19:26] is the sub-list for method input_type
 	19, // [19:19] is the sub-list for extension type_name
 	19, // [19:19] is the sub-list for extension extendee
 	0,  // [0:19] is the sub-list for field type_name
@@ -1167,7 +1385,7 @@ func file_cairnos_v1_workflow_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cairnos_v1_workflow_proto_rawDesc), len(file_cairnos_v1_workflow_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -61,6 +61,13 @@ type loopRun struct {
 	stepCount  int
 	strikes    int
 	started    time.Time
+
+	// depth is 0 for an engine-started action and r.depth+1 for a delegated
+	// child. maxDelegateDepth caps it, so a child never delegates again.
+	depth int
+	// delegations counts children spawned this execution, walled at
+	// maxDelegations.
+	delegations int
 }
 
 // run drives iterations until a final answer or a wall
@@ -142,6 +149,10 @@ func (r *loopRun) applyDecision(ctx context.Context, dec *decision) (runner.Resu
 				fmt.Sprintf("tool %q is not in this action's allowlist", dec.tool))
 		}
 
+		if dec.tool == DelegateToolName {
+			return runner.Result{}, false, r.runDelegate(ctx, dec)
+		}
+
 		r.strikes = 0
 		r.runTool(ctx, dec)
 
@@ -213,7 +224,7 @@ func (r *loopRun) runTool(ctx context.Context, dec *decision) {
 	}
 
 	if callErr != nil {
-		step.Output = map[string]any{"error": callErr.Error(), "class": failureClass(callErr)}
+		step.Output = classifiedFailure(callErr)
 		r.appendNote(fmt.Sprintf("[tool %s] failed (%s): %v", dec.tool, failureClass(callErr), callErr))
 		r.persistStep(ctx, step)
 
@@ -419,6 +430,13 @@ func parseToolCall(output any) (string, map[string]any, bool) {
 	}
 
 	return name, arguments, true
+}
+
+// classifiedFailure renders a failed tool or delegate call as the transcript's
+// error map: the message and its retry class, so the driver can judge whether
+// re-issuing the call could help.
+func classifiedFailure(err error) map[string]any {
+	return map[string]any{"error": err.Error(), "class": failureClass(err)}
 }
 
 // failureClass names a tool failure's retry class for the transcript.

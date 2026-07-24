@@ -47,15 +47,16 @@ type discordPayload struct {
 	Content string `json:"content"`
 }
 
-// Notify posts the alert. A non-2xx response is an error so the caller can log a
-// failed delivery; the caller treats notification as best-effort and never lets
-// it change the held job's fate.
-func (d *DiscordNotifier) Notify(ctx context.Context, alert ReauthAlert) error {
+// Post sends content as one Discord webhook message. It is the generic sink the
+// event fan-out drains one line at a time, and the primitive Notify renders an
+// alert through (.agents/spec/parity/messaging-bridge.md, decision 7). A non-2xx
+// response is an error so the caller can log a failed delivery.
+func (d *DiscordNotifier) Post(ctx context.Context, content string) error {
 	if d.webhookURL == "" {
 		return ErrEmptyWebhook
 	}
 
-	body, err := json.Marshal(discordPayload{Content: alert.message()})
+	body, err := json.Marshal(discordPayload{Content: content})
 	if err != nil {
 		return fmt.Errorf("encode discord payload: %w", err)
 	}
@@ -81,9 +82,20 @@ func (d *DiscordNotifier) Notify(ctx context.Context, alert ReauthAlert) error {
 	return nil
 }
 
-// message renders the alert as the Discord content string, leading with the tool
+// Notify posts the alert. It renders the alert to its content string and
+// delegates to Post, so the direct re-auth alert and the fan-out share one
+// webhook path. The caller treats notification as best-effort and never lets a
+// failed delivery change the held job's fate.
+func (d *DiscordNotifier) Notify(ctx context.Context, alert ReauthAlert) error {
+	return d.Post(ctx, alert.Message())
+}
+
+// Message renders the alert as the Discord content string, leading with the tool
 // and the fix so the line is actionable straight from a phone notification.
-func (a ReauthAlert) message() string {
+// Exported so the serve fan-out can post a held alert as one line through the
+// same webhook, keeping the default ["held"] set byte-identical to the direct
+// Notify path (decision 7).
+func (a ReauthAlert) Message() string {
 	var builder strings.Builder
 
 	builder.WriteString("CairnOS: a scheduled job is held, re-authentication needed.\n")

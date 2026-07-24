@@ -36,7 +36,9 @@ Commands:
   memory    Manage memory entries: add, get <id>, rm <id>, search
   vault     Manage vault documents: put, get <id>, query
   rules     Language rules: set <lang> [<project>] <key> <value>, get <lang> [<project>], import <dir>
+  secrets   Encrypted secret store: set <name>, get <name>, rm <name>, ls, rotate, keygen
   schedule  Manage scheduled workflows: add <file>, list, remove <id-or-name>, run
+  webhook   Manage webhook triggers: add <file>, list, rotate <workflow>, remove <workflow>
   serve     Serve the gRPC and HTTP API with the scheduler daemon embedded
   chat      Talk to CairnOS: an interactive conversation over a running serve
   keys      Manage API access keys: add, list, enable <id>, disable <id>
@@ -53,6 +55,7 @@ Commands:
   audit     List governance audit actions (pause, resume, terminate)
   prune     Delete runs and outputs past the retention window
   health    Exit 0 when the config loads and the store answers
+  service   Run serve under the host supervisor: setup, status, uninstall
 
 Use "cairnos <command> -h" for the command's flags.
 `
@@ -67,6 +70,11 @@ type App struct {
 	stderr io.Writer
 	stdin  io.Reader
 	logger *slog.Logger
+
+	// interrupts feeds the chat REPL's interrupt watcher; nil means cmdChat
+	// registers a real signal.Notify channel. Tests inject one through
+	// WithInterrupts so no test ever sends a real SIGINT.
+	interrupts <-chan os.Signal
 }
 
 // New wires an App over the given streams, reading interactive input from
@@ -85,6 +93,15 @@ func New(stdout, stderr io.Writer) *App {
 // app for chaining.
 func (a *App) WithStdin(stdin io.Reader) *App {
 	a.stdin = stdin
+
+	return a
+}
+
+// WithInterrupts sets the channel the chat REPL takes interrupt signals
+// from, so tests can fire interrupts without sending a real SIGINT. It
+// returns the App for chaining.
+func (a *App) WithInterrupts(interrupts <-chan os.Signal) *App {
+	a.interrupts = interrupts
 
 	return a
 }
@@ -143,14 +160,21 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 }
 
-// dispatchGovernance handles the governance commands and the help and unknown
-// fallbacks, keeping Run's primary switch under the complexity ceiling.
+// dispatchGovernance handles the governance and host-service commands and
+// the help and unknown fallbacks, keeping Run's primary switch under the
+// complexity ceiling.
 func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string) int {
 	switch name {
+	case "service":
+		return a.cmdService(ctx, rest)
+	case "webhook":
+		return a.cmdWebhook(ctx, rest)
 	case "vault":
 		return a.cmdVault(ctx, rest)
 	case "rules":
 		return a.cmdRules(ctx, rest)
+	case "secrets":
+		return a.cmdSecrets(ctx, rest)
 	case "pause":
 		return a.cmdPause(ctx, rest)
 	case "resume":

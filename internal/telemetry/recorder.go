@@ -44,6 +44,10 @@ const (
 	metricQueueReclaimed     = "cairnos_queue_reclaimed_total"
 	metricQueueDepth         = "cairnos_queue_depth"
 	metricQueueOldestAge     = "cairnos_queue_oldest_age_seconds"
+	metricBridgeUpdates      = "cairnos_bridge_updates_total"
+	metricBridgeTurns        = "cairnos_bridge_turns_total"
+	metricBridgeConfirms     = "cairnos_bridge_confirms_total"
+	metricBridgeSendFailures = "cairnos_bridge_send_failures_total"
 )
 
 // Metric label keys from the catalog.
@@ -95,6 +99,14 @@ const (
 	statusFailed    = "failed"
 )
 
+// Bridge turn outcome labels for cairnos_bridge_turns_total. BridgeUpdate and
+// BridgeConfirm take their outcome from the bridge package verbatim, so their
+// label vocabulary lives there; only the turn bool needs a mapping here.
+const (
+	bridgeOutcomeOK    = "ok"
+	bridgeOutcomeError = "error"
+)
+
 // Circuit state values and labels. The spec fixes the gauge encoding (0
 // closed, 1 half-open, 2 open), which differs from reliability's iota
 // order, so the mapping here is explicit.
@@ -142,6 +154,11 @@ type Recorder struct {
 	queueReclaimed    metric.Int64Counter
 	queueDepth        metric.Float64Gauge
 	queueOldestAge    metric.Float64Gauge
+
+	bridgeUpdates      metric.Int64Counter
+	bridgeTurns        metric.Int64Counter
+	bridgeConfirms     metric.Int64Counter
+	bridgeSendFailures metric.Int64Counter
 }
 
 // NewRecorder builds a Recorder over the given tracer and meter. Exposed
@@ -210,6 +227,43 @@ func (r *Recorder) BudgetSpend(ctx context.Context, workflowName string, spend, 
 	r.budgetSpend.Record(context.WithoutCancel(ctx), spend, metric.WithAttributes(
 		attribute.String(keyWorkflow, workflowName),
 	))
+}
+
+// BridgeUpdate counts one Telegram update the poll loop handled on
+// cairnos_bridge_updates_total, labeled handled, unauthorized, or error, so an
+// operator sees authorized traffic split from dropped and dispatch-failed
+// updates. The outcome vocabulary is the bridge package's; this method labels
+// verbatim.
+func (r *Recorder) BridgeUpdate(ctx context.Context, outcome string) {
+	r.bridgeUpdates.Add(context.WithoutCancel(ctx), 1, metric.WithAttributes(
+		attribute.String(keyOutcome, outcome),
+	))
+}
+
+// BridgeTurn counts one chat turn the bridge delivered on
+// cairnos_bridge_turns_total, labeled ok or error, so turn failures surface
+// next to the send-failure counter.
+func (r *Recorder) BridgeTurn(ctx context.Context, ok bool) {
+	r.bridgeTurns.Add(context.WithoutCancel(ctx), 1, metric.WithAttributes(
+		attribute.String(keyOutcome, bridgeTurnOutcome(ok)),
+	))
+}
+
+// BridgeConfirm counts one D9 confirmation the bridge resolved on
+// cairnos_bridge_confirms_total, labeled approved, denied, expired, or refused.
+// refused covers a wrong-user tap or an allow_confirm miss, the confirm-time
+// grant the bridge enforces, so a spike in refusals is visible on its own.
+func (r *Recorder) BridgeConfirm(ctx context.Context, outcome string) {
+	r.bridgeConfirms.Add(context.WithoutCancel(ctx), 1, metric.WithAttributes(
+		attribute.String(keyOutcome, outcome),
+	))
+}
+
+// BridgeSendFailure counts one outbound Bot API send that failed after the turn
+// already completed. The turn stays in session history and is never re-run, so
+// this counter is the only signal an operator missed a reply.
+func (r *Recorder) BridgeSendFailure(ctx context.Context) {
+	r.bridgeSendFailures.Add(context.WithoutCancel(ctx), 1)
 }
 
 // QueueItemRun counts one queued scheduled run on cairnos_queue_runs_total,
@@ -446,6 +500,10 @@ func (r *Recorder) buildInstruments(meter metric.Meter) error {
 	r.queueReclaimed = newCounter(meter, &errs, metricQueueReclaimed, "Expired leases the sweep returned to ready for redelivery.")
 	r.queueDepth = newFloatGauge(meter, &errs, metricQueueDepth, "Work-queue depth by item state (ready, leased, held, dead).")
 	r.queueOldestAge = newFloatGauge(meter, &errs, metricQueueOldestAge, "Age in seconds of the oldest ready work item.")
+	r.bridgeUpdates = newCounter(meter, &errs, metricBridgeUpdates, "Telegram bridge updates by outcome (handled, unauthorized, or error).")
+	r.bridgeTurns = newCounter(meter, &errs, metricBridgeTurns, "Telegram bridge chat turns by outcome (ok or error).")
+	r.bridgeConfirms = newCounter(meter, &errs, metricBridgeConfirms, "Telegram bridge D9 confirmations by outcome (approved, denied, expired, or refused).")
+	r.bridgeSendFailures = newCounter(meter, &errs, metricBridgeSendFailures, "Telegram bridge outbound sends that failed after the turn completed.")
 
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("build metric instruments: %w", err)
@@ -617,6 +675,16 @@ func queueOutcome(ok bool) string {
 	}
 
 	return "failed"
+}
+
+// bridgeTurnOutcome labels a bridge chat turn's result for the outcome
+// attribute; the bridge counter uses ok/error, not the queue's ok/failed.
+func bridgeTurnOutcome(ok bool) string {
+	if ok {
+		return bridgeOutcomeOK
+	}
+
+	return bridgeOutcomeError
 }
 
 // stateValue renders a breaker state as the spec's gauge encoding.

@@ -25,9 +25,15 @@ const (
 	codeSuggestionNotFound = "api.suggestion_not_found"
 	codeRunFinished        = "api.run_finished"
 	codeRunNotManaged      = "api.run_not_managed"
-	codeInvalidArgument    = "api.invalid_argument"
-	codeUnimplemented      = "api.unimplemented"
-	codeInternal           = "api.internal"
+	codeReplayHashMismatch = "api.replay_hash_mismatch"
+	// codeWorkflowNameMismatch reports a save or inline run whose definition
+	// name differs from the {workflow_name} path param. Without the check a
+	// save could strand a file the resolver maps under a different name than
+	// the URL the client used (.agents/spec/parity/builder-ops.md).
+	codeWorkflowNameMismatch = "api.workflow_name_mismatch"
+	codeInvalidArgument      = "api.invalid_argument"
+	codeUnimplemented        = "api.unimplemented"
+	codeInternal             = "api.internal"
 )
 
 // Canonical agent.* codes from the 04 mapping table. The agent loop ships in
@@ -117,7 +123,7 @@ func apiGRPCCode(code string) codes.Code {
 		return codes.NotFound
 	case codeRunFinished, codeRunNotManaged:
 		return codes.FailedPrecondition
-	case codeInvalidArgument:
+	case codeInvalidArgument, codeWorkflowNameMismatch:
 		return codes.InvalidArgument
 	case codeUnimplemented:
 		return codes.Unimplemented

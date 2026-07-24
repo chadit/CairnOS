@@ -29,7 +29,7 @@ timeout     = "15m"
 
 [workflow.inputs.repos]
 type        = "string[]"
-default     = ["n8n-io/n8n", "modelcontextprotocol/go-sdk"]
+default     = ["open-telemetry/opentelemetry-go", "modelcontextprotocol/go-sdk"]
 description = "Upstream owner/name repos to watch. Documents the intended set; with no foreach yet, the actions below name their repos directly (see the fan-out note at the top)."
 
 [workflow.inputs.issues_repo]
@@ -40,26 +40,27 @@ description = "Private issues repo that receives triage drafts. Corrected to Cai
 [workflow.inputs.roadmap_summary]
 type        = "string"
 default     = """
-CairnOS replaces Hermes Agent, OpenClaw, n8n, and cron/script sprawl with one
-engine: TOML workflows, a DAG executor, real runners (LLM, github, email,
-webhook), an MCP client for connector breadth, and a bounded agent loop for
-self-planning tasks. Near-term roadmap: built-in runners and the MCP client
-(1a), the agent loop that retires Hermes and OpenClaw (1c), full observability
-(2), then auth, A2A, and multi-node (4). A release matters to this roadmap when
-it touches workflow engines, agent loops, the MCP protocol or its SDKs, model
-connectors, or scheduler and retry semantics CairnOS would want to track.
+CairnOS replaces a sprawl of single-purpose agent tools, workflow services, and
+cron scripts with one engine: TOML workflows, a DAG executor, real runners (LLM,
+github, email, webhook), an MCP client for connector breadth, and a bounded
+agent loop for self-planning tasks. Near-term roadmap: built-in runners and the
+MCP client (1a), the agent loop that covers self-planning tasks (1c), full
+observability (2), then auth, A2A, and multi-node (4). A release matters to this
+roadmap when it touches workflow engines, agent loops, the MCP protocol or its
+SDKs, model connectors, or scheduler and retry semantics CairnOS would want to
+track.
 """
 description = "Plain-text roadmap summary the compare step judges releases against. Edit this as the roadmap moves."
 
 # One repo per action: the github runner's op=releases takes a single repo, so
 # each watched repo is its own root action. They share no dependency, so the
 # engine runs them in parallel and the compare step fans them back in.
-[action.releases_n8n]
+[action.releases_otel]
 runner     = "github"
 idempotent = true
-params     = { op = "releases", repo = "n8n-io/n8n", limit = 5 }
+params     = { op = "releases", repo = "open-telemetry/opentelemetry-go", limit = 5 }
 
-[action.releases_n8n.retry]
+[action.releases_otel.retry]
 max_attempts = 3
 backoff      = "exponential"
 base_delay   = "2s"
@@ -81,7 +82,7 @@ max_delay    = "30s"
 # sentinel, the same trick career_scout uses with NO_MATCHES.
 [action.compare]
 runner     = "anthropic"
-depends_on = ["releases_n8n", "releases_mcp"]
+depends_on = ["releases_otel", "releases_mcp"]
 
 [action.compare.params]
 system = """
@@ -101,8 +102,8 @@ You will see false positives. When unsure, lean toward MATCH and let the human
 triage. The body you write becomes a draft issue, not a decision.
 """
 prompt = """
-Recent n8n-io/n8n releases:
-${{ releases_n8n.output }}
+Recent open-telemetry/opentelemetry-go releases:
+${{ releases_otel.output }}
 
 Recent modelcontextprotocol/go-sdk releases:
 ${{ releases_mcp.output }}

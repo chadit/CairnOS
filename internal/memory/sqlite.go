@@ -289,6 +289,30 @@ func (s *SQLite) Load(ctx context.Context, scope string, tokenBudget int) ([]Ent
 	return loaded, nil
 }
 
+// List returns every entry in the request workspace, optionally narrowed to
+// one scope (an empty scope lists all), ordered by created_at then id so a
+// repeated export writes the same files in the same order. Unlike Load it
+// applies no importance ordering and no token budget: the caller wants the
+// whole set for offline editing, not a prompt-sized slice.
+func (s *SQLite) List(ctx context.Context, scope string) ([]Entry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT "+entryColumns+` FROM memory_entries
+		 WHERE workspace_id = ? AND (? = '' OR scope = ?)
+		 ORDER BY created_at ASC, id ASC`,
+		workspaceFromContext(ctx), scope, scope)
+	if err != nil {
+		return nil, fmt.Errorf("list memory entries: %w", err)
+	}
+	defer closeRows(rows)
+
+	entries, err := collectEntries(rows)
+	if err != nil {
+		return nil, fmt.Errorf("list memory entries: %w", err)
+	}
+
+	return entries, nil
+}
+
 // listByImportance is the no-keywords Search path: the scope's entries in
 // Load order, optionally capped.
 func (s *SQLite) listByImportance(ctx context.Context, scope string, limit int) ([]Entry, error) {

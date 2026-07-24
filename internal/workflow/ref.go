@@ -17,6 +17,12 @@ const (
 	RefEnv
 	// RefSecret reads a value from the configured secret source.
 	RefSecret
+	// RefItem reads the current element of a foreach fan-out (${{ item }} or
+	// ${{ item.<field> }}); only valid inside an action that declares foreach.
+	RefItem
+	// RefIndex reads the zero-based position of the current foreach element
+	// (${{ index }}); only valid inside a foreach action.
+	RefIndex
 )
 
 // Ref is one parsed interpolation reference from a params value, a goal, or a
@@ -44,6 +50,8 @@ const (
 	nsInputs    = "inputs"
 	nsEnv       = "env"
 	nsSecrets   = "secrets"
+	nsItem      = "item"
+	nsIndex     = "index"
 	fieldOutput = "output"
 )
 
@@ -146,12 +154,25 @@ func scanRefs(text string) ([]span, []error) {
 	}
 }
 
-// parseRef classifies one reference body. Namespaced references (inputs, env,
-// secrets) take exactly two parts; everything else must be an action output
-// reference of the shape name.output or name.output.field...
+// parseRef classifies one reference body. The foreach namespaces (item,
+// index) are single-part; namespaced references (inputs, env, secrets) take
+// exactly two parts; everything else must be an action output reference of
+// the shape name.output or name.output.field...
 func parseRef(raw, body string) (Ref, error) {
+	if body == "" {
+		return Ref{}, fmt.Errorf("%w: %q", ErrBadReference, raw)
+	}
+
 	parts := strings.Split(body, ".")
-	if body == "" || len(parts) < minRefParts {
+
+	switch parts[0] {
+	case nsItem:
+		return parseItemRef(raw, parts), nil
+	case nsIndex:
+		return parseIndexRef(raw, parts)
+	}
+
+	if len(parts) < minRefParts {
 		return Ref{}, fmt.Errorf("%w: %q", ErrBadReference, raw)
 	}
 
@@ -161,6 +182,23 @@ func parseRef(raw, body string) (Ref, error) {
 	default:
 		return parseActionRef(raw, parts)
 	}
+}
+
+// parseItemRef reads ${{ item }} or ${{ item.<field>... }}: the whole element
+// or a path into it. The path mirrors action-output refs, so a bad field
+// surfaces at resolution the same way a bad output field does.
+func parseItemRef(raw string, parts []string) Ref {
+	return Ref{Raw: raw, Kind: RefItem, Target: nsItem, Path: parts[1:]}
+}
+
+// parseIndexRef reads ${{ index }}. The index carries no path, so anything
+// after it (index.foo) is malformed.
+func parseIndexRef(raw string, parts []string) (Ref, error) {
+	if len(parts) != 1 {
+		return Ref{}, fmt.Errorf("%w: %q", ErrBadReference, raw)
+	}
+
+	return Ref{Raw: raw, Kind: RefIndex, Target: nsIndex}, nil
 }
 
 func parseNamespacedRef(raw string, parts []string) (Ref, error) {

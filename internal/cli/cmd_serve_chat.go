@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
+	"github.com/chadit/CairnOS/internal/skills"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/internal/vault"
@@ -30,10 +32,10 @@ func (a *App) failServe(ctx context.Context, tel *telemetry.Telemetry, stage str
 // the API config and logs its endpoint. It returns an exit code and false on a
 // wiring failure, so the serve flow stays under the complexity ceiling. With
 // chat disabled, the agent is nil and ChatService stays unmounted.
-func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *chatDeps) (int, bool) {
-	agent, err := buildChatAgent(cfg, deps)
+func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *chatDeps) (*chat.Agent, *chat.Personalities, int, bool) {
+	agent, personalities, err := buildChatAgent(cfg, deps)
 	if err != nil {
-		return a.failServe(ctx, tel, "chat", err), false
+		return nil, nil, a.failServe(ctx, tel, "chat", err), false
 	}
 
 	if agent != nil {
@@ -42,7 +44,7 @@ func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry
 		a.printOutf("chat available at %s/v1/chat\n", "http://"+cfg.API.HTTP)
 	}
 
-	return ExitOK, true
+	return agent, personalities, ExitOK, true
 }
 
 // buildChatAgent wires the Phase 9 chat agent for serve when [chat] is enabled
@@ -52,32 +54,80 @@ func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry
 // descriptor, and hands the chat agent a workflow trigger over the run manager
 // so a confirmed proposal fires a real run. A disabled [chat] returns a nil
 // agent, which keeps ChatService unmounted.
-func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, error) {
+func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, *chat.Personalities, error) {
 	if !cfg.Chat.Enabled {
-		return nil, nil //nolint:nilnil // a nil agent is the documented "chat disabled" state, not an error
+		// A nil agent is the documented "chat disabled" state, not an error.
+		return nil, nil, nil
 	}
 
 	driver, err := chatDriver(deps.registry, cfg.Chat.Driver)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	tools := chat.BuildToolSet(chatReadTools(deps.memory, deps.vault))
+	// One adapter feeds both the system-prompt listing (via Config.Skills) and
+	// the skill read tool (via chatReadTools), so the two description-match paths
+	// see the same library.
+	source := skillSourceAdapter{lib: skills.New(deps.skillsDir, deps.logger)}
+
+	tools := chat.BuildToolSet(chatReadTools(deps.memory, deps.vault, source))
 
 	trigger := api.NewChatWorkflowTrigger(deps.manager, api.NewWorkflowResolver(deps.workflowsDir, deps.logger))
+
+	// Built once here so the OpenAI-compatible adapter and the chat agent share
+	// the same resolved personality set rather than each building its own.
+	personalities := chat.NewPersonalities(cfg.Chat.Personalities, cfg.Chat.DefaultPersonality)
 
 	agent := chat.New(&chat.Config{
 		Store:         deps.store,
 		Driver:        driver,
 		Tools:         tools.Tools,
 		Specs:         tools.Specs,
-		Personalities: chat.NewPersonalities(cfg.Chat.Personalities, cfg.Chat.DefaultPersonality),
+		Personalities: personalities,
+		Skills:        source,
+		ContextDir:    deps.contextDir,
+		FileAllowlist: cfg.Chat.FileAllowlist,
+		MaxFileBytes:  cfg.Chat.MaxFileBytes,
 		Trigger:       trigger,
 		TurnBudgetUSD: cfg.Chat.TurnBudgetUSD,
 		NewID:         store.NewID,
 	})
 
-	return agent, nil
+	return agent, personalities, nil
+}
+
+// skillSourceAdapter adapts the skills library to chat.SkillSource, keeping
+// internal/chat free of an internal/skills import (the WorkflowTrigger seam
+// pattern). It maps skills.ErrNotFound onto chat.ErrSkillNotFound so the chat
+// side matches on its own sentinel.
+type skillSourceAdapter struct {
+	lib *skills.Library
+}
+
+// List implements chat.SkillSource.
+func (a skillSourceAdapter) List() []chat.SkillInfo {
+	loaded := a.lib.List()
+	infos := make([]chat.SkillInfo, len(loaded))
+
+	for idx := range loaded {
+		infos[idx] = chat.SkillInfo{Name: loaded[idx].Name, Description: loaded[idx].Description}
+	}
+
+	return infos
+}
+
+// Load implements chat.SkillSource.
+func (a skillSourceAdapter) Load(name string) (string, error) {
+	skill, err := a.lib.Load(name)
+	if err != nil {
+		if errors.Is(err, skills.ErrNotFound) {
+			return "", chat.ErrSkillNotFound
+		}
+
+		return "", fmt.Errorf("load skill: %w", err)
+	}
+
+	return skill.Body, nil
 }
 
 // chatDeps groups the chat agent's wiring dependencies, so buildChatAgent takes
@@ -89,6 +139,8 @@ type chatDeps struct {
 	registry     *runner.Registry
 	manager      *api.Manager
 	workflowsDir string
+	skillsDir    string
+	contextDir   string
 	logger       *slog.Logger
 }
 
@@ -115,10 +167,11 @@ func chatDriver(registry *runner.Registry, name string) (runner.ToolCaller, erro
 }
 
 // chatReadTools builds the read tools the chat agent runs inline: the memory
-// tool when a memory store is configured, and the vault query tool when a vault
-// store is configured. A nil store leaves its tool out, so a node without a
-// vault still runs chat with memory and the gate.
-func chatReadTools(mem memory.Store, vaultStore vault.Store) map[string]runner.Runner {
+// tool when a memory store is configured, the vault query tool when a vault
+// store is configured, and the skill read tool when a skill source is wired. A
+// nil dependency leaves its tool out, so a node without a vault still runs chat
+// with memory and the gate.
+func chatReadTools(mem memory.Store, vaultStore vault.Store, skillSource chat.SkillSource) map[string]runner.Runner {
 	tools := map[string]runner.Runner{}
 
 	if mem != nil {
@@ -127,6 +180,10 @@ func chatReadTools(mem memory.Store, vaultStore vault.Store) map[string]runner.R
 
 	if vaultStore != nil {
 		tools[chat.ToolVaultQuery] = builtins.NewVaultQueryTool(vaultStore)
+	}
+
+	if skillSource != nil {
+		tools[chat.SkillToolName] = chat.NewSkillTool(skillSource)
 	}
 
 	return tools

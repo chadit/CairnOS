@@ -9,6 +9,7 @@ import type {
   LoginResponse,
   RejectSuggestionResponse,
   Run,
+  SaveWorkflowResponse,
   SearchMemoryResponse,
   Suggestion,
   ValidateWorkflowResponse,
@@ -75,6 +76,20 @@ export function validateWorkflow(toml: string): Promise<ValidateWorkflowResponse
   });
 }
 
+/**
+ * saveWorkflow writes a workflow definition to the server's workflows
+ * directory via the gateway's PUT route. The bytes ride base64-encoded, the
+ * same proto3 JSON mapping validateWorkflow uses; the server captures any
+ * prior definition in the version store before overwriting, so the save is
+ * rollbackable.
+ */
+export function saveWorkflow(name: string, toml: string): Promise<SaveWorkflowResponse> {
+  return request<SaveWorkflowResponse>(`/workflows/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: { toml: base64Encode(toml) },
+  });
+}
+
 interface SearchMemoryParams {
   scope?: string | undefined;
   text?: string | undefined;
@@ -129,8 +144,11 @@ export function rejectSuggestion(id: string): Promise<RejectSuggestionResponse> 
   });
 }
 
-/** base64Encode encodes a UTF-8 string for the validate request's bytes field. */
-function base64Encode(text: string): string {
+/**
+ * base64Encode encodes a UTF-8 string for a request's proto `bytes` field.
+ * Exported so the run stream can encode an inline definition the same way.
+ */
+export function base64Encode(text: string): string {
   const bytes = new TextEncoder().encode(text);
   let binary = '';
   for (const byte of bytes) {

@@ -50,7 +50,7 @@ func (a *App) cmdMCP(ctx context.Context, args []string) int {
 		return a.cmdMCPServe(ctx, args[1:])
 	case "publish":
 		return a.cmdMCPPublish(ctx, args[1:])
-	case "import":
+	case subcmdImport:
 		return a.cmdMCPImport(ctx, args[1:])
 	default:
 		a.printErrf("unknown mcp subcommand %q\n", args[0])
@@ -115,7 +115,27 @@ func (a *App) cmdMCPServe(ctx context.Context, args []string) int {
 // engine, registry) without the telemetry, scheduler, and API listeners a stdio
 // MCP server has no use for.
 func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, db store.Store, mem memory.Store, rulesSvc rules.Service) int {
-	registry, err := newRegistry(ctx, cfg.Runners, mem, rulesSvc)
+	// The source is built before the registry so the credential manager and the
+	// runners share one secret chain.
+	source, closeSource, err := a.buildSecretSource(ctx, dir, cfg)
+	if err != nil {
+		a.printErrf("mcp serve: %v\n", err)
+
+		return ExitFailure
+	}
+	defer func() { _ = closeSource() }()
+
+	// Outbound credentials resolve their secret refs through the source so the
+	// http and mcp_client runners mint bearer tokens. Construction does no
+	// network and fails fast on a missing ref.
+	credManager, err := buildCredentialManager(ctx, cfg, source)
+	if err != nil {
+		a.printErrf("mcp serve: %v\n", err)
+
+		return ExitFailure
+	}
+
+	registry, err := newRegistry(ctx, cfg.Runners, mem, rulesSvc, credManager)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
 
@@ -125,7 +145,7 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 
 	manager := api.NewManager(a.logger)
 
-	engCfg := engineConfig(cfg)
+	engCfg := engineConfig(cfg, source)
 	engCfg.NewID = manager.NewID
 	engCfg.OnEvent = manager.Dispatch
 	engCfg.AgentExecutor = agentloop.New(registry, mem, db, nil)

@@ -52,6 +52,22 @@ func safeHTTPClient(name string, timeout time.Duration, allowPrivate bool) *http
 	}
 }
 
+// credentialsClientName labels the egress guard's redirect check for the
+// credentials token client, so a refused hop reads the same as the runners'.
+const credentialsClientName = "credentials"
+
+// GuardedHTTPClient exposes the shared egress guard for callers outside the
+// runner factories, namely the credentials token client that POSTs client
+// secrets to OAuth2 token endpoints. It is the same dial-time IP guard and
+// redirect scheme guard as safeHTTPClient: loopback, link-local, private,
+// unspecified, and multicast targets are refused at dial after DNS resolution,
+// unless allowPrivate is true (which keeps the scheme guard and drops the IP
+// guard, matching the runner opt-out). timeout bounds one token mint or refresh,
+// since x/oauth2 TokenSources take no per-call context.
+func GuardedHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
+	return safeHTTPClient(credentialsClientName, timeout, allowPrivate)
+}
+
 // guardedControl is the net.Dialer Control callback that rejects a dial to a
 // blocked address. address is the resolved "host:port" the connection will use,
 // so parsing the host yields the IP the socket connects to, not a name that

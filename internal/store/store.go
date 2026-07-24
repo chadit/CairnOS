@@ -25,6 +25,11 @@ const (
 	RunSucceeded RunStatus = "succeeded"
 	RunFailed    RunStatus = "failed"
 	RunCanceled  RunStatus = "canceled"
+	// RunHeld is a run parked on a human-approval action. No goroutine runs
+	// while it waits, so ReconcileInterrupted leaves it alone across a restart,
+	// and it is not terminal: deciding the approval resumes the same run
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	RunHeld RunStatus = "held"
 )
 
 // ActionStatus is the per-action state within a run.
@@ -39,6 +44,11 @@ const (
 	ActionSucceeded ActionStatus = "succeeded"
 	ActionFailed    ActionStatus = "failed"
 	ActionSkipped   ActionStatus = "skipped"
+	// ActionWaiting marks an approval action parked pending a human decision.
+	// It is not terminal: the run finalizes as held while the action waits, and
+	// the action re-runs to a terminal state when the run resumes
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	ActionWaiting ActionStatus = "waiting"
 )
 
 // Run is one execution of a workflow.
@@ -49,11 +59,16 @@ type Run struct {
 	WorkspaceID  string // reserved for multi-tenancy; "default" until Phase 5
 	Status       RunStatus
 	Inputs       map[string]any
-	Trigger      string // cli|schedule|api|a2a|webhook
+	Trigger      string // cli|schedule|api|a2a|webhook|webhook_test|poll|replay|error|workflow
 	Error        *cairnerr.Error
-	CreatedAt    time.Time
-	StartedAt    time.Time // zero until the run starts
-	FinishedAt   time.Time // zero until terminal
+	// ParentRunID links a child run to the run that spawned it: a replay to
+	// the run it reruns, a workflow-call child to its caller, an error
+	// workflow to the failed run that fired it. Empty means a root run
+	// (.agents/spec/parity/workflow-language.md, "Replay from failed action").
+	ParentRunID string
+	CreatedAt   time.Time
+	StartedAt   time.Time // zero until the run starts
+	FinishedAt  time.Time // zero until terminal
 }
 
 // ActionResult is the persisted outcome of one action within a run.
@@ -245,12 +260,18 @@ type SuggestionStore interface {
 // Chat message roles (.agents/spec/13-roadmap.md, Phase 9). A conversation
 // alternates user prompts and assistant replies, with tool rows recording the
 // agent's tool calls so a replayed history shows what the agent did, not just
-// what it said.
+// what it said. A system row carries framing a client seeds ahead of the first
+// user turn, the shape the OpenAI-compatible adapter maps a client `system`
+// message onto (.agents/spec/parity/openai-compat.md).
 const (
 	// ChatRoleUser marks a message the human or bot sent.
 	ChatRoleUser = "user"
 	// ChatRoleAssistant marks the chat agent's reply.
 	ChatRoleAssistant = "assistant"
+	// ChatRoleSystem marks a seeded framing message, the role an
+	// OpenAI-compatible client's `system` message lands as when the adapter
+	// replays prior history into a fresh session.
+	ChatRoleSystem = "system"
 	// ChatRoleTool marks a recorded tool call and its result, kept in history
 	// so the next turn's prompt shows the agent what it already looked up.
 	ChatRoleTool = "tool"
@@ -269,8 +290,9 @@ type ChatSession struct {
 }
 
 // ChatMessage is one entry in a conversation, ordered by Seq within its
-// session. Roles are ChatRoleUser, ChatRoleAssistant, or ChatRoleTool; the
-// content is the message text (or the rendered tool exchange for a tool row).
+// session. Roles are ChatRoleUser, ChatRoleAssistant, ChatRoleSystem, or
+// ChatRoleTool; the content is the message text (or the rendered tool exchange
+// for a tool row).
 type ChatMessage struct {
 	SessionID string
 	Seq       int // 1-based position within the session
@@ -282,6 +304,21 @@ type ChatMessage struct {
 // ChatSessionFilter narrows ListSessions.
 type ChatSessionFilter struct {
 	// Limit caps the result count; zero means no cap.
+	Limit int
+}
+
+// ChatSearchQuery narrows SearchMessages.
+type ChatSearchQuery struct {
+	// Text is the full-text query. Empty returns no rows at the store;
+	// the API layer rejects it with InvalidArgument before it gets here.
+	Text string
+
+	// SessionID optionally narrows hits to one session. Empty searches
+	// every session in the request workspace.
+	SessionID string
+
+	// Limit caps the result count; zero means no cap, matching
+	// ChatSessionFilter.Limit and memory's SearchQuery.
 	Limit int
 }
 
@@ -305,7 +342,9 @@ type ChatStore interface {
 	ListSessions(ctx context.Context, filter ChatSessionFilter) ([]*ChatSession, error)
 
 	// AppendMessage records one message at the next sequence in its session
-	// and stamps the session's updated_at. Messages are insert-only; a
+	// and stamps the session's updated_at. Role is one of ChatRoleUser,
+	// ChatRoleAssistant, ChatRoleSystem, or ChatRoleTool; the column is a plain
+	// string, so a new role needs no schema change. Messages are insert-only; a
 	// conversation is never rewritten. Appending to a session in another
 	// workspace fails with ErrChatSessionNotFound.
 	AppendMessage(ctx context.Context, message *ChatMessage) error
@@ -313,6 +352,90 @@ type ChatStore interface {
 	// ListMessages returns one session's messages ordered by seq, scoped to
 	// the request workspace.
 	ListMessages(ctx context.Context, sessionID string) ([]*ChatMessage, error)
+
+	// SearchMessages returns messages whose content matches the query,
+	// best match first with (session_id, seq) as the stable tie-break,
+	// scoped to the request workspace. A SessionID filter naming a foreign
+	// or missing session simply matches nothing; it is a filter, not a
+	// lookup, so it never reports ErrChatSessionNotFound.
+	SearchMessages(ctx context.Context, query ChatSearchQuery) ([]*ChatMessage, error)
+}
+
+// BridgeSessionStore maps a messaging-transport chat to its chat session, so
+// the binding survives a serve restart rather than living in bridge memory
+// (.agents/spec/parity/messaging-bridge.md, decision 1). Every method is
+// workspace-scoped through the request context the way chat sessions are: the
+// bridge stamps the mapped workspace before it binds or looks up, exactly as
+// the gRPC interceptor stamps a verified token's workspace, so a chat bound in
+// one tenant is invisible from another.
+type BridgeSessionStore interface {
+	// BindBridgeSession upserts the binding for (transport, chatKey) in the
+	// request workspace. A rebind (the bridge's /new path) overwrites the prior
+	// session id rather than failing on the primary key, so switching a chat to
+	// a fresh conversation is a single call.
+	BindBridgeSession(ctx context.Context, transport, chatKey, sessionID string) error
+
+	// LookupBridgeSession returns the bound session id for (transport, chatKey)
+	// in the request workspace, or ErrBridgeSessionNotFound when no binding
+	// exists. The bridge reads that sentinel as first contact and creates then
+	// binds a session.
+	LookupBridgeSession(ctx context.Context, transport, chatKey string) (string, error)
+}
+
+// ApprovalStatus is the decision state of a human-approval gate.
+type ApprovalStatus string
+
+// Approval decision states (.agents/spec/parity/workflow-language.md, "Human
+// approval"). A gate opens pending and moves once to approved or denied.
+const (
+	ApprovalPending  ApprovalStatus = "pending"
+	ApprovalApproved ApprovalStatus = "approved"
+	ApprovalDenied   ApprovalStatus = "denied"
+)
+
+// Approval is one human-approval gate on a run's approval action. The primary
+// key is (RunID, ActionName): parallel branches can each park an approval, so
+// two pending approvals in one run is a legal state. Message is the resolved,
+// secret-free approval prompt (validation bans secret refs in it, so it never
+// carries a credential). Actor and Comment record who decided and why, empty
+// while pending.
+type Approval struct {
+	RunID       string
+	ActionName  string
+	WorkspaceID string // scoping, same convention as runs
+	Status      ApprovalStatus
+	Message     string
+	Actor       string
+	Comment     string
+	CreatedAt   time.Time
+	DecidedAt   time.Time // zero while pending
+}
+
+// ApprovalStore is the human-approval slice of the store
+// (.agents/spec/parity/workflow-language.md, "Human approval"), split out so
+// the engine and the decision surfaces depend on this narrow surface instead
+// of all of Store. Every method is workspace-scoped the way runs are, so a
+// decision or read across the tenancy boundary reads as not-found.
+type ApprovalStore interface {
+	// CreateApproval records a new pending approval gate. A zero CreatedAt is
+	// stamped with the current time, an empty WorkspaceID becomes the request
+	// workspace, and an empty Status becomes pending.
+	CreateApproval(ctx context.Context, approval *Approval) error
+
+	// GetApproval fetches one gate by (runID, actionName), scoped to the request
+	// workspace so an approval in another workspace reads as ErrApprovalNotFound.
+	GetApproval(ctx context.Context, runID, actionName string) (*Approval, error)
+
+	// ListPendingApprovals returns a run's still-pending gates ordered by action
+	// name, scoped to the request workspace. A name-omitted decision uses it to
+	// pick the single pending gate or to list the ambiguous ones.
+	ListPendingApprovals(ctx context.Context, runID string) ([]*Approval, error)
+
+	// DecideApproval moves a pending gate to approved or denied, recording the
+	// actor and comment and stamping decided_at. Deciding a gate that is missing
+	// in the request workspace, already decided, or owned by another tenant fails
+	// with ErrApprovalNotFound.
+	DecideApproval(ctx context.Context, runID, actionName string, status ApprovalStatus, actor, comment string) error
 }
 
 // AgentStepStore is the transcript slice of the store
@@ -366,6 +489,16 @@ type Store interface {
 	// ChatStore carries the conversation-session and message methods Phase 9
 	// chat persists (.agents/spec/13-roadmap.md, Phase 9).
 	ChatStore
+
+	// ApprovalStore carries the human-approval gate methods the engine parks a
+	// run on and the decision surfaces resolve
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	ApprovalStore
+
+	// BridgeSessionStore carries the messaging-bridge chat-to-session bindings
+	// the Telegram long-poll loop resolves per turn
+	// (.agents/spec/parity/messaging-bridge.md).
+	BridgeSessionStore
 
 	// ListActionResults returns every action row for a run.
 	ListActionResults(ctx context.Context, runID string) ([]*ActionResult, error)

@@ -128,12 +128,44 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     PRIMARY KEY (session_id, seq)
 );
 
+CREATE TABLE IF NOT EXISTS run_approvals (
+    run_id       TEXT NOT NULL,
+    action_name  TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    status       TEXT NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    actor        TEXT NOT NULL DEFAULT '',
+    comment      TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL,
+    decided_at   TIMESTAMPTZ,
+    PRIMARY KEY (run_id, action_name)
+);
+
+CREATE TABLE IF NOT EXISTS bridge_sessions (
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    transport    TEXT NOT NULL,
+    chat_key     TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (workspace_id, transport, chat_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workflow ON runs(workflow_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(workspace_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(workspace_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_versions_workflow ON workflow_versions(workflow_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_fts
+    ON chat_messages USING GIN (to_tsvector('simple', content));
+CREATE INDEX IF NOT EXISTS idx_run_approvals_pending ON run_approvals(workspace_id, run_id, status);
+
+-- runs.parent_run_id rides a guarded ALTER because the schema has no migration
+-- framework: CREATE TABLE IF NOT EXISTS never adds a column to a database an
+-- older binary already created. Postgres has ADD COLUMN IF NOT EXISTS, so this
+-- is idempotent across restarts and across nodes opening the same database
+-- (.agents/spec/parity/workflow-language.md, "Replay from failed action").
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT;
 `
 
 // Store is the Postgres-backed implementation of store.Store. It is safe for

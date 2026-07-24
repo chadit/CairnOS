@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,5 +318,189 @@ func TestHTTPValidate(t *testing.T) {
 				t.Fatalf("validate error = %v, want error %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestHTTPCredentialSendsBearer(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(authHeader); got != bearerPrefix+credToken {
+			t.Errorf("Authorization = %q, want %q", got, bearerPrefix+credToken)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok": true}`)
+	}))
+	defer server.Close()
+
+	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
+
+	fetch, err := builtins.NewHTTPWithCredentials(map[string]any{credentialKey: credName}, server.Client(), lookup)
+	if err != nil {
+		t.Fatalf("new http: %v", err)
+	}
+
+	if _, err := fetch.Execute(t.Context(), httpTask(map[string]any{urlKey: server.URL})); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if lookup.callCount() != 1 {
+		t.Fatalf("credential minted %d tokens, want exactly 1 per request", lookup.callCount())
+	}
+}
+
+// TestHTTPExplicitAuthorizationWinsOverCredential pins the precedence rule: an
+// Authorization from default_headers or a per-call header wins, and the
+// credential is never even minted in that case.
+func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
+	t.Parallel()
+
+	const explicit = "Bearer explicit-operator-token"
+
+	cases := []struct {
+		name   string
+		cfg    map[string]any
+		params map[string]any
+	}{
+		{
+			name:   "default_headers authorization wins",
+			cfg:    map[string]any{credentialKey: credName, defaultHeadersKey: map[string]any{authHeader: explicit}},
+			params: map[string]any{},
+		},
+		{
+			name:   "per-call header authorization wins",
+			cfg:    map[string]any{credentialKey: credName},
+			params: map[string]any{headersKey: map[string]any{authHeader: explicit}},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get(authHeader); got != explicit {
+					t.Errorf("Authorization = %q, want the explicit header %q", got, explicit)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"ok": true}`)
+			}))
+			defer server.Close()
+
+			lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
+
+			params := tt.params
+			params[urlKey] = server.URL
+
+			fetch, err := builtins.NewHTTPWithCredentials(tt.cfg, server.Client(), lookup)
+			if err != nil {
+				t.Fatalf("new http: %v", err)
+			}
+
+			if _, err := fetch.Execute(t.Context(), httpTask(params)); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+
+			if lookup.callCount() != 0 {
+				t.Fatalf("credential minted %d tokens, want 0 when an explicit Authorization is set", lookup.callCount())
+			}
+		})
+	}
+}
+
+// TestHTTPCredentialTokenNeverInError proves the bearer token never rides an
+// error string, even when a hostile endpoint echoes it back in an error body:
+// the runner attaches the token to the request, gets a 500, and the classified
+// error carries the status only.
+func TestHTTPCredentialTokenNeverInError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "denied for "+r.Header.Get(authHeader))
+	}))
+	defer server.Close()
+
+	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
+
+	fetch, err := builtins.NewHTTPWithCredentials(map[string]any{credentialKey: credName}, server.Client(), lookup)
+	if err != nil {
+		t.Fatalf("new http: %v", err)
+	}
+
+	_, err = fetch.Execute(t.Context(), httpTask(map[string]any{urlKey: server.URL}))
+	if err == nil {
+		t.Fatal("500 response returned no error")
+	}
+
+	// Scan the whole rendered error chain for the secret. This is a secret-leak
+	// check, not error-identity matching, so a substring search is the point.
+	rendered := err.Error()
+	if strings.Contains(rendered, credToken) {
+		t.Fatalf("error string leaked the bearer token: %v", err)
+	}
+
+	if lookup.callCount() != 1 {
+		t.Fatalf("credential minted %d tokens, want exactly 1 (the token was sent, just not leaked)", lookup.callCount())
+	}
+}
+
+// TestHTTPCredentialMintFailureIsTransient checks a token endpoint that is
+// briefly unavailable surfaces as a transient runner error, so the engine
+// retries rather than treating it as a permanent config fault.
+func TestHTTPCredentialMintFailureIsTransient(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	lookup := &fakeTokenLookup{
+		tokens: map[string]string{credName: credToken},
+		err:    errors.New("token endpoint unreachable"),
+	}
+
+	fetch, err := builtins.NewHTTPWithCredentials(map[string]any{credentialKey: credName}, server.Client(), lookup)
+	if err != nil {
+		t.Fatalf("new http: %v", err)
+	}
+
+	_, err = fetch.Execute(t.Context(), httpTask(map[string]any{urlKey: server.URL}))
+
+	classified, ok := errors.AsType[*runner.Error](err)
+	if !ok {
+		t.Fatalf("error %v is not a runner.Error", err)
+	}
+
+	if classified.Class != runner.ClassTransient || classified.Code != "http.credential" {
+		t.Fatalf("class/code = %v/%q, want transient http.credential", classified.Class, classified.Code)
+	}
+}
+
+// TestHTTPNilLookupSendsNoBearer keeps the no-credential path byte-for-byte:
+// with no credential key and a nil lookup, no Authorization header is added.
+func TestHTTPNilLookupSendsNoBearer(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(authHeader); got != "" {
+			t.Errorf("Authorization = %q, want none without a credential", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok": true}`)
+	}))
+	defer server.Close()
+
+	fetch, err := builtins.NewHTTPWithCredentials(nil, server.Client(), nil)
+	if err != nil {
+		t.Fatalf("new http: %v", err)
+	}
+
+	if _, err := fetch.Execute(t.Context(), httpTask(map[string]any{urlKey: server.URL})); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
 }

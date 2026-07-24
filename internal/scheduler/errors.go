@@ -22,4 +22,8 @@ var (
 	// ErrWorkItemNotFound reports a queue operation (nak, hold, resume) against
 	// an id that matches no work item, or one in the wrong state for the change.
 	ErrWorkItemNotFound = errors.New("work item not found")
+
+	// ErrCursorNotFound reports a GetCursor for a schedule that has never
+	// polled, so the poll fire path reads it as the empty first-poll cursor.
+	ErrCursorNotFound = errors.New("poll cursor not found")
 )

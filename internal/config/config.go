@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -17,6 +18,7 @@ import (
 type Config struct {
 	Engine    Engine
 	Store     Store
+	Secrets   Secrets
 	Memory    Memory
 	Retention Retention
 	Env       Env
@@ -31,9 +33,61 @@ type Config struct {
 	Tuning    Tuning
 	Scheduler Scheduler
 	Chat      Chat
+	Webhook   Webhook
+	Bridge    Bridge
+	Notify    Notify
 	// Runners carries each [runner.<name>] block verbatim for the registry's
 	// factories, including nested tables like circuit_breaker.
 	Runners map[string]map[string]any
+	// Credentials carries each [credential.<name>] block parsed and validated
+	// into a typed Credential (unlike Runners, which stays verbatim, because a
+	// credential's grant, token_url, and secret refs validate at Load).
+	Credentials map[string]Credential
+}
+
+// Grant names a [credential.<name>] block's OAuth2 grant. Named so config
+// validation, the credentials manager, and the docs agree on one spelling.
+const (
+	// GrantClientCredentials mints tokens from a client id and secret with no
+	// user context, for machine-to-machine SaaS calls.
+	GrantClientCredentials = "client_credentials"
+	// GrantRefreshToken mints access tokens from a long-lived refresh token.
+	GrantRefreshToken = "refresh_token"
+)
+
+// Credential is one outbound OAuth2 credential parsed from a [credential.<name>]
+// block (.agents/spec/parity/secrets-credentials.md, "outbound OAuth2
+// credentials"). The http and mcp_client runners reference it by name to send a
+// bearer token. Client secrets and refresh tokens never live in this struct or
+// the config file: only the secret-ref name does, resolved through the secret
+// chain at wiring time.
+type Credential struct {
+	// Grant is GrantClientCredentials or GrantRefreshToken.
+	Grant string
+
+	// TokenURL is the OAuth2 token endpoint. It must be https unless
+	// AllowPrivateTargets is set, which mirrors the runner egress opt-out.
+	TokenURL string
+
+	// ClientID identifies this client at the provider. It is plain config, not a
+	// secret.
+	ClientID string
+
+	// ClientSecretRef is the secret name of the client secret, resolved through
+	// the chain. Required for client_credentials, optional for refresh_token.
+	ClientSecretRef string
+
+	// RefreshTokenRef is the secret name of the refresh token, resolved through
+	// the chain. Required for and unique to the refresh_token grant.
+	RefreshTokenRef string
+
+	// Scopes are the requested scopes, meaningful for client_credentials only.
+	Scopes []string
+
+	// AllowPrivateTargets drops the token client's dial-time IP guard (keeping
+	// the scheme guard) for a provider on an internal or dev endpoint, matching
+	// the runner opt-out. It also lets TokenURL use http.
+	AllowPrivateTargets bool
 }
 
 // Engine bounds execution.
@@ -41,6 +95,11 @@ type Engine struct {
 	MaxConcurrentActions int
 	DefaultTimeout       time.Duration
 	Retry                Retry
+
+	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
+	// engine.call_depth_exceeded. Below 1 falls back to the engine default
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	MaxCallDepth int
 
 	// Fallback is the mixed-model chain, keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
@@ -63,6 +122,36 @@ type Store struct {
 	Backend string
 	DSN     string
 }
+
+// Secrets selects how a ${{ secrets.name }} reference resolves
+// (.agents/spec/parity/secrets-credentials.md, "Config"). The default "env"
+// backend is byte-for-byte today's behavior: values come only from
+// CAIRNOS_SECRET_<NAME> variables. The "store" backend prepends the env source
+// to an encrypted-at-rest store, Chain(env, store), so env stays first and a
+// value set in the environment still wins.
+//
+// Threat model, stated so a reader does not over-trust the word "encrypted":
+// the store defends a database-dump / read-at-rest attacker only, never an
+// attacker who can inject environment variables (env is trusted in the
+// single-operator model, and env wins the chain). A secret interpolated into an
+// action's output is recoverable in plaintext from run history: this backend
+// encrypts the secret store, not the run store. Env-sourced secrets stay
+// visible to child CLI runners through the inherited process environment.
+type Secrets struct {
+	// Backend is "env" (default) or "store".
+	Backend string
+}
+
+// Secret backend names Load accepts. Named constants so the CLI backend guard,
+// the wiring source builder, and validation all agree on one spelling.
+const (
+	// SecretsBackendEnv reads secrets only from CAIRNOS_SECRET_<NAME>; no key
+	// material is needed and behavior matches the pre-store engine exactly.
+	SecretsBackendEnv = "env"
+	// SecretsBackendStore composes the env source with the encrypted store as
+	// Chain(env, store), env first.
+	SecretsBackendStore = "store"
+)
 
 // Memory selects the memory backend.
 type Memory struct {
@@ -453,6 +542,130 @@ type Chat struct {
 	// Phase 9 guardrail against a runaway conversation. Zero leaves turns
 	// uncapped.
 	TurnBudgetUSD float64
+
+	// OpenAICompat mounts the OpenAI-compatible chat completions adapter over
+	// the chat surface, so off-the-shelf OpenAI clients can point at this node
+	// (.agents/spec/parity/openai-compat.md). Default false; it requires chat
+	// enabled, so serve fails fast when this is on with chat off.
+	OpenAICompat bool
+
+	// FileAllowlist is the set of absolute directory roots an @-file reference in
+	// a chat message may read from (.agents/spec/parity/skills-context.md,
+	// Part 2). Empty (the default) leaves every @-token inert: no reads, no
+	// notes, plain text. A path is readable only when its symlink-resolved form
+	// sits inside a symlink-resolved root, so a symlink cannot escape a root and
+	// a sibling sharing a root's name prefix is rejected.
+	FileAllowlist []string
+
+	// MaxFileBytes caps how much of one @-file reference inlines into the
+	// transcript; a larger file truncates at the cap with the byte counts in the
+	// record. Default 64 KiB.
+	MaxFileBytes int
+}
+
+// Webhook configures the webhook-ingress subsystem
+// (.agents/spec/parity/triggers-webhooks.md, "Webhook ingress"). Off by
+// default: serve mounts no ingress routes until [webhook] enabled is true and
+// an admin has registered at least one workflow with `cairnos webhook add`, so
+// the default posture exposes no public webhook surface.
+type Webhook struct {
+	// Enabled gates the ingress routes. With it off, buildWebhookExtension
+	// returns nil and serve mounts nothing, so an unregistered node is
+	// unreachable by design.
+	Enabled bool
+
+	// RatePerMinute is the default per-registration delivery cap; a registration
+	// may override it at add time. Below 1 falls back to the handler default.
+	RatePerMinute int
+
+	// TestWait bounds how long the test endpoint holds a connection waiting for
+	// the terminal run before it answers 202 and lets the run finish in the
+	// background. The shared server carries no WriteTimeout, so this is the only
+	// bound on a slow test run pinning a connection.
+	TestWait time.Duration
+
+	// SignatureSkew is the freshness window for the native signature: a
+	// timestamp further than this from now is rejected, and the nonce cache
+	// retains entries for this long, so a captured request cannot replay past it
+	// (security amendment 1). Below 1 falls back to the handler default.
+	SignatureSkew time.Duration
+}
+
+// Bridge configures the Phase 9b messaging bridge
+// (.agents/spec/parity/messaging-bridge.md). Off by default; a second transport
+// beyond Telegram is additive.
+type Bridge struct {
+	Telegram Telegram
+}
+
+// Telegram configures the Telegram long-poll bridge. The bot token is a
+// credential, so it is read only from CAIRNOS_BRIDGE_TELEGRAM_TOKEN at serve
+// wiring, never a config-file key. There is deliberately no base_url key: a
+// configurable base URL plus the token-in-path Bot API is a token-exfiltration
+// vector, so the client's base URL stays a test-only unexported field
+// (.agents/spec/parity/messaging-bridge.md, decision 3).
+type Telegram struct {
+	// Enabled turns the bridge on. With it off, serve starts no long-poll loop
+	// and logs one line. It is also treated as off when the token env is unset.
+	Enabled bool
+
+	// PollTimeout is the long-poll hold time per getUpdates call.
+	PollTimeout time.Duration
+
+	// SendTimeout bounds each outbound Bot API call.
+	SendTimeout time.Duration
+
+	// ConfirmTTL is how long an unanswered D9 proposal stays pending before it
+	// expires as a deny.
+	ConfirmTTL time.Duration
+
+	// Verbose relays tool-call status lines as italic messages when true;
+	// otherwise only assistant text and confirmations reach the chat.
+	Verbose bool
+
+	// Users is the allowlist keyed by Telegram user ID (as a string), mapping
+	// each permitted sender to a workspace and its grants. An enabled bridge with
+	// no users is a configuration error. The map has no env form; it is file-only.
+	Users map[string]TelegramUser
+}
+
+// TelegramUser maps one allowlisted Telegram sender to a workspace and its
+// grants. The bridge is an in-process trusted surface with no token to carry
+// scopes, so approving a D9 workflow is a distinct operator-set grant
+// (AllowConfirm) rather than a scope check
+// (.agents/spec/parity/messaging-bridge.md, decision 4).
+type TelegramUser struct {
+	// Workspace is the workspace every turn from this sender is stamped with,
+	// exactly as the gRPC interceptor would. Required: an empty workspace is a
+	// configuration error.
+	Workspace string
+
+	// Personality names the chat personality a new session for this sender gets.
+	// Empty falls back to [chat] default_personality.
+	Personality string
+
+	// AllowConfirm grants this sender the right to Approve a D9 proposal. Default
+	// false: chat access does not imply workflow-approval authority, so a
+	// chat-only sender's Approve tap is refused.
+	AllowConfirm bool
+}
+
+// Notify configures outbound event notifications
+// (.agents/spec/parity/messaging-bridge.md, decision 7). The Discord webhook URL
+// is a credential, so it stays in CAIRNOS_NOTIFY_DISCORD_WEBHOOK, never a config
+// key.
+type Notify struct {
+	Discord Discord
+}
+
+// Discord selects which engine and queue events fan out to the shipped Discord
+// webhook. The default set is exactly ["held"], which keeps today's
+// re-authentication hold message byte-identical.
+type Discord struct {
+	// Events is the selected event set. Every value must be one of held,
+	// run_failed, dead_lettered, or budget_denied; any other value is a
+	// configuration error.
+	Events []string
 }
 
 // Default returns the settings a fresh `cairnos init` ships: local-only,
@@ -462,6 +675,7 @@ func Default() Config {
 		Engine: Engine{
 			MaxConcurrentActions: 4,
 			DefaultTimeout:       10 * time.Minute,
+			MaxCallDepth:         3,
 			Retry: Retry{
 				MaxAttempts: 3,
 				Backoff:     "exponential",
@@ -470,8 +684,9 @@ func Default() Config {
 				Jitter:      true,
 			},
 		},
-		Store:  Store{Backend: "sqlite", DSN: "file:./data/cairnos.db"},
-		Memory: Memory{Backend: "sqlite", EmbeddingRunner: "openai"},
+		Store:   Store{Backend: "sqlite", DSN: "file:./data/cairnos.db"},
+		Secrets: Secrets{Backend: SecretsBackendEnv},
+		Memory:  Memory{Backend: "sqlite", EmbeddingRunner: "openai"},
 		Retention: Retention{
 			Runs:    90 * 24 * time.Hour,
 			Outputs: 30 * 24 * time.Hour,
@@ -517,10 +732,46 @@ func Default() Config {
 		Chat: Chat{
 			Driver:             defaultChatDriver,
 			DefaultPersonality: defaultChatPersonality,
+			MaxFileBytes:       defaultChatMaxFileBytes,
 		},
-		Runners: map[string]map[string]any{},
+		Webhook: Webhook{
+			RatePerMinute: defaultWebhookRatePerMinute,
+			TestWait:      defaultWebhookTestWait,
+			SignatureSkew: defaultWebhookSignatureSkew,
+		},
+		Bridge: Bridge{
+			Telegram: Telegram{
+				PollTimeout: defaultBridgePollTimeout,
+				SendTimeout: defaultBridgeSendTimeout,
+				ConfirmTTL:  defaultBridgeConfirmTTL,
+			},
+		},
+		Notify: Notify{
+			Discord: Discord{
+				// A fresh slice per call so a mutated result never leaks into
+				// the next Default(); ["held"] keeps today's behavior.
+				Events: []string{NotifyEventHeld},
+			},
+		},
+		Runners:     map[string]map[string]any{},
+		Credentials: map[string]Credential{},
 	}
 }
+
+// Webhook ingress defaults (.agents/spec/parity/triggers-webhooks.md,
+// "Config"). The per-registration cap matches the login rate's calm-node
+// default; the test endpoint holds a connection at most 30s before it answers
+// 202 and lets the run finish in the background. Both only matter once an
+// operator sets [webhook] enabled = true.
+const (
+	defaultWebhookRatePerMinute = 60
+	defaultWebhookTestWait      = 30 * time.Second
+	// defaultWebhookSignatureSkew is the native-signature freshness window and
+	// the nonce-cache retention (security amendment 1). Five minutes tolerates
+	// clock drift between a sender and this node while keeping the replay window
+	// short.
+	defaultWebhookSignatureSkew = 5 * time.Minute
+)
 
 // Chat defaults: the anthropic runner drives turns (it implements ToolCaller),
 // and the assistant personality frames a session that names none
@@ -529,6 +780,33 @@ func Default() Config {
 const (
 	defaultChatDriver      = "anthropic"
 	defaultChatPersonality = "assistant"
+	// defaultChatMaxFileBytes caps one inlined @-file reference at 64 KiB (the
+	// shift is byte-size arithmetic), so an @-ref cannot dominate a prompt even
+	// once an operator opts a root into chat.file_allowlist.
+	defaultChatMaxFileBytes = 64 << 10
+)
+
+// Telegram bridge timing defaults (.agents/spec/parity/messaging-bridge.md,
+// "Config"). The long poll holds each getUpdates call for 50s, each outbound
+// call gets 10s, and an unanswered proposal expires as deny after 10m. All only
+// matter once an operator sets [bridge.telegram] enabled = true.
+const (
+	defaultBridgePollTimeout = 50 * time.Second
+	defaultBridgeSendTimeout = 10 * time.Second
+	defaultBridgeConfirmTTL  = 10 * time.Minute
+)
+
+// Discord fan-out event names (.agents/spec/parity/messaging-bridge.md,
+// decision 7). These are the only values [notify.discord] events accepts; the
+// default set is exactly held, which keeps today's re-auth hold behavior.
+// Exported so the serve producers (held, run_failed, dead_lettered,
+// budget_denied) name the same events config validates against, one source of
+// truth rather than magic strings on both sides of the wiring.
+const (
+	NotifyEventHeld         = "held"
+	NotifyEventRunFailed    = "run_failed"
+	NotifyEventDeadLettered = "dead_lettered"
+	NotifyEventBudgetDenied = "budget_denied"
 )
 
 // Hive publish floor defaults (.agents/spec/09-a2a-and-hive.md,
@@ -596,11 +874,27 @@ func Load(path string) (Config, error) {
 		return cfg, envErr
 	}
 
+	if validErr := validateSecrets(&cfg.Secrets); validErr != nil {
+		return cfg, validErr
+	}
+
 	if validErr := validateAuth(&cfg.Auth); validErr != nil {
 		return cfg, validErr
 	}
 
 	if validErr := validateOAuth(&cfg.OAuth); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateCredentials(cfg.Credentials); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateBridge(&cfg.Bridge.Telegram); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateNotify(&cfg.Notify.Discord); validErr != nil {
 		return cfg, validErr
 	}
 
@@ -614,6 +908,19 @@ const (
 	signingAlgHS256 = "HS256"
 	signingAlgEdDSA = "EdDSA"
 )
+
+// validateSecrets rejects a [secrets] backend outside the known set at load, so
+// a typo fails at startup with config.invalid rather than silently falling back
+// to env and hiding the store an operator meant to use.
+func validateSecrets(secrets *Secrets) error {
+	switch secrets.Backend {
+	case SecretsBackendEnv, SecretsBackendStore:
+		return nil
+	default:
+		return fmt.Errorf("%w: secrets.backend %q is not %s or %s",
+			ErrInvalidConfig, secrets.Backend, SecretsBackendEnv, SecretsBackendStore)
+	}
+}
 
 // validateAuth fails fast when auth is enabled with an unusable identity:
 // an empty issuer or audience, a non-positive TTL, or an unknown signing
@@ -684,12 +991,69 @@ func validOAuthRole(role string) bool {
 	return role == roleAdmin || role == roleEditor || role == roleViewer
 }
 
+// validateBridge fails fast when the Telegram bridge is enabled but unusable: an
+// enabled bridge with no allowlisted users would accept nobody, and a user entry
+// with no workspace has nothing to stamp turns with. Bridge-off configs skip
+// this. The chat cross-check (bridge enabled while [chat] is disabled) lives at
+// serve wiring, where both blocks are visible
+// (.agents/spec/parity/messaging-bridge.md, decision 6). Iteration is over
+// sorted IDs so the reported entry is reproducible.
+func validateBridge(telegram *Telegram) error {
+	if !telegram.Enabled {
+		return nil
+	}
+
+	if len(telegram.Users) == 0 {
+		return fmt.Errorf("%w: bridge.telegram.users must list at least one user when the bridge is enabled", ErrInvalidConfig)
+	}
+
+	ids := make([]string, 0, len(telegram.Users))
+	for id := range telegram.Users {
+		ids = append(ids, id)
+	}
+
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		if telegram.Users[id].Workspace == "" {
+			return fmt.Errorf("%w: bridge.telegram.users.%s.workspace must be set", ErrInvalidConfig, id)
+		}
+	}
+
+	return nil
+}
+
+// validateNotify rejects any notify.discord.events value outside the known set,
+// so a typo'd event name fails at load rather than silently emitting nothing.
+// It runs regardless of the bridge: the Discord fan-out is its own subsystem.
+func validateNotify(d *Discord) error {
+	for _, event := range d.Events {
+		if !validNotifyEvent(event) {
+			return fmt.Errorf("%w: notify.discord.events %q is not one of %s, %s, %s, %s",
+				ErrInvalidConfig, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied)
+		}
+	}
+
+	return nil
+}
+
+// validNotifyEvent reports whether event is one of the fan-out event names.
+func validNotifyEvent(event string) bool {
+	switch event {
+	case NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied:
+		return true
+	default:
+		return false
+	}
+}
+
 // fileConfig mirrors the TOML layout with string durations, so duration
 // parsing (including the day suffix) goes through workflow.ParseDuration.
 type fileConfig struct {
 	Engine struct {
 		MaxConcurrentActions *int                `toml:"max_concurrent_actions"`
 		DefaultTimeout       *string             `toml:"default_timeout"`
+		MaxCallDepth         *int                `toml:"max_call_depth"`
 		Retry                *fileRetry          `toml:"retry"`
 		Fallback             map[string][]string `toml:"fallback"`
 	} `toml:"engine"`
@@ -697,6 +1061,9 @@ type fileConfig struct {
 		Backend *string `toml:"backend"`
 		DSN     *string `toml:"dsn"`
 	} `toml:"store"`
+	Secrets struct {
+		Backend *string `toml:"backend"`
+	} `toml:"secrets"`
 	Memory struct {
 		Backend         *string `toml:"backend"`
 		Vector          *bool   `toml:"vector"`
@@ -799,8 +1166,47 @@ type fileConfig struct {
 		DefaultPersonality *string           `toml:"default_personality"`
 		Personalities      map[string]string `toml:"personalities"`
 		TurnBudgetUSD      *float64          `toml:"turn_budget_usd"`
+		OpenAICompat       *bool             `toml:"openai_compat"`
+		FileAllowlist      []string          `toml:"file_allowlist"`
+		MaxFileBytes       *int              `toml:"max_file_bytes"`
 	} `toml:"chat"`
+	Webhook struct {
+		Enabled       *bool   `toml:"enabled"`
+		RatePerMinute *int    `toml:"rate_per_minute"`
+		TestWait      *string `toml:"test_wait"`
+		SignatureSkew *string `toml:"signature_skew"`
+	} `toml:"webhook"`
+	Bridge struct {
+		Telegram struct {
+			Enabled     *bool                     `toml:"enabled"`
+			PollTimeout *string                   `toml:"poll_timeout"`
+			SendTimeout *string                   `toml:"send_timeout"`
+			ConfirmTTL  *string                   `toml:"confirm_ttl"`
+			Verbose     *bool                     `toml:"verbose"`
+			Users       map[string]fileBridgeUser `toml:"users"`
+		} `toml:"telegram"`
+	} `toml:"bridge"`
+	Notify struct {
+		Discord struct {
+			Events []string `toml:"events"`
+		} `toml:"discord"`
+	} `toml:"notify"`
 	Runner map[string]map[string]any `toml:"runner"`
+	// Credential holds each [credential.<name>] block verbatim so parsing can
+	// reject unknown keys itself: go-toml drops unknown struct fields silently,
+	// which would let a plaintext client_secret or a typo'd secret key sit in the
+	// file unnoticed (security amendment 4).
+	Credential map[string]map[string]any `toml:"credential"`
+}
+
+// fileBridgeUser mirrors one [bridge.telegram.users.<id>] table. Each entry
+// replaces wholesale (there is no per-user default to merge with), so plain
+// values stand in for the pointer-optional pattern used elsewhere. There is no
+// token field here: the token is env-only (decision 3).
+type fileBridgeUser struct {
+	Workspace    string `toml:"workspace"`
+	Personality  string `toml:"personality"`
+	AllowConfirm bool   `toml:"allow_confirm"`
 }
 
 type fileRetry struct {
@@ -828,6 +1234,15 @@ func applyTOML(cfg *Config, data []byte) error {
 		cfg.Runners = file.Runner
 	}
 
+	if file.Credential != nil {
+		credentials, err := parseCredentialBlocks(file.Credential)
+		if err != nil {
+			return err
+		}
+
+		cfg.Credentials = credentials
+	}
+
 	return nil
 }
 
@@ -835,8 +1250,10 @@ func applyTOML(cfg *Config, data []byte) error {
 // fields distinguish "absent, keep the default" from "present, even if zero".
 func applyScalars(cfg *Config, file *fileConfig) {
 	setIf(&cfg.Engine.MaxConcurrentActions, file.Engine.MaxConcurrentActions)
+	setIf(&cfg.Engine.MaxCallDepth, file.Engine.MaxCallDepth)
 	setIf(&cfg.Store.Backend, file.Store.Backend)
 	setIf(&cfg.Store.DSN, file.Store.DSN)
+	setIf(&cfg.Secrets.Backend, file.Secrets.Backend)
 	setIf(&cfg.Memory.Backend, file.Memory.Backend)
 	setIf(&cfg.Memory.Vector, file.Memory.Vector)
 	setIf(&cfg.Memory.EmbeddingRunner, file.Memory.EmbeddingRunner)
@@ -896,9 +1313,27 @@ func applyScalars(cfg *Config, file *fileConfig) {
 	setIf(&cfg.Chat.Driver, file.Chat.Driver)
 	setIf(&cfg.Chat.DefaultPersonality, file.Chat.DefaultPersonality)
 	setIf(&cfg.Chat.TurnBudgetUSD, file.Chat.TurnBudgetUSD)
+	setIf(&cfg.Chat.OpenAICompat, file.Chat.OpenAICompat)
+	setIf(&cfg.Chat.MaxFileBytes, file.Chat.MaxFileBytes)
+	setIf(&cfg.Webhook.Enabled, file.Webhook.Enabled)
+	setIf(&cfg.Webhook.RatePerMinute, file.Webhook.RatePerMinute)
+	setIf(&cfg.Bridge.Telegram.Enabled, file.Bridge.Telegram.Enabled)
+	setIf(&cfg.Bridge.Telegram.Verbose, file.Bridge.Telegram.Verbose)
+
+	if file.Bridge.Telegram.Users != nil {
+		cfg.Bridge.Telegram.Users = convertBridgeUsers(file.Bridge.Telegram.Users)
+	}
+
+	if file.Notify.Discord.Events != nil {
+		cfg.Notify.Discord.Events = file.Notify.Discord.Events
+	}
 
 	if file.Chat.Personalities != nil {
 		cfg.Chat.Personalities = file.Chat.Personalities
+	}
+
+	if file.Chat.FileAllowlist != nil {
+		cfg.Chat.FileAllowlist = file.Chat.FileAllowlist
 	}
 
 	if file.Hive.Categories != nil {
@@ -953,6 +1388,11 @@ func applyDurations(cfg *Config, file *fileConfig) error {
 		{name: "scheduler.backoff", raw: file.Scheduler.Backoff, dst: &cfg.Scheduler.Backoff},
 		{name: "scheduler.max_age", raw: file.Scheduler.MaxAge, dst: &cfg.Scheduler.MaxAge},
 		{name: "scheduler.sweep_interval", raw: file.Scheduler.SweepInterval, dst: &cfg.Scheduler.SweepInterval},
+		{name: "webhook.test_wait", raw: file.Webhook.TestWait, dst: &cfg.Webhook.TestWait},
+		{name: "webhook.signature_skew", raw: file.Webhook.SignatureSkew, dst: &cfg.Webhook.SignatureSkew},
+		{name: "bridge.telegram.poll_timeout", raw: file.Bridge.Telegram.PollTimeout, dst: &cfg.Bridge.Telegram.PollTimeout},
+		{name: "bridge.telegram.send_timeout", raw: file.Bridge.Telegram.SendTimeout, dst: &cfg.Bridge.Telegram.SendTimeout},
+		{name: "bridge.telegram.confirm_ttl", raw: file.Bridge.Telegram.ConfirmTTL, dst: &cfg.Bridge.Telegram.ConfirmTTL},
 	}
 
 	if file.Engine.Retry != nil {
@@ -983,4 +1423,16 @@ func setIf[T any](dst, src *T) {
 	if src != nil {
 		*dst = *src
 	}
+}
+
+// convertBridgeUsers turns the file layout's user tables into the resolved
+// TelegramUser map keyed by Telegram user ID.
+func convertBridgeUsers(users map[string]fileBridgeUser) map[string]TelegramUser {
+	resolved := make(map[string]TelegramUser, len(users))
+	for id, user := range users {
+		// Identical field set, so a struct conversion carries the tags off.
+		resolved[id] = TelegramUser(user)
+	}
+
+	return resolved
 }

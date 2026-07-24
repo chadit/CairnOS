@@ -56,6 +56,7 @@ const (
 // Shared literals the package's assertions repeat.
 const (
 	statusOK          = "ok"
+	statusError       = "error"
 	memoryScopeGlobal = "global"
 )
 
@@ -522,6 +523,34 @@ func TestScopeEnforcementPerMethod(t *testing.T) {
 				_, err := fix.login.Revoke(ctx, &cairnosv1.RevokeRequest{Jti: "x"})
 
 				return wrapRPC("Revoke", err)
+			},
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			name:  "read scope cannot replay a run",
+			token: readMemory,
+			call: func(ctx context.Context) error {
+				stream, err := fix.workflow.ReplayRun(ctx, &cairnosv1.ReplayRunRequest{RunId: "x"})
+				if err != nil {
+					return wrapRPC("ReplayRun", err)
+				}
+
+				_, err = stream.Recv()
+
+				return wrapRPC("ReplayRun", err)
+			},
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			name:  "read scope cannot save a workflow",
+			token: readMemory,
+			call: func(ctx context.Context) error {
+				_, err := fix.workflow.SaveWorkflow(ctx, &cairnosv1.SaveWorkflowRequest{
+					WorkflowName: helloName,
+					Toml:         []byte(helloTOML),
+				})
+
+				return wrapRPC("SaveWorkflow", err)
 			},
 			wantCode: codes.PermissionDenied,
 		},

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/runner/builtins"
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 // Tool names the chat agent offers. The trio is the Phase 9 tool set: memory
@@ -89,6 +90,12 @@ type Event struct {
 
 	// RunStatus is the terminal run status on EventRunFinished.
 	RunStatus string
+
+	// Usage carries the turn's accumulated driver-and-tool token spend, set on
+	// EventTurnDone so a caller reports real counts. The gRPC surface ignores it
+	// until someone maps it; the OpenAI-compatible adapter reads it for its
+	// usage block (.agents/spec/parity/openai-compat.md).
+	Usage runner.Usage
 }
 
 // Proposal is the D9 confirmation payload: what the chat agent wants to run,

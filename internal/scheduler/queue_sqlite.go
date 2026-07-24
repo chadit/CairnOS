@@ -59,6 +59,12 @@ func OpenSQLiteQueue(path string) (*SQLiteQueue, error) {
 		return nil, fmt.Errorf("create work-queue schema: %w", errors.Join(execErr, db.Close()))
 	}
 
+	// The poll-cursor table rides the same file as the work-item table, so a
+	// poll fire persists its cursor through the one queue handle it enqueues on.
+	if _, execErr := db.ExecContext(setupCtx, pollCursorSchema); execErr != nil {
+		return nil, fmt.Errorf("create poll-cursor schema: %w", errors.Join(execErr, db.Close()))
+	}
+
 	return &SQLiteQueue{db: db}, nil
 }
 

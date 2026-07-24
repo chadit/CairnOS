@@ -35,6 +35,13 @@ const (
 	// CodeAgentNotAvailable marks an agent action executed before Phase 1c
 	// ships the agent loop.
 	CodeAgentNotAvailable = "engine.agent_not_available"
+	// CodeWorkflowSourceMissing marks a workflow-call action reached with no
+	// WorkflowSource configured on the engine, so no child can be resolved.
+	CodeWorkflowSourceMissing = "engine.workflow_source_missing"
+	// CodeCallDepthExceeded marks a workflow-call nested past
+	// engine.max_call_depth; the message prints the ancestry chain, which also
+	// catches an A->B->A cycle without separate cycle tracking.
+	CodeCallDepthExceeded = "engine.call_depth_exceeded"
 
 	// CodePreconditionFailed marks an action that could not launch: an
 	// unresolved reference, a missing upstream output, or bad resolved params.
@@ -65,6 +72,10 @@ const (
 	// not say otherwise, per the spec's engine.max_concurrent_actions default.
 	defaultMaxConcurrent = 4
 
+	// defaultMaxCallDepth caps workflow-call nesting when the config does not
+	// say otherwise, per the spec's engine.max_call_depth default.
+	defaultMaxCallDepth = 3
+
 	// idRandomBytes sizes the random suffix of fallback run IDs.
 	idRandomBytes = 8
 )
@@ -73,6 +84,17 @@ const (
 // CLI wires an env-backed implementation later; tests use a map fake.
 type SecretSource interface {
 	Get(ctx context.Context, name string) (string, error)
+}
+
+// WorkflowSource resolves a child workflow by name for a workflow-call action
+// (kind = "workflow"). The interface lives in the engine so nothing here imports
+// the API package; api.WorkflowResolver satisfies it structurally, so the CLI
+// and serve wiring pass the same directory-backed resolver
+// (.agents/spec/parity/workflow-language.md, "Workflow call"). Nil makes every
+// workflow-call action fail with engine.workflow_source_missing.
+type WorkflowSource interface {
+	// Resolve returns the workflow named name, or an error when none exists.
+	Resolve(name string) (*workflow.Workflow, error)
 }
 
 // AgentExecutor runs agent-kind actions: the Phase 1c loop
@@ -100,6 +122,16 @@ type Config struct {
 	// a burst of ready actions cannot exhaust rate limits or local CPU.
 	// Values below one fall back to the spec default of four.
 	MaxConcurrentActions int
+
+	// Workflows resolves a workflow-call action's child by name. Nil makes
+	// every workflow-call action fail with engine.workflow_source_missing
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	Workflows WorkflowSource
+
+	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
+	// engine.call_depth_exceeded. Values below one fall back to the spec
+	// default of three.
+	MaxCallDepth int
 
 	// DefaultTimeout bounds actions that declare no timeout of their own.
 	// Zero means no per-action ceiling beyond the run's.
@@ -184,6 +216,10 @@ func New(cfg Config, registry *runner.Registry, stateStore store.Store) *Engine 
 		cfg.MaxConcurrentActions = defaultMaxConcurrent
 	}
 
+	if cfg.MaxCallDepth < 1 {
+		cfg.MaxCallDepth = defaultMaxCallDepth
+	}
+
 	if cfg.NewID == nil {
 		cfg.NewID = fallbackID
 	}
@@ -258,7 +294,10 @@ func (e *Engine) RunWorkflow(ctx context.Context, flow *workflow.Workflow, input
 		Status:       store.RunPending,
 		Inputs:       validated,
 		Trigger:      trigger,
-		CreatedAt:    time.Now(),
+		// A workflow-call parent stamps the calling run's ID here through the
+		// call context; a root run carries none, so ParentRunID stays empty.
+		ParentRunID: callInfoFrom(ctx).parentRunID,
+		CreatedAt:   time.Now(),
 	}
 
 	if err := e.store.CreateRun(ctx, run); err != nil {
@@ -281,6 +320,20 @@ func (e *Engine) checkRunners(flow *workflow.Workflow, inputs map[string]any) er
 
 	for _, name := range slices.Sorted(maps.Keys(flow.Actions)) {
 		action := flow.Actions[name]
+
+		if action.Kind == workflow.KindWorkflow {
+			// A workflow-call action has no runner; its child is resolved and
+			// validated as its own run at launch through the WorkflowSource,
+			// where the recursive RunWorkflow re-applies these run-start checks.
+			continue
+		}
+
+		if action.Kind == workflow.KindApproval {
+			// An approval action has no runner or driver: it parks the run pending
+			// a human decision, so there is nothing to validate at run start.
+			continue
+		}
+
 		if action.Kind != workflow.KindTask {
 			errs = append(errs, e.checkAgentAction(action)...)
 

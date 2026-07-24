@@ -38,48 +38,70 @@ type actionEvent struct {
 	cerr   *cairnerr.Error
 }
 
+// seedEntry primes one action's already-known output into a new run's
+// scheduling state so the loop treats it as succeeded and never launches it.
+// Replay carries a prior run's succeeded outputs forward this way; resume
+// (Phase parity S5) reloads a held run's outputs the same way.
+type seedEntry struct {
+	Output any
+}
+
 // runExec is the in-memory state of one run. The scheduling loop goroutine
 // owns every mutable field; workers communicate only through the events
 // channel, so no lock guards the maps.
 type runExec struct {
-	eng       *Engine
-	flow      *workflow.Workflow
-	run       *store.Run
-	inputs    map[string]any
-	order     []string
-	statuses  map[string]store.ActionStatus
-	outputs   map[string]any
-	firstErr  *cairnerr.Error
-	cancelRun context.CancelFunc
-	events    chan actionEvent
-	sem       chan struct{}
-	wg        sync.WaitGroup
+	eng          *Engine
+	flow         *workflow.Workflow
+	run          *store.Run
+	inputs       map[string]any
+	order        []string
+	statuses     map[string]store.ActionStatus
+	outputs      map[string]any
+	seeds        map[string]seedEntry
+	persistSeeds bool
+	firstErr     *cairnerr.Error
+	// firstErrAction names the action behind firstErr, so an error-workflow
+	// fire can report which stage failed. It stays empty when the run fails
+	// without an action failure, such as a run timeout.
+	firstErrAction string
+	cancelRun      context.CancelFunc
+	events         chan actionEvent
+	sem            chan struct{}
+	wg             sync.WaitGroup
 }
 
 // newRunExec builds the scheduling state for one run, with every action
-// pending and a semaphore sized to the engine's concurrency cap.
-func newRunExec(eng *Engine, flow *workflow.Workflow, run *store.Run, inputs map[string]any, cancelRun context.CancelFunc) *runExec {
+// pending and a semaphore sized to the engine's concurrency cap. seeds
+// pre-populates actions whose output is already known (replay, resume); with
+// persistSeeds true those actions get a persisted succeeded row (a replay's
+// new run), with it false they only prime in-memory state so the original
+// run's rows stay byte-identical (a resume of the same run).
+func newRunExec(eng *Engine, flow *workflow.Workflow, run *store.Run, inputs map[string]any, cancelRun context.CancelFunc, seeds map[string]seedEntry, persistSeeds bool) *runExec {
 	statuses := make(map[string]store.ActionStatus, len(flow.Actions))
 	for name := range flow.Actions {
 		statuses[name] = store.ActionPending
 	}
 
 	return &runExec{
-		eng:       eng,
-		flow:      flow,
-		run:       run,
-		inputs:    inputs,
-		order:     slices.Sorted(maps.Keys(flow.Actions)),
-		statuses:  statuses,
-		outputs:   make(map[string]any, len(flow.Actions)),
-		cancelRun: cancelRun,
-		events:    make(chan actionEvent),
-		sem:       make(chan struct{}, eng.cfg.MaxConcurrentActions),
+		eng:          eng,
+		flow:         flow,
+		run:          run,
+		inputs:       inputs,
+		order:        slices.Sorted(maps.Keys(flow.Actions)),
+		statuses:     statuses,
+		outputs:      make(map[string]any, len(flow.Actions)),
+		seeds:        seeds,
+		persistSeeds: persistSeeds,
+		cancelRun:    cancelRun,
+		events:       make(chan actionEvent),
+		sem:          make(chan struct{}, eng.cfg.MaxConcurrentActions),
 	}
 }
 
 // seed moves the run to running and persists a pending row for every action,
-// so a crash before the first launch still leaves a complete picture.
+// so a crash before the first launch still leaves a complete picture. A seeded
+// action is primed succeeded instead, so the loop carries its output forward
+// without ever launching it.
 func (x *runExec) seed(ctx context.Context) {
 	x.run.StartedAt = time.Now()
 	x.run.Status = store.RunRunning
@@ -87,6 +109,12 @@ func (x *runExec) seed(ctx context.Context) {
 	x.eng.emit(&Event{RunID: x.run.ID, Type: EventRunStarted, Status: string(store.RunRunning)})
 
 	for _, name := range x.order {
+		if entry, seeded := x.seeds[name]; seeded {
+			x.seedAction(ctx, name, entry)
+
+			continue
+		}
+
 		x.eng.persistAction(ctx, &store.ActionResult{
 			RunID:      x.run.ID,
 			ActionName: name,
@@ -96,19 +124,81 @@ func (x *runExec) seed(ctx context.Context) {
 	}
 }
 
+// seedAction primes a seeded action's output into scheduling state so the loop
+// treats it as already succeeded. A persisted seed (replay) also writes the
+// succeeded row stamped with the run it was carried from; an in-memory seed
+// (resume) writes nothing, because the original run's succeeded row already
+// exists and must stay byte-identical.
+func (x *runExec) seedAction(ctx context.Context, name string, entry seedEntry) {
+	x.statuses[name] = store.ActionSucceeded
+	x.outputs[name] = entry.Output
+
+	if !x.persistSeeds {
+		return
+	}
+
+	x.eng.persistAction(ctx, &store.ActionResult{
+		RunID:      x.run.ID,
+		ActionName: name,
+		Runner:     runnerLabel(x.flow.Actions[name]),
+		Status:     store.ActionSucceeded,
+		Output:     entry.Output,
+		Meta:       map[string]string{metaReplayedFrom: x.run.ParentRunID},
+		FinishedAt: time.Now(),
+	})
+}
+
 // loop implements the scheduling algorithm from the spec: launch every ready
 // action, wait for a terminal event, apply it, and reschedule, until every
 // action is terminal.
 func (x *runExec) loop(ctx context.Context) {
 	x.scheduleReady(ctx)
 
+	// The loop runs until every action is terminal, with one deliberate
+	// exception: when nothing is in flight but an action is parked waiting on a
+	// human decision, the run quiesces and the loop breaks so finalize can settle
+	// it as held. Every in-flight branch still reports before the break, since
+	// inFlight stays true until the last worker's event lands
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
 	for !x.allTerminal() {
+		if !x.inFlight() {
+			break
+		}
+
 		evt := <-x.events
 		x.applyEvent(ctx, evt)
 		x.scheduleReady(ctx)
 	}
 
 	x.wg.Wait()
+}
+
+// inFlight reports whether any action is launched and still owes a terminal
+// event, so the loop keeps receiving until the last worker reports. An approval
+// that parks reports ActionWaiting and stops being in flight, which is how a run
+// reaches quiescence and parks.
+func (x *runExec) inFlight() bool {
+	for _, status := range x.statuses {
+		switch status {
+		case store.ActionReady, store.ActionRunning:
+			return true
+		case store.ActionPending, store.ActionWaiting, store.ActionSucceeded, store.ActionFailed, store.ActionSkipped:
+		}
+	}
+
+	return false
+}
+
+// anyWaiting reports whether an action is parked waiting on a human decision,
+// the signal outcome reads to finalize a quiesced run as held.
+func (x *runExec) anyWaiting() bool {
+	for _, status := range x.statuses {
+		if status == store.ActionWaiting {
+			return true
+		}
+	}
+
+	return false
 }
 
 // finalize settles the run's terminal state: canceled when the caller's
@@ -121,7 +211,13 @@ func (x *runExec) finalize(parent, runCtx context.Context) {
 
 	x.run.Status = status
 	x.run.Error = runErr
-	x.run.FinishedAt = time.Now()
+
+	// A held run is parked, not finished: leave FinishedAt zero so the in-memory
+	// run matches the store, which never stamps finished_at for a non-terminal
+	// status (.agents/spec/parity/workflow-language.md, "Human approval").
+	if status != store.RunHeld {
+		x.run.FinishedAt = time.Now()
+	}
 
 	x.eng.emit(&Event{RunID: x.run.ID, Type: EventRunFinished, Status: string(status), Err: runErr})
 }
@@ -136,6 +232,10 @@ func (x *runExec) outcome(parent, runCtx context.Context) (store.RunStatus, *cai
 		return store.RunFailed, errf(CodeRunTimeout, "the run exceeded its %s timeout", x.flow.Timeout)
 	case x.firstErr != nil:
 		return store.RunFailed, x.firstErr
+	case x.anyWaiting():
+		// Cancel and failure win above; a run that only quiesced on a pending
+		// approval parks as held, carrying no error since it has not failed.
+		return store.RunHeld, nil
 	default:
 		return store.RunSucceeded, nil
 	}
@@ -183,7 +283,9 @@ func (x *runExec) depsState(action *workflow.Action) depsResult {
 		case store.ActionFailed, store.ActionSkipped:
 			return depsBlocked
 		case store.ActionSucceeded:
-		case store.ActionPending, store.ActionReady, store.ActionRunning:
+		case store.ActionPending, store.ActionReady, store.ActionRunning, store.ActionWaiting:
+			// A parked (waiting) upstream is not terminal, so a downstream action
+			// cannot proceed until the approval resumes and it succeeds.
 			state = depsWaiting
 		default:
 			state = depsWaiting
@@ -259,20 +361,24 @@ func (x *runExec) applyEvent(ctx context.Context, evt actionEvent) {
 	case store.ActionSucceeded:
 		x.outputs[evt.name] = evt.output
 	case store.ActionFailed:
-		x.noteFailure(ctx, evt.cerr)
-	case store.ActionSkipped, store.ActionPending, store.ActionReady, store.ActionRunning:
-		// a worker whose run ended before it could start reports skipped;
-		// the status update above is all the bookkeeping it needs, and
-		// workers never report the non-terminal states
+		x.noteFailure(ctx, evt.name, evt.cerr)
+	case store.ActionWaiting, store.ActionSkipped, store.ActionPending, store.ActionReady, store.ActionRunning:
+		// An approval worker that parked reports waiting, and a worker whose run
+		// ended before it started reports skipped; the status update above is all
+		// the bookkeeping either needs, and workers never report the other
+		// non-terminal states
 	default:
 	}
 }
 
 // noteFailure records the first failure as the run error and, under halt,
-// cancels in-flight actions and skips everything still pending.
-func (x *runExec) noteFailure(ctx context.Context, cerr *cairnerr.Error) {
+// cancels in-flight actions and skips everything still pending. name is the
+// failing action, kept alongside firstErr so an error-workflow fire can name
+// the stage that failed.
+func (x *runExec) noteFailure(ctx context.Context, name string, cerr *cairnerr.Error) {
 	if x.firstErr == nil {
 		x.firstErr = cerr
+		x.firstErrAction = name
 	}
 
 	if x.flow.OnError != workflow.OnErrorHalt {
@@ -299,7 +405,7 @@ func (x *runExec) failBeforeLaunch(ctx context.Context, name string, cerr *cairn
 
 	x.eng.persistAction(ctx, result)
 	x.eng.cfg.Instrumentation.ActionSettled(ctx, result)
-	x.noteFailure(ctx, cerr)
+	x.noteFailure(ctx, name, cerr)
 }
 
 // markSkipped persists a skip with its reason, so history shows why the
@@ -334,7 +440,7 @@ func (x *runExec) allTerminal() bool {
 	for _, status := range x.statuses {
 		switch status {
 		case store.ActionSucceeded, store.ActionFailed, store.ActionSkipped:
-		case store.ActionPending, store.ActionReady, store.ActionRunning:
+		case store.ActionPending, store.ActionReady, store.ActionRunning, store.ActionWaiting:
 			return false
 		default:
 			return false
@@ -344,10 +450,30 @@ func (x *runExec) allTerminal() bool {
 	return true
 }
 
-// executeDAG runs a created run to completion: it derives the run context
-// from the workflow timeout, drives the scheduling loop, and finalizes the
-// run record.
+// executeDAG runs a created run to completion from scratch, with no seeded
+// actions: every action starts pending and runs through the loop.
 func (e *Engine) executeDAG(ctx context.Context, flow *workflow.Workflow, run *store.Run, inputs map[string]any) {
+	e.executeSeededDAG(ctx, flow, run, inputs, nil, false)
+}
+
+// executeSeededDAG runs a created run to completion: it derives the run
+// context from the workflow timeout, seeds any pre-known action outputs,
+// drives the scheduling loop, and finalizes the run record. seeds and
+// persistSeeds pass straight through to newRunExec, so a replay carries a
+// prior run's succeeded outputs forward without re-invoking their runners.
+func (e *Engine) executeSeededDAG(ctx context.Context, flow *workflow.Workflow, run *store.Run, inputs map[string]any, seeds map[string]seedEntry, persistSeeds bool) {
+	// Stamp the call context every action inherits: this run owns any child a
+	// workflow-call action spawns, so it becomes the child's parent, and this
+	// run's name extends the ancestry chain the depth cap prints. A root run
+	// starts from the zero callInfo; a workflow-call child inherits the depth
+	// and ancestry the caller set (.agents/spec/parity/workflow-language.md).
+	incoming := callInfoFrom(ctx)
+	ctx = withCallInfo(ctx, callInfo{
+		parentRunID: run.ID,
+		depth:       incoming.depth,
+		ancestry:    append(slices.Clone(incoming.ancestry), flow.Name),
+	})
+
 	runCtx, cancelRun := runContext(ctx, flow.Timeout)
 	defer cancelRun()
 
@@ -356,13 +482,106 @@ func (e *Engine) executeDAG(ctx context.Context, flow *workflow.Workflow, run *s
 	// fires after finalize so it observes the terminal status and error.
 	runCtx, finishRun := e.cfg.Instrumentation.RunStarted(runCtx, run)
 
-	exec := newRunExec(e, flow, run, inputs, cancelRun)
+	exec := newRunExec(e, flow, run, inputs, cancelRun, seeds, persistSeeds)
 
 	exec.seed(runCtx)
 	exec.loop(runCtx)
 	exec.finalize(ctx, runCtx)
 
 	finishRun(run)
+
+	// finalize already persisted the terminal status, so the error-workflow
+	// fire runs after every watcher has seen the failure and cannot race a
+	// one-shot process exit. It reads exec.firstErrAction to name the stage
+	// that failed (.agents/spec/parity/workflow-language.md, "Error workflow").
+	e.fireErrorWorkflow(ctx, flow, run, exec.firstErrAction)
+}
+
+// triggerError marks a run created by an error-workflow fire. A run already
+// carrying this trigger never fires its own error workflow, the n8n loop guard
+// (.agents/spec/parity/workflow-language.md, "Error workflow").
+const triggerError = "error"
+
+// fireErrorWorkflow runs a failed run's declared error_workflow to completion,
+// synchronously, before executeSeededDAG returns. Only a failed run fires, and
+// only when it was not itself an error run; a succeeded or canceled run fires
+// nothing. The fire never alters the original run's terminal state: a missing
+// source, an unresolvable name, a rejection, or a failing error run each log at
+// error level and return.
+func (e *Engine) fireErrorWorkflow(ctx context.Context, flow *workflow.Workflow, run *store.Run, failedAction string) {
+	if run.Status != store.RunFailed || run.Trigger == triggerError || flow.ErrorWorkflow == "" {
+		return
+	}
+
+	if e.cfg.Workflows == nil {
+		slog.Error("error workflow not fired: no workflow source configured on the engine",
+			"run_id", run.ID, "workflow", flow.Name, "error_workflow", flow.ErrorWorkflow)
+
+		return
+	}
+
+	child, err := e.cfg.Workflows.Resolve(flow.ErrorWorkflow)
+	if err != nil {
+		slog.Error("error workflow not fired: resolve failed",
+			"run_id", run.ID, "workflow", flow.Name, "error_workflow", flow.ErrorWorkflow, "error", err)
+
+		return
+	}
+
+	// WithoutCancel detaches the fire from a timed-out or canceled parent so the
+	// error run still reports; it copies context values, keeping the ancestry
+	// key the child inherits and the parent_run_id this run stamped.
+	fireCtx := context.WithoutCancel(ctx)
+
+	childRun, err := e.RunWorkflow(fireCtx, child, failureInputs(child, run, failedAction), triggerError)
+	if err != nil {
+		slog.Error("error workflow rejected before any run record",
+			"run_id", run.ID, "error_workflow", child.Name, "error", err)
+
+		return
+	}
+
+	if childRun.Status != store.RunSucceeded {
+		slog.Error("error workflow did not succeed",
+			"run_id", run.ID, "error_run_id", childRun.ID, "status", string(childRun.Status), "error", childRun.Error)
+	}
+}
+
+// failureInputs builds the failure-context inputs an error workflow receives,
+// keeping only the keys it declares because validateInputs rejects unknown
+// ones. An error workflow declaring none of them gets an empty map.
+func failureInputs(child *workflow.Workflow, run *store.Run, failedAction string) map[string]any {
+	full := failureContext(run, failedAction)
+
+	inputs := make(map[string]any, len(full))
+
+	for key, value := range full {
+		if _, declared := child.Inputs[key]; declared {
+			inputs[key] = value
+		}
+	}
+
+	return inputs
+}
+
+// failureContext is the full set of fields an error workflow may declare out of
+// its failed parent: the run id, the workflow name, the action that failed, and
+// the canonical code and message behind the failure.
+func failureContext(run *store.Run, failedAction string) map[string]any {
+	var code, message string
+
+	if run.Error != nil {
+		code = run.Error.Code
+		message = run.Error.Message
+	}
+
+	return map[string]any{
+		"run_id":        run.ID,
+		"workflow":      run.WorkflowName,
+		"failed_action": failedAction,
+		"error_code":    code,
+		"error_message": message,
+	}
 }
 
 // persistAction writes one action transition. The write context is detached

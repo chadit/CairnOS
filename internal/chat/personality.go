@@ -1,6 +1,9 @@
 package chat
 
-import "maps"
+import (
+	"maps"
+	"slices"
+)
 
 // Built-in personality names. A personality is a named system prompt that
 // frames every turn in a session (.agents/spec/13-roadmap.md, Phase 9:
@@ -104,4 +107,19 @@ func (p *Personalities) Known(name string) bool {
 	_, ok := p.prompts[name]
 
 	return ok
+}
+
+// Names returns every personality this node serves, sorted for a stable listing.
+// The set is the built-ins overlaid with the config's personalities in one map,
+// so a config entry that overrides a built-in name appears once rather than
+// twice; GET /v1/models renders this list.
+func (p *Personalities) Names() []string {
+	names := make([]string, 0, len(p.prompts))
+	for name := range p.prompts {
+		names = append(names, name)
+	}
+
+	slices.Sort(names)
+
+	return names
 }

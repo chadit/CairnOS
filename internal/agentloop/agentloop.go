@@ -134,11 +134,16 @@ func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runne
 // ValidateAction applies the run-start checks from the spec's termination
 // table: the driver must be a registered runner.ToolCaller
 // (agent.driver_incapable otherwise) and every tools entry a registered
-// runner.Describer (workflow.invalid otherwise). Tools resolving only
-// through the runner registry is the whole no-recursion enforcement: an
-// action name is not a runner name, no built-in runner starts a workflow
-// or another loop, and the future run_workflow primitive does not exist
-// yet (.agents/spec/14-open-decisions.md, D9).
+// runner.Describer (workflow.invalid otherwise). Tools resolve only through
+// the runner registry, with one loop-owned exception: "delegate" is admitted
+// without a registry lookup because describerFor supplies its descriptor. That
+// is the no-recursion boundary. An action name is not a runner name, and no
+// registry runner starts a workflow or another loop; delegation is instead
+// bounded by its own walls (opt-in via tools, depth capped at 1, one
+// delegation per action run, iteration and budget clamps to the parent's
+// remaining), so it adds exactly one child level and never a third
+// (.agents/spec/15-agent-loop.md, "No recursion in v1"; D9 and D15 in
+// .agents/spec/14-open-decisions.md).
 func (l *Loop) ValidateAction(action *workflow.Action) error {
 	var errs cairnerr.Errors
 
@@ -180,8 +185,17 @@ func (l *Loop) driverFor(action *workflow.Action) (runner.ToolCaller, *cairnerr.
 }
 
 // describerFor resolves one tools entry, enforcing registration and the
-// Describer capability (.agents/spec/15-agent-loop.md, "Tools").
+// Describer capability (.agents/spec/15-agent-loop.md, "Tools"). The one
+// exception is "delegate", the loop-owned delegation tool: it is accepted
+// without a registry lookup and supplies its own descriptor, so ValidateAction
+// and toolset both admit it (internal/agentloop/delegate.go).
 func (l *Loop) describerFor(action *workflow.Action, name string) (runner.Runner, runner.Describer, *cairnerr.Error) {
+	if name == DelegateToolName {
+		tool := &delegateTool{}
+
+		return tool, tool, nil
+	}
+
 	rnr, registered := l.registry.Get(name)
 	if !registered {
 		return nil, nil, errf(workflow.CodeInvalid,

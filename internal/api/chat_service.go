@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 
@@ -26,6 +27,7 @@ type ChatAgent interface {
 	GetSession(ctx context.Context, id string) (*store.ChatSession, error)
 	ListSessions(ctx context.Context, limit int) ([]*store.ChatSession, error)
 	ListMessages(ctx context.Context, sessionID string) ([]*store.ChatMessage, error)
+	SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error)
 	SendMessage(ctx context.Context, sessionID, userMessage string, out chan<- chat.Event) error
 	ConfirmAction(ctx context.Context, sessionID string, approve bool, out chan<- chat.Event) error
 }
@@ -85,6 +87,32 @@ func (s *chatService) ListMessages(ctx context.Context, req *cairnosv1.ListMessa
 	}
 
 	return &cairnosv1.ListMessagesResponse{Messages: out}, nil
+}
+
+// SearchMessages runs full-text search over the workspace's transcripts. An
+// empty query is rejected here so the store never sees it and gateway clients
+// get the canonical InvalidArgument envelope.
+func (s *chatService) SearchMessages(ctx context.Context, req *cairnosv1.SearchMessagesRequest) (*cairnosv1.SearchMessagesResponse, error) {
+	if strings.TrimSpace(req.GetText()) == "" {
+		return nil, errorStatus(codes.InvalidArgument,
+			cairnerr.New(codeInvalidArgument, "text is required"))
+	}
+
+	messages, err := s.agent.SearchMessages(ctx, store.ChatSearchQuery{
+		Text:      req.GetText(),
+		SessionID: req.GetSessionId(),
+		Limit:     int(req.GetLimit()),
+	})
+	if err != nil {
+		return nil, chatStatus(err)
+	}
+
+	out := make([]*cairnosv1.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, protoChatMessage(message))
+	}
+
+	return &cairnosv1.SearchMessagesResponse{Messages: out}, nil
 }
 
 // SendMessage runs one conversation turn and streams its events. The chat agent

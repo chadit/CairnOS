@@ -1,0 +1,79 @@
+# browser_snapshot.toml: single-shot page snapshot through the containerized
+# Playwright MCP server, shown two ways: a direct task action and an agent
+# loop that plans its own browsing over the same tool.
+#
+# Run it:
+#   cairnos run examples/agents/browser_snapshot/browser_snapshot.toml \
+#     --input url=https://example.com \
+#     --input question="What is this page about?"
+#
+# browser_nav is a named mcp_client instance. It is NOT declared here, because
+# a workflow file holds only [workflow] and [action] tables; its
+# [runner.browser_nav] config block lives in the README, ready to paste into
+# ~/.cairnos/config.toml. Registering that named block needs the mcp_client
+# named-instance path (parity/mcp-import-fix.md slice 1); without it the block
+# registers nothing and the run fails to resolve browser_nav.
+
+[workflow]
+name        = "browser_snapshot"
+version     = "1"
+description = "Navigate to a page with a containerized Playwright MCP server and summarize its snapshot."
+timeout     = "5m"
+
+[workflow.inputs.url]
+type        = "string"
+required    = true
+description = "The page to open. The browser container fetches it, so this reaches the public web."
+
+[workflow.inputs.question]
+type        = "string"
+default     = "Summarize what this page is about in three sentences."
+description = "What to ask about the page once its snapshot is captured."
+
+# Direct task path: one browser_navigate call returns the page snapshot in the
+# same Execute. mcp_client opens and closes a session per call, so this is
+# single-shot by design; a click-through flow that needs the session to persist
+# waits on mcp_client session pooling (see the README).
+[action.snapshot]
+runner     = "browser_nav"
+idempotent = true
+params     = { url = "${{ inputs.url }}" }
+
+[action.snapshot.retry]
+max_attempts = 2
+backoff      = "exponential"
+base_delay   = "3s"
+max_delay    = "20s"
+
+# Summarize the raw snapshot with an LLM. No browser code runs on the host: the
+# snapshot is just text this action reads.
+[action.summarize]
+runner     = "anthropic"
+depends_on = ["snapshot"]
+
+[action.summarize.params]
+system = """
+You summarize a web page from its accessibility snapshot. Answer the user's
+question in plain text. If the snapshot does not contain the answer, say so.
+"""
+prompt = """
+Question: ${{ inputs.question }}
+
+Page snapshot:
+${{ snapshot.output }}
+"""
+
+# Agent-action variant: the same browser_nav tool, driven by the loop instead
+# of a fixed step. Two consent gates line up here. The operator's
+# [runner.browser_nav] block registers the tool (config-only), and this action's
+# tools allowlist is the agent-side grant. Neither the goal nor the driver can
+# add a tool the operator did not wire. Validates today; executes under the
+# Phase 1c agent loop.
+[action.investigate]
+kind           = "agent"
+depends_on     = ["summarize"]
+driver         = "anthropic"
+goal           = "Open ${{ inputs.url }} with the browser_nav tool and answer: ${{ inputs.question }}"
+tools          = ["browser_nav"]
+max_iterations = 4
+budget_usd     = 0.50

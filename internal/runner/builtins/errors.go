@@ -24,4 +24,15 @@ var (
 	// chain, so a runner's transport classifier finds it with errors.Is and
 	// reports a blocked_target instead of a generic network failure.
 	errBlockedTarget = errors.New("target resolves to a blocked address")
+
+	// errUnmappableValue reports a Go params/inputs value with no Starlark
+	// equivalent. The code runner wraps it as code.bad_params. Params are
+	// JSON-shaped in practice, so this stays defensive.
+	errUnmappableValue = errors.New("value has no starlark equivalent")
+
+	// errBadOutput reports a Starlark output value the code runner refuses to
+	// hand downstream: a non-data type, an int outside int64, or a dict with a
+	// non-string key. The runner wraps it as code.bad_output. Failing here
+	// keeps output types stable across runs instead of letting them drift.
+	errBadOutput = errors.New("output is not a json-shaped value")
 )

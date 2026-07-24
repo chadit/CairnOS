@@ -142,6 +142,19 @@ export interface ValidateWorkflowResponse {
   errors?: ApiError[];
 }
 
+/**
+ * SaveWorkflowResponse reports the result of a builder save. `priorHash` and
+ * `created` are optional because the gateway omits zero-valued proto fields:
+ * a first save carries no `priorHash`, and an overwrite reports `created`
+ * absent rather than false.
+ */
+export interface SaveWorkflowResponse {
+  workflowName: string;
+  hash: string;
+  priorHash?: string;
+  created?: boolean;
+}
+
 /** MemoryEntry is one curated note. */
 export interface MemoryEntry {
   id?: string;

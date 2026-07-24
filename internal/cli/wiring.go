@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/credentials"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/reliability"
@@ -30,6 +32,7 @@ import (
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/internal/tenancy"
 	"github.com/chadit/CairnOS/internal/vault"
+	"github.com/chadit/CairnOS/internal/webhook"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -49,6 +52,8 @@ const (
 	dataDirName      = "data"
 	workflowsDirName = "workflows"
 	examplesDirName  = "examples"
+	skillsDirName    = "skills"
+	contextDirName   = "context"
 	helloFileName    = "hello.toml"
 )
 
@@ -71,9 +76,10 @@ const triggerCLI = "cli"
 // Subcommand names shared by several command families (runs, schedule,
 // suggestions, memory, keys).
 const (
-	subcmdList = "list"
-	subcmdAdd  = "add"
-	subcmdGet  = "get"
+	subcmdList   = "list"
+	subcmdAdd    = "add"
+	subcmdGet    = "get"
+	subcmdImport = "import"
 )
 
 // defaultListLimit caps tabular output when no --limit is given.
@@ -244,6 +250,136 @@ func openVault(ctx context.Context, dir string) (vaultStore, error) {
 	return vaultDB, nil
 }
 
+// openSecretsStore opens the encrypted secret store on the configured [store]
+// backend, the openVault shape: it shares the run store's DSN (a disjoint
+// secrets table in the one sqlite file, or in the one Postgres database) and
+// wraps it in the sealer built from the environment key material. The master
+// key is required for the store backend, so a missing or malformed key
+// (secrets.LoadKeys) fails here rather than at first resolve; those errors name
+// env vars only, never key bytes.
+func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secrets.Store, error) {
+	primary, previous, err := secrets.LoadKeys(os.Getenv)
+	if err != nil {
+		return nil, fmt.Errorf("load secrets keys: %w", err)
+	}
+
+	sealer, err := secrets.NewSealer(primary, previous...)
+	if err != nil {
+		return nil, fmt.Errorf("build secrets sealer: %w", err)
+	}
+
+	if cfg.Store.Backend == backendPostgres {
+		secretStore, openErr := secrets.OpenPostgres(ctx, cfg.Store.DSN, sealer)
+		if openErr != nil {
+			return nil, fmt.Errorf("open secrets store: %w", openErr)
+		}
+
+		return secretStore, nil
+	}
+
+	path := storePath(dir, cfg.Store.DSN)
+	if err := ensureDataDir(path); err != nil {
+		return nil, err
+	}
+
+	//nolint:contextcheck // secrets.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
+	secretStore, err := secrets.OpenSQLite(path, sealer)
+	if err != nil {
+		return nil, fmt.Errorf("open secrets store: %w", err)
+	}
+
+	return secretStore, nil
+}
+
+// buildSecretSource resolves the engine's secret source for the configured
+// [secrets] backend. The default "env" backend returns the env source alone
+// with a no-op closer, byte-for-byte today's behavior and no key material
+// needed. The "store" backend opens the encrypted store and composes it as
+// Chain(env, store) so env still wins, warns about any store secret an env var
+// shadows (env wins, so a stale variable can silently mask a rotated store
+// value), and returns the store's closer.
+func (a *App) buildSecretSource(ctx context.Context, dir string, cfg *config.Config) (secrets.Source, func() error, error) {
+	if cfg.Secrets.Backend != config.SecretsBackendStore {
+		return secrets.NewEnv(), func() error { return nil }, nil
+	}
+
+	secretStore, err := openSecretsStore(ctx, dir, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	a.warnSecretsShadowedByEnv(ctx, secretStore)
+
+	return secrets.Chain(secrets.NewEnv(), secretStore), secretStore.Close, nil
+}
+
+// warnSecretsShadowedByEnv logs one startup warning naming the store secrets an
+// env var shadows, so an operator sees Chain(env, store) will serve the env
+// value for those names. It lists names only, never values, and stays quiet
+// when nothing is shadowed or the store cannot be listed (a resolve-time error
+// surfaces the real problem later).
+func (a *App) warnSecretsShadowedByEnv(ctx context.Context, secretStore secrets.Store) {
+	metas, err := secretStore.List(ctx)
+	if err != nil {
+		return
+	}
+
+	names := make([]string, len(metas))
+	for idx := range metas {
+		names[idx] = metas[idx].Name
+	}
+
+	if shadowed := secrets.ShadowedByEnv(names, os.LookupEnv); len(shadowed) > 0 {
+		a.logger.Warn("store secrets shadowed by environment variables; env wins, so a stale variable can mask a rotated store value",
+			"secrets", shadowed)
+	}
+}
+
+// tokenClientTimeout bounds one OAuth2 token mint or refresh through the guarded
+// client. x/oauth2 TokenSources take no per-call context, so this client Timeout
+// is the only bound on a refresh (credentials context capture).
+const tokenClientTimeout = 30 * time.Second
+
+// buildCredentialManager constructs the outbound OAuth2 credential manager from
+// the [credential.<name>] blocks, resolving each secret ref through the shared
+// secret source and minting tokens over the egress-guarded client. Construction
+// does no network: it resolves refs and builds token sources, so a missing ref or
+// unreachable-config credential fails serve at startup rather than mid-run. With
+// no credentials configured it returns an empty manager, which is a no-op. The
+// http and mcp_client runners look credentials up by name (slice 5).
+func buildCredentialManager(ctx context.Context, cfg *config.Config, source secrets.Source) (*credentials.Manager, error) {
+	newClient := func(allowPrivate bool) *http.Client {
+		return builtins.GuardedHTTPClient(tokenClientTimeout, allowPrivate)
+	}
+
+	manager, err := credentials.New(ctx, cfg.Credentials, source, newClient)
+	if err != nil {
+		return nil, fmt.Errorf("build credential manager: %w", err)
+	}
+
+	return manager, nil
+}
+
+// buildServeCredentials builds the credential manager at serve startup, its
+// fail-fast side effect, and logs the configured credential names (never
+// values). It returns the manager so the http and mcp_client runners mint
+// bearer tokens through it. A false return with a printed error means a
+// credential is unresolvable, so serve exits before binding a listener.
+func (a *App) buildServeCredentials(ctx context.Context, cfg *config.Config, source secrets.Source) (*credentials.Manager, bool) {
+	manager, err := buildCredentialManager(ctx, cfg, source)
+	if err != nil {
+		a.printErrf("serve: credentials: %v\n", err)
+
+		return nil, false
+	}
+
+	if names := manager.Names(); len(names) > 0 {
+		a.logger.Info("outbound credentials configured", "names", names)
+	}
+
+	return manager, true
+}
+
 // openVaultAt is openStoreAt for the vault subcommands.
 func (a *App) openVaultAt(ctx context.Context, label, dirFlagValue string) (vaultStore, int, bool) {
 	if err := ctx.Err(); err != nil {
@@ -371,6 +507,82 @@ func openSchedules(ctx context.Context, dir string) (scheduleStore, error) {
 	}
 
 	return scheds, nil
+}
+
+// openWebhooks opens the webhook registration store on the configured backend,
+// the schedule-store opener shape. On sqlite it shares the run store's database
+// file through a disjoint webhook_registrations table, and the returned closer
+// releases that handle. On postgres the table lives in the run store's database,
+// reached through a schedule store opened only for its pool: PostgresWebhooks
+// borrows that pool (its own Close is a no-op), so the closer closes the
+// schedule store to release the pool.
+func openWebhooks(ctx context.Context, dir string) (webhook.Store, func() error, error) {
+	cfg, err := config.Load(filepath.Join(dir, configFileName))
+	if err != nil {
+		return nil, nil, fmt.Errorf("load config: %w", err)
+	}
+
+	if cfg.Store.Backend == backendPostgres {
+		scheds, openErr := scheduler.OpenPostgres(ctx, cfg.Store.DSN)
+		if openErr != nil {
+			return nil, nil, fmt.Errorf("open webhook store: %w", openErr)
+		}
+
+		hooks, hookErr := webhook.NewPostgresWebhooks(ctx, scheds.Pool())
+		if hookErr != nil {
+			return nil, nil, fmt.Errorf("open webhook store: %w", errors.Join(hookErr, scheds.Close()))
+		}
+
+		return hooks, scheds.Close, nil
+	}
+
+	//nolint:contextcheck // openSQLiteWebhooks does schema setup, process-lifetime initialization with no request ctx to inherit
+	return openSQLiteWebhooks(dir, &cfg)
+}
+
+// openSQLiteWebhooks opens the sqlite registration store sharing the run store's
+// database file through a disjoint table, the branch both webhook-store openers
+// share. The returned closer releases the file handle. It carries no ctx: schema
+// setup is process-lifetime initialization, not request work.
+func openSQLiteWebhooks(dir string, cfg *config.Config) (webhook.Store, func() error, error) {
+	path := storePath(dir, cfg.Store.DSN)
+	if err := ensureDataDir(path); err != nil {
+		return nil, nil, err
+	}
+
+	hooks, err := webhook.OpenSQLiteWebhooks(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open webhook store: %w", err)
+	}
+
+	return hooks, hooks.Close, nil
+}
+
+// openWebhooksAt is openStoreAt for the webhook subcommands. It hands back the
+// registration store and the closer that releases the backend's handle (the
+// pool on postgres, the file on sqlite), so the caller defers one close.
+func (a *App) openWebhooksAt(ctx context.Context, label, dirFlagValue string) (webhook.Store, func() error, int, bool) {
+	if err := ctx.Err(); err != nil {
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	dir, err := resolveDir(dirFlagValue)
+	if err != nil {
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	hooks, closeHooks, err := openWebhooks(ctx, dir)
+	if err != nil {
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	return hooks, closeHooks, ExitOK, true
 }
 
 // newCoordinator picks the scheduler coordinator for the configured backend:
@@ -660,18 +872,34 @@ func (a *App) closeStore(closer io.Closer) {
 	}
 }
 
+// closeSecretSource runs a secret source's closer, logging instead of failing.
+// It exists so a build-failure cleanup path can release the source as a plain
+// statement alongside closeTelemetry and closeRegistry, rather than a bare
+// error-discarding assignment.
+func (a *App) closeSecretSource(closeSource func() error) {
+	if err := closeSource(); err != nil {
+		a.logger.Warn("close secret source", "error", err)
+	}
+}
+
 // newRegistry wires the built-in runners: the Phase 0 pair (mock proves the
 // engine without external services, local_fn ships with an empty function
 // table until embedders register Go functions) plus the Phase 1a slices of
 // CLI wrappers, notification sinks (webhook plus the read-capable http fetch
-// runner), the language-rules stub, and the API-backed runners (openai,
-// anthropic, github, mcp_client), plus a
+// runner), the inline Starlark code runner, the language-rules stub, and the
+// API-backed runners (openai,
+// anthropic, github, mcp_client), the sandbox_exec container runner, plus a
 // plugin-backed runner per type = "plugin" config block (Phase 1b), plus
-// the memory agent tool when a memory store is supplied (Phase 1c). Each
+// the memory agent tool when a memory store is supplied (Phase 1c). Blocks
+// with type = "mcp_client" (the shape `cairnos mcp import` emits) register
+// a per-name instance of the built-in mcp_client factory. Each
 // factory receives its [runner.<name>] config block through BuildAll. ctx
 // bounds construction: plugin factories spawn their child process during
-// BuildAll.
-func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem memory.Store, rulesSvc rules.Service) (*runner.Registry, error) {
+// BuildAll. credLookup wires the outbound credential manager into the http and
+// mcp_client runners so a block with a credential key sends a bearer token; nil
+// keeps every runner exactly as before, and a credential key with a nil lookup
+// then fails BuildAll.
+func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem memory.Store, rulesSvc rules.Service, credLookup builtins.TokenLookup) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
 
 	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
@@ -696,8 +924,12 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		return nil, fmt.Errorf("register webhook runner: %w", err)
 	}
 
-	if err := registry.Register(builtins.HTTPName, builtins.HTTPFactory); err != nil {
+	if err := registry.Register(builtins.HTTPName, builtins.HTTPFactoryWithCredentials(credLookup)); err != nil {
 		return nil, fmt.Errorf("register http runner: %w", err)
+	}
+
+	if err := registry.Register(builtins.CodeName, builtins.CodeFactory); err != nil {
+		return nil, fmt.Errorf("register code runner: %w", err)
 	}
 
 	// The language_rules_service runner queries the real Rules Service when one
@@ -725,8 +957,12 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		return nil, fmt.Errorf("register github runner: %w", err)
 	}
 
-	if err := registry.Register(builtins.MCPClientName, builtins.MCPClientFactory); err != nil {
+	if err := registry.Register(builtins.MCPClientName, builtins.MCPClientFactoryWithCredentials(credLookup)); err != nil {
 		return nil, fmt.Errorf("register mcp_client runner: %w", err)
+	}
+
+	if err := registry.Register(builtins.SandboxExecName, builtins.SandboxExecFactory); err != nil {
+		return nil, fmt.Errorf("register sandbox_exec runner: %w", err)
 	}
 
 	if mem != nil {
@@ -735,7 +971,7 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		}
 	}
 
-	if err := registerPlugins(ctx, registry, runnerCfgs); err != nil {
+	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, credLookup); err != nil {
 		return nil, err
 	}
 
@@ -746,19 +982,34 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 	return registry, nil
 }
 
-// registerPlugins adds a plugin-backed runner for every [runner.<name>]
-// block declaring type = "plugin", additional to the built-in names. A
-// plugin name colliding with a built-in surfaces as the registry's
-// duplicate-registration error rather than silently shadowing it.
-func registerPlugins(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any) error {
+// registerConfiguredRunners adds a runner for every [runner.<name>] block
+// whose type string selects a registration path, additional to the built-in
+// names: "plugin" wires an out-of-process runner (Phase 1b), "mcp_client"
+// wires a per-name instance of the built-in MCP client factory (the shape
+// `cairnos mcp import` emits). Blocks without a type key, or with another
+// value, stay plain config for the built-in of that name. A configured name
+// colliding with an already-registered one surfaces as the registry's
+// duplicate-registration error rather than silently shadowing it. The one
+// exception is a block literally named mcp_client: the built-in is already
+// registered under that name with the same factory and BuildAll hands it
+// that block, so a second Register would spuriously fail existing configs.
+func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any, credLookup builtins.TokenLookup) error {
 	for _, name := range slices.Sorted(maps.Keys(runnerCfgs)) {
 		kind, _ := runnerCfgs[name]["type"].(string)
-		if kind != "plugin" {
-			continue
-		}
 
-		if err := registry.Register(name, plugin.Factory(ctx, name)); err != nil {
-			return fmt.Errorf("register plugin runner %q: %w", name, err)
+		switch kind {
+		case "plugin":
+			if err := registry.Register(name, plugin.Factory(ctx, name)); err != nil {
+				return fmt.Errorf("register plugin runner %q: %w", name, err)
+			}
+		case builtins.MCPClientName:
+			if name == builtins.MCPClientName {
+				continue
+			}
+
+			if err := registry.Register(name, builtins.MCPClientFactoryForWithCredentials(name, credLookup)); err != nil {
+				return fmt.Errorf("register mcp_client runner %q: %w", name, err)
+			}
 		}
 	}
 
@@ -774,10 +1025,14 @@ func (a *App) closeRegistry(registry *runner.Registry) {
 	}
 }
 
-// engineConfig maps the file config onto the engine's tuning knobs.
-func engineConfig(cfg *config.Config) engine.Config {
+// engineConfig maps the file config onto the engine's tuning knobs. source is
+// the resolved secret source (env alone, or Chain(env, store) when [secrets]
+// backend = "store"), built by the caller through buildSecretSource so every
+// entry point resolves ${{ secrets.* }} through the one configured chain.
+func engineConfig(cfg *config.Config, source secrets.Source) engine.Config {
 	return engine.Config{
 		MaxConcurrentActions: cfg.Engine.MaxConcurrentActions,
+		MaxCallDepth:         cfg.Engine.MaxCallDepth,
 		DefaultTimeout:       cfg.Engine.DefaultTimeout,
 		DefaultRetry: reliability.Policy{
 			MaxAttempts: cfg.Engine.Retry.MaxAttempts,
@@ -794,7 +1049,7 @@ func engineConfig(cfg *config.Config) engine.Config {
 			Cooldown:         breakerCooldown,
 		},
 		EnvAllowlist: cfg.Env.Allowlist,
-		Secrets:      secrets.NewEnv(),
+		Secrets:      source,
 		NewID:        store.NewID,
 	}
 }

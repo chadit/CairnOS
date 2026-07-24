@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/store"
@@ -184,6 +185,56 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]*store.Ch
 	}
 
 	return messages, nil
+}
+
+// SearchMessages runs FTS5 full-text search over the request workspace's
+// transcripts, best match first (bm25 ranks best-first ascending) with
+// (session_id, seq) as the stable tie-break. The join through chat_sessions
+// enforces workspace isolation the same way ListMessages does, and the
+// doubled session parameter makes that filter optional without assembling
+// SQL at runtime, matching internal/memory's scope filter.
+func (s *Store) SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error) {
+	match := ftsPhrase(query.Text)
+	if match == "" {
+		return nil, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.session_id, m.seq, m.role, m.content, m.created_at
+		 FROM chat_messages_fts
+		 JOIN chat_messages m ON m.rowid = chat_messages_fts.rowid
+		 JOIN chat_sessions s ON s.id = m.session_id
+		 WHERE chat_messages_fts MATCH ? AND s.workspace_id = ? AND (? = '' OR m.session_id = ?)
+		 ORDER BY bm25(chat_messages_fts), m.session_id, m.seq
+		 LIMIT ?`,
+		match, store.WorkspaceFromContext(ctx), query.SessionID, query.SessionID, limitOrAll(query.Limit))
+	if err != nil {
+		return nil, fmt.Errorf("search chat messages: %w", err)
+	}
+
+	return collectRows(rows, "search chat messages", scanChatMessage)
+}
+
+// ftsPhrase quotes raw user text as an FTS5 phrase. Stripping embedded
+// double quotes first means the input can never terminate the phrase early
+// and smuggle FTS5 query syntax in. Copied from internal/memory rather than
+// exported from it; the two packages stay decoupled on purpose.
+func ftsPhrase(raw string) string {
+	cleaned := strings.TrimSpace(strings.ReplaceAll(raw, `"`, ""))
+	if cleaned == "" {
+		return ""
+	}
+
+	return `"` + cleaned + `"`
+}
+
+// limitOrAll maps "no limit requested" onto SQLite's LIMIT -1 (unlimited).
+func limitOrAll(limit int) int {
+	if limit <= 0 {
+		return -1
+	}
+
+	return limit
 }
 
 // scanChatSession reads one chatSessionColumns row back into a ChatSession.

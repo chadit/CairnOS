@@ -3,6 +3,7 @@ package api_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -483,5 +484,146 @@ func drainSendUntilGate(t *testing.T, fix *authFixture, ctx context.Context, ses
 
 	if err := drainChatStream(stream); err != nil {
 		t.Fatalf("drain send stream: %v", err)
+	}
+}
+
+// completeChatTurn sends one message and drains the turn to EOF, so both the
+// user message and the assistant reply are persisted before the caller
+// searches for them.
+func completeChatTurn(t *testing.T, client cairnosv1.ChatServiceClient, sessionID, message string) {
+	t.Helper()
+
+	stream, err := client.SendMessage(t.Context(), &cairnosv1.SendMessageRequest{SessionId: sessionID, Message: message})
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	if err := drainChatStream(stream); err != nil {
+		t.Fatalf("drain send stream: %v", err)
+	}
+}
+
+// TestChatSearchMessagesOverGRPC proves a completed turn's user and assistant
+// messages both answer a full-text query, and every hit names its session so
+// a caller can jump back into the conversation it came from.
+func TestChatSearchMessagesOverGRPC(t *testing.T) {
+	t.Parallel()
+
+	fix := startChatServer(t, &scriptedChatDriver{turns: []runner.Result{finalTurn("the apollo program landed in 1969")}})
+	ctx := t.Context()
+
+	session, err := fix.chat.CreateSession(ctx, &cairnosv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	sessionID := session.GetSession().GetId()
+	completeChatTurn(t, fix.chat, sessionID, "tell me about apollo")
+
+	resp, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: "apollo"})
+	if err != nil {
+		t.Fatalf("search messages: %v", err)
+	}
+
+	roles := make(map[string]bool, 2)
+
+	for _, hit := range resp.GetMessages() {
+		if hit.GetSessionId() != sessionID {
+			t.Errorf("hit session_id = %q, want %q", hit.GetSessionId(), sessionID)
+		}
+
+		roles[hit.GetRole()] = true
+	}
+
+	if len(resp.GetMessages()) != 2 || !roles["user"] || !roles["assistant"] {
+		t.Fatalf("search returned %d hits with roles %v, want the user and assistant messages",
+			len(resp.GetMessages()), roles)
+	}
+}
+
+// TestChatSearchMessagesOverGateway proves the search RPC answers on its GET
+// route with the hit and its session id in the JSON body.
+func TestChatSearchMessagesOverGateway(t *testing.T) {
+	t.Parallel()
+
+	fix := startChatServer(t, &scriptedChatDriver{turns: []runner.Result{finalTurn("the gateway found the beacon")}})
+
+	session, err := fix.chat.CreateSession(t.Context(), &cairnosv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	sessionID := session.GetSession().GetId()
+	completeChatTurn(t, fix.chat, sessionID, "where is the beacon")
+
+	code, body := httpGet(t, fix.httpBase+"/v1/chat/search?text=beacon")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200", code, body)
+	}
+
+	if !strings.Contains(string(body), "beacon") || !strings.Contains(string(body), sessionID) {
+		t.Fatalf("gateway body = %s, want a hit carrying the query text and its session id", body)
+	}
+}
+
+// TestChatSearchScopeEnforced proves SearchMessages sits under chat:session
+// in the method table: a token without the scope is refused, one with it
+// answers. The success leg guards against the table's fail-closed default
+// silently demanding admin for a registered chat method.
+func TestChatSearchScopeEnforced(t *testing.T) {
+	t.Parallel()
+
+	fix := startAuthServer(t)
+
+	t.Run("no chat scope is refused", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := authedCtx(t, fix.token(t, auth.ScopeReadRun))
+
+		_, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: "anything"})
+		wantGRPCCode(t, err, codes.PermissionDenied)
+	})
+
+	t.Run("chat scope answers", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := authedCtx(t, fix.token(t, auth.ScopeChatSession))
+
+		if _, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: "anything"}); err != nil {
+			t.Fatalf("search with chat:session should succeed, got: %v", err)
+		}
+	})
+}
+
+// TestChatSearchEmptyTextRejected proves an empty query is refused before the
+// store sees it: InvalidArgument over gRPC, and the canonical cairnerr
+// envelope over the gateway so HTTP clients get the documented error shape.
+func TestChatSearchEmptyTextRejected(t *testing.T) {
+	t.Parallel()
+
+	fix := startChatServer(t, &scriptedChatDriver{turns: []runner.Result{finalTurn("unused")}})
+
+	_, err := fix.chat.SearchMessages(t.Context(), &cairnosv1.SearchMessagesRequest{Text: "   "})
+	wantGRPCCode(t, err, codes.InvalidArgument)
+
+	code, body := httpGet(t, fix.httpBase+"/v1/chat/search")
+	if code != http.StatusBadRequest {
+		t.Fatalf("status = %d (%s), want 400", code, body)
+	}
+
+	var envelope struct {
+		Status string `json:"status"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("parse error envelope %q: %v", body, err)
+	}
+
+	if envelope.Status != statusError || envelope.Error.Code != "api.invalid_argument" {
+		t.Fatalf("envelope = %s, want status error with code api.invalid_argument", body)
 	}
 }

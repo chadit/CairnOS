@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,6 +18,23 @@ const (
 	chatHello            = "hello there"
 	chatReply            = "hi, how can I help"
 	chatFollowUp         = "what is the budget"
+	chatSystemFraming    = "you are a terse ops assistant"
+)
+
+// Search fixtures. The strong message repeats the term so it outranks the
+// weak one on both bm25 (higher term frequency) and ts_rank (more matches);
+// the weak message appears verbatim in two sessions so equal scores force the
+// (session_id, seq) tie-break. The quoted/decoy/operators trio proves FTS
+// syntax in a query matches literally: an unsanitized FTS5 query would treat
+// the OR as an operator and return the decoy.
+const (
+	chatSearchTerm      = "budget"
+	chatSearchStrong    = "budget review of the budget against the budget cap"
+	chatSearchWeak      = "is the budget final"
+	chatSearchMiss      = "nothing to see here"
+	chatSearchQuoted    = `say "hello" OR else`
+	chatSearchDecoy     = "else what"
+	chatSearchOperators = `"hello" OR else`
 )
 
 // testChatSessionRoundTrip proves a session and its ordered messages persist
@@ -85,6 +103,48 @@ func testChatSessionRoundTrip(t *testing.T, openFn OpenFunc) {
 
 		if message.CreatedAt.IsZero() {
 			t.Errorf("message %d created_at not persisted", idx)
+		}
+	}
+}
+
+// testChatSessionSeedsSystemRole proves a system-role message persists and
+// reads back in sequence order alongside the user and assistant rows, the row
+// the OpenAI-compatible adapter seeds when a client sends a `system` message
+// (.agents/spec/parity/openai-compat.md). The role column is a plain string, so
+// this is the store proving it accepts the value with no schema change.
+func testChatSessionSeedsSystemRole(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	ctx := t.Context()
+	created := time.Date(2026, 6, 13, 9, 0, 0, microFixtureNS, time.UTC)
+
+	sessionID := newID()
+	seedSession(t, db, sessionID, personalityAssistant, created)
+
+	appendMessage(t, db, sessionID, store.ChatRoleSystem, chatSystemFraming)
+	appendMessage(t, db, sessionID, store.ChatRoleUser, chatHello)
+	appendMessage(t, db, sessionID, store.ChatRoleAssistant, chatReply)
+
+	messages, err := db.ListMessages(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+
+	wantRoles := []string{store.ChatRoleSystem, store.ChatRoleUser, store.ChatRoleAssistant}
+	wantContent := []string{chatSystemFraming, chatHello, chatReply}
+
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("listed %d messages, want %d", len(messages), len(wantRoles))
+	}
+
+	for idx, message := range messages {
+		if message.Seq != idx+1 {
+			t.Errorf("message %d seq = %d, want %d", idx, message.Seq, idx+1)
+		}
+
+		if message.Role != wantRoles[idx] || message.Content != wantContent[idx] {
+			t.Errorf("message %d = %s/%q, want %s/%q", idx, message.Role, message.Content, wantRoles[idx], wantContent[idx])
 		}
 	}
 }
@@ -195,6 +255,256 @@ func testChatSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	})
 	if !errors.Is(appendErr, store.ErrChatSessionNotFound) {
 		t.Fatalf("acme AppendMessage(globex session) error = %v, want ErrChatSessionNotFound", appendErr)
+	}
+}
+
+// testChatSearchRanksBestMatchFirst proves SearchMessages finds matching
+// messages with content intact, best match first, breaking equal-relevance
+// ties on (session_id, seq) so the order is stable across runs. bm25 and
+// ts_rank disagree on scores, so ordering is only asserted where both agree:
+// the strong message repeats the term (both rankers place it first) and the
+// two weak hits are byte-identical (equal scores force the tie-break).
+func testChatSearchRanksBestMatchFirst(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	sessionA, sessionB := seedChatSearchCorpus(t, db)
+
+	hits, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm})
+	if err != nil {
+		t.Fatalf("search messages: %v", err)
+	}
+
+	assertChatHits(t, hits, []chatHit{
+		{sessionA, twoUnits, chatSearchStrong},
+		{sessionA, 1, chatSearchWeak},
+		{sessionB, 1, chatSearchWeak},
+	})
+
+	for idx, hit := range hits {
+		if hit.CreatedAt.IsZero() {
+			t.Errorf("hit %d created_at not populated", idx)
+		}
+	}
+}
+
+// testChatSearchFiltersBySession proves the SessionID filter narrows hits to
+// one session, and that naming a missing session matches nothing rather than
+// reporting not-found: it is a filter, not a lookup.
+func testChatSearchFiltersBySession(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	_, sessionB := seedChatSearchCorpus(t, db)
+
+	hits, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, SessionID: sessionB})
+	if err != nil {
+		t.Fatalf("search messages with session filter: %v", err)
+	}
+
+	assertChatHits(t, hits, []chatHit{{sessionB, 1, chatSearchWeak}})
+
+	missing, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, SessionID: "missing"})
+	if err != nil {
+		t.Fatalf("search messages with missing session filter: %v", err)
+	}
+
+	if len(missing) != 0 {
+		t.Errorf("missing-session filter returned %d hits, want 0", len(missing))
+	}
+}
+
+// testChatSearchLimitsResults proves Limit caps the hit count from the top of
+// the ranking while zero returns everything, the same contract as
+// ChatSessionFilter.Limit.
+func testChatSearchLimitsResults(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	sessionA, sessionB := seedChatSearchCorpus(t, db)
+
+	limited, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, Limit: twoUnits})
+	if err != nil {
+		t.Fatalf("search messages with limit: %v", err)
+	}
+
+	assertChatHits(t, limited, []chatHit{
+		{sessionA, twoUnits, chatSearchStrong},
+		{sessionA, 1, chatSearchWeak},
+	})
+
+	everything, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm})
+	if err != nil {
+		t.Fatalf("search messages without limit: %v", err)
+	}
+
+	assertChatHits(t, everything, []chatHit{
+		{sessionA, twoUnits, chatSearchStrong},
+		{sessionA, 1, chatSearchWeak},
+		{sessionB, 1, chatSearchWeak},
+	})
+}
+
+// testChatSearchIsolatesByWorkspace proves a search from one workspace never
+// sees another's messages, even when both hold the same matching content: the
+// tenancy boundary every chat read honors
+// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	base := time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC)
+
+	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
+	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
+
+	acmeSession := newID()
+	globexSession := newID()
+
+	createSessionIn(t, db, acmeCtx, acmeSession, base)
+	createSessionIn(t, db, globexCtx, globexSession, base)
+
+	appendMessageIn(t, db, acmeCtx, acmeSession, chatSearchWeak)
+	appendMessageIn(t, db, globexCtx, globexSession, chatSearchWeak)
+
+	acmeHits, err := db.SearchMessages(acmeCtx, store.ChatSearchQuery{Text: chatSearchTerm})
+	if err != nil {
+		t.Fatalf("search acme messages: %v", err)
+	}
+
+	assertChatHits(t, acmeHits, []chatHit{{acmeSession, 1, chatSearchWeak}})
+
+	globexHits, err := db.SearchMessages(globexCtx, store.ChatSearchQuery{Text: chatSearchTerm})
+	if err != nil {
+		t.Fatalf("search globex messages: %v", err)
+	}
+
+	assertChatHits(t, globexHits, []chatHit{{globexSession, 1, chatSearchWeak}})
+}
+
+// testChatSearchTreatsQuerySyntaxLiterally proves a query carrying quotes and
+// an OR matches literally instead of smuggling FTS operators in. If the OR
+// reached FTS5 as an operator, the decoy message (which only shares the last
+// word) would come back too.
+func testChatSearchTreatsQuerySyntaxLiterally(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	base := time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC)
+
+	sessionID := newID()
+	seedSession(t, db, sessionID, personalityAssistant, base)
+
+	appendMessage(t, db, sessionID, store.ChatRoleUser, chatSearchQuoted)
+	appendMessage(t, db, sessionID, store.ChatRoleUser, chatSearchDecoy)
+
+	hits, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchOperators})
+	if err != nil {
+		t.Fatalf("search with operator syntax: %v", err)
+	}
+
+	assertChatHits(t, hits, []chatHit{{sessionID, 1, chatSearchQuoted}})
+}
+
+// testChatSearchEmptyTextReturnsNothing proves an empty or blank query
+// returns no rows and no error at the store. Rejecting it loudly is the API
+// layer's job; the store just stays quiet.
+func testChatSearchEmptyTextReturnsNothing(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	base := time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC)
+
+	sessionID := newID()
+	seedSession(t, db, sessionID, personalityAssistant, base)
+	appendMessage(t, db, sessionID, store.ChatRoleUser, chatSearchWeak)
+
+	for _, text := range []string{"", "   "} {
+		hits, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: text})
+		if err != nil {
+			t.Fatalf("search with blank text %q: %v", text, err)
+		}
+
+		if len(hits) != 0 {
+			t.Errorf("blank text %q returned %d hits, want 0", text, len(hits))
+		}
+	}
+}
+
+// seedChatSearchCorpus stages the two-session search fixture: session A holds
+// a weak match, a strong match, and a miss; session B holds one message
+// byte-identical to A's weak match. It returns the session ids in creation
+// order, which is also lexicographic order (ULIDs are monotonic), so callers
+// can assert the (session_id, seq) tie-break.
+func seedChatSearchCorpus(t *testing.T, db store.Store) (string, string) {
+	t.Helper()
+
+	base := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
+
+	sessionA := newID()
+	sessionB := newID()
+
+	seedSession(t, db, sessionA, personalityAssistant, base)
+	seedSession(t, db, sessionB, personalityAssistant, base)
+
+	appendMessage(t, db, sessionA, store.ChatRoleUser, chatSearchWeak)
+	appendMessage(t, db, sessionA, store.ChatRoleAssistant, chatSearchStrong)
+	appendMessage(t, db, sessionA, store.ChatRoleUser, chatSearchMiss)
+	appendMessage(t, db, sessionB, store.ChatRoleUser, chatSearchWeak)
+
+	return sessionA, sessionB
+}
+
+// chatHit is the (session, seq, content) identity of one expected search hit.
+type chatHit struct {
+	session string
+	seq     int
+	content string
+}
+
+// assertChatHits compares search results against the expected hits in order,
+// failing with the full got/want shape so a ranking or tie-break regression
+// reads directly from the failure message.
+func assertChatHits(t *testing.T, got []*store.ChatMessage, want []chatHit) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("search returned %d hits %v, want %d %v", len(got), chatHitIDs(got), len(want), want)
+	}
+
+	for idx, hit := range want {
+		message := got[idx]
+		if message.SessionID != hit.session || message.Seq != hit.seq || message.Content != hit.content {
+			t.Errorf("hit %d = %s/%d %q, want %s/%d %q",
+				idx, message.SessionID, message.Seq, message.Content, hit.session, hit.seq, hit.content)
+		}
+	}
+}
+
+// chatHitIDs renders search hits as (session, seq) pairs for a failure message.
+func chatHitIDs(messages []*store.ChatMessage) []string {
+	ids := make([]string, len(messages))
+	for i, message := range messages {
+		ids[i] = fmt.Sprintf("%s/%d", message.SessionID, message.Seq)
+	}
+
+	return ids
+}
+
+// appendMessageIn records one user message through the workspace ctx carries,
+// so the isolation case's messages land in the right tenant.
+//
+//nolint:revive // t leads every helper here for the t.Fatalf calls; ctx follows to carry the workspace
+func appendMessageIn(t *testing.T, db store.Store, ctx context.Context, sessionID, content string) {
+	t.Helper()
+
+	err := db.AppendMessage(ctx, &store.ChatMessage{
+		SessionID: sessionID,
+		Role:      store.ChatRoleUser,
+		Content:   content,
+	})
+	if err != nil {
+		t.Fatalf("append message to %s: %v", sessionID, err)
 	}
 }
 

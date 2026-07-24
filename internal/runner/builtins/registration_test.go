@@ -25,11 +25,13 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 	factories := map[string]runner.Factory{
 		builtins.EmailName:         builtins.EmailFactory,
 		builtins.WebhookName:       builtins.WebhookFactory,
+		builtins.CodeName:          builtins.CodeFactory,
 		builtins.LanguageRulesName: builtins.LanguageRulesFactory,
 		builtins.OpenAIName:        builtins.OpenAIFactory,
 		builtins.AnthropicName:     builtins.AnthropicFactory,
 		builtins.GitHubName:        builtins.GitHubFactory,
 		builtins.MCPClientName:     builtins.MCPClientFactory,
+		builtins.SandboxExecName:   builtins.SandboxExecFactory,
 	}
 
 	for name, factory := range factories {
@@ -45,6 +47,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 	wantNames := []string{
 		builtins.AnthropicName,
 		builtins.AntigravityName,
+		builtins.CodeName,
 		builtins.CodexName,
 		builtins.EmailName,
 		builtins.GitHubName,
@@ -55,6 +58,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.OMPQwenName,
 		builtins.OpenAIName,
 		builtins.QwenName,
+		builtins.SandboxExecName,
 		builtins.WebhookName,
 	}
 

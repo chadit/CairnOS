@@ -30,6 +30,10 @@ export const handlers = [
 
   http.post('/v1/workflows/validate', () => HttpResponse.json({ valid: true, errors: [] })),
 
+  http.put('/v1/workflows/:name', ({ params }) =>
+    HttpResponse.json({ workflowName: String(params.name), hash: 'test-hash', created: true }),
+  ),
+
   http.get('/v1/chat/sessions', () => HttpResponse.json({ sessions: [] })),
 
   http.post('/v1/chat/sessions', async ({ request }) => {

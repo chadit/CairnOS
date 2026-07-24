@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/chadit/CairnOS/internal/agentloop"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/workflow"
@@ -74,6 +76,14 @@ func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 		a.printErrf("schedule add: %s has no schedule key; add one (e.g. schedule = \"@hourly\")\n", path)
 
 		return ExitUsage
+	}
+
+	// A poll workflow naming an unregistered source parses fine but fails at
+	// every fire (poll.ErrUnknownSource is a runtime lookup, not a load-time
+	// rule), so warn now while the operator is watching rather than only in the
+	// daemon log later.
+	if flow.Poll != nil && !slices.Contains(poll.BuiltinSourceNames(), flow.Poll.Source) {
+		a.printErrf("schedule add: warning: unknown poll source %q; the schedule will fail at fire time\n", flow.Poll.Source)
 	}
 
 	// Store the absolute path so the daemon can load the file no matter
@@ -225,7 +235,34 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		a.logger.Info("reconciled interrupted runs", "count", reconciled)
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, nil)
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		a.printErrf("schedule run: %v\n", err)
+
+		return ExitFailure
+	}
+
+	// The source is built before the registry so the credential manager and the
+	// runners share one secret chain.
+	source, closeSource, err := a.buildSecretSource(ctx, dir, &cfg)
+	if err != nil {
+		a.printErrf("schedule run: %v\n", err)
+
+		return ExitFailure
+	}
+	defer func() { _ = closeSource() }()
+
+	// Outbound credentials resolve their secret refs through the source so the
+	// http and mcp_client runners mint bearer tokens. Construction does no
+	// network and fails fast on a missing ref.
+	credManager, err := buildCredentialManager(ctx, &cfg, source)
+	if err != nil {
+		a.printErrf("schedule run: %v\n", err)
+
+		return ExitFailure
+	}
+
+	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
@@ -233,18 +270,11 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 	defer a.closeRegistry(registry)
 
-	engCfg := engineConfig(&cfg)
+	engCfg := engineConfig(&cfg, source)
 	engCfg.AgentExecutor = agentloop.New(registry, mem, db, nil)
 
 	fireRunner := &engineFireRunner{
 		eng: engine.New(engCfg, registry, db),
-	}
-
-	dir, err := resolveDir(*dirFlag)
-	if err != nil {
-		a.printErrf("schedule run: %v\n", err)
-
-		return ExitFailure
 	}
 
 	queue, closeQueue, err := openWorkQueue(ctx, dir, &cfg, scheds)
@@ -266,20 +296,38 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 
 	// The daemon enqueues each fire; the worker drains the queue and runs the
 	// workflow through the engine fire runner. A fire no worker can take right
-	// away waits in the queue instead of being skipped (S8).
+	// away waits in the queue instead of being skipped (S8). The poll-aware
+	// wrapper turns a [workflow.poll] fire into per-event enqueues and leaves a
+	// plain schedule untouched.
+	enqueue := &scheduleEnqueueRunner{queue: queue, logger: a.logger}
+	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, a.logger)
+
 	daemon := scheduler.New(scheduler.Config{
 		Store:       scheds,
-		Runner:      &scheduleEnqueueRunner{queue: queue, logger: a.logger},
+		Runner:      pollRunner,
 		Coordinator: coord,
 		Logger:      a.logger,
 	})
 
-	worker := newQueueWorker(queue, &queueRunnerAdapter{fire: fireRunner}, &cfg.Scheduler, nil, a.logger)
+	// The standalone `schedule run` worker fans held and dead_lettered alerts out
+	// the same way serve does, so an operator running the scheduler outside serve
+	// still gets Discord notifications. The drainer rides a child context so it
+	// always stops once the producer and worker return, even on an early error.
+	fanoutCtx, stopFanout := context.WithCancel(ctx)
+	fanout := BuildDiscordFanout(&cfg, a.logger)
+	fanoutDone := StartFanout(fanoutCtx, fanout)
+
+	worker := newQueueWorker(queue, &queueRunnerAdapter{fire: fireRunner}, &cfg.Scheduler, nil, fanout, a.logger)
 
 	a.printOutf("scheduler running; interrupt to stop\n")
 
-	if err := runProducerAndWorker(ctx, daemon, worker); err != nil {
-		a.printErrf("schedule run: %v\n", err)
+	runErr := runProducerAndWorker(ctx, daemon, worker)
+
+	stopFanout()
+	<-fanoutDone
+
+	if runErr != nil {
+		a.printErrf("schedule run: %v\n", runErr)
 
 		return ExitFailure
 	}
@@ -294,15 +342,28 @@ type engineFireRunner struct {
 	eng *engine.Engine
 }
 
-// Fire loads and runs one scheduled workflow. A failed run surfaces as an
-// error so the daemon logs it; the daemon keeps running either way.
+// Fire loads and runs one scheduled workflow with default inputs and the
+// schedule trigger. It is FireRun with nothing extra, so any holder of a
+// scheduler.Runner sees no change.
 func (r *engineFireRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
+	return r.FireRun(ctx, sched, nil, triggerSchedule)
+}
+
+// FireRun loads and runs one scheduled workflow with caller-supplied inputs and
+// a trigger label, the poll fire path's entry point on the schedule-run daemon.
+// A failed run surfaces as an error so the daemon logs it; the daemon keeps
+// running either way.
+func (r *engineFireRunner) FireRun(ctx context.Context, sched *scheduler.Schedule, inputs map[string]any, trigger string) error {
 	flow, err := workflow.Load(sched.WorkflowPath)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", sched.WorkflowPath, err)
 	}
 
-	run, err := r.eng.RunWorkflow(ctx, flow, map[string]any{}, triggerSchedule)
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+
+	run, err := r.eng.RunWorkflow(ctx, flow, inputs, trigger)
 	if err != nil {
 		return fmt.Errorf("run %s: %w", sched.WorkflowName, err)
 	}

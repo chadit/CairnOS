@@ -14,6 +14,14 @@ var (
 	// ErrNilWorkflow reports RunWorkflow called without a parsed workflow.
 	ErrNilWorkflow = errors.New("nil workflow")
 
+	// ErrNilRun reports ReplayRun called without the prior run to seed from.
+	ErrNilRun = errors.New("nil run")
+
+	// ErrRunNotHeld reports ResumeRun called on a run that is not parked. Only a
+	// held run may resume; a terminal run whose approval gate was orphaned by a
+	// failure or cancel that beat the park must stay terminal.
+	ErrRunNotHeld = errors.New("run not held")
+
 	// ErrNoSecretSource reports a secrets reference with no secret source
 	// configured on the engine.
 	ErrNoSecretSource = errors.New("no secret source configured")

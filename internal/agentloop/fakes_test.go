@@ -153,6 +153,16 @@ func finalTurn() runner.Result {
 	}
 }
 
+// finalTurnAnswer builds a final-answer turn carrying a custom answer and
+// cost, so a delegated child's answer can differ from the parent's.
+func finalTurnAnswer(answer string, cost float64) runner.Result {
+	return runner.Result{
+		Output: answer,
+		Usage:  runner.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: cost},
+		Meta:   map[string]string{runner.MetaStopReason: runner.StopReasonEndTurn},
+	}
+}
+
 // rawTurn builds a turn with an arbitrary output and stop reason, for the
 // unparseable-output cases.
 func rawTurn(output any, stopReason string, cost float64) runner.Result {
@@ -161,6 +171,70 @@ func rawTurn(output any, stopReason string, cost float64) runner.Result {
 		Usage:  runner.Usage{CostUSD: cost},
 		Meta:   map[string]string{runner.MetaStopReason: stopReason},
 	}
+}
+
+// perActionDriver serves a distinct script per action name, so a parent and
+// its delegated child walk different turns through the one shared driver the
+// child inherits by design. An action with no script ends immediately with the
+// canned final answer.
+type perActionDriver struct {
+	mu      sync.Mutex
+	scripts map[string][]runner.Result
+	calls   map[string]int
+}
+
+var (
+	_ runner.Runner     = (*perActionDriver)(nil)
+	_ runner.ToolCaller = (*perActionDriver)(nil)
+)
+
+// newPerActionDriver builds a driver routing turns by action name.
+func newPerActionDriver(scripts map[string][]runner.Result) *perActionDriver {
+	return &perActionDriver{scripts: scripts, calls: map[string]int{}}
+}
+
+// Name implements runner.Runner.
+func (*perActionDriver) Name() string {
+	return driverName
+}
+
+// Validate implements runner.Runner.
+func (*perActionDriver) Validate(_ *runner.Task) error {
+	return nil
+}
+
+// Execute implements runner.Runner; the loop must never use it.
+func (*perActionDriver) Execute(_ context.Context, _ *runner.Task) (runner.Result, error) {
+	return runner.Result{}, errPlainExecute
+}
+
+// ExecuteWithTools implements runner.ToolCaller, walking the script registered
+// for the task's action name and repeating its last turn once exhausted.
+func (d *perActionDriver) ExecuteWithTools(_ context.Context, task *runner.Task, _ []runner.ToolSpec) (runner.Result, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	name := task.ActionName
+
+	script := d.scripts[name]
+	if len(script) == 0 {
+		d.calls[name]++
+
+		return finalTurn(), nil
+	}
+
+	idx := min(d.calls[name], len(script)-1)
+	d.calls[name]++
+
+	return script[idx], nil
+}
+
+// callsFor reports how many turns the driver served for one action.
+func (d *perActionDriver) callsFor(name string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.calls[name]
 }
 
 // plainRunner is a registered runner with no Describer and no ToolCaller,
@@ -250,6 +324,11 @@ func (f *fakeMemory) Search(_ context.Context, query memory.Query) (memory.Searc
 	f.searches = append(f.searches, query)
 
 	return memory.SearchResult{Entries: f.entries}, nil
+}
+
+// List implements memory.Store; the loop never calls it.
+func (f *fakeMemory) List(_ context.Context, _ string) ([]memory.Entry, error) {
+	return nil, f.failWith
 }
 
 // Load implements memory.Store.
@@ -484,6 +563,42 @@ func (*capturingStore) ListMessages(_ context.Context, _ string) ([]*store.ChatM
 	return nil, nil
 }
 
+// SearchMessages implements store.Store.
+func (*capturingStore) SearchMessages(_ context.Context, _ store.ChatSearchQuery) ([]*store.ChatMessage, error) {
+	return nil, nil
+}
+
+// CreateApproval implements store.Store; the agent loop never parks approvals.
+func (*capturingStore) CreateApproval(_ context.Context, _ *store.Approval) error {
+	return nil
+}
+
+// GetApproval implements store.Store.
+func (*capturingStore) GetApproval(_ context.Context, runID, actionName string) (*store.Approval, error) {
+	return nil, fmt.Errorf("%w: %s/%s", store.ErrApprovalNotFound, runID, actionName)
+}
+
+// ListPendingApprovals implements store.Store.
+func (*capturingStore) ListPendingApprovals(_ context.Context, _ string) ([]*store.Approval, error) {
+	return nil, nil
+}
+
+// DecideApproval implements store.Store.
+func (*capturingStore) DecideApproval(_ context.Context, runID, actionName string, _ store.ApprovalStatus, _, _ string) error {
+	return fmt.Errorf("%w: %s/%s", store.ErrApprovalNotFound, runID, actionName)
+}
+
+// BindBridgeSession implements store.Store; the agent loop never touches the
+// messaging bridge.
+func (*capturingStore) BindBridgeSession(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// LookupBridgeSession implements store.Store.
+func (*capturingStore) LookupBridgeSession(_ context.Context, transport, chatKey string) (string, error) {
+	return "", fmt.Errorf("%w: %s/%s", store.ErrBridgeSessionNotFound, transport, chatKey)
+}
+
 // ReconcileInterrupted implements store.Store.
 func (*capturingStore) ReconcileInterrupted(_ context.Context) (int, error) {
 	return 0, nil
@@ -522,9 +637,10 @@ func (c *capturingStore) recordedSteps() []store.AgentStep {
 	return slices.Clone(c.steps)
 }
 
-// newTestRegistry wires the scripted driver, the mock tool, the plain
-// runner, and (when a memory store is given) the memory tool.
-func newTestRegistry(t *testing.T, driver *scriptedDriver, mem memory.Store) *runner.Registry {
+// newTestRegistry wires the given driver, the mock tool, the plain runner,
+// and (when a memory store is given) the memory tool. The driver is taken as a
+// runner.Runner so delegate tests can swap in a per-action driver.
+func newTestRegistry(t *testing.T, driver runner.Runner, mem memory.Store) *runner.Registry {
 	t.Helper()
 
 	registry := runner.NewRegistry()

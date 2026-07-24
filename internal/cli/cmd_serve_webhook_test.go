@@ -1,0 +1,274 @@
+package cli_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
+	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/store"
+)
+
+// httpAddrPattern pulls the bound HTTP address out of serve's startup output.
+var httpAddrPattern = regexp.MustCompile(`HTTP listening on (\S+)`)
+
+// serveWebhookWorkflow is the workflow a webhook POST fires; a mock action keeps
+// the run self-contained and fast to terminate.
+const serveWebhookWorkflow = `
+[workflow]
+name = "webhooked"
+
+[action.tick]
+runner = "mock"
+params = { output = "tick" }
+`
+
+// serveWebhookAuthConfig turns auth on alongside webhook ingress, so one boot
+// proves both halves of the scope-bypass invariant: a webhook POST needs only
+// its path token, while a gateway RPC still demands a scoped bearer.
+const serveWebhookAuthConfig = `
+[api]
+grpc = "127.0.0.1:0"
+http = "127.0.0.1:0"
+
+[telemetry]
+enabled = false
+
+[auth]
+enabled = true
+
+[webhook]
+enabled = true
+`
+
+// serveWebhookDisabledConfig leaves webhook off, so no ingress route mounts and a
+// POST falls through to the gateway catch-all.
+const serveWebhookDisabledConfig = `
+[api]
+grpc = "127.0.0.1:0"
+http = "127.0.0.1:0"
+
+[telemetry]
+enabled = false
+
+[webhook]
+enabled = false
+`
+
+// writeServeHome writes a config plus the webhook workflow into a fresh home and
+// returns the home dir and the workflow's absolute path.
+func writeServeHome(t *testing.T, configTOML string) (string, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(configTOML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	workflowsDir := filepath.Join(dir, "workflows")
+	if err := os.MkdirAll(workflowsDir, 0o750); err != nil {
+		t.Fatalf("create workflows dir: %v", err)
+	}
+
+	wfPath := filepath.Join(workflowsDir, "webhooked.toml")
+	if err := os.WriteFile(wfPath, []byte(serveWebhookWorkflow), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	return dir, wfPath
+}
+
+// bootServe starts serve on ephemeral ports and returns its bound HTTP and gRPC
+// addresses plus a cancel that stops it. The test drives shutdown through cancel
+// and asserts the clean exit in a cleanup.
+func bootServe(t *testing.T, dir string) (string, string) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+
+	stdout := newSignalWriter()
+
+	var stderr bytes.Buffer
+
+	exit := make(chan int, 1)
+
+	go func() {
+		exit <- cli.New(stdout, &stderr).Run(ctx, []string{serveCmd, flagDirArg, dir})
+	}()
+
+	select {
+	case <-stdout.ready:
+	case code := <-exit:
+		cancel()
+		t.Fatalf("serve exited early with %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	t.Cleanup(func() {
+		cancel()
+
+		if code := <-exit; code != cli.ExitOK {
+			t.Errorf("serve exit = %d, want %d\nstderr: %s", code, cli.ExitOK, stderr.String())
+		}
+	})
+
+	return outputAddr(t, stdout, httpAddrPattern, "HTTP"), outputAddr(t, stdout, grpcAddrPattern, "gRPC")
+}
+
+// postWebhook POSTs body to the ingress path and returns the status and the
+// decoded body.
+func postWebhook(t *testing.T, httpAddr, token, body string) (int, []byte) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	url := "http://" + httpAddr + "/v1/hooks/" + token
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build webhook request: %v", err)
+	}
+
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("post webhook: %v", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read webhook response: %v", err)
+	}
+
+	return resp.StatusCode, payload
+}
+
+// waitForRun polls the run store until the run appears, since the production path
+// answers 202 and the record is written as the run starts. The poll is
+// ticker-driven so there is no bare sleep, and bounded by a timeout channel.
+func waitForRun(t *testing.T, dir, runID string) *store.Run {
+	t.Helper()
+
+	db := openRunStore(t, dir)
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.After(5 * time.Second)
+
+	for {
+		run, err := db.GetRun(t.Context(), runID)
+		if err == nil {
+			return run
+		}
+
+		select {
+		case <-ticker.C:
+		case <-timeout:
+			t.Fatalf("webhook run %s never landed in the store: %v", runID, err)
+		}
+	}
+}
+
+// TestServeWebhookRunsUnderDefaultWorkspace is the scope-bypass invariant test
+// (security amendment 5). With auth on, a webhook POST carrying only its path
+// token starts a run, that run is stamped store.DefaultWorkspace with trigger
+// "webhook", and an unauthenticated gRPC RunWorkflow is still rejected
+// Unauthenticated, proving the ingress route did not weaken scope enforcement.
+func TestServeWebhookRunsUnderDefaultWorkspace(t *testing.T) {
+	// t.Setenv (the HS256 secret) forbids t.Parallel.
+	t.Setenv("CAIRNOS_AUTH_HS256_SECRET", "0123456789abcdef0123456789abcdef")
+
+	dir, wfPath := writeServeHome(t, serveWebhookAuthConfig)
+
+	// Registration is a local store op needing no auth; it mints the token serve
+	// later answers.
+	prod, _ := addWebhook(t, dir, wfPath)
+
+	httpAddr, grpcAddr := bootServe(t, dir)
+
+	statusCode, body := postWebhook(t, httpAddr, prod, "{}")
+	if statusCode != http.StatusAccepted {
+		t.Fatalf("webhook POST = %d, want 202\nbody: %s", statusCode, body)
+	}
+
+	var accepted struct {
+		Status string `json:"status"`
+		RunID  string `json:"run_id"`
+	}
+	if err := json.Unmarshal(body, &accepted); err != nil {
+		t.Fatalf("decode 202 body %q: %v", body, err)
+	}
+
+	if accepted.RunID == "" {
+		t.Fatalf("202 body carried no run_id:\n%s", body)
+	}
+
+	// A gateway RPC without a bearer is still rejected, so the unauthenticated
+	// ingress route did not open the scoped surface.
+	if code := unauthedRunCode(t, grpcAddr); code != codes.Unauthenticated {
+		t.Fatalf("unauthenticated RunWorkflow = %s, want Unauthenticated", code)
+	}
+
+	run := waitForRun(t, dir, accepted.RunID)
+
+	if run.WorkspaceID != store.DefaultWorkspace {
+		t.Fatalf("webhook run workspace = %q, want %q", run.WorkspaceID, store.DefaultWorkspace)
+	}
+
+	if run.Trigger != "webhook" {
+		t.Fatalf("webhook run trigger = %q, want webhook", run.Trigger)
+	}
+}
+
+// unauthedRunCode opens a RunWorkflow stream with no bearer token and returns the
+// gRPC status code of the first receive.
+func unauthedRunCode(t *testing.T, grpcAddr string) codes.Code {
+	t.Helper()
+
+	conn := dialServe(t, grpcAddr)
+
+	stream, err := cairnosv1.NewWorkflowServiceClient(conn).RunWorkflow(t.Context(),
+		&cairnosv1.RunWorkflowRequest{WorkflowName: "webhooked"})
+	if err != nil {
+		return status.Code(err)
+	}
+
+	_, recvErr := stream.Recv()
+
+	return status.Code(recvErr)
+}
+
+// TestServeWebhookDisabledRoutes404 proves the default posture mounts nothing: a
+// POST to the ingress path with webhook disabled falls through to the gateway
+// catch-all and 404s, so an unregistered node exposes no ingress surface.
+func TestServeWebhookDisabledRoutes404(t *testing.T) {
+	t.Parallel()
+
+	dir, _ := writeServeHome(t, serveWebhookDisabledConfig)
+
+	httpAddr, _ := bootServe(t, dir)
+
+	// A well-formed 64-hex token still 404s, because no /v1/hooks route exists to
+	// match it at the mux.
+	token := strings.Repeat("ab", 32)
+
+	statusCode, _ := postWebhook(t, httpAddr, token, "{}")
+	if statusCode != http.StatusNotFound {
+		t.Fatalf("disabled webhook POST = %d, want 404", statusCode)
+	}
+}

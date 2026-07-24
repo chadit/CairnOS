@@ -13,6 +13,19 @@ func DedupKeyFor(scheduleID string, fireTime time.Time) string {
 	return scheduleID + "|" + fireTime.UTC().Format(time.RFC3339Nano)
 }
 
+// pollDedupPrefix tags a polled event's dedup key so it can never collide with a
+// scheduled occurrence's (schedule, fire-time) key.
+const pollDedupPrefix = "poll"
+
+// PollDedupKeyFor builds the exactly-once enqueue key for one polled event:
+// poll|<scheduleID>|<eventID>. A repeat observation of the same event across
+// overlapping poll windows or concurrent leader fires lands one row, so a poll
+// workflow runs once per event while that row exists
+// (.agents/spec/parity/triggers-webhooks.md, "Delivery semantics").
+func PollDedupKeyFor(scheduleID, eventID string) string {
+	return pollDedupPrefix + "|" + scheduleID + "|" + eventID
+}
+
 // WorkState is a queued item's lifecycle state. A cron fire enqueues a ready
 // item; a worker leases it; success acks (deletes) it; failure naks it back to
 // ready with backoff, or dead-letters it once it has been delivered too many

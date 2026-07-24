@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"path/filepath"
 
 	"github.com/chadit/CairnOS/internal/agentloop"
+	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
@@ -64,12 +66,19 @@ func (a *App) cmdRun(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(mem)
 
-	return a.executeRun(ctx, &cfg, db, mem, flow, values)
+	dir, err := resolveDir(*dirFlag)
+	if err != nil {
+		a.printErrf("run: %v\n", err)
+
+		return ExitFailure
+	}
+
+	return a.executeRun(ctx, &cfg, db, mem, flow, values, filepath.Join(dir, workflowsDirName))
 }
 
 // executeRun reconciles interrupted work, wires the engine (agent loop and
 // telemetry included), runs the flow, and renders the outcome.
-func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store, mem memory.Store, flow *workflow.Workflow, values map[string]any) int {
+func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store, mem memory.Store, flow *workflow.Workflow, values map[string]any, workflowsDir string) int {
 	reconciled, err := db.ReconcileInterrupted(ctx)
 	if err != nil {
 		a.printErrf("run: reconcile interrupted runs: %v\n", err)
@@ -81,46 +90,11 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 		a.logger.Info("reconciled interrupted runs", "count", reconciled)
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, nil)
-	if err != nil {
-		a.printErrf("run: %v\n", err)
-
-		return ExitFailure
+	eng, cleanup, code, proceed := a.buildEngine(ctx, "run", workflowsDir, cfg, db, mem)
+	if !proceed {
+		return code
 	}
-	defer a.closeRegistry(registry)
-
-	// A one-shot run has nothing to scrape, and binding the configured
-	// metrics port would collide with a serve process on the same machine,
-	// so run never serves /metrics. The instrumentation hooks still fire:
-	// with an OTLP endpoint configured, the run's trace and metrics push
-	// to the collector on the deferred shutdown flush; without one, the
-	// hooks cost nearly nothing and trace IDs still reach the logs.
-	telCfg := cfg.Telemetry
-	telCfg.Prometheus = ""
-
-	tel, err := telemetry.Setup(ctx, telCfg, appVersion())
-	if err != nil {
-		a.printErrf("run: telemetry: %v\n", err)
-
-		return ExitFailure
-	}
-	defer a.closeTelemetry(ctx, tel)
-
-	engCfg := engineConfig(cfg)
-	engCfg.Instrumentation = tel.Recorder()
-	engCfg.AgentExecutor = agentloop.New(registry, mem, db, tel.Recorder())
-	// A local run honors budgets and pauses too: governance is an engine
-	// feature, not a serve-only one (.agents/spec/12-ui-and-governance.md).
-	engCfg.Budget = db
-	engCfg.Pause = db
-
-	eng := engine.New(engCfg, registry, db)
-
-	if err := wireBreakerTelemetry(ctx, eng, tel.Recorder()); err != nil {
-		a.printErrf("run: telemetry: %v\n", err)
-
-		return ExitFailure
-	}
+	defer cleanup()
 
 	run, err := eng.RunWorkflow(ctx, flow, values, triggerCLI)
 	if err != nil {
@@ -137,6 +111,131 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 		return ExitFailure
 	}
 
+	a.printRunSummary(ctx, db, run)
+
+	// A held run parked on an approval is a clean outcome, not a failure: the
+	// operator decides it later with `cairnos runs approve`
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	if run.Status == store.RunSucceeded || run.Status == store.RunHeld {
+		return ExitOK
+	}
+
+	return ExitFailure
+}
+
+// buildEngine wires the runner registry, telemetry, agent loop, and
+// governance onto an engine for a one-shot CLI command, returning a cleanup
+// that flushes telemetry and closes the registry. run and replay share it so
+// both execute against an identically configured engine. A local command
+// honors budgets and pauses too: governance is an engine feature, not a
+// serve-only one (.agents/spec/12-ui-and-governance.md).
+func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *config.Config, db store.Store, mem memory.Store) (*engine.Engine, func(), int, bool) {
+	// A one-shot command has nothing to scrape, and binding the configured
+	// metrics port would collide with a serve process on the same machine, so
+	// it never serves /metrics. The instrumentation hooks still fire: with an
+	// OTLP endpoint configured, the trace and metrics push to the collector on
+	// the deferred shutdown flush; without one, the hooks cost nearly nothing
+	// and trace IDs still reach the logs.
+	telCfg := cfg.Telemetry
+	telCfg.Prometheus = ""
+
+	tel, err := telemetry.Setup(ctx, telCfg, appVersion())
+	if err != nil {
+		a.printErrf("%s: telemetry: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	// The secrets store shares the run store's DSN; its path resolves against the
+	// CairnOS home, the parent of the workflows directory every caller passes
+	// (filepath.Join(dir, workflowsDirName)). The default env backend opens
+	// nothing and hands back a no-op closer. The source is built before the
+	// registry so the credential manager and the runners share one chain.
+	source, closeSource, err := a.buildSecretSource(ctx, filepath.Dir(workflowsDir), cfg)
+	if err != nil {
+		a.closeTelemetry(ctx, tel)
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	// Outbound credentials resolve their secret refs through the same source, so
+	// an http or mcp_client runner naming a credential mints a bearer token.
+	// Construction does no network; a missing ref fails here, not mid-run.
+	credManager, err := buildCredentialManager(ctx, cfg, source)
+	if err != nil {
+		a.closeTelemetry(ctx, tel)
+		a.closeSecretSource(closeSource)
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager)
+	if err != nil {
+		a.closeTelemetry(ctx, tel)
+		a.closeSecretSource(closeSource)
+		a.printErrf("%s: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	engCfg := engineConfig(cfg, source)
+	engCfg.Instrumentation = tel.Recorder()
+	engCfg.AgentExecutor = agentloop.New(registry, mem, db, tel.Recorder())
+	engCfg.Budget = db
+	engCfg.Pause = db
+	// A workflow-call action resolves its child by name from the workflows
+	// directory, the same directory-backed resolver the API and replay use
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	engCfg.Workflows = api.NewWorkflowResolver(workflowsDir, a.logger)
+
+	eng := engine.New(engCfg, registry, db)
+
+	cleanup := func() {
+		a.closeTelemetry(ctx, tel)
+		a.closeRegistry(registry)
+
+		_ = closeSource()
+	}
+
+	if err := wireBreakerTelemetry(ctx, eng, tel.Recorder()); err != nil {
+		cleanup()
+		a.printErrf("%s: telemetry: %v\n", label, err)
+
+		return nil, nil, ExitFailure, false
+	}
+
+	return eng, cleanup, ExitOK, true
+}
+
+// executeReplay wires the engine and replays a prior run, seeding its
+// succeeded actions and re-executing the rest, then renders the outcome. The
+// prior run, its results, and the current workflow arrive already resolved and
+// hash-checked by the caller.
+func (a *App) executeReplay(ctx context.Context, cfg *config.Config, db store.Store, mem memory.Store, prior *store.Run, results []*store.ActionResult, flow *workflow.Workflow, workflowsDir string) int {
+	eng, cleanup, code, proceed := a.buildEngine(ctx, "runs replay", workflowsDir, cfg, db, mem)
+	if !proceed {
+		return code
+	}
+	defer cleanup()
+
+	run, err := eng.ReplayRun(ctx, prior, results, flow)
+	if err != nil {
+		// Rejection before any record existed: registration or governance
+		// problems are validation-shaped, store failures are not.
+		if _, isValidation := errors.AsType[cairnerr.Errors](err); isValidation {
+			a.printWorkflowErrors(err)
+
+			return ExitUsage
+		}
+
+		a.printErrf("runs replay: %v\n", err)
+
+		return ExitFailure
+	}
+
+	a.printOutf("replaying run %s as %s\n", prior.ID, run.ID)
 	a.printRunSummary(ctx, db, run)
 
 	if run.Status == store.RunSucceeded {

@@ -41,6 +41,7 @@ func envBindings(cfg *Config) []envBinding {
 	bindings := []envBinding{
 		{suffix: "ENGINE_MAX_CONCURRENT_ACTIONS", set: intoInt(&cfg.Engine.MaxConcurrentActions)},
 		{suffix: "ENGINE_DEFAULT_TIMEOUT", set: intoDuration(&cfg.Engine.DefaultTimeout)},
+		{suffix: "ENGINE_MAX_CALL_DEPTH", set: intoInt(&cfg.Engine.MaxCallDepth)},
 		{suffix: "ENGINE_RETRY_MAX_ATTEMPTS", set: intoInt(&cfg.Engine.Retry.MaxAttempts)},
 		{suffix: "ENGINE_RETRY_BACKOFF", set: intoString(&cfg.Engine.Retry.Backoff)},
 		{suffix: "ENGINE_RETRY_BASE_DELAY", set: intoDuration(&cfg.Engine.Retry.BaseDelay)},
@@ -48,6 +49,7 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "ENGINE_RETRY_JITTER", set: intoBool(&cfg.Engine.Retry.Jitter)},
 		{suffix: "STORE_BACKEND", set: intoString(&cfg.Store.Backend)},
 		{suffix: "STORE_DSN", set: intoString(&cfg.Store.DSN)},
+		{suffix: "SECRETS_BACKEND", set: intoString(&cfg.Secrets.Backend)},
 		{suffix: "MEMORY_BACKEND", set: intoString(&cfg.Memory.Backend)},
 		{suffix: "MEMORY_VECTOR", set: intoBool(&cfg.Memory.Vector)},
 		{suffix: "MEMORY_EMBEDDING_RUNNER", set: intoString(&cfg.Memory.EmbeddingRunner)},
@@ -116,6 +118,23 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "SCHEDULER_WORKER_CONCURRENCY", set: intoInt(&cfg.Scheduler.WorkerConcurrency)},
 		{suffix: "SCHEDULER_PREFETCH", set: intoInt(&cfg.Scheduler.Prefetch)},
 		{suffix: "SCHEDULER_SWEEP_INTERVAL", set: intoDuration(&cfg.Scheduler.SweepInterval)},
+		{suffix: "CHAT_OPENAI_COMPAT", set: intoBool(&cfg.Chat.OpenAICompat)},
+		{suffix: "CHAT_FILE_ALLOWLIST", set: intoList(&cfg.Chat.FileAllowlist)},
+		{suffix: "CHAT_MAX_FILE_BYTES", set: intoInt(&cfg.Chat.MaxFileBytes)},
+		{suffix: "WEBHOOK_ENABLED", set: intoBool(&cfg.Webhook.Enabled)},
+		{suffix: "WEBHOOK_RATE_PER_MINUTE", set: intoInt(&cfg.Webhook.RatePerMinute)},
+		{suffix: "WEBHOOK_TEST_WAIT", set: intoDuration(&cfg.Webhook.TestWait)},
+		{suffix: "WEBHOOK_SIGNATURE_SKEW", set: intoDuration(&cfg.Webhook.SignatureSkew)},
+		{suffix: "BRIDGE_TELEGRAM_ENABLED", set: intoBool(&cfg.Bridge.Telegram.Enabled)},
+		{suffix: "BRIDGE_TELEGRAM_POLL_TIMEOUT", set: intoDuration(&cfg.Bridge.Telegram.PollTimeout)},
+		{suffix: "BRIDGE_TELEGRAM_SEND_TIMEOUT", set: intoDuration(&cfg.Bridge.Telegram.SendTimeout)},
+		{suffix: "BRIDGE_TELEGRAM_CONFIRM_TTL", set: intoDuration(&cfg.Bridge.Telegram.ConfirmTTL)},
+		{suffix: "BRIDGE_TELEGRAM_VERBOSE", set: intoBool(&cfg.Bridge.Telegram.Verbose)},
+		// The token and the Discord webhook URL are credentials, so they come only
+		// from CAIRNOS_BRIDGE_TELEGRAM_TOKEN and CAIRNOS_NOTIFY_DISCORD_WEBHOOK at
+		// serve wiring, never a config field bound here. The users table is
+		// file-only: a map has no single env form.
+		{suffix: "NOTIFY_DISCORD_EVENTS", set: intoList(&cfg.Notify.Discord.Events)},
 	}
 
 	return bindings

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Canvas } from '@/builder/Canvas';
 import { Inspector } from '@/builder/Inspector';
 import { InputsEditor } from '@/builder/InputsEditor';
+import { RunPanel } from '@/builder/RunPanel';
 import { TomlPanel } from '@/builder/TomlPanel';
 import { useBuilderStore } from '@/builder/store';
 
@@ -87,6 +88,7 @@ export function BuilderPage() {
         <div className="flex-1 space-y-4">
           <Canvas />
           <InputsEditor />
+          <RunPanel />
           <TomlPanel />
         </div>
         <Inspector />

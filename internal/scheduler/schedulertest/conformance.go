@@ -4,6 +4,7 @@
 package schedulertest
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -63,6 +64,10 @@ func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.W
 		{"HoldThenResume", testQueueHoldThenResume},
 		{"PurgeDeadRemovesOldItems", testQueuePurgeDeadRemovesOldItems},
 		{"StatsReportsOldestReadyAge", testQueueStatsReportsOldestReadyAge},
+		{"CursorSetThenGet", testCursorSetThenGet},
+		{"CursorUpsertOverwrites", testCursorUpsertOverwrites},
+		{"CursorMissingReportsNotFound", testCursorMissingReportsNotFound},
+		{"CursorPerScheduleIsolation", testCursorPerScheduleIsolation},
 	}
 
 	for _, testCase := range cases {
@@ -363,6 +368,112 @@ func testQueueStatsReportsOldestReadyAge(t *testing.T, queue scheduler.WorkQueue
 	if stats.OldestReadyAge != agedReady {
 		t.Errorf("oldest ready age = %v, want 5m", stats.OldestReadyAge)
 	}
+}
+
+// Poll-cursor case fixtures. Two schedule ids prove per-schedule isolation, and
+// two cursor payloads prove an upsert overwrites the prior value.
+const (
+	cursorScheduleA   = "poll-sched-a"
+	cursorScheduleB   = "poll-sched-b"
+	cursorValueFirst  = "2026-06-13T12:00:00Z"
+	cursorValueSecond = "2026-06-13T12:05:00Z"
+)
+
+func testCursorSetThenGet(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	cursors := mustCursors(t, queue)
+
+	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
+		t.Fatalf("set cursor: %v", err)
+	}
+
+	got, err := cursors.GetCursor(t.Context(), cursorScheduleA)
+	if err != nil {
+		t.Fatalf("get cursor: %v", err)
+	}
+
+	if got != cursorValueFirst {
+		t.Errorf("cursor = %q, want %q", got, cursorValueFirst)
+	}
+}
+
+func testCursorUpsertOverwrites(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	cursors := mustCursors(t, queue)
+
+	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
+		t.Fatalf("first set: %v", err)
+	}
+
+	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueSecond); err != nil {
+		t.Fatalf("second set: %v", err)
+	}
+
+	got, err := cursors.GetCursor(t.Context(), cursorScheduleA)
+	if err != nil {
+		t.Fatalf("get cursor: %v", err)
+	}
+
+	if got != cursorValueSecond {
+		t.Errorf("upserted cursor = %q, want %q", got, cursorValueSecond)
+	}
+}
+
+func testCursorMissingReportsNotFound(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	cursors := mustCursors(t, queue)
+
+	if _, err := cursors.GetCursor(t.Context(), cursorScheduleA); !errors.Is(err, scheduler.ErrCursorNotFound) {
+		t.Fatalf("get missing cursor err = %v, want ErrCursorNotFound", err)
+	}
+}
+
+func testCursorPerScheduleIsolation(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	cursors := mustCursors(t, queue)
+
+	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
+		t.Fatalf("set A: %v", err)
+	}
+
+	if err := cursors.SetCursor(t.Context(), cursorScheduleB, cursorValueSecond); err != nil {
+		t.Fatalf("set B: %v", err)
+	}
+
+	gotA, err := cursors.GetCursor(t.Context(), cursorScheduleA)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+
+	if gotA != cursorValueFirst {
+		t.Errorf("schedule A cursor = %q, want %q", gotA, cursorValueFirst)
+	}
+
+	gotB, err := cursors.GetCursor(t.Context(), cursorScheduleB)
+	if err != nil {
+		t.Fatalf("get B: %v", err)
+	}
+
+	if gotB != cursorValueSecond {
+		t.Errorf("schedule B cursor = %q, want %q", gotB, cursorValueSecond)
+	}
+}
+
+// mustCursors asserts the queue backend also implements PollCursors, the poll
+// half of the same handle; a backend that forgets it fails here loudly.
+func mustCursors(t *testing.T, queue scheduler.WorkQueue) scheduler.PollCursors {
+	t.Helper()
+
+	cursors, ok := queue.(scheduler.PollCursors)
+	if !ok {
+		t.Fatalf("queue backend %T does not implement PollCursors", queue)
+	}
+
+	return cursors
 }
 
 // mustEnqueue enqueues a ready item keyed by dedup, failing the test on error.

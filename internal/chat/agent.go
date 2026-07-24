@@ -69,6 +69,29 @@ type Config struct {
 	// Personalities resolves a session's personality to its system prompt.
 	Personalities *Personalities
 
+	// Skills lists and loads operator-authored skills a turn can invoke. Nil
+	// disables skill invocation, so a node without a skills directory runs chat
+	// unchanged. A loaded skill influences the driver prompt only: it adds no
+	// tool, raises no budget, and cannot move the D9 confirmation gate.
+	Skills SkillSource
+
+	// ContextDir is the directory holding per-workspace context docs
+	// (<ContextDir>/<workspace>.md). Empty disables workspace context, so a node
+	// without one runs chat unchanged. A loaded doc influences the driver prompt
+	// only, the same additive posture as a skill.
+	ContextDir string
+
+	// FileAllowlist is the set of absolute directory roots an @-file reference in
+	// a user message may read from. Empty (the default) leaves every @-token
+	// inert: no reads, no notes, plain text. A path is readable only when its
+	// symlink-resolved form sits inside a symlink-resolved root.
+	FileAllowlist []string
+
+	// MaxFileBytes caps how much of one @-file reference inlines into the
+	// transcript; a larger file truncates at the cap with the byte counts in the
+	// record. Zero leaves an inlined file untruncated.
+	MaxFileBytes int
+
 	// Trigger fires a confirmed workflow. Nil disables the gate: a run_workflow
 	// proposal still raises the confirmation event, but an approval reports that
 	// triggering is unavailable instead of starting a run.
@@ -156,6 +179,17 @@ func (a *Agent) ListMessages(ctx context.Context, sessionID string) ([]*store.Ch
 	messages, err := a.cfg.Store.ListMessages(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list chat messages: %w", err)
+	}
+
+	return messages, nil
+}
+
+// SearchMessages runs full-text search over the workspace's transcripts, best
+// match first with (session_id, seq) as the stable tie-break.
+func (a *Agent) SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error) {
+	messages, err := a.cfg.Store.SearchMessages(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("search chat messages: %w", err)
 	}
 
 	return messages, nil

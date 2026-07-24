@@ -46,7 +46,7 @@ func (a *App) cmdRules(ctx context.Context, args []string) int {
 		return a.cmdRulesSet(ctx, args[1:])
 	case subcmdGet:
 		return a.cmdRulesGet(ctx, args[1:])
-	case "import":
+	case subcmdImport:
 		return a.cmdRulesImport(ctx, args[1:])
 	default:
 		a.printErrf("unknown rules subcommand %q\n", args[0])

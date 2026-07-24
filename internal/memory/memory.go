@@ -39,6 +39,11 @@ type Store interface {
 	// Load returns the entries to inject into a prompt for a given scope,
 	// ordered by importance, capped by a token budget.
 	Load(ctx context.Context, scope string, tokenBudget int) ([]Entry, error)
+
+	// List returns entries in the request workspace, optionally narrowed to
+	// one scope (empty lists all), ordered by created_at then id so exports
+	// are stable run to run.
+	List(ctx context.Context, scope string) ([]Entry, error)
 }
 
 // Entry is one curated note.

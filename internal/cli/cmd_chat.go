@@ -1,12 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
+	"os"
+	"os/signal"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -16,17 +15,23 @@ import (
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 )
 
-const chatUsage = "usage: cairnos chat [--addr host:port] [--token T] [--session id] [--personality name]\n"
+const chatUsage = "usage: cairnos chat [--addr host:port] [--token T] [--session id] [--personality name] [--search q] [--limit n]\n"
 
 // defaultChatAddr is the gRPC address the chat client dials when --addr is
 // unset: the serve default on loopback.
 const defaultChatAddr = "127.0.0.1:7777"
 
+// defaultChatSearchLimit caps search hits when the caller does not say
+// otherwise; /search and the --limit default share it so both surfaces
+// agree on how much transcript floods the terminal.
+const defaultChatSearchLimit = 20
+
 // cmdChat is the interactive chat REPL (.agents/spec/13-roadmap.md, Phase 9):
-// it dials a running serve API, opens or continues a session, then reads a line
-// at a time, streams the assistant's reply, and prompts y/n when the agent
-// proposes a workflow, confirming through ConfirmAction. It is a thin client
-// over ChatService, so the agent, gate, and budget all live server-side.
+// it dials a running serve API, opens or continues a session, and hands the
+// conversation to chatREPL, which owns the line loop, slash commands, and
+// streaming. It is a thin client over ChatService, so the agent, gate, and
+// budget all live server-side. --search skips the REPL entirely: one query,
+// hits printed, exit.
 func (a *App) cmdChat(ctx context.Context, args []string) int {
 	opts, code, proceed := a.parseChatFlags(args)
 	if !proceed {
@@ -42,18 +47,39 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 	defer a.closeConn(conn)
 
 	client := cairnosv1.NewChatServiceClient(conn)
-	callCtx := chatContext(ctx, opts.token)
 
-	sessionID, err := resolveSession(callCtx, client, opts)
+	if opts.searchSet {
+		// The one-shot stays on main's signal context: Ctrl-C should kill a
+		// non-interactive query the normal way, unlike the REPL below.
+		return a.runChatSearch(chatContext(ctx, opts.token), client, &opts)
+	}
+
+	// WithoutCancel detaches the conversation from main's NotifyContext:
+	// SIGINT must interrupt one turn, not the whole session, so the REPL's
+	// only exits are /quit, /exit, stdin EOF, and a scanner error.
+	callCtx := chatContext(context.WithoutCancel(ctx), opts.token)
+
+	sessionID, personality, err := resolveSession(callCtx, client, &opts)
 	if err != nil {
 		a.printErrf("chat: %v\n", err)
 
 		return ExitFailure
 	}
 
-	a.printOutf("session %s (%s); type a message, or /quit to exit\n", sessionID, opts.personality)
+	a.printOutf("session %s (%s); type a message, /help for commands, /quit to exit\n", sessionID, personality)
 
-	return a.chatLoop(callCtx, client, sessionID)
+	interrupts := a.interrupts
+	if interrupts == nil {
+		// No injected seam, so watch the real signal for the REPL's lifetime.
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt)
+
+		defer signal.Stop(signals)
+
+		interrupts = signals
+	}
+
+	return newChatREPL(a, client, sessionID, personality).run(callCtx, interrupts)
 }
 
 // chatOptions holds the parsed chat flags.
@@ -62,6 +88,12 @@ type chatOptions struct {
 	token       string
 	session     string
 	personality string
+	search      string
+	limit       int
+
+	// searchSet distinguishes --search "" (a usage error) from --search
+	// absent (enter the REPL); the flag package reports both as "".
+	searchSet bool
 }
 
 // parseChatFlags parses the chat command flags.
@@ -71,8 +103,10 @@ func (a *App) parseChatFlags(args []string) (chatOptions, int, bool) {
 
 	addr := flags.String("addr", defaultChatAddr, "serve gRPC address")
 	token := flags.String("token", "", "bearer token (when the server runs with auth)")
-	session := flags.String("session", "", "continue an existing session id")
+	session := flags.String("session", "", "continue an existing session id; with --search, narrow hits to it")
 	personality := flags.String("personality", "", "personality for a new session")
+	search := flags.String("search", "", "print matching transcript messages and exit without the REPL")
+	limit := flags.Int("limit", defaultChatSearchLimit, "result cap for --search")
 
 	if code, proceed := parseFlags(flags, args); !proceed {
 		return chatOptions{}, code, false
@@ -84,175 +118,74 @@ func (a *App) parseChatFlags(args []string) (chatOptions, int, bool) {
 		return chatOptions{}, ExitUsage, false
 	}
 
-	return chatOptions{addr: *addr, token: *token, session: *session, personality: *personality}, ExitOK, true
-}
+	var searchSet bool
 
-// resolveSession continues the session named on the flags, or creates a new one
-// when none was given. It returns the session id to converse in.
-func resolveSession(ctx context.Context, client cairnosv1.ChatServiceClient, opts chatOptions) (string, error) {
-	if opts.session != "" {
-		resp, err := client.GetSession(ctx, &cairnosv1.GetSessionRequest{SessionId: opts.session})
-		if err != nil {
-			return "", fmt.Errorf("get session %s: %w", opts.session, err)
+	flags.Visit(func(visited *flag.Flag) {
+		if visited.Name == "search" {
+			searchSet = true
 		}
+	})
 
-		opts.personality = resp.GetSession().GetPersonality()
+	if searchSet && strings.TrimSpace(*search) == "" {
+		// Fail before dialing: an empty query can only ever be a mistake.
+		a.printErrf("%s", chatUsage)
 
-		return resp.GetSession().GetId(), nil
+		return chatOptions{}, ExitUsage, false
 	}
 
-	resp, err := client.CreateSession(ctx, &cairnosv1.CreateSessionRequest{Personality: opts.personality})
+	return chatOptions{
+		addr:        *addr,
+		token:       *token,
+		session:     *session,
+		personality: *personality,
+		search:      *search,
+		limit:       *limit,
+		searchSet:   searchSet,
+	}, ExitOK, true
+}
+
+// runChatSearch answers --search in one shot: run the query with the
+// --session scope and --limit cap, print hits in the REPL's shared format,
+// and exit without touching sessions or entering the line loop.
+func (a *App) runChatSearch(ctx context.Context, client chatClient, opts *chatOptions) int {
+	resp, err := client.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{
+		Text:      opts.search,
+		SessionId: opts.session,
+		// #nosec G115 -- an operator-typed result cap; a wrapped value only
+		// changes the cap, and the server treats non-positive as no cap.
+		Limit: int32(opts.limit),
+	})
 	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-
-	return resp.GetSession().GetId(), nil
-}
-
-// chatLoop reads lines until EOF or /quit, sending each as a message and
-// streaming the reply.
-func (a *App) chatLoop(ctx context.Context, client cairnosv1.ChatServiceClient, sessionID string) int {
-	reader := bufio.NewScanner(a.stdin)
-
-	for {
-		a.printOutf("> ")
-
-		if !reader.Scan() {
-			return a.scannerExit(reader)
-		}
-
-		line := strings.TrimSpace(reader.Text())
-		if line == "" {
-			continue
-		}
-
-		if line == "/quit" || line == "/exit" {
-			return ExitOK
-		}
-
-		if err := a.runChatTurn(ctx, client, sessionID, line); err != nil {
-			a.printErrf("chat: %v\n", err)
-
-			return ExitFailure
-		}
-	}
-}
-
-// scannerExit reports the exit code after the input stream ends: a scan error
-// fails, a clean EOF (the operator closed stdin) exits successfully.
-func (a *App) scannerExit(reader *bufio.Scanner) int {
-	if err := reader.Err(); err != nil {
-		a.printErrf("chat: read input: %v\n", err)
+		a.printErrf("chat: search: %v\n", err)
 
 		return ExitFailure
 	}
 
-	a.printOutf("\n")
+	a.printSearchHits(resp.GetMessages())
 
 	return ExitOK
 }
 
-// runChatTurn sends one message, streams its events, and on a
-// confirmation-required event prompts the operator and confirms or denies.
-func (a *App) runChatTurn(ctx context.Context, client cairnosv1.ChatServiceClient, sessionID, message string) error {
-	stream, err := client.SendMessage(ctx, &cairnosv1.SendMessageRequest{SessionId: sessionID, Message: message})
-	if err != nil {
-		return fmt.Errorf("send message: %w", err)
-	}
-
-	pending, gated, err := a.streamEvents(stream)
-	if err != nil {
-		return err
-	}
-
-	if !gated {
-		return nil
-	}
-
-	return a.resolveProposal(ctx, client, sessionID, pending)
-}
-
-// chatEventStream is the receive side of SendMessage and ConfirmAction, so one
-// streamEvents body serves both.
-type chatEventStream interface {
-	Recv() (*cairnosv1.ChatEvent, error)
-}
-
-// streamEvents prints assistant text and tool-call notices as they arrive. The
-// bool reports whether the turn paused for confirmation, in which case the
-// proposal is returned; a false bool means the turn answered or ran to
-// completion.
-func (a *App) streamEvents(stream chatEventStream) (*cairnosv1.WorkflowProposal, bool, error) {
-	for {
-		event, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil, false, nil
-		}
-
+// resolveSession continues the session named on the flags, or creates a new
+// one when none was given. It returns the session id and personality to
+// converse in; a continued session reports its stored personality, not the
+// flag value.
+func resolveSession(ctx context.Context, client chatClient, opts *chatOptions) (string, string, error) {
+	if opts.session != "" {
+		resp, err := client.GetSession(ctx, &cairnosv1.GetSessionRequest{SessionId: opts.session})
 		if err != nil {
-			return nil, false, fmt.Errorf("receive chat event: %w", err)
+			return "", "", fmt.Errorf("get session %s: %w", opts.session, err)
 		}
 
-		if proposal := a.printChatEvent(event); proposal != nil {
-			return proposal, true, nil
-		}
-	}
-}
-
-// printChatEvent prints one event for the operator and returns a proposal when
-// the event is a confirmation gate, so the caller can prompt.
-func (a *App) printChatEvent(event *cairnosv1.ChatEvent) *cairnosv1.WorkflowProposal {
-	switch event.GetType() {
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_ASSISTANT_CHUNK:
-		a.printOutf("%s\n", event.GetText())
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_TOOL_CALL:
-		a.printOutf("[tool %s]\n", event.GetTool())
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_CONFIRMATION_REQUIRED:
-		return event.GetProposal()
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_RUN_STARTED:
-		a.printOutf("[run %s started]\n", event.GetRunId())
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_RUN_FINISHED:
-		a.printOutf("[run %s %s]\n", event.GetRunId(), event.GetRunStatus())
-	case cairnosv1.ChatEventType_CHAT_EVENT_TYPE_TURN_DONE,
-		cairnosv1.ChatEventType_CHAT_EVENT_TYPE_UNSPECIFIED:
-		// Turn-done carries no new text to print here; the assistant chunk
-		// already showed the reply.
+		return resp.GetSession().GetId(), resp.GetSession().GetPersonality(), nil
 	}
 
-	return nil
-}
-
-// resolveProposal prompts the operator y/n for a pending workflow trigger and
-// confirms or denies it, streaming the confirm turn's events.
-func (a *App) resolveProposal(ctx context.Context, client cairnosv1.ChatServiceClient, sessionID string, proposal *cairnosv1.WorkflowProposal) error {
-	a.printOutf("Run workflow %q (estimated budget $%.2f)? [y/N] ",
-		proposal.GetWorkflowName(), proposal.GetEstimatedBudgetUsd())
-
-	approve := a.readApproval()
-
-	stream, err := client.ConfirmAction(ctx, &cairnosv1.ConfirmActionRequest{SessionId: sessionID, Approve: approve})
+	resp, err := client.CreateSession(ctx, &cairnosv1.CreateSessionRequest{Personality: opts.personality})
 	if err != nil {
-		return fmt.Errorf("confirm action: %w", err)
+		return "", "", fmt.Errorf("create session: %w", err)
 	}
 
-	if _, _, err := a.streamEvents(stream); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// readApproval reads one y/n line, defaulting to deny on anything but an
-// explicit yes, so a stray newline never fires a workflow.
-func (a *App) readApproval() bool {
-	reader := bufio.NewScanner(a.stdin)
-	if !reader.Scan() {
-		return false
-	}
-
-	answer := strings.ToLower(strings.TrimSpace(reader.Text()))
-
-	return answer == "y" || answer == "yes"
+	return resp.GetSession().GetId(), resp.GetSession().GetPersonality(), nil
 }
 
 // chatContext attaches the bearer token to the outgoing call metadata when one

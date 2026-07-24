@@ -25,12 +25,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChatService_CreateSession_FullMethodName = "/cairnos.v1.ChatService/CreateSession"
-	ChatService_SendMessage_FullMethodName   = "/cairnos.v1.ChatService/SendMessage"
-	ChatService_ConfirmAction_FullMethodName = "/cairnos.v1.ChatService/ConfirmAction"
-	ChatService_GetSession_FullMethodName    = "/cairnos.v1.ChatService/GetSession"
-	ChatService_ListSessions_FullMethodName  = "/cairnos.v1.ChatService/ListSessions"
-	ChatService_ListMessages_FullMethodName  = "/cairnos.v1.ChatService/ListMessages"
+	ChatService_CreateSession_FullMethodName  = "/cairnos.v1.ChatService/CreateSession"
+	ChatService_SendMessage_FullMethodName    = "/cairnos.v1.ChatService/SendMessage"
+	ChatService_ConfirmAction_FullMethodName  = "/cairnos.v1.ChatService/ConfirmAction"
+	ChatService_GetSession_FullMethodName     = "/cairnos.v1.ChatService/GetSession"
+	ChatService_ListSessions_FullMethodName   = "/cairnos.v1.ChatService/ListSessions"
+	ChatService_ListMessages_FullMethodName   = "/cairnos.v1.ChatService/ListMessages"
+	ChatService_SearchMessages_FullMethodName = "/cairnos.v1.ChatService/SearchMessages"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -60,6 +61,8 @@ type ChatServiceClient interface {
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 	// ListMessages returns one session's full transcript in order.
 	ListMessages(ctx context.Context, in *ListMessagesRequest, opts ...grpc.CallOption) (*ListMessagesResponse, error)
+	// SearchMessages runs full-text search over the workspace's transcripts.
+	SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error)
 }
 
 type chatServiceClient struct {
@@ -148,6 +151,16 @@ func (c *chatServiceClient) ListMessages(ctx context.Context, in *ListMessagesRe
 	return out, nil
 }
 
+func (c *chatServiceClient) SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_SearchMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
@@ -175,6 +188,8 @@ type ChatServiceServer interface {
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	// ListMessages returns one session's full transcript in order.
 	ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error)
+	// SearchMessages runs full-text search over the workspace's transcripts.
+	SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -202,6 +217,9 @@ func (UnimplementedChatServiceServer) ListSessions(context.Context, *ListSession
 }
 func (UnimplementedChatServiceServer) ListMessages(context.Context, *ListMessagesRequest) (*ListMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListMessages not implemented")
+}
+func (UnimplementedChatServiceServer) SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchMessages not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -318,6 +336,24 @@ func _ChatService_ListMessages_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SearchMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SearchMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SearchMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SearchMessages(ctx, req.(*SearchMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -340,6 +376,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListMessages",
 			Handler:    _ChatService_ListMessages_Handler,
+		},
+		{
+			MethodName: "SearchMessages",
+			Handler:    _ChatService_SearchMessages_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

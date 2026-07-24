@@ -29,6 +29,11 @@ const (
 
 	// CodeDriverFailed marks a driver turn that errored, ending the chat turn.
 	CodeDriverFailed = "chat.driver_failed"
+
+	// CodeBadWorkspace marks a turn whose request workspace id fails
+	// ^[A-Za-z0-9_-]+$ before a context path is built, so a traversal-shaped id
+	// never reads another workspace's context file.
+	CodeBadWorkspace = "chat.bad_workspace_id"
 )
 
 // Sentinel errors for the chat package.
@@ -36,6 +41,10 @@ var (
 	// ErrUnknownPersonality reports a CreateSession naming a personality the
 	// node does not serve, so a typo fails at creation.
 	ErrUnknownPersonality = errors.New("unknown personality")
+
+	// ErrSkillNotFound is what a SkillSource returns for an unknown name; the
+	// CLI adapter maps skills.ErrNotFound onto it.
+	ErrSkillNotFound = errors.New("skill not found")
 )
 
 // errf builds a canonical chat error. A local constructor mirrors the agent

@@ -217,6 +217,50 @@ func TestImportConfigRendersRunnerBlocks(t *testing.T) {
 	}
 }
 
+func TestImportConfigReservesBuiltinClientName(t *testing.T) {
+	t.Parallel()
+
+	// Server "mcp" with tool "client" slugs to exactly mcp_client, the one name
+	// the CLI wiring treats as configuration for the built-in instance.
+	servers := []mcp.ServerEntry{
+		{Name: "mcp", Endpoint: "https://mcp.example/tools", Tools: []mcp.ToolEntry{{Name: "client"}}},
+	}
+
+	rendered, names := mcp.ImportConfig(servers, "")
+
+	if len(names) != 1 || names[0] != "mcp_client_2" {
+		t.Fatalf("names = %v, want the reserved slug suffixed as mcp_client_2", names)
+	}
+
+	if !strings.Contains(rendered, "[runner.mcp_client_2]") {
+		t.Errorf("rendered config missing [runner.mcp_client_2]\n%s", rendered)
+	}
+
+	if strings.Contains(rendered, "[runner.mcp_client]") {
+		t.Errorf("rendered config emits the reserved [runner.mcp_client] block\n%s", rendered)
+	}
+}
+
+func TestImportConfigHeaderMakesNoTokenClaim(t *testing.T) {
+	t.Parallel()
+
+	rendered, _ := mcp.ImportConfig(nil, "")
+
+	if strings.Contains(rendered, "CAIRNOS_RUNNER") {
+		t.Errorf("header still claims a per-runner token env var\n%s", rendered)
+	}
+
+	for _, want := range []string{
+		"Authenticated MCP servers aren't supported yet",
+		"sends no Authorization header",
+		"allow_private_targets = true",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("header missing %q\n%s", want, rendered)
+		}
+	}
+}
+
 func TestImportConfigSkipsSelf(t *testing.T) {
 	t.Parallel()
 

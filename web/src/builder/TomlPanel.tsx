@@ -5,6 +5,7 @@ import { ErrorBanner } from '@/components/ErrorBanner';
 import { emitWorkflow } from '@/workflow/emit';
 import { WorkflowParseError, parseWorkflow } from '@/workflow/parse';
 import { useBuilderStore } from './store';
+import { errorCodesByAction } from './validationErrors';
 
 /**
  * TomlPanel is the export/import bridge. Export renders the current canvas to
@@ -50,14 +51,7 @@ export function TomlPanel() {
       setToml(text);
       const result = await validateWorkflow(text);
 
-      const byAction: Record<string, string[]> = {};
-      for (const issue of result.errors ?? []) {
-        const action = actionFromDetails(issue.details);
-        if (action) {
-          byAction[action] = [...(byAction[action] ?? []), issue.code];
-        }
-      }
-      setErrorCodes(byAction);
+      setErrorCodes(errorCodesByAction(result.errors));
 
       setValidationNote(
         result.valid
@@ -115,17 +109,4 @@ export function TomlPanel() {
       {importError ? <ErrorBanner error={importError} title="TOML problem" /> : null}
     </section>
   );
-}
-
-/**
- * actionFromDetails pulls an action name out of a validation error's details.
- * The engine's structured details vary by code; an "action" key is the common
- * carrier. When absent, the error stays workflow-level and shows in the note.
- */
-function actionFromDetails(details: Record<string, unknown> | undefined): string | null {
-  if (!details) {
-    return null;
-  }
-  const value = details.action ?? details.name;
-  return typeof value === 'string' ? value : null;
 }

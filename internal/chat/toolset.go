@@ -28,8 +28,9 @@ func BuildToolSet(readTools map[string]runner.Runner) ToolSet {
 	specs := make([]runner.ToolSpec, 0, len(readTools)+1)
 
 	// Order the read tools by their well-known names so the descriptor list the
-	// driver sees is stable across runs (memory first, then vault_query).
-	for _, name := range []string{ToolMemory, ToolVaultQuery} {
+	// driver sees is stable across runs: memory, then vault_query, then the skill
+	// read tool. run_workflow's gate descriptor still goes last, below.
+	for _, name := range []string{ToolMemory, ToolVaultQuery, SkillToolName} {
 		rnr, present := readTools[name]
 		if !present {
 			continue

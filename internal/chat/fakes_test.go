@@ -3,6 +3,7 @@ package chat_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 
@@ -32,6 +33,7 @@ type scriptedDriver struct {
 	turns   []runner.Result
 	calls   int
 	prompts []string
+	systems []string
 }
 
 var (
@@ -58,6 +60,9 @@ func (d *scriptedDriver) ExecuteWithTools(_ context.Context, task *runner.Task, 
 	prompt, _ := task.Params["prompt"].(string)
 	d.prompts = append(d.prompts, prompt)
 
+	system, _ := task.Params["system"].(string)
+	d.systems = append(d.systems, system)
+
 	if d.calls >= len(d.turns) {
 		return runner.Result{}, errDriverScriptEmpty
 	}
@@ -76,6 +81,16 @@ func (d *scriptedDriver) callCount() int {
 	return d.calls
 }
 
+// allPrompts returns a copy of every prompt the driver saw, so a test can prove
+// a section (a workspace context doc, say) rendered into every iteration of a
+// multi-iteration turn, not just the last.
+func (d *scriptedDriver) allPrompts() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return slices.Clone(d.prompts)
+}
+
 // lastPrompt returns the most recent prompt the driver saw, so a test can
 // prove the conversation history replayed into it.
 func (d *scriptedDriver) lastPrompt(t *testing.T) string {
@@ -89,6 +104,21 @@ func (d *scriptedDriver) lastPrompt(t *testing.T) string {
 	}
 
 	return d.prompts[len(d.prompts)-1]
+}
+
+// lastSystem returns the most recent system prompt the driver saw, so a test
+// can prove the description-match skill listing was appended to it.
+func (d *scriptedDriver) lastSystem(t *testing.T) string {
+	t.Helper()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.systems) == 0 {
+		t.Fatal("driver saw no system prompts")
+	}
+
+	return d.systems[len(d.systems)-1]
 }
 
 // finalTurn is a driver turn carrying a plain text answer.
@@ -150,8 +180,8 @@ func collectEvents(events <-chan chat.Event) []chat.Event {
 // eventTypes maps events to their types for order assertions.
 func eventTypes(events []chat.Event) []chat.EventType {
 	types := make([]chat.EventType, len(events))
-	for idx, event := range events {
-		types[idx] = event.Type
+	for idx := range events {
+		types[idx] = events[idx].Type
 	}
 
 	return types

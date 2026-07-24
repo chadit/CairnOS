@@ -8,7 +8,7 @@ import (
 	"github.com/chadit/CairnOS/internal/memory"
 )
 
-const memoryUsage = "usage: cairnos memory <add|get|rm|search> [flags]\n"
+const memoryUsage = "usage: cairnos memory <add|get|rm|search|export|import> [flags]\n"
 
 // defaultImportance matches the memory schema's importance default.
 const defaultImportance = 50
@@ -29,6 +29,10 @@ func (a *App) cmdMemory(ctx context.Context, args []string) int {
 		return a.cmdMemoryRemove(ctx, args[1:])
 	case "search":
 		return a.cmdMemorySearch(ctx, args[1:])
+	case "export":
+		return a.cmdMemoryExport(ctx, args[1:])
+	case subcmdImport:
+		return a.cmdMemoryImport(ctx, args[1:])
 	default:
 		a.printErrf("unknown memory subcommand %q\n", args[0])
 		a.printErrf("%s", memoryUsage)
@@ -194,6 +198,77 @@ func (a *App) cmdMemorySearch(ctx context.Context, args []string) int {
 	}
 
 	a.flushTab(tab)
+
+	return ExitOK
+}
+
+func (a *App) cmdMemoryExport(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("memory export", flag.ContinueOnError)
+	flags.SetOutput(a.stderr)
+
+	outFlag := flags.String("out", "", "directory to write <id>.md files into")
+	scopeFlag := flags.String("scope", "", "restrict export to one scope (default all)")
+	dirFlag := dirFlagOn(flags)
+
+	if code, proceed := parseFlags(flags, args); !proceed {
+		return code
+	}
+
+	if *outFlag == "" {
+		a.printErrf("usage: cairnos memory export --out D [--scope S] [--dir D]\n")
+
+		return ExitUsage
+	}
+
+	mem, code, proceed := a.openMemoryAt(ctx, "memory export", *dirFlag)
+	if !proceed {
+		return code
+	}
+	defer a.closeStore(mem)
+
+	count, err := memory.ExportDir(ctx, mem, *scopeFlag, *outFlag)
+	if err != nil {
+		a.printErrf("memory export: %v\n", err)
+
+		return ExitFailure
+	}
+
+	a.printOutf("exported %d entries to %s\n", count, *outFlag)
+
+	return ExitOK
+}
+
+func (a *App) cmdMemoryImport(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("memory import", flag.ContinueOnError)
+	flags.SetOutput(a.stderr)
+
+	fromFlag := flags.String("from", "", "directory of <id>.md files to import")
+	dirFlag := dirFlagOn(flags)
+
+	if code, proceed := parseFlags(flags, args); !proceed {
+		return code
+	}
+
+	if *fromFlag == "" {
+		a.printErrf("usage: cairnos memory import --from D [--dir D]\n")
+
+		return ExitUsage
+	}
+
+	mem, code, proceed := a.openMemoryAt(ctx, "memory import", *dirFlag)
+	if !proceed {
+		return code
+	}
+	defer a.closeStore(mem)
+
+	summary, err := memory.ImportDir(ctx, mem, *fromFlag)
+	if err != nil {
+		a.printErrf("memory import: %v\n", err)
+
+		return ExitFailure
+	}
+
+	a.printOutf("added %d, updated %d, unchanged %d\n", summary.Added, summary.Updated, summary.Unchanged)
 
 	return ExitOK
 }

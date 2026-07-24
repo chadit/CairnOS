@@ -79,11 +79,101 @@ func newPostgresQueue(t *testing.T) scheduler.WorkQueue {
 }
 
 // TestSchedulerQueueConformance runs the shared work-queue contract against a
-// live Postgres, the backend counterpart to the sqlite unit test.
+// live Postgres, the backend counterpart to the sqlite unit test. The poll
+// cursor cases ride the same suite, so both backends are held to one contract.
 func TestSchedulerQueueConformance(t *testing.T) {
 	t.Parallel()
 
 	schedulertest.RunWorkQueueConformance(t, newPostgresQueue)
+}
+
+// TestSchedulerPollCursorSurvivesReopen proves the Postgres poll cursor is
+// durable across a pool close/reopen against the same schema, the backend
+// counterpart to the sqlite reopen test: a daemon restart re-polls from where it
+// left off instead of backfilling.
+func TestSchedulerPollCursorSurvivesReopen(t *testing.T) {
+	t.Parallel()
+
+	const (
+		scheduleID = "sched-reopen"
+		cursor     = "2026-06-13T12:00:00Z"
+	)
+
+	ctx := t.Context()
+	schema := "cairnos_cursor_test_" + strings.ToLower(ulid.Make().String())
+
+	cfg, err := pgxpool.ParseConfig(integration.DSN(t))
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+
+	setupPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open setup pool: %v", err)
+	}
+
+	if _, err := setupPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); err != nil {
+		setupPool.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+
+	setupPool.Close()
+
+	t.Cleanup(func() {
+		dropCtx := context.WithoutCancel(ctx)
+
+		dropPool, dropErr := pgxpool.NewWithConfig(dropCtx, cfg)
+		if dropErr != nil {
+			t.Errorf("open drop pool: %v", dropErr)
+
+			return
+		}
+		defer dropPool.Close()
+
+		if _, execErr := dropPool.Exec(dropCtx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); execErr != nil {
+			t.Errorf("drop test schema: %v", execErr)
+		}
+	})
+
+	firstPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open first pool: %v", err)
+	}
+
+	first, err := scheduler.NewPostgresQueue(ctx, firstPool)
+	if err != nil {
+		firstPool.Close()
+		t.Fatalf("new first queue: %v", err)
+	}
+
+	if err := first.SetCursor(ctx, scheduleID, cursor); err != nil {
+		firstPool.Close()
+		t.Fatalf("set cursor: %v", err)
+	}
+
+	firstPool.Close()
+
+	secondPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("reopen pool: %v", err)
+	}
+	defer secondPool.Close()
+
+	second, err := scheduler.NewPostgresQueue(ctx, secondPool)
+	if err != nil {
+		t.Fatalf("new second queue: %v", err)
+	}
+
+	got, err := second.GetCursor(ctx, scheduleID)
+	if err != nil {
+		t.Fatalf("get cursor after reopen: %v", err)
+	}
+
+	if got != cursor {
+		t.Errorf("cursor after reopen = %q, want %q", got, cursor)
+	}
 }
 
 // TestSchedulerCoordinatorContendForLeadership races two coordinators against the
