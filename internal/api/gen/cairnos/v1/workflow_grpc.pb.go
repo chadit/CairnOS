@@ -31,6 +31,7 @@ const (
 	WorkflowService_ReplayRun_FullMethodName        = "/cairnos.v1.WorkflowService/ReplayRun"
 	WorkflowService_ValidateWorkflow_FullMethodName = "/cairnos.v1.WorkflowService/ValidateWorkflow"
 	WorkflowService_SaveWorkflow_FullMethodName     = "/cairnos.v1.WorkflowService/SaveWorkflow"
+	WorkflowService_ApproveRun_FullMethodName       = "/cairnos.v1.WorkflowService/ApproveRun"
 )
 
 // WorkflowServiceClient is the client API for WorkflowService service.
@@ -62,6 +63,12 @@ type WorkflowServiceClient interface {
 	// the prior definition in the version store first, so the save is
 	// rollbackable via the suggestions revert path.
 	SaveWorkflow(ctx context.Context, in *SaveWorkflowRequest, opts ...grpc.CallOption) (*SaveWorkflowResponse, error)
+	// ApproveRun decides a pending approval gate on a held run: approve lets
+	// the gated action succeed, deny fails it with action.approval_denied
+	// under normal error handling. Either way the run resumes asynchronously;
+	// the response acknowledges the decision like CancelRun's ack, and GetRun
+	// reports where the resumed run lands.
+	ApproveRun(ctx context.Context, in *ApproveRunRequest, opts ...grpc.CallOption) (*ApproveRunResponse, error)
 }
 
 type workflowServiceClient struct {
@@ -160,6 +167,16 @@ func (c *workflowServiceClient) SaveWorkflow(ctx context.Context, in *SaveWorkfl
 	return out, nil
 }
 
+func (c *workflowServiceClient) ApproveRun(ctx context.Context, in *ApproveRunRequest, opts ...grpc.CallOption) (*ApproveRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApproveRunResponse)
+	err := c.cc.Invoke(ctx, WorkflowService_ApproveRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkflowServiceServer is the server API for WorkflowService service.
 // All implementations must embed UnimplementedWorkflowServiceServer
 // for forward compatibility.
@@ -189,6 +206,12 @@ type WorkflowServiceServer interface {
 	// the prior definition in the version store first, so the save is
 	// rollbackable via the suggestions revert path.
 	SaveWorkflow(context.Context, *SaveWorkflowRequest) (*SaveWorkflowResponse, error)
+	// ApproveRun decides a pending approval gate on a held run: approve lets
+	// the gated action succeed, deny fails it with action.approval_denied
+	// under normal error handling. Either way the run resumes asynchronously;
+	// the response acknowledges the decision like CancelRun's ack, and GetRun
+	// reports where the resumed run lands.
+	ApproveRun(context.Context, *ApproveRunRequest) (*ApproveRunResponse, error)
 	mustEmbedUnimplementedWorkflowServiceServer()
 }
 
@@ -219,6 +242,9 @@ func (UnimplementedWorkflowServiceServer) ValidateWorkflow(context.Context, *Val
 }
 func (UnimplementedWorkflowServiceServer) SaveWorkflow(context.Context, *SaveWorkflowRequest) (*SaveWorkflowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SaveWorkflow not implemented")
+}
+func (UnimplementedWorkflowServiceServer) ApproveRun(context.Context, *ApproveRunRequest) (*ApproveRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApproveRun not implemented")
 }
 func (UnimplementedWorkflowServiceServer) mustEmbedUnimplementedWorkflowServiceServer() {}
 func (UnimplementedWorkflowServiceServer) testEmbeddedByValue()                         {}
@@ -353,6 +379,24 @@ func _WorkflowService_SaveWorkflow_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkflowService_ApproveRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkflowServiceServer).ApproveRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkflowService_ApproveRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkflowServiceServer).ApproveRun(ctx, req.(*ApproveRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkflowService_ServiceDesc is the grpc.ServiceDesc for WorkflowService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -379,6 +423,10 @@ var WorkflowService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveWorkflow",
 			Handler:    _WorkflowService_SaveWorkflow_Handler,
+		},
+		{
+			MethodName: "ApproveRun",
+			Handler:    _WorkflowService_ApproveRun_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

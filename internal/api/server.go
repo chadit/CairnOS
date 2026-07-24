@@ -316,10 +316,11 @@ func (s *Server) startGRPC() {
 		logger:        s.logger,
 	})
 	cairnosv1.RegisterWorkflowServiceServer(s.grpcServer, &workflowService{
-		store:        s.cfg.Store,
-		manager:      s.cfg.Manager,
-		workflowsDir: s.cfg.WorkflowsDir,
-		logger:       s.logger,
+		store:         s.cfg.Store,
+		manager:       s.cfg.Manager,
+		workflowsDir:  s.cfg.WorkflowsDir,
+		authenticator: s.cfg.Auth,
+		logger:        s.logger,
 	})
 	cairnosv1.RegisterMemoryServiceServer(s.grpcServer, &memoryService{store: s.cfg.Memory})
 

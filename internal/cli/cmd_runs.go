@@ -54,7 +54,7 @@ func (a *App) cmdRunsList(ctx context.Context, args []string) int {
 	flags.SetOutput(a.stderr)
 
 	workflowFlag := flags.String("workflow", "", "only runs of this workflow")
-	statusFlag := flags.String("status", "", "only runs in this status (pending|running|succeeded|failed|canceled)")
+	statusFlag := flags.String("status", "", "only runs in this status (pending|running|succeeded|failed|canceled|held)")
 	limitFlag := flags.Int("limit", defaultListLimit, "maximum rows")
 	dirFlag := dirFlagOn(flags)
 

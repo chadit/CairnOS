@@ -172,24 +172,7 @@ func (s *governanceService) audit(ctx context.Context, actor, action, target, de
 	}
 }
 
-// actor derives who performed a control action: the authenticated subject when
-// a verifiable bearer token rode the call, else "local". A verify failure here
-// never blocks the action (the interceptor already authorized it); it only
-// means the audit row records "local".
+// actor names who performed a control action for the audit row.
 func (s *governanceService) actor(ctx context.Context) string {
-	if s.authenticator == nil {
-		return actorLocal
-	}
-
-	token, err := bearerToken(ctx)
-	if err != nil {
-		return actorLocal
-	}
-
-	claims, err := s.authenticator.Verify(ctx, token)
-	if err != nil || claims.Subject == "" {
-		return actorLocal
-	}
-
-	return claims.Subject
+	return actorFromContext(ctx, s.authenticator)
 }

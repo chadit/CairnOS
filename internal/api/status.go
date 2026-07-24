@@ -26,6 +26,19 @@ const (
 	codeRunFinished        = "api.run_finished"
 	codeRunNotManaged      = "api.run_not_managed"
 	codeReplayHashMismatch = "api.replay_hash_mismatch"
+	// codeRunNotHeld refuses an approval decision on a run that is not
+	// parked: a finished run can still own an orphaned pending gate (a
+	// failure or cancel beat the approval branch), and deciding it must not
+	// resurrect the terminal run
+	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	codeRunNotHeld = "api.run_not_held"
+	// codeNoPendingApproval reports an approval decision with no gate left
+	// to decide.
+	codeNoPendingApproval = "api.no_pending_approval"
+	// codeApprovalAmbiguous reports an omitted action_name when several
+	// gates are pending; the message lists them so the caller reruns with
+	// one.
+	codeApprovalAmbiguous = "api.approval_ambiguous"
 	// codeWorkflowNameMismatch reports a save or inline run whose definition
 	// name differs from the {workflow_name} path param. Without the check a
 	// save could strand a file the resolver maps under a different name than

@@ -8,7 +8,6 @@ syntax = "proto3";
 
 package cairnos.v1;
 
-import "cairnos/v1/common.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";

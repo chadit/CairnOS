@@ -74,6 +74,18 @@ service WorkflowService {
       body: "*"
     };
   }
+
+  // ApproveRun decides a pending approval gate on a held run: approve lets
+  // the gated action succeed, deny fails it with action.approval_denied
+  // under normal error handling. Either way the run resumes asynchronously;
+  // the response acknowledges the decision like CancelRun's ack, and GetRun
+  // reports where the resumed run lands.
+  rpc ApproveRun(ApproveRunRequest) returns (ApproveRunResponse) {
+    option (google.api.http) = {
+      post: "/v1/runs/{run_id}/approve"
+      body: "*"
+    };
+  }
 }
 
 // RunWorkflowRequest names the workflow (resolved against the server's
@@ -129,7 +141,7 @@ message Run {
   string workflow_hash = 3;
 
   // status is the run lifecycle state:
-  // pending|running|succeeded|failed|canceled.
+  // pending|running|succeeded|failed|canceled|held.
   string status = 4;
 
   // trigger records what started the run: cli|schedule|api|a2a|webhook.
@@ -249,4 +261,37 @@ message SaveWorkflowResponse {
 
   // created is true when no file carried this name before the save.
   bool created = 4;
+}
+
+// ApproveRunRequest decides one pending approval gate on a held run.
+// action_name may be omitted when exactly one gate is pending; with zero or
+// several pending the request is refused, the several case listing the
+// candidate action names (.agents/spec/parity/workflow-language.md, "Human
+// approval").
+message ApproveRunRequest {
+  string run_id = 1;
+  string action_name = 2;
+
+  // approve decides the gate: true approves, false denies. Denial fails the
+  // gated action with action.approval_denied under normal error handling.
+  bool approve = 3;
+
+  // comment is an optional decision note recorded on the gate.
+  string comment = 4;
+}
+
+// ApproveRunResponse acknowledges the decision; the run resumes
+// asynchronously and lands in run history when its loop settles.
+message ApproveRunResponse {
+  string run_id = 1;
+
+  // action_name is the gate that was decided, resolved when the request
+  // omitted it.
+  string action_name = 2;
+
+  // approved echoes the decision the gate recorded.
+  bool approved = 3;
+
+  // status acknowledges the resume signal, mirroring CancelRun's ack shape.
+  string status = 4;
 }

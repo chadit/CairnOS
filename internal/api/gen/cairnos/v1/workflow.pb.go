@@ -297,7 +297,7 @@ type Run struct {
 	WorkflowName string                 `protobuf:"bytes,2,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
 	WorkflowHash string                 `protobuf:"bytes,3,opt,name=workflow_hash,json=workflowHash,proto3" json:"workflow_hash,omitempty"`
 	// status is the run lifecycle state:
-	// pending|running|succeeded|failed|canceled.
+	// pending|running|succeeded|failed|canceled|held.
 	Status string `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
 	// trigger records what started the run: cli|schedule|api|a2a|webhook.
 	Trigger       string                 `protobuf:"bytes,5,opt,name=trigger,proto3" json:"trigger,omitempty"`
@@ -1191,6 +1191,156 @@ func (x *SaveWorkflowResponse) GetCreated() bool {
 	return false
 }
 
+// ApproveRunRequest decides one pending approval gate on a held run.
+// action_name may be omitted when exactly one gate is pending; with zero or
+// several pending the request is refused, the several case listing the
+// candidate action names (.agents/spec/parity/workflow-language.md, "Human
+// approval").
+type ApproveRunRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	RunId      string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	ActionName string                 `protobuf:"bytes,2,opt,name=action_name,json=actionName,proto3" json:"action_name,omitempty"`
+	// approve decides the gate: true approves, false denies. Denial fails the
+	// gated action with action.approval_denied under normal error handling.
+	Approve bool `protobuf:"varint,3,opt,name=approve,proto3" json:"approve,omitempty"`
+	// comment is an optional decision note recorded on the gate.
+	Comment       string `protobuf:"bytes,4,opt,name=comment,proto3" json:"comment,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApproveRunRequest) Reset() {
+	*x = ApproveRunRequest{}
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApproveRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApproveRunRequest) ProtoMessage() {}
+
+func (x *ApproveRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApproveRunRequest.ProtoReflect.Descriptor instead.
+func (*ApproveRunRequest) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ApproveRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ApproveRunRequest) GetActionName() string {
+	if x != nil {
+		return x.ActionName
+	}
+	return ""
+}
+
+func (x *ApproveRunRequest) GetApprove() bool {
+	if x != nil {
+		return x.Approve
+	}
+	return false
+}
+
+func (x *ApproveRunRequest) GetComment() string {
+	if x != nil {
+		return x.Comment
+	}
+	return ""
+}
+
+// ApproveRunResponse acknowledges the decision; the run resumes
+// asynchronously and lands in run history when its loop settles.
+type ApproveRunResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// action_name is the gate that was decided, resolved when the request
+	// omitted it.
+	ActionName string `protobuf:"bytes,2,opt,name=action_name,json=actionName,proto3" json:"action_name,omitempty"`
+	// approved echoes the decision the gate recorded.
+	Approved bool `protobuf:"varint,3,opt,name=approved,proto3" json:"approved,omitempty"`
+	// status acknowledges the resume signal, mirroring CancelRun's ack shape.
+	Status        string `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApproveRunResponse) Reset() {
+	*x = ApproveRunResponse{}
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApproveRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApproveRunResponse) ProtoMessage() {}
+
+func (x *ApproveRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_workflow_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApproveRunResponse.ProtoReflect.Descriptor instead.
+func (*ApproveRunResponse) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_workflow_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ApproveRunResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ApproveRunResponse) GetActionName() string {
+	if x != nil {
+		return x.ActionName
+	}
+	return ""
+}
+
+func (x *ApproveRunResponse) GetApproved() bool {
+	if x != nil {
+		return x.Approved
+	}
+	return false
+}
+
+func (x *ApproveRunResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
 var File_cairnos_v1_workflow_proto protoreflect.FileDescriptor
 
 const file_cairnos_v1_workflow_proto_rawDesc = "" +
@@ -1278,12 +1428,24 @@ const file_cairnos_v1_workflow_proto_rawDesc = "" +
 	"\x04hash\x18\x02 \x01(\tR\x04hash\x12\x1d\n" +
 	"\n" +
 	"prior_hash\x18\x03 \x01(\tR\tpriorHash\x12\x18\n" +
-	"\acreated\x18\x04 \x01(\bR\acreated*\x95\x01\n" +
+	"\acreated\x18\x04 \x01(\bR\acreated\"\x7f\n" +
+	"\x11ApproveRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1f\n" +
+	"\vaction_name\x18\x02 \x01(\tR\n" +
+	"actionName\x12\x18\n" +
+	"\aapprove\x18\x03 \x01(\bR\aapprove\x12\x18\n" +
+	"\acomment\x18\x04 \x01(\tR\acomment\"\x80\x01\n" +
+	"\x12ApproveRunResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1f\n" +
+	"\vaction_name\x18\x02 \x01(\tR\n" +
+	"actionName\x12\x1a\n" +
+	"\bapproved\x18\x03 \x01(\bR\bapproved\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status*\x95\x01\n" +
 	"\fRunEventType\x12\x1e\n" +
 	"\x1aRUN_EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aRUN_EVENT_TYPE_RUN_STARTED\x10\x01\x12$\n" +
 	" RUN_EVENT_TYPE_ACTION_TRANSITION\x10\x02\x12\x1f\n" +
-	"\x1bRUN_EVENT_TYPE_RUN_FINISHED\x10\x032\x93\x06\n" +
+	"\x1bRUN_EVENT_TYPE_RUN_FINISHED\x10\x032\x86\a\n" +
 	"\x0fWorkflowService\x12t\n" +
 	"\vRunWorkflow\x12\x1e.cairnos.v1.RunWorkflowRequest\x1a\x14.cairnos.v1.RunEvent\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/workflows/{workflow_name}/runs0\x01\x12Z\n" +
 	"\x06GetRun\x12\x19.cairnos.v1.GetRunRequest\x1a\x1a.cairnos.v1.GetRunResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/v1/runs/{run_id}\x12W\n" +
@@ -1292,7 +1454,9 @@ const file_cairnos_v1_workflow_proto_rawDesc = "" +
 	"\tCancelRun\x12\x1c.cairnos.v1.CancelRunRequest\x1a\x1d.cairnos.v1.CancelRunResponse\"#\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/v1/runs/{run_id}/cancel\x12f\n" +
 	"\tReplayRun\x12\x1c.cairnos.v1.ReplayRunRequest\x1a\x14.cairnos.v1.RunEvent\"#\x82\xd3\xe4\x93\x02\x1d:\x01*\"\x18/v1/runs/{run_id}/replay0\x01\x12\x80\x01\n" +
 	"\x10ValidateWorkflow\x12#.cairnos.v1.ValidateWorkflowRequest\x1a$.cairnos.v1.ValidateWorkflowResponse\"!\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/v1/workflows/validate\x12{\n" +
-	"\fSaveWorkflow\x12\x1f.cairnos.v1.SaveWorkflowRequest\x1a .cairnos.v1.SaveWorkflowResponse\"(\x82\xd3\xe4\x93\x02\":\x01*\x1a\x1d/v1/workflows/{workflow_name}BAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
+	"\fSaveWorkflow\x12\x1f.cairnos.v1.SaveWorkflowRequest\x1a .cairnos.v1.SaveWorkflowResponse\"(\x82\xd3\xe4\x93\x02\":\x01*\x1a\x1d/v1/workflows/{workflow_name}\x12q\n" +
+	"\n" +
+	"ApproveRun\x12\x1d.cairnos.v1.ApproveRunRequest\x1a\x1e.cairnos.v1.ApproveRunResponse\"$\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/v1/runs/{run_id}/approveBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
 
 var (
 	file_cairnos_v1_workflow_proto_rawDescOnce sync.Once
@@ -1307,7 +1471,7 @@ func file_cairnos_v1_workflow_proto_rawDescGZIP() []byte {
 }
 
 var file_cairnos_v1_workflow_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cairnos_v1_workflow_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_cairnos_v1_workflow_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_cairnos_v1_workflow_proto_goTypes = []any{
 	(RunEventType)(0),                // 0: cairnos.v1.RunEventType
 	(*RunWorkflowRequest)(nil),       // 1: cairnos.v1.RunWorkflowRequest
@@ -1327,31 +1491,33 @@ var file_cairnos_v1_workflow_proto_goTypes = []any{
 	(*ValidateWorkflowResponse)(nil), // 15: cairnos.v1.ValidateWorkflowResponse
 	(*SaveWorkflowRequest)(nil),      // 16: cairnos.v1.SaveWorkflowRequest
 	(*SaveWorkflowResponse)(nil),     // 17: cairnos.v1.SaveWorkflowResponse
-	(*structpb.Struct)(nil),          // 18: google.protobuf.Struct
-	(*Error)(nil),                    // 19: cairnos.v1.Error
-	(*timestamppb.Timestamp)(nil),    // 20: google.protobuf.Timestamp
-	(*structpb.Value)(nil),           // 21: google.protobuf.Value
+	(*ApproveRunRequest)(nil),        // 18: cairnos.v1.ApproveRunRequest
+	(*ApproveRunResponse)(nil),       // 19: cairnos.v1.ApproveRunResponse
+	(*structpb.Struct)(nil),          // 20: google.protobuf.Struct
+	(*Error)(nil),                    // 21: cairnos.v1.Error
+	(*timestamppb.Timestamp)(nil),    // 22: google.protobuf.Timestamp
+	(*structpb.Value)(nil),           // 23: google.protobuf.Value
 }
 var file_cairnos_v1_workflow_proto_depIdxs = []int32{
-	18, // 0: cairnos.v1.RunWorkflowRequest.inputs:type_name -> google.protobuf.Struct
+	20, // 0: cairnos.v1.RunWorkflowRequest.inputs:type_name -> google.protobuf.Struct
 	0,  // 1: cairnos.v1.RunEvent.type:type_name -> cairnos.v1.RunEventType
 	2,  // 2: cairnos.v1.RunEvent.action:type_name -> cairnos.v1.ActionState
 	4,  // 3: cairnos.v1.RunEvent.run:type_name -> cairnos.v1.Run
-	19, // 4: cairnos.v1.RunEvent.error:type_name -> cairnos.v1.Error
-	18, // 5: cairnos.v1.Run.inputs:type_name -> google.protobuf.Struct
-	19, // 6: cairnos.v1.Run.error:type_name -> cairnos.v1.Error
-	20, // 7: cairnos.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	20, // 8: cairnos.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	20, // 9: cairnos.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	21, // 10: cairnos.v1.ActionResult.output:type_name -> google.protobuf.Value
+	21, // 4: cairnos.v1.RunEvent.error:type_name -> cairnos.v1.Error
+	20, // 5: cairnos.v1.Run.inputs:type_name -> google.protobuf.Struct
+	21, // 6: cairnos.v1.Run.error:type_name -> cairnos.v1.Error
+	22, // 7: cairnos.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	22, // 8: cairnos.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	22, // 9: cairnos.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	23, // 10: cairnos.v1.ActionResult.output:type_name -> google.protobuf.Value
 	6,  // 11: cairnos.v1.ActionResult.usage:type_name -> cairnos.v1.Usage
-	19, // 12: cairnos.v1.ActionResult.error:type_name -> cairnos.v1.Error
-	20, // 13: cairnos.v1.ActionResult.started_at:type_name -> google.protobuf.Timestamp
-	20, // 14: cairnos.v1.ActionResult.finished_at:type_name -> google.protobuf.Timestamp
+	21, // 12: cairnos.v1.ActionResult.error:type_name -> cairnos.v1.Error
+	22, // 13: cairnos.v1.ActionResult.started_at:type_name -> google.protobuf.Timestamp
+	22, // 14: cairnos.v1.ActionResult.finished_at:type_name -> google.protobuf.Timestamp
 	4,  // 15: cairnos.v1.GetRunResponse.run:type_name -> cairnos.v1.Run
 	5,  // 16: cairnos.v1.GetRunResponse.actions:type_name -> cairnos.v1.ActionResult
 	4,  // 17: cairnos.v1.ListRunsResponse.runs:type_name -> cairnos.v1.Run
-	19, // 18: cairnos.v1.ValidateWorkflowResponse.errors:type_name -> cairnos.v1.Error
+	21, // 18: cairnos.v1.ValidateWorkflowResponse.errors:type_name -> cairnos.v1.Error
 	1,  // 19: cairnos.v1.WorkflowService.RunWorkflow:input_type -> cairnos.v1.RunWorkflowRequest
 	7,  // 20: cairnos.v1.WorkflowService.GetRun:input_type -> cairnos.v1.GetRunRequest
 	9,  // 21: cairnos.v1.WorkflowService.ListRuns:input_type -> cairnos.v1.ListRunsRequest
@@ -1359,15 +1525,17 @@ var file_cairnos_v1_workflow_proto_depIdxs = []int32{
 	12, // 23: cairnos.v1.WorkflowService.ReplayRun:input_type -> cairnos.v1.ReplayRunRequest
 	14, // 24: cairnos.v1.WorkflowService.ValidateWorkflow:input_type -> cairnos.v1.ValidateWorkflowRequest
 	16, // 25: cairnos.v1.WorkflowService.SaveWorkflow:input_type -> cairnos.v1.SaveWorkflowRequest
-	3,  // 26: cairnos.v1.WorkflowService.RunWorkflow:output_type -> cairnos.v1.RunEvent
-	8,  // 27: cairnos.v1.WorkflowService.GetRun:output_type -> cairnos.v1.GetRunResponse
-	10, // 28: cairnos.v1.WorkflowService.ListRuns:output_type -> cairnos.v1.ListRunsResponse
-	13, // 29: cairnos.v1.WorkflowService.CancelRun:output_type -> cairnos.v1.CancelRunResponse
-	3,  // 30: cairnos.v1.WorkflowService.ReplayRun:output_type -> cairnos.v1.RunEvent
-	15, // 31: cairnos.v1.WorkflowService.ValidateWorkflow:output_type -> cairnos.v1.ValidateWorkflowResponse
-	17, // 32: cairnos.v1.WorkflowService.SaveWorkflow:output_type -> cairnos.v1.SaveWorkflowResponse
-	26, // [26:33] is the sub-list for method output_type
-	19, // [19:26] is the sub-list for method input_type
+	18, // 26: cairnos.v1.WorkflowService.ApproveRun:input_type -> cairnos.v1.ApproveRunRequest
+	3,  // 27: cairnos.v1.WorkflowService.RunWorkflow:output_type -> cairnos.v1.RunEvent
+	8,  // 28: cairnos.v1.WorkflowService.GetRun:output_type -> cairnos.v1.GetRunResponse
+	10, // 29: cairnos.v1.WorkflowService.ListRuns:output_type -> cairnos.v1.ListRunsResponse
+	13, // 30: cairnos.v1.WorkflowService.CancelRun:output_type -> cairnos.v1.CancelRunResponse
+	3,  // 31: cairnos.v1.WorkflowService.ReplayRun:output_type -> cairnos.v1.RunEvent
+	15, // 32: cairnos.v1.WorkflowService.ValidateWorkflow:output_type -> cairnos.v1.ValidateWorkflowResponse
+	17, // 33: cairnos.v1.WorkflowService.SaveWorkflow:output_type -> cairnos.v1.SaveWorkflowResponse
+	19, // 34: cairnos.v1.WorkflowService.ApproveRun:output_type -> cairnos.v1.ApproveRunResponse
+	27, // [27:35] is the sub-list for method output_type
+	19, // [19:27] is the sub-list for method input_type
 	19, // [19:19] is the sub-list for extension type_name
 	19, // [19:19] is the sub-list for extension extendee
 	0,  // [0:19] is the sub-list for field type_name
@@ -1385,7 +1553,7 @@ func file_cairnos_v1_workflow_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cairnos_v1_workflow_proto_rawDesc), len(file_cairnos_v1_workflow_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   17,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

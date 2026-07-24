@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,15 +33,22 @@ const savedFilePerm = 0o600
 // asynchronously and lands in history as canceled.
 const cancelAckStatus = "canceling"
 
+// resumeAckStatus acknowledges an approval decision; the run resumes
+// asynchronously and lands in history when its loop settles.
+const resumeAckStatus = "resuming"
+
 // workflowService implements cairnos.v1.WorkflowService over the run
-// manager, the durable store, and the workflows directory.
+// manager, the durable store, and the workflows directory. authenticator is
+// nil when auth is disabled; approval decisions then record "local" as the
+// actor, the same fallback governance audit rows use.
 type workflowService struct {
 	cairnosv1.UnimplementedWorkflowServiceServer
 
-	store        store.Store
-	manager      *Manager
-	workflowsDir string
-	logger       *slog.Logger
+	store         store.Store
+	manager       *Manager
+	workflowsDir  string
+	authenticator Authenticator
+	logger        *slog.Logger
 }
 
 // RunWorkflow starts a run by name and streams its events until the run
@@ -239,6 +247,129 @@ func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveW
 		PriorHash:    priorHash,
 		Created:      created,
 	}, nil
+}
+
+// ApproveRun decides a pending approval gate on a held run and resumes the
+// run through the manager, detached from this call like every managed run:
+// the response is an ack (mirroring CancelRun) and GetRun reports where the
+// resumed loop lands. Everything that can fail resolves before the decision
+// is written, so a resolver or store failure never strands a decided gate on
+// a still-held run. The run is read workspace-scoped, so a foreign run
+// answers not-found, never forbidden
+// (.agents/spec/parity/workflow-language.md, "Human approval").
+func (s *workflowService) ApproveRun(ctx context.Context, req *cairnosv1.ApproveRunRequest) (*cairnosv1.ApproveRunResponse, error) {
+	held, err := s.store.GetRun(ctx, req.GetRunId())
+	if err != nil {
+		return nil, runLookupStatus(req.GetRunId(), err)
+	}
+
+	// A run that already finished can still own a pending gate: when a
+	// failure or cancel beat the approval branch, the branch's detached write
+	// left the gate behind while the run finalized. Deciding that orphaned
+	// gate must not resurrect the terminal run, so refuse before touching it.
+	if held.Status != store.RunHeld {
+		return nil, errorStatus(codes.FailedPrecondition, cairnerr.Newf(codeRunNotHeld,
+			"run %s is not awaiting approval (status %s)", held.ID, held.Status))
+	}
+
+	actionName, err := s.resolveApprovalAction(ctx, held.ID, req.GetActionName())
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := s.store.ListActionResults(ctx, held.ID)
+	if err != nil {
+		return nil, canonicalStatus(err)
+	}
+
+	flow, err := NewWorkflowResolver(s.workflowsDir, s.logger).Resolve(held.WorkflowName)
+	if err != nil {
+		return nil, err
+	}
+
+	decision := store.ApprovalApproved
+	if !req.GetApprove() {
+		decision = store.ApprovalDenied
+	}
+
+	actor := actorFromContext(ctx, s.authenticator)
+	if err := s.store.DecideApproval(ctx, held.ID, actionName, decision, actor, req.GetComment()); err != nil {
+		return nil, canonicalStatus(err)
+	}
+
+	if err := s.startResume(ctx, held, results, flow); err != nil {
+		return nil, err
+	}
+
+	return &cairnosv1.ApproveRunResponse{
+		RunId:      held.ID,
+		ActionName: actionName,
+		Approved:   req.GetApprove(),
+		Status:     resumeAckStatus,
+	}, nil
+}
+
+// resolveApprovalAction picks the gate to decide: the named one, or the
+// single pending gate when the name is omitted. Zero or several pending
+// gates with no name is refused, the several case listing the pending action
+// names so the caller reruns naming one, matching the CLI's semantics.
+func (s *workflowService) resolveApprovalAction(ctx context.Context, runID, actionName string) (string, error) {
+	if actionName != "" {
+		return actionName, nil
+	}
+
+	pending, err := s.store.ListPendingApprovals(ctx, runID)
+	if err != nil {
+		return "", canonicalStatus(err)
+	}
+
+	switch len(pending) {
+	case 0:
+		return "", errorStatus(codes.FailedPrecondition, cairnerr.Newf(codeNoPendingApproval,
+			"run %s has no pending approvals", runID))
+	case 1:
+		return pending[0].ActionName, nil
+	default:
+		return "", errorStatus(codes.FailedPrecondition, cairnerr.Newf(codeApprovalAmbiguous,
+			"run %s has %d pending approvals; rerun naming one of: %s",
+			runID, len(pending), strings.Join(approvalActionNames(pending), ", ")))
+	}
+}
+
+// startResume hands the decided run to the manager and drains its outcome in
+// the background so an unattended resume failure still lands in the log. A
+// run the manager is already driving is a success here, not an error: the
+// decision is recorded and the active loop settles it.
+func (s *workflowService) startResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) error {
+	handle, err := s.manager.StartResume(ctx, held, results, flow)
+	if err != nil {
+		if errors.Is(err, ErrRunActive) {
+			return nil
+		}
+
+		return canonicalStatus(err)
+	}
+
+	go func() {
+		out := <-handle.Outcome
+		if out.Err != nil {
+			s.logger.Error("resume after approval decision failed",
+				"run_id", held.ID, "error", out.Err)
+		}
+	}()
+
+	return nil
+}
+
+// approvalActionNames lists the pending gates' action names for the
+// ambiguity message.
+func approvalActionNames(pending []*store.Approval) []string {
+	names := make([]string, 0, len(pending))
+	for _, gate := range pending {
+		names = append(names, gate.ActionName)
+	}
+
+	return names
 }
 
 // resolveRunFlow picks the definition a run executes. An empty toml resolves

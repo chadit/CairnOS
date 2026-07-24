@@ -259,6 +259,43 @@ func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResult
 	})
 }
 
+// StartResume drives a held run forward after its approval was decided,
+// detached from ctx like every managed run: the caller gets an ack while the
+// loop settles in the background, cancelable through the manager like any
+// active run. The run keeps its existing ID, so the reservation handshake
+// launchRun performs for engine-minted IDs does not apply; routing registers
+// under held.ID before the engine goroutine starts. A run already active
+// here is refused with ErrRunActive so two loops can never drive one run
+// (.agents/spec/parity/workflow-language.md, "Human approval").
+func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
+	eng := m.engine()
+	if eng == nil {
+		return nil, ErrManagerUnbound
+	}
+
+	workspace := store.WorkspaceFromContext(ctx)
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	m.mu.Lock()
+	if _, active := m.cancels[held.ID]; active {
+		m.mu.Unlock()
+		cancel()
+
+		return nil, ErrRunActive
+	}
+
+	m.cancels[held.ID] = &runState{cancel: cancel, workspace: workspace}
+	m.mu.Unlock()
+
+	outcome := make(chan RunOutcome, 1)
+
+	go m.execute(runCtx, held.ID, eng, func(runCtx context.Context, eng *engine.Engine) (*store.Run, error) {
+		return eng.ResumeRun(runCtx, held, results, flow)
+	}, outcome)
+
+	return &RunHandle{ID: held.ID, Outcome: outcome, workspace: workspace}, nil
+}
+
 // launchRun runs the reservation handshake shared by StartRun and StartReplay:
 // it reserves the next run ID, wires the watcher before the engine emits, and
 // returns once the engine accepts the run (the record exists) or rejects it

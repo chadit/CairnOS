@@ -65,7 +65,12 @@ func scopeForMethod(fullMethod string) (string, bool) {
 	case "/cairnos.v1.AdminService/Health", "/cairnos.v1.LoginService/Login":
 		return "", true
 	case "/cairnos.v1.WorkflowService/RunWorkflow", "/cairnos.v1.WorkflowService/CancelRun",
-		"/cairnos.v1.WorkflowService/ReplayRun", "/cairnos.v1.WorkflowService/SaveWorkflow":
+		"/cairnos.v1.WorkflowService/ReplayRun", "/cairnos.v1.WorkflowService/SaveWorkflow",
+		"/cairnos.v1.WorkflowService/ApproveRun":
+		// ApproveRun sits with the other run mutations: deciding a gate
+		// changes what the run executes, per the D9 pattern of enforcing
+		// write:workflow at decision time
+		// (.agents/spec/parity/workflow-language.md, "Human approval").
 		return auth.ScopeWriteWorkflow, false
 	case "/cairnos.v1.WorkflowService/ValidateWorkflow", "/cairnos.v1.AdminService/ListRunners":
 		return auth.ScopeReadWorkflow, false
@@ -236,6 +241,28 @@ func (g *authGuard) authorize(ctx context.Context, fullMethod string) (string, [
 	}
 
 	return claims.Workspace, claims.Scopes, nil
+}
+
+// actorFromContext derives who performed a mutating call: the authenticated
+// subject when a verifiable bearer token rode the call, else "local". A
+// verify failure here never blocks the action (the interceptor already
+// authorized it); it only means the record names "local".
+func actorFromContext(ctx context.Context, authenticator Authenticator) string {
+	if authenticator == nil {
+		return actorLocal
+	}
+
+	token, err := bearerToken(ctx)
+	if err != nil {
+		return actorLocal
+	}
+
+	claims, err := authenticator.Verify(ctx, token)
+	if err != nil || claims.Subject == "" {
+		return actorLocal
+	}
+
+	return claims.Subject
 }
 
 // bearerToken pulls the token out of the call metadata, accepting both

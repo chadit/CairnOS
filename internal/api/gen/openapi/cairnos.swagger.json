@@ -1193,6 +1193,45 @@
         ]
       }
     },
+    "/v1/runs/{runId}/approve": {
+      "post": {
+        "summary": "ApproveRun decides a pending approval gate on a held run: approve lets\nthe gated action succeed, deny fails it with action.approval_denied\nunder normal error handling. Either way the run resumes asynchronously;\nthe response acknowledges the decision like CancelRun's ack, and GetRun\nreports where the resumed run lands.",
+        "operationId": "WorkflowService_ApproveRun",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ApproveRunResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceApproveRunBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/v1/runs/{runId}/cancel": {
       "post": {
         "summary": "CancelRun cancels an in-flight run started through this server.",
@@ -1700,6 +1739,23 @@
     "SuggestionServiceRejectSuggestionBody": {
       "type": "object"
     },
+    "WorkflowServiceApproveRunBody": {
+      "type": "object",
+      "properties": {
+        "actionName": {
+          "type": "string"
+        },
+        "approve": {
+          "type": "boolean",
+          "description": "approve decides the gate: true approves, false denies. Denial fails the\ngated action with action.approval_denied under normal error handling."
+        },
+        "comment": {
+          "type": "string",
+          "description": "comment is an optional decision note recorded on the gate."
+        }
+      },
+      "description": "ApproveRunRequest decides one pending approval gate on a held run.\naction_name may be omitted when exactly one gate is pending; with zero or\nseveral pending the request is refused, the several case listing the\ncandidate action names (.agents/spec/parity/workflow-language.md, \"Human\napproval\")."
+    },
     "WorkflowServiceCancelRunBody": {
       "type": "object"
     },
@@ -1902,6 +1958,27 @@
           "type": "string"
         }
       }
+    },
+    "v1ApproveRunResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "actionName": {
+          "type": "string",
+          "description": "action_name is the gate that was decided, resolved when the request\nomitted it."
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "approved echoes the decision the gate recorded."
+        },
+        "status": {
+          "type": "string",
+          "description": "status acknowledges the resume signal, mirroring CancelRun's ack shape."
+        }
+      },
+      "description": "ApproveRunResponse acknowledges the decision; the run resumes\nasynchronously and lands in run history when its loop settles."
     },
     "v1ApproveSuggestionResponse": {
       "type": "object",
@@ -2592,7 +2669,7 @@
         },
         "status": {
           "type": "string",
-          "description": "status is the run lifecycle state:\npending|running|succeeded|failed|canceled."
+          "description": "status is the run lifecycle state:\npending|running|succeeded|failed|canceled|held."
         },
         "trigger": {
           "type": "string",

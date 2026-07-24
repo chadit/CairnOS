@@ -974,7 +974,7 @@ var File_cairnos_v1_chat_proto protoreflect.FileDescriptor
 const file_cairnos_v1_chat_proto_rawDesc = "" +
 	"\n" +
 	"\x15cairnos/v1/chat.proto\x12\n" +
-	"cairnos.v1\x1a\x17cairnos/v1/common.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x01\n" +
+	"cairnos.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x01\n" +
 	"\vChatSession\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12 \n" +
 	"\vpersonality\x18\x02 \x01(\tR\vpersonality\x129\n" +
@@ -1129,7 +1129,6 @@ func file_cairnos_v1_chat_proto_init() {
 	if File_cairnos_v1_chat_proto != nil {
 		return
 	}
-	file_cairnos_v1_common_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

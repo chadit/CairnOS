@@ -1,0 +1,8 @@
+# GO-2026-5932: golang.org/x/crypto/openpgp is unmaintained by design and
+# will never get a fixed version. Nothing in this module's build graph
+# imports the openpgp subpackage ("go mod why golang.org/x/crypto/openpgp"
+# answers "main module does not need package"); x/crypto itself rides at the
+# latest release only as a transitive module requirement. Suppressed rather
+# than chased because no upgrade can clear a no-fix advisory on an unused
+# subpackage.
+GO-2026-5932
