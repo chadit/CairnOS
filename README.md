@@ -8,6 +8,40 @@ chat with a confirmation gate, an MCP server and client, and a React web UI
 for building workflows and watching runs. gRPC is the API core, with a
 JSON/HTTP gateway generated from the same protos.
 
+## Install
+
+From a clone (also what `make build` wraps):
+
+```sh
+go install ./cmd/cairnos    # installs cairnos into $GOBIN (default ~/go/bin)
+```
+
+Or straight from the module path, no clone needed. The repo is private, so
+tell the Go toolchain to fetch it over your git auth instead of the public
+proxy:
+
+```sh
+GOPRIVATE=github.com/chadit go install github.com/chadit/CairnOS/cmd/cairnos@latest
+```
+
+Either way you get the full binary: engine, CLI, serve, chat, MCP, web UI.
+Check it landed with `cairnos help`.
+
+## Initialize and run your first prompt
+
+```sh
+cairnos init      # writes a starter config under ~/.cairnos
+cairnos validate examples/agents/quickstart/quickstart.toml
+cairnos run examples/agents/quickstart/quickstart.toml
+```
+
+The quickstart workflow sends one prompt through a CLI tool you have already
+logged into on this machine (it ships pointing at `codex`; swap the runner
+line for `claude`, `omp_glm`, or any other logged-in tool, see
+[examples/agents/quickstart](./examples/agents/quickstart/README.md)). If the
+run prints a reply, your install, runner wiring, and tool auth all work.
+`cairnos init --dir <path>` picks a different home.
+
 ## Deploy it as a service, not an installed CLI
 
 Don't `go install` the binary onto your PATH and call that a deployment. The
@@ -77,17 +111,16 @@ JSON/HTTP gateway on 8080, Prometheus metrics on 9090. Keep the ports on
 localhost or a private network (Tailscale works well) and turn auth on
 (`[auth] enabled = true`) before anything else can reach them.
 
-## First run
+## Working from a clone
 
 ```sh
-make build           # builds bin/cairnos
-./bin/cairnos init   # writes a starter config under ~/.cairnos
+make build           # builds bin/cairnos without touching $GOBIN
 ./bin/cairnos validate examples/agents/release_monitor/release_monitor.toml
 ./bin/cairnos run <workflow.toml>   # one-shot run, no service needed
 ```
 
-`cairnos init --dir <path>` picks a different home. One-shot `cairnos run` is
-for trying a workflow out; anything scheduled or conversational needs serve.
+One-shot `cairnos run` is for trying a workflow out; anything scheduled or
+conversational needs serve.
 
 ## Model setup
 
@@ -110,9 +143,12 @@ Keys ride the environment (`CAIRNOS_RUNNER_ANTHROPIC_API_KEY`,
 `CAIRNOS_RUNNER_OPENAI_API_KEY`), never the config file.
 
 **CLI runners** wrap a tool that carries its own subscription login, so no API
-key touches CairnOS at all. Built-ins: `codex`, `qwen`, `omp`, `omp_codex`,
-`omp_qwen`, `antigravity`. Say you have a Codex subscription: log in once on
-the host that runs serve (`codex login`), then use it from a workflow:
+key touches CairnOS at all. Built-ins: `claude`, `codex`, `qwen`, `omp`,
+`omp_codex`, `omp_qwen`, `omp_glm`, `antigravity`. Each launches its tool's
+headless one-shot mode out of the box (`codex exec`, `claude -p`, `omp-glm
+-p`, and so on), so a workflow action never opens an interactive UI. Say you
+have a Codex subscription: log in once on the host that runs serve
+(`codex login`), then use it from a workflow:
 
 ```toml
 [action.plan]
@@ -120,13 +156,14 @@ runner = "codex"
 params = { prompt = "Draft the migration plan for ..." }
 ```
 
-Or route it through an OMP wrapper configured for codex. The `omp_codex`
-runner launches an `omp-codex` binary from PATH by default; override the path
-if yours lives elsewhere:
+Or route through an OMP wrapper. Each CLI runner finds its binary on PATH by
+default (`omp_glm` launches `omp-glm`); override the path or argv when yours
+differs:
 
 ```toml
-[runner.omp_codex]
-binary = "/usr/local/bin/omp-codex"
+[runner.omp_glm]
+binary = "/usr/local/bin/omp-glm"
+# args = ["-p", "{prompt}"]   # the default; override to add flags
 ```
 
 When a CLI tool's login expires mid-schedule, the job is held rather than

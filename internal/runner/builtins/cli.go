@@ -6,27 +6,48 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
+// printFlag is the print-and-exit flag claude, qwen, and the omp family
+// share for one-shot runs.
+const printFlag = "-p"
+
 // Registry names of the wrapped command-line tools.
 const (
+	ClaudeName      = "claude"
 	CodexName       = "codex"
 	QwenName        = "qwen"
 	OMPName         = "omp"
 	OMPCodexName    = "omp_codex"
 	OMPQwenName     = "omp_qwen"
+	OMPGLMName      = "omp_glm"
 	AntigravityName = "antigravity"
 )
 
-// CLIDefaults maps each built-in CLI runner name to the binary it launches
-// when its config block does not override binary. The omp_* pair differs
-// because those binaries carry a dash while runner names use underscores.
-func CLIDefaults() map[string]string {
-	return map[string]string{
-		CodexName:       "codex",
-		QwenName:        "qwen",
-		OMPName:         "omp",
-		OMPCodexName:    "omp-codex",
-		OMPQwenName:     "omp-qwen",
-		AntigravityName: "antigravity",
+// CLITool is one built-in wrapper's launch defaults: the binary it runs and
+// the argv template that makes the tool print one response and exit.
+type CLITool struct {
+	Binary string
+	Args   []string
+}
+
+// CLIDefaults maps each built-in CLI runner name to its launch defaults when
+// its config block overrides neither binary nor args. The omp_* names differ
+// from their binaries because those carry a dash while runner names use
+// underscores. Every argv template picks the tool's headless one-shot mode,
+// because a workflow action can never answer an interactive UI: a bare
+// `codex <prompt>` or `claude <prompt>` opens the tool's TUI and hangs the
+// run, so codex routes through its `exec` subcommand and claude, qwen, and
+// the omp family take `-p` (print-and-exit). antigravity keeps the bare
+// positional its wrapper expects.
+func CLIDefaults() map[string]CLITool {
+	return map[string]CLITool{
+		ClaudeName:      {Binary: "claude", Args: []string{printFlag, promptToken}},
+		CodexName:       {Binary: "codex", Args: []string{"exec", promptToken}},
+		QwenName:        {Binary: "qwen", Args: []string{printFlag, promptToken}},
+		OMPName:         {Binary: "omp", Args: []string{printFlag, promptToken}},
+		OMPCodexName:    {Binary: "omp-codex", Args: []string{printFlag, promptToken}},
+		OMPQwenName:     {Binary: "omp-qwen", Args: []string{printFlag, promptToken}},
+		OMPGLMName:      {Binary: "omp-glm", Args: []string{printFlag, promptToken}},
+		AntigravityName: {Binary: "antigravity"},
 	}
 }
 
@@ -40,8 +61,8 @@ type CLI struct {
 }
 
 // NewCLI builds a named CLI runner over the shared subprocess helper.
-func NewCLI(name, defaultBinary string, cfg map[string]any) (*CLI, error) {
-	helper, err := newCLIExec(name, defaultBinary, cfg)
+func NewCLI(name string, tool CLITool, cfg map[string]any) (*CLI, error) {
+	helper, err := newCLIExec(name, tool, cfg)
 	if err != nil {
 		return nil, wrapConfigErr(name, err)
 	}
@@ -50,9 +71,9 @@ func NewCLI(name, defaultBinary string, cfg map[string]any) (*CLI, error) {
 }
 
 // CLIFactory adapts one named tool to the registry contract.
-func CLIFactory(name, defaultBinary string) runner.Factory {
+func CLIFactory(name string, tool CLITool) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return NewCLI(name, defaultBinary, cfg)
+		return NewCLI(name, tool, cfg)
 	}
 }
 

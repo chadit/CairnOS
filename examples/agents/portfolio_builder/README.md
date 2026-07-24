@@ -23,8 +23,8 @@ schedule.
 model = "claude-sonnet-4-5"
 
 [runner.codex]
-# binary = "codex"          # override if the CLI lives elsewhere
-# args   = ["exec", "{prompt}"]
+# binary = "codex"          # override if the CLI lives elsewhere; the runner
+#                           # already launches `codex exec` by default
 ```
 
 Environment:

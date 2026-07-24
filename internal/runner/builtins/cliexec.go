@@ -72,9 +72,9 @@ type cliExec struct {
 }
 
 // newCLIExec decodes the shared CLI config keys (binary, args, stdin) with
-// per-runner defaults.
-func newCLIExec(name, defaultBinary string, cfg map[string]any) (cliExec, error) {
-	binary, err := configValue(cfg, cfgKeyBinary, defaultBinary)
+// per-runner defaults from the tool's launch template.
+func newCLIExec(name string, tool CLITool, cfg map[string]any) (cliExec, error) {
+	binary, err := configValue(cfg, cfgKeyBinary, tool.Binary)
 	if err != nil {
 		return cliExec{}, err
 	}
@@ -95,8 +95,12 @@ func newCLIExec(name, defaultBinary string, cfg map[string]any) (cliExec, error)
 	}
 
 	if args == nil && !useStdin {
-		// Without an argv template the prompt travels as the single
-		// positional argument, the common shape for the wrapped CLIs.
+		args = tool.Args
+	}
+
+	if args == nil && !useStdin {
+		// Without a tool template the prompt travels as the single
+		// positional argument, the fallback shape for wrapped CLIs.
 		args = []string{promptToken}
 	}
 

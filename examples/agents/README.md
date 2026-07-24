@@ -1,6 +1,9 @@
 # Sample agents
 
-Eight small workflows that ship with Phase 1. They aren't finished products;
+Start with [quickstart](./quickstart/README.md): one prompt through a
+logged-in CLI tool, the fastest proof that a fresh install works.
+
+Eight more workflows ship with Phase 1. They aren't finished products;
 each one exists to show how actions compose, how data passes between them,
 and which runner fits which job. Every directory holds one workflow TOML
 and a README with its config block, env keys, and run commands.
@@ -13,6 +16,7 @@ or any listing site.
 
 | Agent | Schema features | Runners |
 | --- | --- | --- |
+| quickstart | smallest possible workflow | codex (or any CLI runner) |
 | career_scout | schedule, retry, condition | webhook, openai, email |
 | skill_gap_analyzer | inputs, data passing | anthropic, local_fn, email |
 | learning_coach | parallel fan-in, agent action | github, anthropic |

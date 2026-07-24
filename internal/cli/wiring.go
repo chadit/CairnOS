@@ -910,8 +910,8 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		return nil, fmt.Errorf("register local_fn runner: %w", err)
 	}
 
-	for name, binary := range builtins.CLIDefaults() {
-		if err := registry.Register(name, builtins.CLIFactory(name, binary)); err != nil {
+	for name, tool := range builtins.CLIDefaults() {
+		if err := registry.Register(name, builtins.CLIFactory(name, tool)); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", name, err)
 		}
 	}

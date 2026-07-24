@@ -1,0 +1,20 @@
+# quickstart.toml: the smallest useful workflow, one prompt through a CLI
+# runner you have already logged into. It proves the engine, your runner
+# config, and the tool's auth in a single one-shot run, no API key needed.
+#
+# Run it:
+#   cairnos run examples/agents/quickstart/quickstart.toml
+#
+# The codex runner launches `codex exec` under the hood (every CLI runner
+# defaults to its tool's headless one-shot mode). Swap the runner line for
+# whichever tool is logged in on this machine: "claude", "qwen", "omp",
+# "omp_glm", or an API runner like "anthropic"/"openai" if a key is set.
+
+[workflow]
+name        = "quickstart"
+version     = "1"
+description = "One prompt through a logged-in CLI tool to prove the setup end to end."
+
+[action.hello]
+runner = "codex"
+params = { prompt = "In two sentences: say hello from inside a CairnOS workflow, and name one chore on a developer machine you could automate." }

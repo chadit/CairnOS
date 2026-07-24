@@ -51,7 +51,7 @@ func assertUnsafePrompt(t *testing.T, err error) {
 func TestCLIRefusesDashedPromptOnBarePositional(t *testing.T) {
 	t.Parallel()
 
-	cli, err := builtins.NewCLI(builtins.CodexName, "codex", nil)
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, nil)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestCLIRefusesDashedPromptOnBarePositional(t *testing.T) {
 func TestCLIAllowsDashedPromptWhenOptedIn(t *testing.T) {
 	t.Parallel()
 
-	cli, err := builtins.NewCLI(builtins.CodexName, "codex", map[string]any{allowDashedKey: true})
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, map[string]any{allowDashedKey: true})
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -80,9 +80,9 @@ func TestCLIAllowsDashedPromptWhenOptedIn(t *testing.T) {
 func TestCLIAllowsDashedPromptAfterTerminator(t *testing.T) {
 	t.Parallel()
 
-	cfg := map[string]any{argsKey: []any{"--flag", "--", "{prompt}"}}
+	cfg := map[string]any{argsKey: []any{"--flag", "--", promptArg}}
 
-	cli, err := builtins.NewCLI(builtins.CodexName, "codex", cfg)
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, cfg)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCLIAllowsDashedPromptAfterTerminator(t *testing.T) {
 func TestCLIDashedPromptOnStdinIsSafe(t *testing.T) {
 	t.Parallel()
 
-	cli, err := builtins.NewCLI(builtins.CodexName, "codex", map[string]any{stdinKey: true})
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, map[string]any{stdinKey: true})
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}

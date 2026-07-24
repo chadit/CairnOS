@@ -18,6 +18,11 @@ const (
 	argsKey    = "args"
 	stdinKey   = "stdin"
 	testPrompt = "hello cairn"
+
+	// promptArg is the {prompt} placeholder and codexBinary the codex binary
+	// literal, hoisted so the template assertions share one spelling.
+	promptArg   = "{prompt}"
+	codexBinary = "codex"
 )
 
 // writeShim drops an executable script into dir and returns its path. Tests
@@ -50,7 +55,7 @@ func TestCLICapturesOutputAndExitCode(t *testing.T) {
 	shim := writeShim(t, t.TempDir(), "echoer", `echo "got: $1"
 echo "warn" >&2`)
 
-	cli, err := builtins.NewCLI(builtins.CodexName, shim, nil)
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: shim}, nil)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -99,7 +104,7 @@ exit 1`)
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cli, err := builtins.NewCLI(builtins.CodexName, tt.binary, nil)
+			cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: tt.binary}, nil)
 			if err != nil {
 				t.Fatalf("new cli: %v", err)
 			}
@@ -141,7 +146,7 @@ exit 1`)
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cli, err := builtins.NewCLI(builtins.CodexName, tt.binary, nil)
+			cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: tt.binary}, nil)
 			if err != nil {
 				t.Fatalf("new cli: %v", err)
 			}
@@ -167,7 +172,7 @@ func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 	// stdout pipe open past the kill.
 	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
 
-	cli, err := builtins.NewCLI(builtins.QwenName, sleeper, nil)
+	cli, err := builtins.NewCLI(builtins.QwenName, builtins.CLITool{Binary: sleeper}, nil)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -195,7 +200,7 @@ func TestCLIStreamsChunks(t *testing.T) {
 	multi := writeShim(t, t.TempDir(), "multi", `echo "line one"
 echo "line two"`)
 
-	cli, err := builtins.NewCLI(builtins.OMPName, multi, nil)
+	cli, err := builtins.NewCLI(builtins.OMPName, builtins.CLITool{Binary: multi}, nil)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -229,7 +234,7 @@ func TestCLIStdinMode(t *testing.T) {
 
 	catShim := writeShim(t, t.TempDir(), "catter", "cat")
 
-	cli, err := builtins.NewCLI(builtins.AntigravityName, catShim, map[string]any{stdinKey: true})
+	cli, err := builtins.NewCLI(builtins.AntigravityName, builtins.CLITool{Binary: catShim}, map[string]any{stdinKey: true})
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -251,10 +256,10 @@ func TestCLIConfigOverridesBinaryAndArgs(t *testing.T) {
 
 	cfg := map[string]any{
 		binaryKey: shim,
-		argsKey:   []any{"--prompt", "{prompt}"},
+		argsKey:   []any{"--prompt", promptArg},
 	}
 
-	cli, err := builtins.NewCLI(builtins.CodexName, "definitely-not-on-path", cfg)
+	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: "definitely-not-on-path"}, cfg)
 	if err != nil {
 		t.Fatalf("new cli: %v", err)
 	}
@@ -288,7 +293,7 @@ func TestCLIValidatePromptParam(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cli, err := builtins.NewCLI(builtins.CodexName, "codex", nil)
+			cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, nil)
 			if err != nil {
 				t.Fatalf("new cli: %v", err)
 			}
