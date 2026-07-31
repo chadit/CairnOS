@@ -115,6 +115,18 @@ func getRun(t *testing.T, fix *fixture, runID string) *cairnosv1.GetRunResponse 
 	return resp
 }
 
+// actionStatus reports the status recorded for one action of a run, or the
+// empty string when the run carries no result for that name yet.
+func actionStatus(resp *cairnosv1.GetRunResponse, name string) string {
+	for _, action := range resp.GetActions() {
+		if action.GetName() == name {
+			return action.GetStatus()
+		}
+	}
+
+	return ""
+}
+
 // waitForRunStatus polls GetRun until the run reaches want; the terminal
 // state of a resumed run arrives eventually, not on the ack.
 func waitForRunStatus(t *testing.T, fix *fixture, runID, want string) *cairnosv1.GetRunResponse {
@@ -255,14 +267,28 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 		t.Fatalf("approve sign_a: %v", err)
 	}
 
-	// The resumed run settles sign_a and re-parks held on sign_b; one pending
-	// gate left is the observable boundary between the two parks.
-	waitApproveFor(t, "sign_a gate settling", func() bool {
-		pending, err := fix.db.ListPendingApprovals(t.Context(), runID)
+	// Both parks read held, so the status alone cannot separate them: the run
+	// still reads held from the first park while the resume is in flight, and
+	// approving sign_b against that stale read is refused. sign_a only reaches
+	// succeeded during the resume, so a held observed after that is the second
+	// park. GetRun reads the run row before the action rows and can pair a
+	// stale held with a settled sign_a, so these stay two ordered reads.
+	waitApproveFor(t, "run re-parking on sign_b", func() bool {
+		if actionStatus(getRun(t, fix, runID), "sign_a") != statusSucceeded {
+			return false
+		}
 
-		return err == nil && len(pending) == 1
+		return getRun(t, fix, runID).GetRun().GetStatus() == statusHeld
 	})
-	waitForRunStatus(t, fix, runID, statusHeld)
+
+	pending, err := fix.db.ListPendingApprovals(t.Context(), runID)
+	if err != nil {
+		t.Fatalf("list pending approvals: %v", err)
+	}
+
+	if len(pending) != 1 || pending[0].ActionName != "sign_b" {
+		t.Fatalf("pending gates after deciding sign_a = %+v, want only sign_b", pending)
+	}
 
 	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
 		RunId:      runID,

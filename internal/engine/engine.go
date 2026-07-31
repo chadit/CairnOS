@@ -300,7 +300,12 @@ func (e *Engine) RunWorkflow(ctx context.Context, flow *workflow.Workflow, input
 		CreatedAt:   time.Now(),
 	}
 
-	if err := e.store.CreateRun(ctx, run); err != nil {
+	// The insert detaches from cancellation for the same reason persistAction
+	// and finishRun write detached: the manager hands out the reserved run id
+	// before this write lands, so a Cancel arriving in that window would kill
+	// the insert and leave the run with no record to mark canceled. Detached,
+	// the record always exists and the cancel settles it in executeDAG.
+	if err := e.store.CreateRun(context.WithoutCancel(ctx), run); err != nil {
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 

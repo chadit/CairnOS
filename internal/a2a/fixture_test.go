@@ -32,6 +32,7 @@ import (
 const (
 	helloSkill      = "hello"
 	slowSkill       = "slow"
+	streamSkill     = "stream"
 	statusSucceeded = "succeeded"
 	statusRunning   = "running"
 )
@@ -79,6 +80,28 @@ runner = "mock"
 params = { delay_ms = 60000 }
 `
 
+// streamTOML holds its first action long enough that a consumer calling
+// TaskUpdates right after CreateTask still attaches to the live run. The
+// manager drops a run's retained handle the moment the run finishes (release in
+// api/manager.go), and a late consumer then falls back to the stored terminal
+// record, which carries no per-action steps. hello's actions are instant, so a
+// loaded machine can finish the run between the two calls; the delay here is
+// what makes the per-action assertions about the live stream hold. It is not
+// padding, so do not trim it away.
+const streamTOML = `
+[workflow]
+name = "stream"
+
+[action.greet]
+runner = "mock"
+params = { output = "hello world", delay_ms = 750 }
+
+[action.reply]
+runner = "mock"
+depends_on = ["greet"]
+params = { output = "hello yourself" }
+`
+
 // fixture is one running server exposing the A2A service plus the well-known
 // card, with the handles tests poke it through.
 type fixture struct {
@@ -111,6 +134,7 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 
 	writeWorkflow(t, workflowsDir, "hello.toml", helloTOML)
 	writeWorkflow(t, workflowsDir, "slow.toml", slowTOML)
+	writeWorkflow(t, workflowsDir, "stream.toml", streamTOML)
 
 	dbPath := filepath.Join(dir, "cairnos.db")
 

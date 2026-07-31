@@ -6,3 +6,15 @@
 # than chased because no upgrade can clear a no-fix advisory on an unused
 # subpackage.
 GO-2026-5932
+
+# GHSA-qwww-vcr4-c8h2: the advisory states "This only affects your application
+# if you are using the unstable RSC APIs". web/ is a client-only SPA: it imports
+# BrowserRouter, MemoryRouter, Routes, Route, Navigate, NavLink, Outlet, Link,
+# and useParams, and defines no loaders, actions, or server runtime, so the
+# vulnerable action path never runs. There is also no upgrade that clears it
+# here: the fix lands in react-router 8.3.0, but react-router-dom has no 8.x
+# release ("npm view react-router-dom dist-tags" answers latest 7.18.2) and
+# pins react-router to its own version. Revisit when react-router-dom ships an
+# 8.x line. The four advisories that did apply (CVE-2026-55685, CVE-2026-53666,
+# CVE-2026-53667, CVE-2026-53669) are cleared by the 7.18.2 bump.
+GHSA-qwww-vcr4-c8h2

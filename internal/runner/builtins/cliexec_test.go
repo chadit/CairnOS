@@ -194,6 +194,32 @@ func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 	}
 }
 
+// TestCLIDeadlineAtStartIsTransientTimeout proves a deadline that is already
+// spent when the process launches classifies as the same transient timeout a
+// deadline mid-run does. Calling a spent deadline a permanent start fault would
+// deny the retry a fresh deadline could clear, and under load a short deadline
+// takes this path rather than the mid-run one.
+func TestCLIDeadlineAtStartIsTransientTimeout(t *testing.T) {
+	t.Parallel()
+
+	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
+
+	cli, err := builtins.NewCLI(builtins.QwenName, builtins.CLITool{Binary: sleeper}, nil)
+	if err != nil {
+		t.Fatalf("new cli: %v", err)
+	}
+
+	task := cliTask()
+	task.Deadline = time.Now().Add(-time.Second)
+
+	_, err = cli.Execute(t.Context(), task)
+
+	classified, isClassified := errors.AsType[*runner.Error](err)
+	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != "qwen.timeout" {
+		t.Fatalf("error = %v, want transient qwen.timeout", err)
+	}
+}
+
 func TestCLIStreamsChunks(t *testing.T) {
 	t.Parallel()
 

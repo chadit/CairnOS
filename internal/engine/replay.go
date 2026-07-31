@@ -67,7 +67,9 @@ func (e *Engine) ReplayRun(ctx context.Context, prior *store.Run, priorResults [
 		CreatedAt:    time.Now(),
 	}
 
-	if err := e.store.CreateRun(ctx, run); err != nil {
+	// Detached for the reason RunWorkflow's insert is: a Cancel racing the
+	// reserved id would otherwise kill this write and leave no record.
+	if err := e.store.CreateRun(context.WithoutCancel(ctx), run); err != nil {
 		return nil, fmt.Errorf("create replay run: %w", err)
 	}
 

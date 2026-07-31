@@ -617,7 +617,7 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 	start := time.Now()
 
 	if err := cmd.Start(); err != nil {
-		return runner.Result{}, s.classifyStart(err)
+		return runner.Result{}, s.classifyStart(runCtx, err)
 	}
 
 	stdoutText, scanErr := collectStdout(runCtx, stdoutPipe, stream)
@@ -668,8 +668,16 @@ func (*SandboxExec) killContainer(parent context.Context, runtimeName, name stri
 
 // classifyStart maps a launch failure. A missing runtime binary is permanent
 // no_runtime (the class BuildAll must never hit); anything else at start is
-// permanent start.
-func (*SandboxExec) classifyStart(err error) error {
+// permanent start. A deadline that expires while the runtime is still launching
+// is the exception: that is the same transient timeout classifyWait reports once
+// the container is running, and calling it permanent would deny a retry the
+// fresh deadline could clear.
+func (*SandboxExec) classifyStart(runCtx context.Context, err error) error {
+	if runCtx.Err() != nil {
+		return runner.NewError(runner.ClassTransient, codeSandboxTimeout,
+			"container run canceled or timed out")
+	}
+
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
 			"container runtime not found: "+err.Error())

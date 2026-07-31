@@ -43,7 +43,10 @@ func TestTaskUpdatesStreamsToCompletion(t *testing.T) {
 
 	fix := startFixture(t, fixtureOptions{})
 
-	created, err := fix.a2a.CreateTask(t.Context(), &a2av1.CreateTaskRequest{Skill: helloSkill})
+	// stream, not hello: its first action holds the run open so this consumer
+	// attaches to the live handle. Against hello the run can finish between the
+	// two calls, and the terminal-record fallback carries no per-action steps.
+	created, err := fix.a2a.CreateTask(t.Context(), &a2av1.CreateTaskRequest{Skill: streamSkill})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

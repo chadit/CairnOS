@@ -271,19 +271,19 @@ func TestConfirmTapAfterGateClearedRepliesExpired(t *testing.T) {
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.chat.confirmCalls()) == 1 })
+	// The fake records the ConfirmAction call on entry, but resolveConfirm only
+	// replies expired after that call returns, so waiting on the call count can
+	// observe the assertions below before the reply is sent. The reply is the
+	// last step on this path, which makes it the wait that covers the rest.
+	waitFor(t, func() bool { return sentContains(rig.tg.sentMessages(), msgStaleExpired) })
 
 	calls := rig.chat.confirmCalls()
-	if !calls[0].approve {
+	if len(calls) != 1 || !calls[0].approve {
 		t.Fatalf("confirm calls = %+v, want one approve", calls)
 	}
 
 	if got := rig.metrics.confirmCount(confirmApproved); got != 0 {
 		t.Errorf("approved count = %d, want 0 on a cleared gate", got)
-	}
-
-	if !sentContains(rig.tg.sentMessages(), msgStaleExpired) {
-		t.Errorf("expired reply not sent for the lost race")
 	}
 }
 

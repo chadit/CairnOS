@@ -775,6 +775,36 @@ func TestOperatorCancelEndsRunCanceled(t *testing.T) {
 	assertAllTerminal(t, db, run.ID, 1)
 }
 
+// TestCanceledStartStillPersistsRunRecord proves the run insert survives a
+// context that is already canceled when RunWorkflow is entered. The manager
+// hands out a reserved run id before this write lands, so a Cancel arriving in
+// that window used to kill the insert: the caller got "create run: context
+// canceled" and no record existed to mark canceled, which left an A2A task
+// answering Internal with nothing in the store.
+func TestCanceledStartStillPersistsRunRecord(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	rec := &recorder{}
+	eng, db := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnRecord: rec.record})
+
+	run, err := eng.RunWorkflow(ctx, parseFlow(t, linearTOML), nil, triggerCLI)
+	if err != nil {
+		t.Fatalf("RunWorkflow on a canceled context: %v", err)
+	}
+
+	stored, err := db.GetRun(t.Context(), run.ID)
+	if err != nil {
+		t.Fatalf("run record was not persisted for a canceled start: %v", err)
+	}
+
+	if stored.Status != store.RunCanceled {
+		t.Errorf("persisted run status = %q, want %q", stored.Status, store.RunCanceled)
+	}
+}
+
 func TestInterpolationResolvesNativeAndEmbeddedValues(t *testing.T) {
 	t.Parallel()
 

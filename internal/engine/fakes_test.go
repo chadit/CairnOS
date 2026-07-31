@@ -52,8 +52,14 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// CreateRun implements store.Store.
-func (f *fakeStore) CreateRun(_ context.Context, run *store.Run) error {
+// CreateRun implements store.Store. It honors cancellation the way the sqlite
+// and postgres stores do, so a caller that passes a canceled context here fails
+// in tests exactly as it would against a real database.
+func (f *fakeStore) CreateRun(ctx context.Context, run *store.Run) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("insert run %s: %w", run.ID, err)
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

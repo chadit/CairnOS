@@ -588,6 +588,31 @@ func TestSandboxExecuteSuccessShape(t *testing.T) {
 	}
 }
 
+// TestSandboxDeadlineAtStartIsTransientTimeout proves a deadline already spent
+// when the runtime launches classifies as the transient timeout classifyWait
+// reports once the container runs, not a permanent start fault that would deny
+// a retry the fresh deadline could clear.
+func TestSandboxDeadlineAtStartIsTransientTimeout(t *testing.T) {
+	dir, _ := stageRecordingStub(t)
+	t.Setenv("PATH", pathWith(dir))
+	t.Setenv("DOCKER_HOST", "")
+
+	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	if err != nil {
+		t.Fatalf("new sandbox: %v", err)
+	}
+
+	task := sandboxTask()
+	task.Deadline = time.Now().Add(-time.Second)
+
+	_, err = sandbox.Execute(t.Context(), task)
+
+	classified, isClassified := errors.AsType[*runner.Error](err)
+	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != "sandbox_exec.timeout" {
+		t.Fatalf("error = %v, want transient sandbox_exec.timeout", err)
+	}
+}
+
 func TestSandboxExecuteCapsOutput(t *testing.T) {
 	dir := t.TempDir()
 	body := `if [ "$1" = "kill" ]; then exit 0; fi

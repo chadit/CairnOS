@@ -147,7 +147,7 @@ func (c cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runne
 	start := time.Now()
 
 	if err := cmd.Start(); err != nil {
-		return runner.Result{}, c.classifyStart(err)
+		return runner.Result{}, c.classifyStart(runCtx, err)
 	}
 
 	stdoutText, scanErr := collectStdout(runCtx, stdoutPipe, stream)
@@ -245,8 +245,21 @@ func (c cliExec) code(suffix string) string {
 }
 
 // classifyStart maps a launch failure. A missing binary is permanent because
-// no retry installs it; so is anything else at start (bad path, bad mode).
-func (c cliExec) classifyStart(err error) error {
+// no retry installs it; so is anything else at start (bad path, bad mode). A
+// deadline that expires while the process is still launching is the exception:
+// that is the same transient timeout classifyWait reports once the process is
+// running, and calling it permanent would deny a retry the fresh deadline could
+// clear.
+func (c cliExec) classifyStart(runCtx context.Context, err error) error {
+	if runCtx.Err() != nil {
+		return &runner.Error{
+			Class:   runner.ClassTransient,
+			Code:    c.code("timeout"),
+			Message: c.binary + " canceled or timed out",
+			Cause:   err,
+		}
+	}
+
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
 		return &runner.Error{
 			Class:   runner.ClassPermanent,
