@@ -179,6 +179,34 @@ stop a workflow:
 codex = ["omp_qwen", "anthropic"]
 ```
 
+### Host commands
+
+The `exec` runner launches a plain host process on a schedule. It is for the
+script that has to run where its logins already live, such as a reconciler
+that shells out to a model CLI or to `gh`. There is no container and no
+credential handling: the command inherits the environment of the user running
+serve.
+
+```toml
+[runner.exec]
+allow_actions = ["reconcile"]
+timeout       = 540
+# env = { REPORT_PROJECT = "billing-api" }
+```
+
+```toml
+[action.reconcile]
+runner = "exec"
+params = { command = "/path/to/reconciler.py", workdir = "/path/to/scripts" }
+```
+
+`allow_actions` denies by default. An action name absent from the list is
+refused at validate time, and a block that is missing or lists nothing refuses
+every action.
+
+Warning: a command listed here runs on the host as the serve user, with that
+user's full environment and no isolation.
+
 ## Development
 
 ```sh

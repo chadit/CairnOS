@@ -882,54 +882,18 @@ func (a *App) closeSecretSource(closeSource func() error) {
 	}
 }
 
-// newRegistry wires the built-in runners: the Phase 0 pair (mock proves the
-// engine without external services, local_fn ships with an empty function
-// table until embedders register Go functions) plus the Phase 1a slices of
-// CLI wrappers, notification sinks (webhook plus the read-capable http fetch
-// runner), the inline Starlark code runner, the language-rules stub, and the
-// API-backed runners (openai,
-// anthropic, github, mcp_client), the sandbox_exec container runner, plus a
-// plugin-backed runner per type = "plugin" config block (Phase 1b), plus
-// the memory agent tool when a memory store is supplied (Phase 1c). Blocks
-// with type = "mcp_client" (the shape `cairnos mcp import` emits) register
-// a per-name instance of the built-in mcp_client factory. Each
-// factory receives its [runner.<name>] config block through BuildAll. ctx
-// bounds construction: plugin factories spawn their child process during
-// BuildAll. credLookup wires the outbound credential manager into the http and
-// mcp_client runners so a block with a credential key sends a bearer token; nil
-// keeps every runner exactly as before, and a credential key with a nil lookup
-// then fails BuildAll.
+// newRegistry wires every built-in runner, plus a plugin-backed runner per
+// type = "plugin" block and a per-name mcp_client per type = "mcp_client"
+// block (the shape `cairnos mcp import` emits). Each factory gets its
+// [runner.<name>] config block through BuildAll, where plugin factories spawn
+// their child process, so ctx bounds construction.
 func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem memory.Store, rulesSvc rules.Service, credLookup builtins.TokenLookup) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
-
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
-		return nil, fmt.Errorf("register mock runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.LocalFnName, builtins.LocalFnFactory(map[string]builtins.Func{})); err != nil {
-		return nil, fmt.Errorf("register local_fn runner: %w", err)
-	}
 
 	for name, tool := range builtins.CLIDefaults() {
 		if err := registry.Register(name, builtins.CLIFactory(name, tool)); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", name, err)
 		}
-	}
-
-	if err := registry.Register(builtins.EmailName, builtins.EmailFactory); err != nil {
-		return nil, fmt.Errorf("register email runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.WebhookName, builtins.WebhookFactory); err != nil {
-		return nil, fmt.Errorf("register webhook runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.HTTPName, builtins.HTTPFactoryWithCredentials(credLookup)); err != nil {
-		return nil, fmt.Errorf("register http runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.CodeName, builtins.CodeFactory); err != nil {
-		return nil, fmt.Errorf("register code runner: %w", err)
 	}
 
 	// The language_rules_service runner queries the real Rules Service when one
@@ -941,28 +905,34 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		rulesFactory = builtins.LanguageRulesServiceFactory(newRulesLookup(rulesSvc))
 	}
 
-	if err := registry.Register(builtins.LanguageRulesName, rulesFactory); err != nil {
-		return nil, fmt.Errorf("register language rules runner: %w", err)
+	// One table rather than one if per runner: the list grows with every
+	// built-in, and a per-runner branch pushed this function past the
+	// complexity ceiling. credLookup reaches the http and mcp_client factories
+	// here; a nil lookup stays fine until a block names a credential, which
+	// then fails BuildAll.
+	fixed := []struct {
+		factory runner.Factory
+		name    string
+	}{
+		{name: builtins.MockName, factory: builtins.MockFactory},
+		{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{})},
+		{name: builtins.EmailName, factory: builtins.EmailFactory},
+		{name: builtins.WebhookName, factory: builtins.WebhookFactory},
+		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
+		{name: builtins.CodeName, factory: builtins.CodeFactory},
+		{name: builtins.LanguageRulesName, factory: rulesFactory},
+		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory},
+		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory},
+		{name: builtins.GitHubName, factory: builtins.GitHubFactory},
+		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
+		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
+		{name: builtins.ExecName, factory: builtins.ExecFactory},
 	}
 
-	if err := registry.Register(builtins.OpenAIName, builtins.OpenAIFactory); err != nil {
-		return nil, fmt.Errorf("register openai runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.AnthropicName, builtins.AnthropicFactory); err != nil {
-		return nil, fmt.Errorf("register anthropic runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.GitHubName, builtins.GitHubFactory); err != nil {
-		return nil, fmt.Errorf("register github runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.MCPClientName, builtins.MCPClientFactoryWithCredentials(credLookup)); err != nil {
-		return nil, fmt.Errorf("register mcp_client runner: %w", err)
-	}
-
-	if err := registry.Register(builtins.SandboxExecName, builtins.SandboxExecFactory); err != nil {
-		return nil, fmt.Errorf("register sandbox_exec runner: %w", err)
+	for _, builtin := range fixed {
+		if err := registry.Register(builtin.name, builtin.factory); err != nil {
+			return nil, fmt.Errorf("register %s runner: %w", builtin.name, err)
+		}
 	}
 
 	if mem != nil {

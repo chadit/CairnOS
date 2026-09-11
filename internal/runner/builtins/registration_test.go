@@ -1,6 +1,7 @@
 package builtins_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/runner/builtins"
@@ -32,6 +33,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.GitHubName:        builtins.GitHubFactory,
 		builtins.MCPClientName:     builtins.MCPClientFactory,
 		builtins.SandboxExecName:   builtins.SandboxExecFactory,
+		builtins.ExecName:          builtins.ExecFactory,
 	}
 
 	for name, factory := range factories {
@@ -50,6 +52,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.CodeName,
 		builtins.CodexName,
 		builtins.EmailName,
+		builtins.ExecName,
 		builtins.GitHubName,
 		builtins.LanguageRulesName,
 		builtins.MCPClientName,
@@ -71,5 +74,43 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		if instance.Name() != name {
 			t.Fatalf("runner %s reports name %s", name, instance.Name())
 		}
+	}
+}
+
+// TestExecBuildsFromItsConfigBlock covers the other half of the registration
+// contract: a [runner.exec] block reaches the factory through BuildAll and the
+// built instance shows up under its own name.
+func TestExecBuildsFromItsConfigBlock(t *testing.T) {
+	t.Parallel()
+
+	registry := runner.NewRegistry()
+
+	if err := registry.Register(builtins.ExecName, builtins.ExecFactory); err != nil {
+		t.Fatalf("register %s: %v", builtins.ExecName, err)
+	}
+
+	cfgs := map[string]map[string]any{
+		builtins.ExecName: {
+			cfgAllow:   []any{actionReconcile},
+			cfgTimeout: int64(540),
+		},
+	}
+
+	if err := registry.BuildAll(cfgs); err != nil {
+		t.Fatalf("build all with an exec block: %v", err)
+	}
+
+	if names := registry.List(); !slices.Contains(names, builtins.ExecName) {
+		t.Fatalf("list = %v, want it to contain %q", names, builtins.ExecName)
+	}
+
+	instance, exists := registry.Get(builtins.ExecName)
+	if !exists {
+		t.Fatalf("runner %s not built", builtins.ExecName)
+	}
+
+	task := execTask(map[string]any{cmdKey: binTrue})
+	if err := instance.Validate(task); err != nil {
+		t.Fatalf("configured runner refused its allowed action: %v", err)
 	}
 }
