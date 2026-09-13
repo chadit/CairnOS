@@ -887,7 +887,18 @@ func (a *App) closeSecretSource(closeSource func() error) {
 // block (the shape `cairnos mcp import` emits). Each factory gets its
 // [runner.<name>] config block through BuildAll, where plugin factories spawn
 // their child process, so ctx bounds construction.
-func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem memory.Store, rulesSvc rules.Service, credLookup builtins.TokenLookup) (*runner.Registry, error) {
+//
+// msgSender is the chat-send seam the message runner posts through; only serve
+// has one, and the one-shot callers pass nil so that runner registers and then
+// refuses at execute time, the same shape rulesSvc uses.
+func newRegistry(
+	ctx context.Context,
+	runnerCfgs map[string]map[string]any,
+	mem memory.Store,
+	rulesSvc rules.Service,
+	credLookup builtins.TokenLookup,
+	msgSender builtins.MessageSender,
+) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
 
 	for name, tool := range builtins.CLIDefaults() {
@@ -927,6 +938,7 @@ func newRegistry(ctx context.Context, runnerCfgs map[string]map[string]any, mem 
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
 		{name: builtins.ExecName, factory: builtins.ExecFactory},
+		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
 	}
 
 	for _, builtin := range fixed {

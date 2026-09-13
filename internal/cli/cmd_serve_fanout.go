@@ -8,29 +8,70 @@ import (
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// BuildDiscordFanout builds the Discord event fan-out when the webhook secret is
-// set, selecting the configured event set. It returns nil when the webhook env is
-// unset, which disables every producer (held, run_failed, dead_lettered,
-// budget_denied) the same way an unset token disables the Telegram bridge
-// (.agents/spec/parity/messaging-bridge.md, decision 7). The webhook URL is a
-// credential, so it is read only from the environment, never a config key.
-func BuildDiscordFanout(cfg *config.Config, logger *slog.Logger) *notify.Fanout {
-	webhook := os.Getenv(NotifyDiscordWebhookEnv)
-	if webhook == "" {
+// BuildFanout builds the event fan-out over every configured destination: a
+// Discord sink when the webhook env is set, a Mattermost sink when
+// [notify.mattermost] names an identity, and both when both (FR34). Neither
+// gives a nil fan-out, which disables every producer. A nil registry is the
+// standalone `schedule run` worker, which holds no identities to send through.
+func BuildFanout(cfg *config.Config, registry *messaging.Registry, logger *slog.Logger) *notify.Fanout {
+	sinks := make([]notify.Sink, 0, 2)
+
+	// The webhook URL is a credential, so it is read only from the environment
+	// and never from a config key.
+	if webhook := os.Getenv(NotifyDiscordWebhookEnv); webhook != "" {
+		sinks = append(sinks, notify.Sink{
+			Poster: notify.NewDiscordNotifier(webhook),
+			Events: cfg.Notify.Discord.Events,
+		})
+	}
+
+	sinks = appendMattermostSink(sinks, cfg, registry, logger)
+
+	if len(sinks) == 0 {
 		return nil
 	}
 
-	return notify.NewFanout(notify.NewDiscordNotifier(webhook), cfg.Notify.Discord.Events, logger)
+	return notify.NewFanout(logger, sinks...)
 }
 
-// StartFanout drains the Discord event fan-out on its own goroutine, closing the
+// appendMattermostSink adds the Mattermost fan-out sink, or says why it cannot.
+// The standalone `schedule run` worker holds no identity registry, so a held job
+// that posts to #alerts under serve posts to Discord only there, and #alerts
+// staying quiet reads as "no jobs held".
+func appendMattermostSink(
+	sinks []notify.Sink,
+	cfg *config.Config,
+	registry *messaging.Registry,
+	logger *slog.Logger,
+) []notify.Sink {
+	target := cfg.Notify.Mattermost
+	if target.Identity == "" {
+		return sinks
+	}
+
+	if registry == nil {
+		logger.Info("notify.mattermost is configured but this worker has no messaging identities; skipping the sink",
+			"identity", target.Identity, "channel", target.Channel)
+
+		return sinks
+	}
+
+	return append(sinks, notify.Sink{
+		Poster: notify.MattermostSink(registry, target.Identity, target.Channel),
+		Events: target.Events,
+	})
+}
+
+// StartFanout drains the event fan-out on its own goroutine, closing the
 // returned channel when it exits so shutdown can wait for an in-flight post. A
-// nil fan-out (no webhook) makes Run return at once, so the goroutine closes the
-// channel immediately, the same supervised shape as startSweep (decision 7).
+// nil fan-out (no destination configured) makes Run return at once, so the
+// goroutine closes the channel immediately, the same supervised shape as
+// startSweep (decision 7).
 func StartFanout(ctx context.Context, fanout *notify.Fanout) <-chan struct{} {
 	done := make(chan struct{})
 
@@ -44,12 +85,10 @@ func StartFanout(ctx context.Context, fanout *notify.Fanout) <-chan struct{} {
 }
 
 // WrapRunFailedFanout wraps the manager dispatch so a failed run also emits a
-// run_failed line to the fan-out. Dispatch runs first and unchanged; the emit is
-// additive and fire-and-forget. A nil fan-out or a deselected event makes the
-// wrapper a straight pass-through, so the run stream is untouched when Discord is
-// off (.agents/spec/parity/messaging-bridge.md, decision 7). engine.OnEvent
-// carries no context, so the emit rides the serve lifetime context: once serve
-// shuts down it is canceled and the emit skips, which is what draining wants.
+// run_failed line. Dispatch runs first and unchanged; the emit is additive and
+// fire-and-forget, and a nil fan-out or a deselected event leaves the wrapper a
+// straight pass-through. engine.OnEvent carries no context, so the emit rides
+// the serve lifetime context and skips once shutdown cancels it.
 func WrapRunFailedFanout(ctx context.Context, dispatch func(engine.Event), fanout *notify.Fanout) func(engine.Event) {
 	if !fanout.Selects(config.NotifyEventRunFailed) {
 		return dispatch
@@ -66,7 +105,7 @@ func WrapRunFailedFanout(ctx context.Context, dispatch func(engine.Event), fanou
 	}
 }
 
-// runFailedLine renders a failed run as one Discord line. engine.Event carries no
+// runFailedLine renders a failed run as one fan-out line. engine.Event carries no
 // workflow name, so the line names the run ID plus the error code and message
 // rather than doing a cross-context store lookup off the request path (the
 // accepted trade-off in the spec).
@@ -78,7 +117,7 @@ func runFailedLine(evt *engine.Event) string {
 	return fmt.Sprintf("CairnOS: run %s failed", evt.RunID)
 }
 
-// BudgetFanoutNotifier routes engine budget breaches to the Discord fan-out. Its
+// BudgetFanoutNotifier routes engine budget breaches to the fan-out. Its
 // BudgetWarn reproduces the warning the engine's nil-notifier fallback logs, so
 // warn-mode behavior is unchanged; BudgetDenied emits a budget_denied line on the
 // pause path when that event is selected (.agents/spec/parity/messaging-bridge.md,

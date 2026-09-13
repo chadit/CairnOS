@@ -6,37 +6,52 @@
   },
   "tags": [
     {
-      "name": "WorkflowService"
+      "name": "WorkflowService",
+      "description": "WorkflowService starts and observes workflow runs."
     },
     {
-      "name": "A2AService"
+      "name": "A2AService",
+      "description": "A2AService is the A2A protocol surface external agents call. It maps the\ntask vocabulary onto runs and reuses the WorkflowService run lifecycle, so\nan A2A task and an API run are the same persisted record. SendMessage maps\na conversation onto a chat session instead, through the same bridge core\nTelegram and Mattermost drive."
     },
     {
-      "name": "RunnerPlugin"
+      "name": "RunnerPlugin",
+      "description": "RunnerPlugin mirrors the pkg/runner contract for one out-of-process\nrunner: Describe is the startup handshake, Validate checks params, and\nExecute streams incremental chunks before one terminal result or error."
     },
     {
-      "name": "AdminService"
+      "name": "AdminService",
+      "description": "AdminService covers operator concerns outside any single workflow."
     },
     {
-      "name": "LoginService"
+      "name": "LoginService",
+      "description": "LoginService exchanges access keys for bearer tokens and revokes tokens.\nLogin itself is tokenless (it is the way in); Revoke requires the admin\nscope, enforced by the auth interceptor like every other method."
     },
     {
-      "name": "ChatService"
+      "name": "ChatService",
+      "description": "ChatService holds conversations with the CairnOS agent. Every method takes\nthe chat:session scope; SendMessage that proposes a workflow additionally\nneeds write:workflow on the token, enforced at ConfirmAction."
     },
     {
-      "name": "GovernanceService"
+      "name": "GovernanceService",
+      "description": "GovernanceService covers budget visibility and the admin control actions."
     },
     {
-      "name": "MemoryService"
+      "name": "MemoryService",
+      "description": "MemoryService manages the bounded, curated notes loaded into prompts."
     },
     {
-      "name": "LanguageRulesService"
+      "name": "MessagingService",
+      "description": "MessagingService posts messages as a configured identity. Both methods take\nthe message:send scope."
     },
     {
-      "name": "SuggestionService"
+      "name": "LanguageRulesService",
+      "description": "LanguageRulesService is the typed API over the Language Rules Service."
     },
     {
-      "name": "VaultService"
+      "name": "SuggestionService",
+      "description": "SuggestionService manages the human review queue over persisted tuning\nsuggestions."
+    },
+    {
+      "name": "VaultService",
+      "description": "VaultService manages the Obsidian-style document store and its typed graph\nquery."
     }
   ],
   "consumes": [
@@ -46,6 +61,40 @@
     "application/json"
   ],
   "paths": {
+    "/v1/a2a/messages": {
+      "post": {
+        "summary": "SendMessage runs one conversational turn with this node and returns the\nreply. context_id names the conversation: the same id on a later call\ncontinues the same chat session, so a peer holds a multi-turn exchange\nrather than a series of unrelated questions (FR36). A turn that ends on a\nworkflow proposal answers with state \"input-required\" and the proposal\nfilled; the peer approves or denies it by sending \"approve\" or \"deny\" on\nthe same context_id.",
+        "operationId": "A2AService_SendMessage",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SendMessageResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "SendMessageRequest carries one conversational turn. context_id is the\npeer's own conversation handle; an empty one starts a fresh conversation\nthat the response's context_id names for follow-ups.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/cairnosA2aV1SendMessageRequest"
+            }
+          }
+        ],
+        "tags": [
+          "A2AService"
+        ]
+      }
+    },
     "/v1/a2a/tasks": {
       "get": {
         "summary": "ListTasks lists tasks newest-first, backed by ListRuns.",
@@ -527,7 +576,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/ChatServiceSendMessageBody"
+              "$ref": "#/definitions/v1ChatServiceSendMessageBody"
             }
           }
         ],
@@ -959,6 +1008,63 @@
         ],
         "tags": [
           "MemoryService"
+        ]
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "summary": "SendMessage posts text as one identity and returns the created post.",
+        "operationId": "MessagingService_SendMessage",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MessagingServiceSendMessageResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "description": "MessagingServiceSendMessageRequest carries one send. The name is\nservice-qualified because cairnos.v1 already holds ChatService's\nSendMessageRequest, and both land in one Go package.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1MessagingServiceSendMessageRequest"
+            }
+          }
+        ],
+        "tags": [
+          "MessagingService"
+        ]
+      }
+    },
+    "/v1/messages/identities": {
+      "get": {
+        "summary": "ListIdentities lists the identities a caller may send as.",
+        "operationId": "MessagingService_ListIdentities",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListIdentitiesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "MessagingService"
         ]
       }
     },
@@ -1702,14 +1808,6 @@
         }
       }
     },
-    "ChatServiceSendMessageBody": {
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string"
-        }
-      }
-    },
     "GovernanceServicePauseWorkflowBody": {
       "type": "object",
       "properties": {
@@ -1792,6 +1890,18 @@
         }
       },
       "description": "SaveWorkflowRequest carries the target workflow name (from the URL path) and\nthe raw definition bytes (TOML). Over HTTP/JSON the bytes field is\nbase64-encoded, per proto3 JSON mapping. The definition's own name must\nmatch workflow_name or the save is refused."
+    },
+    "cairnosA2aV1SendMessageRequest": {
+      "type": "object",
+      "properties": {
+        "contextId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "description": "SendMessageRequest carries one conversational turn. context_id is the\npeer's own conversation handle; an empty one starts a fresh conversation\nthat the response's context_id names for follow-ups."
     },
     "cairnosA2aV1Task": {
       "type": "object",
@@ -2115,6 +2225,14 @@
       },
       "description": "ChatMessage is one entry in a conversation."
     },
+    "v1ChatServiceSendMessageBody": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      }
+    },
     "v1ChatSession": {
       "type": "object",
       "properties": {
@@ -2320,6 +2438,27 @@
         }
       }
     },
+    "v1Identity": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "description": "Identity describes one configured send surface. transport names the chat\nsystem behind it (mattermost, telegram); username and display_name are the\naccount a recipient sees; url is the server the identity posts to."
+    },
     "v1LanguageRule": {
       "type": "object",
       "properties": {
@@ -2349,6 +2488,18 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1AuditEntry"
+          }
+        }
+      }
+    },
+    "v1ListIdentitiesResponse": {
+      "type": "object",
+      "properties": {
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Identity"
           }
         }
       }
@@ -2499,6 +2650,40 @@
       },
       "description": "MemoryEntry is one curated note."
     },
+    "v1MessagingServiceSendMessageRequest": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "identity names a configured identity; an unknown name is NotFound."
+        },
+        "to": {
+          "type": "string",
+          "description": "to is the target in one of four forms: \"#channel-name\", \"@username\",\n\"channel:\u003cid\u003e\", or \"user:\u003cid\u003e\". A bare id is InvalidArgument (FR27)."
+        },
+        "text": {
+          "type": "string",
+          "description": "text is the message body, sent unmodified so Mattermost renders any\nmentions it contains (FR29). Empty is InvalidArgument."
+        },
+        "threadId": {
+          "type": "string",
+          "description": "thread_id optionally roots the post in an existing thread."
+        }
+      },
+      "description": "MessagingServiceSendMessageRequest carries one send. The name is\nservice-qualified because cairnos.v1 already holds ChatService's\nSendMessageRequest, and both land in one Go package."
+    },
+    "v1MessagingServiceSendMessageResponse": {
+      "type": "object",
+      "properties": {
+        "postId": {
+          "type": "string"
+        },
+        "channelId": {
+          "type": "string"
+        }
+      },
+      "description": "MessagingServiceSendMessageResponse identifies the created post, so a caller\ncan thread a follow-up onto it."
+    },
     "v1PauseWorkflowResponse": {
       "type": "object",
       "properties": {
@@ -2509,6 +2694,22 @@
           "type": "boolean"
         }
       }
+    },
+    "v1Proposal": {
+      "type": "object",
+      "properties": {
+        "workflow": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "estimatedBudgetUsd": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "description": "Proposal is a workflow the node wants to run on the peer's behalf, awaiting\nthe peer's decision. Approving additionally requires write:workflow on the\npeer's token (FR37)."
     },
     "v1PutDocumentRequest": {
       "type": "object",
@@ -2806,6 +3007,25 @@
           }
         }
       }
+    },
+    "v1SendMessageResponse": {
+      "type": "object",
+      "properties": {
+        "contextId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "proposal": {
+          "$ref": "#/definitions/v1Proposal",
+          "description": "proposal is set only when state is \"input-required\"."
+        }
+      },
+      "description": "SendMessageResponse carries the turn's reply. state is \"completed\" for an\nordinary answer and \"input-required\" when the turn ended on a proposal\nawaiting an approve or deny on the same context_id."
     },
     "v1Suggestion": {
       "type": "object",

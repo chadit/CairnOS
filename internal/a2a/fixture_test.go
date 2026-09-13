@@ -20,6 +20,8 @@ import (
 	a2av1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1"
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/bridge"
+	"github.com/chadit/CairnOS/internal/bridge/bridgetest"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/reliability"
@@ -102,6 +104,62 @@ depends_on = ["greet"]
 params = { output = "hello yourself" }
 `
 
+// fixtureCard is the channel list the fixture's card advertises, so every card
+// assertion runs against a card that actually carries the FR35 block rather
+// than the empty case only.
+func fixtureChannels() []a2a.Channel {
+	return []a2a.Channel{{
+		Type:        channelTypeMattermost,
+		URL:         channelURL,
+		Username:    channelUsername,
+		DisplayName: channelDisplayName,
+	}}
+}
+
+// Card channel values the fixture and the card tests share.
+const (
+	channelTypeMattermost = "mattermost"
+	channelURL            = "https://chat.example.test"
+	channelUsername       = "cairnos-bot"
+	channelDisplayName    = "CairnOS"
+)
+
+// chatRig is the bridge core the conversational A2A path drives, with the
+// fakes behind it a test steers and reads.
+type chatRig struct {
+	core  *bridge.Core
+	agent *bridgetest.Chat
+}
+
+// defaultConfirmTTL keeps a proposal live for a whole test; the expiry case
+// asks for a short one instead.
+const defaultConfirmTTL = time.Minute
+
+// newChatRig builds a core over the shared bridge fakes.
+func newChatRig(t *testing.T, confirmTTL time.Duration) *chatRig {
+	t.Helper()
+
+	if confirmTTL <= 0 {
+		confirmTTL = defaultConfirmTTL
+	}
+
+	agent := bridgetest.NewChat()
+
+	core := bridge.NewCore(&bridge.CoreConfig{
+		Chat:       agent,
+		Store:      bridgetest.NewStore(),
+		Metrics:    bridgetest.NewMetrics(),
+		Logger:     slog.New(slog.DiscardHandler),
+		ConfirmTTL: confirmTTL,
+	})
+
+	// Draining stops the conversation workers and every armed proposal timer, so
+	// nothing fires into the fakes after the test.
+	t.Cleanup(core.Drain)
+
+	return &chatRig{core: core, agent: agent}
+}
+
 // fixture is one running server exposing the A2A service plus the well-known
 // card, with the handles tests poke it through.
 type fixture struct {
@@ -109,6 +167,7 @@ type fixture struct {
 	login     cairnosv1.LoginServiceClient
 	bundle    *a2a.Bundle
 	authStore *auth.SQLite
+	chat      *chatRig
 	cardKey   ed25519.PublicKey
 	httpBase  string
 }
@@ -117,6 +176,14 @@ type fixture struct {
 type fixtureOptions struct {
 	// authEnabled turns on the token interceptor and seeds the auth store.
 	authEnabled bool
+
+	// chatEnabled attaches a bridge core, which is what makes SendMessage answer
+	// a turn instead of the chat-disabled precondition.
+	chatEnabled bool
+
+	// confirmTTL overrides how long an unanswered proposal stays pending; zero
+	// takes the long default.
+	confirmTTL time.Duration
 }
 
 // startFixture boots a server with the A2A extension attached on ephemeral
@@ -162,12 +229,19 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 		t.Fatalf("generate card key: %v", err)
 	}
 
+	var chatRigging *chatRig
+	if opts.chatEnabled {
+		chatRigging = newChatRig(t, opts.confirmTTL)
+	}
+
 	bundle, err := a2a.NewBundle(&a2a.BundleConfig{
 		NodeName:   "cairnos-fixture",
 		Version:    "0.0.1",
 		Endpoint:   "grpc://127.0.0.1:7777",
 		LoginURL:   "http://127.0.0.1:8080/v1/login",
 		SigningKey: cardPriv,
+		Channels:   fixtureChannels(),
+		Bridge:     chatBridge(chatRigging),
 		Manager:    manager,
 		Resolver:   api.NewWorkflowResolver(workflowsDir, logger),
 		Store:      db,
@@ -221,9 +295,22 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 		login:     cairnosv1.NewLoginServiceClient(conn),
 		bundle:    bundle,
 		authStore: authStore,
+		chat:      chatRigging,
 		cardKey:   cardPub,
 		httpBase:  "http://" + server.HTTPAddr(),
 	}
+}
+
+// chatBridge hands the bundle the rig's core, or a nil handler when the fixture
+// runs with chat off. A typed nil *bridge.Core would satisfy the interface and
+// defeat the nil check the disabled path relies on, so the untyped nil is the
+// point of this helper.
+func chatBridge(rig *chatRig) a2a.BridgeHandler {
+	if rig == nil {
+		return nil
+	}
+
+	return rig.core
 }
 
 // wireFixtureAuth opens the auth store and attaches an authenticator when the

@@ -1,0 +1,21 @@
+{
+  "event": "posted",
+  "data": {
+    "channel_display_name": "",
+    "channel_name": "",
+    "channel_type": "D",
+    "sender_name": "@alice",
+    "set_online": true,
+    "team_id": "",
+    "post": "{\"id\":\"pstdm1k4x9wqz2mtn7rc5vhbdp\",\"create_at\":1789000000000,\"update_at\":1789000000000,\"edit_at\":0,\"delete_at\":0,\"is_pinned\":false,\"user_id\":\"usr7h2qd4kmn9wxtc5bf3yjper\",\"channel_id\":\"dmc9r4tzk7wx2mnp5hdfv8qsjb\",\"root_id\":\"\",\"original_id\":\"\",\"message\":\"what is the deploy status?\",\"type\":\"\",\"props\":{},\"hashtags\":\"\",\"pending_post_id\":\"\",\"reply_count\":0,\"last_reply_at\":0,\"participants\":null,\"metadata\":{}}"
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "",
+    "channel_id": "dmc9r4tzk7wx2mnp5hdfv8qsjb",
+    "team_id": "",
+    "connection_id": "",
+    "omit_connection_id": ""
+  },
+  "seq": 7
+}

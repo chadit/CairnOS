@@ -92,6 +92,7 @@ type authFixture struct {
 	login      cairnosv1.LoginServiceClient
 	chat       cairnosv1.ChatServiceClient
 	governance cairnosv1.GovernanceServiceClient
+	conn       *grpc.ClientConn
 	authStore  *auth.SQLite
 	clock      *authClock
 	httpBase   string
@@ -101,6 +102,15 @@ type authFixture struct {
 // material from a fake environment, the auth store sharing the run
 // store's database file, and the secure-default auth config.
 func startAuthServer(t *testing.T) *authFixture {
+	t.Helper()
+
+	return startAuthServerWith(t)
+}
+
+// startAuthServerWith is startAuthServer with extra gRPC services attached, the
+// hook the principal cases use to register a service that hands a handler's own
+// context back to the caller.
+func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixture {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -185,6 +195,7 @@ func startAuthServer(t *testing.T) *authFixture {
 		Manager:      manager,
 		Chat:         chatAgent,
 		Auth:         authn,
+		Extensions:   extensions,
 		Logger:       logger,
 	})
 
@@ -215,6 +226,7 @@ func startAuthServer(t *testing.T) *authFixture {
 		login:      cairnosv1.NewLoginServiceClient(conn),
 		chat:       cairnosv1.NewChatServiceClient(conn),
 		governance: cairnosv1.NewGovernanceServiceClient(conn),
+		conn:       conn,
 		authStore:  authStore,
 		clock:      clock,
 		httpBase:   "http://" + server.HTTPAddr(),
@@ -251,14 +263,24 @@ func (f *authFixture) seedKeyInWorkspace(t *testing.T, workspace string, scopes 
 func (f *authFixture) token(t *testing.T, scopes ...string) string {
 	t.Helper()
 
-	_, plaintext := f.seedKey(t, scopes)
+	token, _ := f.tokenAndSubject(t, scopes...)
+
+	return token
+}
+
+// tokenAndSubject is token plus the key id the token's subject claim carries,
+// which is what a case asserting on the stamped principal has to compare with.
+func (f *authFixture) tokenAndSubject(t *testing.T, scopes ...string) (string, string) {
+	t.Helper()
+
+	key, plaintext := f.seedKey(t, scopes)
 
 	resp, err := f.login.Login(t.Context(), &cairnosv1.LoginRequest{Key: plaintext})
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 
-	return resp.GetToken()
+	return resp.GetToken(), key.ID
 }
 
 // authedCtx attaches a bearer token the way a native gRPC client would.

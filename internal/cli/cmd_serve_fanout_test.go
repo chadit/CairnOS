@@ -89,9 +89,9 @@ func TestReauthOnHoldRoutesHeldByteIdentical(t *testing.T) {
 	cfg := config.Default()
 	logger := slog.New(slog.DiscardHandler)
 
-	fanout := cli.BuildDiscordFanout(&cfg, logger)
+	fanout := cli.BuildFanout(&cfg, nil, logger)
 	if fanout == nil {
-		t.Fatal("cli.BuildDiscordFanout returned nil with the webhook env set")
+		t.Fatal("cli.BuildFanout returned nil with the webhook env set")
 	}
 
 	onHold := cli.NewReauthOnHold(fanout, logger)
@@ -129,8 +129,10 @@ func TestReauthOnHoldNilWhenHeldDeselected(t *testing.T) {
 	t.Parallel()
 
 	logger := slog.New(slog.DiscardHandler)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier("http://example.invalid"),
-		[]string{config.NotifyEventRunFailed}, logger)
+	fanout := notify.NewFanout(logger, notify.Sink{
+		Poster: notify.NewDiscordNotifier("http://example.invalid"),
+		Events: []string{config.NotifyEventRunFailed},
+	})
 
 	if onHold := cli.NewReauthOnHold(fanout, logger); onHold != nil {
 		t.Fatal("cli.NewReauthOnHold returned a callback with held deselected")
@@ -149,8 +151,10 @@ func TestWrapRunFailedFanoutEmitsOnFailedFinish(t *testing.T) {
 
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL),
-		[]string{config.NotifyEventRunFailed}, logger)
+	fanout := notify.NewFanout(logger, notify.Sink{
+		Poster: notify.NewDiscordNotifier(server.URL),
+		Events: []string{config.NotifyEventRunFailed},
+	})
 
 	ctx := drainFanout(t, fanout)
 
@@ -207,8 +211,10 @@ func TestBudgetFanoutNotifierEmitsDeniedNotWarn(t *testing.T) {
 
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL),
-		[]string{config.NotifyEventBudgetDenied}, logger)
+	fanout := notify.NewFanout(logger, notify.Sink{
+		Poster: notify.NewDiscordNotifier(server.URL),
+		Events: []string{config.NotifyEventBudgetDenied},
+	})
 
 	ctx := drainFanout(t, fanout)
 
@@ -252,8 +258,10 @@ func TestNewDeadLetterFanoutEmitsWhenSelected(t *testing.T) {
 
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL),
-		[]string{config.NotifyEventDeadLettered}, logger)
+	fanout := notify.NewFanout(logger, notify.Sink{
+		Poster: notify.NewDiscordNotifier(server.URL),
+		Events: []string{config.NotifyEventDeadLettered},
+	})
 
 	ctx := drainFanout(t, fanout)
 
@@ -276,5 +284,29 @@ func TestNewDeadLetterFanoutEmitsWhenSelected(t *testing.T) {
 
 	if off := cli.NewDeadLetterFanout(nil); off != nil {
 		t.Fatal("cli.NewDeadLetterFanout returned a callback with the fan-out off")
+	}
+}
+
+// TestBuildFanoutSaysWhyMattermostIsSkipped proves the standalone worker says so
+// when it cannot honor [notify.mattermost]. It holds no messaging identities, so
+// a held job that posts to #alerts under serve posts to Discord only there, and
+// #alerts staying quiet reads as "no jobs held".
+func TestBuildFanoutSaysWhyMattermostIsSkipped(t *testing.T) {
+	t.Parallel()
+
+	var logs strings.Builder
+
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	cfg := config.Default()
+	cfg.Notify.Mattermost.Identity = "ops"
+	cfg.Notify.Mattermost.Channel = "#alerts"
+
+	if fanout := cli.BuildFanout(&cfg, nil, logger); fanout != nil {
+		t.Fatalf("BuildFanout with no registry returned a fan-out, want none")
+	}
+
+	if !strings.Contains(logs.String(), "notify.mattermost") {
+		t.Fatalf("the skipped sink was not reported: %s", logs.String())
 	}
 }

@@ -16,8 +16,7 @@
 # on its own until foreach lands.
 #
 # S6 note (.agents/spec/14-open-decisions.md): the issues repo is CairnOS-Issues
-# (corrected from the vision's CairOS-Issues). Any -task migration is a
-# separate concern and is not wired into this workflow.
+# (corrected from the vision's CairOS-Issues).
 
 [workflow]
 name        = "release_monitor"

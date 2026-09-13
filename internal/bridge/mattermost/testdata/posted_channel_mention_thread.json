@@ -1,0 +1,22 @@
+{
+  "event": "posted",
+  "data": {
+    "channel_display_name": "",
+    "channel_name": "",
+    "channel_type": "O",
+    "sender_name": "@alice",
+    "set_online": true,
+    "team_id": "tmq3w7zkx5np8dcv2rfh6yjtbm",
+    "post": "{\"id\":\"pstthr8n3vq6kxz4wmd7cjtprh\",\"create_at\":1789000000000,\"update_at\":1789000000000,\"edit_at\":0,\"delete_at\":0,\"is_pinned\":false,\"user_id\":\"usr7h2qd4kmn9wxtc5bf3yjper\",\"channel_id\":\"chn5y8dwq2kt7mxr4pzc9nvfhj\",\"root_id\":\"pstroot4m9kx2wqz7tdn5cvbhp\",\"original_id\":\"\",\"message\":\"@cairn and what did the retry do?\",\"type\":\"\",\"props\":{},\"hashtags\":\"\",\"pending_post_id\":\"\",\"reply_count\":0,\"last_reply_at\":0,\"participants\":null,\"metadata\":{}}",
+    "mentions": "[\"bot4k9x2mf7qytr3dnw8phe6suc\"]"
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "",
+    "channel_id": "chn5y8dwq2kt7mxr4pzc9nvfhj",
+    "team_id": "",
+    "connection_id": "",
+    "omit_connection_id": ""
+  },
+  "seq": 12
+}

@@ -1,4 +1,4 @@
-package bridge
+package telegram
 
 import (
 	"bytes"
@@ -12,10 +12,10 @@ import (
 
 const (
 	// DefaultBaseURL is the public Bot API host and the only base URL the
-	// production path ever uses: New passes it to NewClient whenever Config.API
-	// is nil. NewClient also takes the base URL as a parameter so the client's
-	// own tests can point at an httptest server; it is never sourced from a
-	// config file or an env var (see doc.go, token-exfiltration rationale).
+	// production path uses: New passes it to NewClient whenever Config.API is
+	// nil. NewClient also takes the base URL as a parameter so the client's own
+	// tests can point at an httptest server; it is never read from config or an
+	// env var (doc.go, token-exfiltration rationale).
 	DefaultBaseURL = "https://api.telegram.org"
 
 	// redactedToken replaces the bot token wherever a string might carry it.
@@ -28,19 +28,19 @@ const (
 )
 
 // Update is one Bot API update: either a message or a callback-query tap. The
-// bridge reads only the fields it routes on.
+// adapter reads only the fields it routes on.
 type Update struct {
-	UpdateID      int64          `json:"update_id"`
 	Message       *Message       `json:"message,omitempty"`
 	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
+	UpdateID      int64          `json:"update_id"`
 }
 
 // Message is a Telegram chat message.
 type Message struct {
-	MessageID int64  `json:"message_id"`
 	From      *User  `json:"from,omitempty"`
-	Chat      Chat   `json:"chat"`
 	Text      string `json:"text,omitempty"`
+	Chat      Chat   `json:"chat"`
+	MessageID int64  `json:"message_id"`
 }
 
 // Chat identifies the conversation a message belongs to.
@@ -55,14 +55,14 @@ type User struct {
 
 // CallbackQuery is an inline-keyboard tap.
 type CallbackQuery struct {
-	ID      string   `json:"id"`
 	From    *User    `json:"from,omitempty"`
 	Message *Message `json:"message,omitempty"`
+	ID      string   `json:"id"`
 	Data    string   `json:"data,omitempty"`
 }
 
 // InlineKeyboardMarkup is the reply markup for an Approve/Deny keyboard. The
-// confirm slice (confirm.go) builds one; the client sends it verbatim.
+// outbound adapter builds one; the client sends it verbatim.
 type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
@@ -76,17 +76,16 @@ type InlineKeyboardButton struct {
 // apiResponse is the Bot API envelope: an ok flag plus a raw result the caller
 // decodes into the shape a given method returns.
 type apiResponse struct {
-	OK          bool            `json:"ok"`
 	Description string          `json:"description,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
+	OK          bool            `json:"ok"`
 }
 
-// BotAPI is the Bot API surface the bridge drives. The shipped *client is the
+// BotAPI is the Bot API surface the adapter drives. The shipped *client is the
 // only production implementation; NewClient returns it behind this interface so
-// the bridge depends on the behavior, not the concrete HTTP client. A test
-// injects its own recorder through bridge.Config.API instead, and this seam is
-// what lets every bridge test run as an external package with no white-box
-// access to the client.
+// the adapter depends on the behavior, not the concrete HTTP client. A fake
+// injects its own recorder through Config.API, which is what lets every adapter
+// suite run as an external package with no white-box access.
 type BotAPI interface {
 	// GetUpdates long-polls for the next batch of updates starting at offset.
 	GetUpdates(ctx context.Context, offset int64, timeoutSecs int) ([]Update, error)
@@ -101,9 +100,9 @@ type BotAPI interface {
 
 // client is the Bot API client and the sole production BotAPI. token is the
 // credential embedded in every URL path; baseURL is DefaultBaseURL on every
-// production call and varied only by the client's own tests through NewClient
-// (doc.go). The client never logs and never returns a raw transport error:
-// every failure is wrapped with the method name and a token-redacted cause.
+// production call and varied only by the client's own suite (doc.go). The
+// client never logs and never returns a raw transport error: every failure is
+// wrapped with the method name and a token-redacted cause.
 type client struct {
 	http    *http.Client
 	token   string
@@ -113,11 +112,9 @@ type client struct {
 
 // NewClient builds the Bot API client behind the BotAPI interface. baseURL is
 // DefaultBaseURL on every production call; it is a parameter only so the
-// client's own tests can point at an httptest server (doc.go). sendTimeout
-// bounds each non-poll call via its context; the http.Client's own Timeout is
-// the long-poll ceiling (pollTimeout plus the deadline margin), an upper bound
-// that stops a hung connection while the per-call context deadlines do the
-// tighter bounding.
+// client's own suite can point at an httptest server (doc.go). sendTimeout
+// bounds each non-poll call via its context, while the http.Client's Timeout is
+// the long-poll ceiling that stops a hung connection.
 func NewClient(token, baseURL string, sendTimeout, pollTimeout time.Duration) BotAPI {
 	return &client{
 		http:    &http.Client{Timeout: pollTimeout + pollDeadlineMargin},
@@ -154,13 +151,13 @@ func (c *client) GetUpdates(ctx context.Context, offset int64, timeoutSecs int) 
 // sendMessageRequest posts one outbound message, optionally with an inline
 // keyboard.
 type sendMessageRequest struct {
-	ChatID      int64                 `json:"chat_id"`
-	Text        string                `json:"text"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	Text        string                `json:"text"`
+	ChatID      int64                 `json:"chat_id"`
 }
 
 // SendMessage posts one message and returns the sent message id so the caller
-// can later edit it (the confirm slice edits an expired proposal in place).
+// can later edit it (the outbound adapter edits an expired proposal in place).
 func (c *client) SendMessage(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -178,13 +175,13 @@ func (c *client) SendMessage(ctx context.Context, chatID int64, text string, key
 // editMessageTextRequest rewrites the text of a message already sent, used to
 // mark an expired proposal in place so the stale keyboard reads as settled.
 type editMessageTextRequest struct {
+	Text      string `json:"text"`
 	ChatID    int64  `json:"chat_id"`
 	MessageID int64  `json:"message_id"`
-	Text      string `json:"text"`
 }
 
-// EditMessageText rewrites a previously sent message. The confirm slice edits an
-// expired proposal so the operator sees it lapsed rather than a live keyboard.
+// EditMessageText rewrites a previously sent message. The outbound adapter edits
+// an expired proposal so the operator sees it lapsed rather than a live keyboard.
 func (c *client) EditMessageText(ctx context.Context, chatID, messageID int64, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -202,7 +199,8 @@ type answerCallbackQueryRequest struct {
 }
 
 // AnswerCallbackQuery clears the tapped button's spinner right away, so the
-// Telegram client responds no matter how busy the target chat's worker is.
+// Telegram client responds no matter how busy the target conversation's worker
+// is.
 func (c *client) AnswerCallbackQuery(ctx context.Context, callbackID, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()

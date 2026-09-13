@@ -55,8 +55,17 @@ const (
 	nameBridgeConfirms     = "cairnos_bridge_confirms_total"
 	nameBridgeSendFailures = "cairnos_bridge_send_failures_total"
 
-	labelOutcome = "outcome"
-	outcomeError = "error"
+	labelOutcome   = "outcome"
+	labelTransport = "transport"
+	labelIdentity  = "identity"
+	outcomeError   = "error"
+
+	// The transports and identity the bridge assertions drive. Telegram answers
+	// as a single bot and leaves the identity label empty; a second transport
+	// with a named identity is what proves the labels actually split the series.
+	transportTelegram   = "telegram"
+	transportMattermost = "mattermost"
+	identityAlerts      = "alerts"
 )
 
 // Span fixture names.
@@ -417,27 +426,29 @@ func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 	}
 }
 
-// TestBridgeMetricsRecorded drives the four Telegram-bridge recorder methods
-// through the manual reader and asserts each lands on the right Prometheus
-// series with the right outcome label, so the bridge dashboard panels have
-// data behind them (S3). BridgeConfirm's refused outcome is checked explicitly
-// because it is the counter behind the confirm-time grant refusals S5 enforces.
+// TestBridgeMetricsRecorded drives the four bridge recorder methods through the
+// manual reader, asserting each lands on the right series and outcome label so
+// the bridge dashboard panels have data (S3). BridgeConfirm's refused outcome is
+// checked because it counts the grant refusals S5 enforces. Every call carries a
+// transport and identity so Telegram's traffic stays unmixed.
 func TestBridgeMetricsRecorded(t *testing.T) {
 	t.Parallel()
 
 	rec, reader, _ := newTestRecorder(t)
 	ctx := t.Context()
 
-	rec.BridgeUpdate(ctx, "handled")
-	rec.BridgeUpdate(ctx, "unauthorized")
-	rec.BridgeUpdate(ctx, outcomeError)
-	rec.BridgeTurn(ctx, true)
-	rec.BridgeTurn(ctx, false)
-	rec.BridgeConfirm(ctx, "approved")
-	rec.BridgeConfirm(ctx, "denied")
-	rec.BridgeConfirm(ctx, "expired")
-	rec.BridgeConfirm(ctx, "refused")
-	rec.BridgeSendFailure(ctx)
+	rec.BridgeUpdate(ctx, transportTelegram, "", "handled")
+	rec.BridgeUpdate(ctx, transportTelegram, "", "unauthorized")
+	rec.BridgeUpdate(ctx, transportTelegram, "", outcomeError)
+	rec.BridgeUpdate(ctx, transportMattermost, identityAlerts, "handled")
+	rec.BridgeTurn(ctx, transportTelegram, "", true)
+	rec.BridgeTurn(ctx, transportTelegram, "", false)
+	rec.BridgeConfirm(ctx, transportTelegram, "", "approved")
+	rec.BridgeConfirm(ctx, transportTelegram, "", "denied")
+	rec.BridgeConfirm(ctx, transportTelegram, "", "expired")
+	rec.BridgeConfirm(ctx, transportTelegram, "", "refused")
+	rec.BridgeSendFailure(ctx, transportTelegram, "")
+	rec.BridgeSendFailure(ctx, transportMattermost, identityAlerts)
 
 	data := collect(t, reader)
 
@@ -448,16 +459,22 @@ func TestBridgeMetricsRecorded(t *testing.T) {
 		value  string
 		want   int64
 	}{
-		{"update handled", nameBridgeUpdates, labelOutcome, "handled", 1},
+		{"update handled", nameBridgeUpdates, labelOutcome, "handled", 2},
 		{"update unauthorized", nameBridgeUpdates, labelOutcome, "unauthorized", 1},
 		{"update error", nameBridgeUpdates, labelOutcome, outcomeError, 1},
+		{"update by transport", nameBridgeUpdates, labelTransport, transportTelegram, 3},
+		{"update by identity", nameBridgeUpdates, labelIdentity, identityAlerts, 1},
 		{"turn ok", nameBridgeTurns, labelOutcome, "ok", 1},
 		{"turn error", nameBridgeTurns, labelOutcome, outcomeError, 1},
+		{"turn by transport", nameBridgeTurns, labelTransport, transportTelegram, 2},
 		{"confirm approved", nameBridgeConfirms, labelOutcome, "approved", 1},
 		{"confirm denied", nameBridgeConfirms, labelOutcome, "denied", 1},
 		{"confirm expired", nameBridgeConfirms, labelOutcome, "expired", 1},
 		{"confirm refused", nameBridgeConfirms, labelOutcome, "refused", 1},
-		{"send failures", nameBridgeSendFailures, "", "", 1},
+		{"confirm by transport", nameBridgeConfirms, labelTransport, transportTelegram, 4},
+		{"send failures", nameBridgeSendFailures, "", "", 2},
+		{"send failures by transport", nameBridgeSendFailures, labelTransport, transportMattermost, 1},
+		{"send failures by identity", nameBridgeSendFailures, labelIdentity, identityAlerts, 1},
 	}
 
 	for _, tt := range tests {

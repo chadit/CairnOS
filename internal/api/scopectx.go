@@ -11,12 +11,10 @@ import (
 type scopesCtxKey struct{}
 
 // contextWithScopes returns a copy of ctx carrying the verified token's granted
-// scopes, so a handler can make a second, finer-grained scope check the method
-// table cannot express. The chat confirm path needs this: SendMessage takes
-// chat:session, but only a confirmed workflow trigger additionally needs
-// write:workflow, and that check happens inside ConfirmAction
-// (.agents/spec/14-open-decisions.md, D9). With auth disabled, no scopes ride
-// the context and ScopesFromContext reports an open set.
+// scopes, so a handler can make a second, finer check the method table cannot
+// express. SendMessage takes chat:session, but a confirmed workflow trigger also
+// needs write:workflow, and that check happens inside ConfirmAction (D9). With
+// auth off no scopes ride the context and the reader reports an open set.
 func contextWithScopes(ctx context.Context, scopes []string) context.Context {
 	return context.WithValue(ctx, scopesCtxKey{}, scopes)
 }
@@ -42,4 +40,25 @@ func hasScope(ctx context.Context, required string) bool {
 	}
 
 	return auth.HasScope(scopes, required)
+}
+
+// subjectCtxKey is the unexported type for the caller-subject context value.
+type subjectCtxKey struct{}
+
+// contextWithSubject returns a copy of ctx carrying the verified token's
+// subject: the key id for an access-key token, the IdP subject for an OAuth
+// login. A handler telling one caller from another within a tenant needs it,
+// since the A2A path matches a proposal against the peer that opened it (FR37).
+// With auth off nothing is stamped.
+func contextWithSubject(ctx context.Context, subject string) context.Context {
+	return context.WithValue(ctx, subjectCtxKey{}, subject)
+}
+
+// subjectFromContext reads the caller's subject off the context. The second
+// result is false when no token rode the call, which is the auth-disabled and
+// public-method case.
+func subjectFromContext(ctx context.Context) (string, bool) {
+	subject, ok := ctx.Value(subjectCtxKey{}).(string)
+
+	return subject, ok
 }

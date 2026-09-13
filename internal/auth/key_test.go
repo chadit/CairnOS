@@ -170,6 +170,9 @@ func TestParseScopes(t *testing.T) {
 			want: []string{auth.ScopeReadMemory, auth.ScopeWriteWorkflow},
 		},
 		{name: "admin", raw: "admin", want: []string{auth.ScopeAdmin}},
+		// message:send has to clear ValidScope, or `cairnos keys add
+		// --scopes message:send` refuses the only key the send path accepts.
+		{name: "message send", raw: "message:send", want: []string{auth.ScopeMessageSend}},
 		{name: "unknown scope", raw: "read:everything", wantErr: true},
 		{name: "typo in valid list", raw: "read:run,write:wrkflow", wantErr: true},
 		{name: "empty entries only", raw: " , ,", want: nil},

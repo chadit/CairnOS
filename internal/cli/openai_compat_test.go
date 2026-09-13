@@ -12,6 +12,10 @@ import (
 // openaiCompatWithoutChatTOML turns the adapter on while chat stays disabled, the
 // misconfiguration serve must reject at startup.
 const openaiCompatWithoutChatTOML = `
+# Telemetry off so the test never binds the default :9090 metrics port.
+[telemetry]
+enabled = false
+
 [api]
 grpc = "127.0.0.1:0"
 http = "127.0.0.1:0"

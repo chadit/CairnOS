@@ -1,0 +1,14 @@
+{
+  "event": "hello",
+  "data": {
+    "connection_id": "kq4x9mzw2tn7",
+    "server_version": "11.4.0.11.4.0"
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "bot4k9x2mf7qytr3dnw8phe6suc",
+    "channel_id": "",
+    "team_id": ""
+  },
+  "seq": 0
+}

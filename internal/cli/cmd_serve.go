@@ -12,11 +12,11 @@ import (
 	"github.com/chadit/CairnOS/internal/agentloop"
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
-	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/hive"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/rules"
@@ -198,7 +198,13 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// records emitted inside a span carry its trace and span IDs.
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, stores.rules, credManager)
+	// The identity registry is created empty and populated once the Mattermost
+	// bridge connects, so the message runner and the notify fan-out can hold it
+	// while it is still empty and resolve identities per send later.
+	msgRegistry := messaging.NewRegistry()
+
+	registry, err := newRegistry(ctx, cfg.Runners, mem, stores.rules, credManager,
+		&messageSenderAdapter{registry: msgRegistry, logger: logger})
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}
@@ -210,11 +216,11 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	workflowsDir := filepath.Join(dir, workflowsDirName)
 
-	// The Discord event fan-out is one drainer over the shipped webhook, shared
+	// The event fan-out is one drainer over every configured destination, shared
 	// by the engine producers (run_failed, budget_denied) and the queue producers
-	// (held, dead_lettered). Nil when the webhook secret is unset, which disables
-	// every producer (decision 7).
-	fanout := BuildDiscordFanout(cfg, logger)
+	// (held, dead_lettered). Nil when neither the Discord webhook nor a Mattermost
+	// identity is configured, which disables every producer (decision 7).
+	fanout := BuildFanout(cfg, msgRegistry, logger)
 
 	eng, err := buildServeEngine(ctx, cfg, &serveEngineDeps{
 		manager:      manager,
@@ -231,27 +237,13 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return a.failServe(ctx, tel, "engine", err)
 	}
 
-	apiCfg := &api.Config{
-		GRPCAddr:     cfg.API.GRPC,
-		HTTPAddr:     cfg.API.HTTP,
-		WorkflowsDir: workflowsDir,
-		Store:        db,
-		Memory:       mem,
-		Vault:        stores.vault,
-		Rules:        stores.rules,
-		Registry:     registry,
-		Breakers:     eng,
-		Manager:      manager,
-		Logger:       logger,
-		BindPolicy: api.BindPolicy{
-			AuthEnabled:               cfg.Auth.Enabled,
-			TLSTerminated:             cfg.Auth.TLSTerminated,
-			ServeWithoutAuthOnNetwork: cfg.Auth.ServeWithoutAuthOnNetwork,
-		},
-		CORSOrigins:     cfg.API.CORSOrigins,
-		MaxBodyBytes:    cfg.API.MaxBodyBytes,
-		MaxRecvMsgBytes: cfg.API.MaxRecvMsgBytes,
-	}
+	apiCfg := newServeAPIConfig(cfg, stores, &serveAPIDeps{
+		registry:     registry,
+		breakers:     eng,
+		manager:      manager,
+		workflowsDir: workflowsDir,
+		logger:       logger,
+	})
 
 	chatAgent, personalities, code, mounted := a.attachChat(ctx, cfg, tel, apiCfg, &chatDeps{
 		store:        db,
@@ -268,31 +260,32 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return code
 	}
 
-	// The bridge builds right after chat because it drives the chat agent: an
-	// enabled bridge with chat off fails fast here, before any listener binds.
-	telegramBridge, code, bridgeMounted := a.buildTelegramBridge(ctx, cfg, tel, &bridgeDeps{
-		chat:   chatAgent,
-		store:  db,
-		logger: logger,
+	// The bridges build right after chat because they drive the chat agent: a
+	// configured bridge with chat off fails fast here, before any listener binds.
+	// Both adapters take the one core built above them, so a conversation started
+	// on either transport shares the session map and the pending proposals.
+	bridges, code, bridgesMounted := a.buildServeBridges(ctx, cfg, tel, msgRegistry, &bridgeDeps{
+		chat:    chatAgent,
+		store:   db,
+		metrics: &bridgeMetricsAdapter{rec: tel.Recorder()},
+		logger:  logger,
 	})
-	if !bridgeMounted {
+	if !bridgesMounted {
 		return code
 	}
 
-	// Assigned only when non-nil: a typed-nil *auth.Authenticator inside
-	// the interface field would read as "auth on" to the server.
-	if authn != nil {
-		apiCfg.Auth = authn
-		apiCfg.LoginLimiter = auth.NewLoginLimiter(auth.LoginLimitConfig{
-			MaxConcurrent: cfg.Auth.MaxConcurrentLogins,
-			RatePerMinute: cfg.Auth.LoginRatePerMinute,
-		})
-		apiCfg.StreamRecheck = cfg.Auth.StreamRecheck
-	}
+	attachMessagingServe(apiCfg, msgRegistry, tel)
 
+	applyServeAuth(apiCfg, cfg, authn)
+
+	// A2A mounts after the bridges so the card is signed over a registry the
+	// Mattermost builder has already populated, and so SendMessage gets the same
+	// core the chat transports hand their turns to.
 	if code, a2aMounted := a.attachA2AServe(ctx, cfg, tel, apiCfg, &a2aServeDeps{
 		manager:      manager,
 		store:        db,
+		core:         bridges.core,
+		identities:   msgRegistry,
 		workflowsDir: workflowsDir,
 		logger:       logger,
 	}); !a2aMounted {
@@ -363,20 +356,21 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	a.printOutf("gRPC listening on %s\n", server.GRPCAddr())
 	a.printOutf("HTTP listening on %s\n", server.HTTPAddr())
+	a.printOutf("messaging endpoint at http://%s%s\n", server.HTTPAddr(), messagingRoute)
 
 	if addr := tel.PrometheusAddr(); addr != "" {
 		a.printOutf("metrics listening on %s\n", addr)
 	}
 
 	return a.serveAndDrain(ctx, cfg, stores, logger, &serveRuntime{
-		server:         server,
-		telegramBridge: telegramBridge,
-		manager:        manager,
-		queue:          queue,
-		registry:       registry,
-		tel:            tel,
-		fanout:         fanout,
-		secrets:        stores.secrets,
+		server:   server,
+		manager:  manager,
+		queue:    queue,
+		bridges:  bridges,
+		registry: registry,
+		tel:      tel,
+		fanout:   fanout,
+		secrets:  stores.secrets,
 	})
 }
 
@@ -384,22 +378,22 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 // scheduler daemon over, so the helper takes one argument instead of a long
 // parameter list.
 type serveRuntime struct {
-	server         *api.Server
-	telegramBridge *bridge.Bridge
-	manager        *api.Manager
-	queue          scheduler.WorkQueue
-	registry       *runner.Registry
-	tel            *telemetry.Telemetry
-	fanout         *notify.Fanout
-	secrets        secrets.Source
+	server   *api.Server
+	bridges  *bridgeRuntime
+	manager  *api.Manager
+	queue    scheduler.WorkQueue
+	registry *runner.Registry
+	tel      *telemetry.Telemetry
+	fanout   *notify.Fanout
+	secrets  secrets.Source
 }
 
-// serveAndDrain starts the retention sweep, hive subscribe, and Telegram bridge
+// serveAndDrain starts the retention sweep, hive subscribe, and chat bridge
 // background loops, prints the ready banner, serves until ctx cancels, then
 // drains every loop and flushes telemetry, returning the exit code. Split out of
 // runServe so that composition root stays under the maintainability ceiling.
 func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *serveStores, logger *slog.Logger, deps *serveRuntime) int {
-	bridgeDone := a.startTelegramBridge(ctx, deps.telegramBridge, logger)
+	bridgeDone := a.startBridges(ctx, logger, deps.bridges)
 	fanoutDone := StartFanout(ctx, deps.fanout)
 
 	a.printOutf("serving; interrupt to stop\n")
@@ -432,6 +426,61 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 	a.closeTelemetry(ctx, deps.tel)
 
 	return code
+}
+
+// serveAPIDeps bundles what newServeAPIConfig reads outside the store set, so
+// the helper takes one argument instead of a long parameter list.
+type serveAPIDeps struct {
+	registry     *runner.Registry
+	breakers     api.BreakerAdmin
+	manager      *api.Manager
+	logger       *slog.Logger
+	workflowsDir string
+}
+
+// newServeAPIConfig assembles the API server's config from the stores, the
+// engine, and the run manager serve already built. It is a straight literal
+// lifted out of runServe, which keeps that composition root under the
+// maintainability ceiling.
+func newServeAPIConfig(cfg *config.Config, stores *serveStores, deps *serveAPIDeps) *api.Config {
+	return &api.Config{
+		GRPCAddr:     cfg.API.GRPC,
+		HTTPAddr:     cfg.API.HTTP,
+		WorkflowsDir: deps.workflowsDir,
+		Store:        stores.db,
+		Memory:       stores.mem,
+		Vault:        stores.vault,
+		Rules:        stores.rules,
+		Registry:     deps.registry,
+		Breakers:     deps.breakers,
+		Manager:      deps.manager,
+		Logger:       deps.logger,
+		BindPolicy: api.BindPolicy{
+			AuthEnabled:               cfg.Auth.Enabled,
+			TLSTerminated:             cfg.Auth.TLSTerminated,
+			ServeWithoutAuthOnNetwork: cfg.Auth.ServeWithoutAuthOnNetwork,
+		},
+		CORSOrigins:     cfg.API.CORSOrigins,
+		MaxBodyBytes:    cfg.API.MaxBodyBytes,
+		MaxRecvMsgBytes: cfg.API.MaxRecvMsgBytes,
+	}
+}
+
+// applyServeAuth stamps the authenticator and its login guards onto the API
+// config. It assigns only when authn is non-nil, because a typed-nil
+// *auth.Authenticator inside the interface field would read as "auth on" to the
+// server.
+func applyServeAuth(apiCfg *api.Config, cfg *config.Config, authn *auth.Authenticator) {
+	if authn == nil {
+		return
+	}
+
+	apiCfg.Auth = authn
+	apiCfg.LoginLimiter = auth.NewLoginLimiter(auth.LoginLimitConfig{
+		MaxConcurrent: cfg.Auth.MaxConcurrentLogins,
+		RatePerMinute: cfg.Auth.LoginRatePerMinute,
+	})
+	apiCfg.StreamRecheck = cfg.Auth.StreamRecheck
 }
 
 // openServeSecretSourceAt builds the serve process's shared secret source, the

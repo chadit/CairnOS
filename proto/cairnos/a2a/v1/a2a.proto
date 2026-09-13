@@ -3,7 +3,9 @@
 // shim over the existing WorkflowService, not a second engine: an A2A "task"
 // is a CairnOS "run", so CreateTask starts a run, GetTask reads one,
 // ListTasks lists them, CancelTask stops one, and TaskUpdates streams a run's
-// events. Every method needs the a2a:task scope; the gateway gives HTTP-only
+// events. SendMessage adds the conversational half: a peer holds a multi-turn
+// chat with this node over the same bridge core the chat transports drive
+// (FR36). Every method needs the a2a:task scope; the gateway gives HTTP-only
 // agents the same surface over JSON.
 
 syntax = "proto3";
@@ -19,7 +21,9 @@ option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1;a
 
 // A2AService is the A2A protocol surface external agents call. It maps the
 // task vocabulary onto runs and reuses the WorkflowService run lifecycle, so
-// an A2A task and an API run are the same persisted record.
+// an A2A task and an API run are the same persisted record. SendMessage maps
+// a conversation onto a chat session instead, through the same bridge core
+// Telegram and Mattermost drive.
 service A2AService {
   // CreateTask starts a run from an A2A task request: the skill names the
   // workflow, params become workflow inputs. It returns the created task
@@ -55,6 +59,20 @@ service A2AService {
   // delivers it as newline-delimited JSON, one update per line.
   rpc TaskUpdates(TaskUpdatesRequest) returns (stream TaskUpdate) {
     option (google.api.http) = {get: "/v1/a2a/tasks/{task_id}/updates"};
+  }
+
+  // SendMessage runs one conversational turn with this node and returns the
+  // reply. context_id names the conversation: the same id on a later call
+  // continues the same chat session, so a peer holds a multi-turn exchange
+  // rather than a series of unrelated questions (FR36). A turn that ends on a
+  // workflow proposal answers with state "input-required" and the proposal
+  // filled; the peer approves or denies it by sending "approve" or "deny" on
+  // the same context_id.
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse) {
+    option (google.api.http) = {
+      post: "/v1/a2a/messages"
+      body: "*"
+    };
   }
 }
 
@@ -177,4 +195,33 @@ message TaskStep {
   string name = 1;
   string status = 2;
   int32 attempt = 3;
+}
+
+// SendMessageRequest carries one conversational turn. context_id is the
+// peer's own conversation handle; an empty one starts a fresh conversation
+// that the response's context_id names for follow-ups.
+message SendMessageRequest {
+  string context_id = 1;
+  string text = 2;
+}
+
+// SendMessageResponse carries the turn's reply. state is "completed" for an
+// ordinary answer and "input-required" when the turn ended on a proposal
+// awaiting an approve or deny on the same context_id.
+message SendMessageResponse {
+  string context_id = 1;
+  string text = 2;
+  string state = 3;
+
+  // proposal is set only when state is "input-required".
+  Proposal proposal = 4;
+}
+
+// Proposal is a workflow the node wants to run on the peer's behalf, awaiting
+// the peer's decision. Approving additionally requires write:workflow on the
+// peer's token (FR37).
+message Proposal {
+  string workflow = 1;
+  google.protobuf.Struct inputs = 2;
+  double estimated_budget_usd = 3;
 }

@@ -25,9 +25,15 @@ const jsonContentType = "application/json"
 const httpTimeout = 30 * time.Second
 
 // newHTTPClient builds a client with an explicit timeout, long enough for
-// the streaming route to finish.
+// the streaming route to finish. Keep-alives are off so a spare dialed
+// connection is closed rather than pooled; a pooled one that never sent a
+// request holds Server.Shutdown for its 5 s grace period, past the fixture's
+// shutdown budget.
 func newHTTPClient() *http.Client {
-	return &http.Client{Timeout: httpTimeout}
+	return &http.Client{
+		Timeout:   httpTimeout,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 }
 
 // httpGet fetches one gateway route and returns status code and body.

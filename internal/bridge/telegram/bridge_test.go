@@ -1,4 +1,4 @@
-package bridge_test
+package telegram_test
 
 import (
 	"log/slog"
@@ -8,16 +8,18 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bridge"
+	"github.com/chadit/CairnOS/internal/bridge/bridgetest"
+	"github.com/chadit/CairnOS/internal/bridge/telegram"
 )
 
 // TestBridgeMultiTurnPersistsAcrossRestart proves an allowlisted chat holds a
-// multi-turn conversation on one session and a fresh bridge over the same store
+// multi-turn conversation on one session and a fresh adapter over the same store
 // re-resolves that binding, because it lives in bridge_sessions, not memory
 // (.agents/spec/parity/messaging-bridge.md, acceptance 1).
 func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}}
+	users := map[int64]bridge.Grant{1: {Workspace: wsDefault}}
 	rig := newFixture(t, users)
 
 	scriptSingles(
@@ -28,23 +30,27 @@ func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 
 	stop := runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.chat.sentTurns()) == 2 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.chat.Turns()) == 2 })
 
 	stop()
 
-	turns := rig.chat.sentTurns()
-	if turns[0].sessionID != turns[1].sessionID {
-		t.Fatalf("turns used different sessions: %q vs %q", turns[0].sessionID, turns[1].sessionID)
+	turns := rig.chat.Turns()
+	if turns[0].SessionID != turns[1].SessionID {
+		t.Fatalf("turns used different sessions: %q vs %q", turns[0].SessionID, turns[1].SessionID)
 	}
 
-	// A fresh bridge over the same store must re-resolve the binding from the
-	// store rather than any in-memory state the first bridge held.
+	// A fresh adapter over the same store must re-resolve the binding from the
+	// store rather than any in-memory state the first core held.
 	restartBot := newFakeBotAPI()
 	scriptSingles(restartBot, messageUpdate(1, testChatID, "after restart"))
 
-	restarted := bridge.New(&bridge.Config{
-		Chat:        rig.chat,
-		Store:       rig.store,
+	restarted := telegram.New(&telegram.Config{
+		Core: bridge.NewCore(&bridge.CoreConfig{
+			Chat:       rig.chat,
+			Store:      rig.store,
+			Metrics:    rig.metrics,
+			ConfirmTTL: time.Minute,
+		}),
 		Metrics:     rig.metrics,
 		API:         restartBot,
 		Users:       users,
@@ -52,18 +58,17 @@ func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 		PollTimeout: time.Second,
 		SendTimeout: time.Second,
 		BackoffBase: time.Millisecond,
-		ConfirmTTL:  time.Minute,
 	})
 
 	stopRestart := runBridge(t, restarted)
 
-	waitFor(t, func() bool { return len(rig.chat.sentTurns()) == 3 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.chat.Turns()) == 3 })
 
 	stopRestart()
 
-	turns = rig.chat.sentTurns()
-	if turns[2].sessionID != turns[0].sessionID {
-		t.Errorf("post-restart turn used session %q, want %q", turns[2].sessionID, turns[0].sessionID)
+	turns = rig.chat.Turns()
+	if turns[2].SessionID != turns[0].SessionID {
+		t.Errorf("post-restart turn used session %q, want %q", turns[2].SessionID, turns[0].SessionID)
 	}
 }
 
@@ -73,19 +78,19 @@ func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 func TestBridgeUnauthorizedSenderGetsNoReply(t *testing.T) {
 	t.Parallel()
 
-	rig := newFixture(t, map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}})
+	rig := newFixture(t, map[int64]bridge.Grant{1: {Workspace: wsDefault}})
 
 	scriptSingles(rig.tg, messageUpdate(999, testChatID, msgGo))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.updateCount(outcomeUnauthorized) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.updateCount(bridge.OutcomeUnauthorized) == 1 })
 
 	if sent := rig.tg.sentMessages(); len(sent) != 0 {
 		t.Errorf("unauthorized sender got a reply: %+v", sent)
 	}
 
-	if turns := rig.chat.sentTurns(); len(turns) != 0 {
+	if turns := rig.chat.Turns(); len(turns) != 0 {
 		t.Errorf("unauthorized sender ran a turn: %+v", turns)
 	}
 }
@@ -95,7 +100,7 @@ func TestBridgeUnauthorizedSenderGetsNoReply(t *testing.T) {
 func TestBridgeNewRebindsAndSessionReplies(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}}
+	users := map[int64]bridge.Grant{1: {Workspace: wsDefault}}
 	rig := newFixture(t, users)
 
 	scriptSingles(
@@ -107,10 +112,10 @@ func TestBridgeNewRebindsAndSessionReplies(t *testing.T) {
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.tg.sentMessages()) == 3 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.tg.sentMessages()) == 3 })
 
 	sent := rig.tg.sentMessages()
-	first := rig.chat.sentTurns()[0].sessionID
+	first := rig.chat.Turns()[0].SessionID
 
 	newReply := sent[1].text
 	if !strings.HasPrefix(newReply, "Started a new session: ") {
@@ -127,23 +132,23 @@ func TestBridgeNewRebindsAndSessionReplies(t *testing.T) {
 	}
 }
 
-// TestBridgeLongReplySplitsOnParagraphs proves a turn over the 4096-char cap
-// splits on the paragraph boundary into ordered messages.
+// TestBridgeLongReplySplitsOnParagraphs proves a turn over the 4096-character cap
+// the adapter reports splits on the paragraph boundary into ordered messages.
 func TestBridgeLongReplySplitsOnParagraphs(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}}
+	users := map[int64]bridge.Grant{1: {Workspace: wsDefault}}
 	rig := newFixture(t, users)
 
 	first := strings.Repeat("a", 3000)
 	second := strings.Repeat("b", 3000)
-	rig.chat.reply = first + "\n\n" + second
+	rig.chat.SetReply(first + "\n\n" + second)
 
 	scriptSingles(rig.tg, messageUpdate(1, testChatID, msgGo))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.tg.sentMessages()) == 2 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.tg.sentMessages()) == 2 })
 
 	sent := rig.tg.sentMessages()
 	if sent[0].text != first || sent[1].text != second {
@@ -162,7 +167,7 @@ func TestBridgeLongReplySplitsOnParagraphs(t *testing.T) {
 func TestBridgeFailedSendCountsOnceNoRerun(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}}
+	users := map[int64]bridge.Grant{1: {Workspace: wsDefault}}
 	rig := newFixture(t, users)
 	rig.tg.failSends()
 
@@ -170,15 +175,22 @@ func TestBridgeFailedSendCountsOnceNoRerun(t *testing.T) {
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.sendFailureCount() == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.metrics.SendFailures()) == 1 })
 
-	if turns := rig.chat.sentTurns(); len(turns) != 1 {
+	if turns := rig.chat.Turns(); len(turns) != 1 {
 		t.Errorf("turn ran %d times, want 1 (no re-run)", len(turns))
 	}
 
-	turnsOK, turnsErr := rig.metrics.turnCounts()
+	turnsOK, turnsErr := rig.metrics.TurnCounts()
 	if turnsOK != 1 || turnsErr != 0 {
 		t.Errorf("turn counts = ok:%d err:%d, want ok:1 err:0", turnsOK, turnsErr)
+	}
+
+	// The failure carries the adapter's own labels, so a dashboard attributes a
+	// missed reply to Telegram rather than to an unlabeled series (FR42).
+	labels := rig.metrics.SendFailures()
+	if labels[0].Transport != transportName || labels[0].Identity != identityName {
+		t.Errorf("send failure labels = %+v, want transport %q", labels[0], transportName)
 	}
 }
 
@@ -188,21 +200,27 @@ func TestBridgeFailedSendCountsOnceNoRerun(t *testing.T) {
 func TestBridgeWorkspaceStampedOnEveryTurn(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{1: {Workspace: wsAcme}}
+	users := map[int64]bridge.Grant{1: {Workspace: wsAcme}}
 	rig := newFixture(t, users)
 
 	scriptSingles(rig.tg, messageUpdate(1, testChatID, msgGo))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.chat.sentTurns()) == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.chat.Turns()) == 1 })
 
-	if bound := rig.store.boundWorkspaces(); len(bound) != 1 || bound[0] != wsAcme {
+	if bound := rig.store.BoundWorkspaces(); len(bound) != 1 || bound[0] != wsAcme {
 		t.Errorf("bind workspaces = %v, want [acme]", bound)
 	}
 
-	if created := rig.chat.createdWorkspaces(); len(created) != 1 || created[0] != wsAcme {
+	if created := rig.chat.CreatedWorkspaces(); len(created) != 1 || created[0] != wsAcme {
 		t.Errorf("session workspaces = %v, want [acme]", created)
+	}
+
+	// The binding is keyed by the adapter's transport name, which is the value the
+	// store column has carried since the bridge shipped.
+	if _, ok := rig.store.Binding(wsAcme, transportName, "100"); !ok {
+		t.Errorf("no binding under transport %q", transportName)
 	}
 }
 
@@ -211,26 +229,26 @@ func TestBridgeWorkspaceStampedOnEveryTurn(t *testing.T) {
 func TestBridgeOffsetAckingSkipsAckedUpdates(t *testing.T) {
 	t.Parallel()
 
-	rig := newFixture(t, map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}})
+	rig := newFixture(t, map[int64]bridge.Grant{1: {Workspace: wsDefault}})
 
 	first := messageUpdate(1, testChatID, "one")
 	first.UpdateID = 5
 	second := messageUpdate(1, testChatID, "two")
 	second.UpdateID = 6
-	rig.tg.script([]bridge.Update{*first}, []bridge.Update{*second})
+	rig.tg.script([]telegram.Update{*first}, []telegram.Update{*second})
 
 	stop := runBridge(t, rig.br)
 
 	// Wait for both turns to run and for the ack of update 6 (offset 7) to be
 	// polled. Stopping on the turn count alone races the poll loop's final
 	// getUpdates(7) against the cancel, which flakes under load.
-	waitFor(t, func() bool {
-		return len(rig.chat.sentTurns()) == 2 && slices.Contains(rig.tg.seenOffsets(), int64(7))
+	bridgetest.WaitFor(t, func() bool {
+		return len(rig.chat.Turns()) == 2 && slices.Contains(rig.tg.seenOffsets(), int64(7))
 	})
 
 	stop()
 
-	if turns := rig.chat.sentTurns(); len(turns) != 2 {
+	if turns := rig.chat.Turns(); len(turns) != 2 {
 		t.Fatalf("processed %d turns, want 2 (no replay)", len(turns))
 	}
 
@@ -249,16 +267,16 @@ func TestBridgeOffsetAckingSkipsAckedUpdates(t *testing.T) {
 func TestBridgeBackoffStateChangeLogsOnly(t *testing.T) {
 	t.Parallel()
 
-	rig := newFixture(t, map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}})
+	rig := newFixture(t, map[int64]bridge.Grant{1: {Workspace: wsDefault}})
 	rig.tg.failGetUpdates(2)
 
 	only := messageUpdate(1, testChatID, msgGo)
 	only.UpdateID = 10
-	rig.tg.script([]bridge.Update{*only})
+	rig.tg.script([]telegram.Update{*only})
 
 	stop := runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.chat.sentTurns()) == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.chat.Turns()) == 1 })
 
 	stop()
 
@@ -281,25 +299,30 @@ func TestBridgeNoTokenInLogsOnTransportError(t *testing.T) {
 	t.Parallel()
 
 	logs := &syncBuffer{}
-	realClient := bridge.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second)
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	metrics := bridgetest.NewMetrics()
 
-	built := bridge.New(&bridge.Config{
-		Chat:        newFakeChat(),
-		Store:       newFakeStore(),
-		Metrics:     newFakeMetrics(),
-		API:         realClient,
-		Users:       map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}},
+	built := telegram.New(&telegram.Config{
+		Core: bridge.NewCore(&bridge.CoreConfig{
+			Chat:       bridgetest.NewChat(),
+			Store:      bridgetest.NewStore(),
+			Metrics:    metrics,
+			Logger:     logger,
+			ConfirmTTL: time.Minute,
+		}),
+		Metrics:     metrics,
+		API:         telegram.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second),
+		Users:       map[int64]bridge.Grant{1: {Workspace: wsDefault}},
+		Logger:      logger,
 		Token:       testToken,
 		PollTimeout: time.Second,
 		SendTimeout: time.Second,
 		BackoffBase: time.Millisecond,
-		ConfirmTTL:  time.Minute,
-		Logger:      slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
 	stop := runBridge(t, built)
 
-	waitFor(t, func() bool { return strings.Contains(logs.String(), "telegram long-poll down") })
+	bridgetest.WaitFor(t, func() bool { return strings.Contains(logs.String(), "telegram long-poll down") })
 
 	stop()
 
@@ -326,12 +349,12 @@ func TestBridgeDispatchFIFOAndConcurrent(t *testing.T) {
 		secondText = "second"
 	)
 
-	users := map[int64]bridge.AllowedUser{
+	users := map[int64]bridge.Grant{
 		1: {Workspace: "w1"},
 		2: {Workspace: "w2"},
 	}
 	rig := newFixture(t, users)
-	rig.chat.gateOn = blockText
+	rig.chat.GateOn(blockText)
 
 	blocked := messageUpdate(1, 1, blockText)
 	other := messageUpdate(2, 2, quickText)
@@ -342,78 +365,46 @@ func TestBridgeDispatchFIFOAndConcurrent(t *testing.T) {
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return containsTurn(rig.chat.sentTurns(), quickText) })
+	bridgetest.WaitFor(t, func() bool { return rig.chat.HasTurn(quickText) })
 
-	waitFor(t, func() bool { return len(rig.tg.answeredCallbacks()) == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.tg.answeredCallbacks()) == 1 })
 
-	if containsTurn(rig.chat.sentTurns(), secondText) {
+	if rig.chat.HasTurn(secondText) {
 		t.Fatal("queued update ran before the blocked turn released; FIFO broken")
 	}
 
-	close(rig.chat.release)
+	rig.chat.Release()
 
-	waitFor(t, func() bool { return containsTurn(rig.chat.sentTurns(), secondText) })
+	bridgetest.WaitFor(t, func() bool { return rig.chat.HasTurn(secondText) })
 
-	turns := rig.chat.sentTurns()
-	if turnIndex(turns, blockText) > turnIndex(turns, secondText) {
-		t.Errorf("first chat processed out of order: %+v", turns)
+	if rig.chat.TurnIndex(blockText) > rig.chat.TurnIndex(secondText) {
+		t.Errorf("first chat processed out of order: %+v", rig.chat.Turns())
 	}
 }
 
-// TestSplitMessage checks the paragraph-preferring split against the real Bot API
-// cap through a delivered turn: under and at the cap stay one message, a
-// paragraph boundary splits, and an oversized single paragraph hard-cuts.
-func TestSplitMessage(t *testing.T) {
+// TestBridgeBadCallbackDataDropped proves a tap whose callback_data does not
+// parse is logged and dropped without reaching the core, while still counting as
+// one allowlisted update the adapter accepted.
+func TestBridgeBadCallbackDataDropped(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name  string
-		reply string
-		want  []string
-	}{
-		{
-			name:  "under the cap",
-			reply: "hello",
-			want:  []string{"hello"},
-		},
-		{
-			name:  "at the cap",
-			reply: strings.Repeat("a", maxMessageChars),
-			want:  []string{strings.Repeat("a", maxMessageChars)},
-		},
-		{
-			name:  "paragraph boundary",
-			reply: strings.Repeat("a", 3000) + "\n\n" + strings.Repeat("b", 3000),
-			want:  []string{strings.Repeat("a", 3000), strings.Repeat("b", 3000)},
-		},
-		{
-			name:  "hard cut one paragraph",
-			reply: strings.Repeat("c", maxMessageChars+500),
-			want:  []string{strings.Repeat("c", maxMessageChars), strings.Repeat("c", 500)},
-		},
+	rig := newFixture(t, map[int64]bridge.Grant{testUserID: {Workspace: wsDefault}})
+
+	scriptSingles(rig.tg, callbackUpdate(1, testUserID, testChatID, "not-a-confirm"))
+
+	runBridge(t, rig.br)
+
+	bridgetest.WaitFor(t, func() bool { return rig.updateCount(bridge.OutcomeHandled) == 1 })
+
+	if sent := rig.tg.sentMessages(); len(sent) != 0 {
+		t.Errorf("bad callback produced a reply: %+v", sent)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	if calls := rig.chat.Confirms(); len(calls) != 0 {
+		t.Errorf("bad callback reached the agent: %+v", calls)
+	}
 
-			rig := newFixture(t, map[int64]bridge.AllowedUser{1: {Workspace: wsDefault}})
-			rig.chat.reply = tt.reply
-
-			scriptSingles(rig.tg, messageUpdate(1, testChatID, msgGo))
-
-			runBridge(t, rig.br)
-
-			waitFor(t, func() bool { return len(rig.tg.sentMessages()) == len(tt.want) })
-
-			got := make([]string, 0, len(tt.want))
-			for _, message := range rig.tg.sentMessages() {
-				got = append(got, message.text)
-			}
-
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("split into %d parts, want %d", len(got), len(tt.want))
-			}
-		})
+	if !strings.Contains(rig.logs.String(), "bridge bad callback") {
+		t.Errorf("bad callback not logged: %s", rig.logs.String())
 	}
 }

@@ -10,7 +10,9 @@ import (
 	"github.com/chadit/CairnOS/internal/a2a"
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/telemetry"
 )
@@ -19,19 +21,29 @@ import (
 // helper takes one argument rather than a long parameter list (gocritic
 // paramTypeCombine, varnamelen on a wide signature).
 type a2aServeDeps struct {
-	manager      *api.Manager
-	store        store.Store
-	workflowsDir string
+	manager *api.Manager
+	store   store.Store
+
+	// core is the shared bridge core a peer's SendMessage runs its turn through.
+	// It is nil when [chat] is off, which is what makes SendMessage answer
+	// FailedPrecondition instead of pretending a turn ran.
+	core *bridge.Core
+
+	// identities is the registry the card's channel list is rendered from. It is
+	// read here, not earlier: the Mattermost builder registers into it just
+	// above this call and the card is signed at NewBundle.
+	identities *messaging.Registry
+
 	logger       *slog.Logger
+	workflowsDir string
 }
 
-// attachA2AServe builds the A2A bundle and, when enabled, mounts it on the API
-// server and prints the card banner. It returns the failure exit code and false
-// only when the bundle cannot be built or attached (telemetry flushed); a
-// disabled A2A mounts nothing and returns true. Kept out of runServe so that
-// function stays under the complexity ceiling, the same shape as attachMCPServe.
+// attachA2AServe builds the A2A bundle and, when enabled, mounts it and prints
+// the card banner. It returns the failure exit code and false only when the
+// bundle cannot be built or attached; a disabled A2A mounts nothing and returns
+// true. Kept out of runServe for the same reason attachMCPServe is.
 func (a *App) attachA2AServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *a2aServeDeps) (int, bool) {
-	bundle, err := buildA2ABundle(cfg, deps.manager, api.NewWorkflowResolver(deps.workflowsDir, deps.logger), deps.store, deps.logger)
+	bundle, err := buildA2ABundle(cfg, api.NewWorkflowResolver(deps.workflowsDir, deps.logger), deps)
 	if err != nil {
 		return a.failServe(ctx, tel, "a2a", err), false
 	}
@@ -57,13 +69,14 @@ const a2aGRPCScheme = "grpc://"
 // without reaching into the a2a package at the call site.
 const a2aWellKnownPath = a2a.WellKnownPath
 
-// buildA2ABundle assembles the A2A surface from the config: it resolves the
-// card signing key (file, then reused auth EdDSA key, then ephemeral), signs
-// the card, wires the service over the shared run manager, resolver, and
-// store, and returns the bundle the serve wiring plugs into the API server. A
-// nil bundle with a nil error means A2A is disabled, which keeps the whole
-// protocol surface out of the process.
-func buildA2ABundle(cfg *config.Config, manager *api.Manager, resolver *api.WorkflowResolver, runStore store.Store, logger *slog.Logger) (*a2a.Bundle, error) {
+// buildA2ABundle assembles the A2A surface: it resolves the card signing key
+// (file, then the reused auth EdDSA key, then ephemeral), signs the card over
+// the advertised endpoint and channels, and wires the service over the shared
+// manager, resolver, store, and bridge core. A nil bundle with a nil error
+// means A2A is disabled.
+func buildA2ABundle(cfg *config.Config, resolver *api.WorkflowResolver, deps *a2aServeDeps) (*a2a.Bundle, error) {
+	logger := deps.logger
+
 	if !cfg.A2A.Enabled {
 		return nil, nil //nolint:nilnil // a nil bundle is the documented "a2a disabled" state, not an error
 	}
@@ -80,22 +93,32 @@ func buildA2ABundle(cfg *config.Config, manager *api.Manager, resolver *api.Work
 		endpoint = a2aGRPCScheme + cfg.API.GRPC
 	}
 
-	bundle, err := a2a.NewBundle(&a2a.BundleConfig{
+	bundleCfg := &a2a.BundleConfig{
 		NodeName:   cfg.Auth.Issuer,
 		Version:    appVersion(),
 		Endpoint:   endpoint,
 		LoginURL:   "http://" + cfg.API.HTTP + "/v1/login",
 		SigningKey: signingKey,
-		Manager:    manager,
+		Channels:   a2aChannels(deps.identities),
+		Manager:    deps.manager,
 		Resolver:   resolver,
-		Store:      runStore,
+		Store:      deps.store,
 		TLS: a2a.TLSConfig{
 			CertFile:     cfg.A2A.CertFile,
 			KeyFile:      cfg.A2A.KeyFile,
 			ClientCAFile: cfg.A2A.ClientCAFile,
 		},
 		Logger: logger,
-	})
+	}
+
+	// Assigned only when non-nil: a typed-nil *bridge.Core inside the interface
+	// field reads as "chat on" to the service and would defeat the nil check
+	// that answers chat-disabled.
+	if deps.core != nil {
+		bundleCfg.Bridge = deps.core
+	}
+
+	bundle, err := a2a.NewBundle(bundleCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build a2a bundle: %w", err)
 	}
@@ -103,12 +126,34 @@ func buildA2ABundle(cfg *config.Config, manager *api.Manager, resolver *api.Work
 	return bundle, nil
 }
 
-// reusableAuthKey returns the auth layer's EdDSA private key when the auth tier
-// is asymmetric, so the card and the cross-org tokens share one trust anchor
-// (.agents/spec/08-auth-and-access.md, Change 3). It returns nil when auth is
-// off or running HS256, which sends ResolveSigningKey to its file or ephemeral
-// path instead. A load failure also yields nil: a failure here is not fatal to
-// A2A, since the file and ephemeral fallbacks still produce a usable key.
+// a2aChannels renders the registry's identities as card channels, so a peer
+// reading the card learns which chat accounts this node answers on (FR35). An
+// empty or nil registry yields nothing, which the card omits.
+func a2aChannels(registry *messaging.Registry) []a2a.Channel {
+	if registry == nil {
+		return nil
+	}
+
+	identities := registry.List()
+
+	channels := make([]a2a.Channel, 0, len(identities))
+	for _, identity := range identities {
+		channels = append(channels, a2a.Channel{
+			Type:        identity.Transport,
+			URL:         identity.URL,
+			Username:    identity.Username,
+			DisplayName: identity.DisplayName,
+		})
+	}
+
+	return channels
+}
+
+// reusableAuthKey returns the auth layer's EdDSA private key when the auth
+// tier is asymmetric, so the card and the cross-org tokens share one trust
+// anchor (.agents/spec/08-auth-and-access.md, Change 3). It returns nil when
+// auth is off, when auth runs HS256, or when the material fails to load, which
+// sends ResolveSigningKey to its file or ephemeral path instead.
 func reusableAuthKey(cfg *config.Config) ed25519.PrivateKey {
 	if !cfg.Auth.Enabled || cfg.Auth.SigningAlgorithm != auth.AlgEdDSA {
 		return nil

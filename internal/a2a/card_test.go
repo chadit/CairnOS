@@ -1,10 +1,13 @@
 package a2a_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/a2a"
@@ -32,6 +35,7 @@ func newSignedCard(t *testing.T) (*a2a.Card, ed25519.PublicKey) {
 		Protocol: a2a.ProtocolVersion,
 		Endpoint: "grpc://localhost:7777",
 		Skills:   []a2a.Skill{{Name: "run_workflow", Description: "Run a named workflow."}},
+		Channels: fixtureChannels(),
 		Auth:     a2a.AuthInfo{Type: a2a.AuthTypeJWT, Login: "http://localhost:8080/v1/login"},
 	}
 
@@ -77,8 +81,8 @@ func TestCardTamperDetected(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name   string
 		mutate func(card *a2a.Card)
+		name   string
 	}{
 		{
 			name:   "endpoint changed",
@@ -95,6 +99,16 @@ func TestCardTamperDetected(t *testing.T) {
 		{
 			name:   "login changed",
 			mutate: func(card *a2a.Card) { card.Auth.Login = "http://evil/login" },
+		},
+		{
+			name:   "channel url changed",
+			mutate: func(card *a2a.Card) { card.Channels[0].URL = "https://evil.example.test" },
+		},
+		{
+			name: "channel appended",
+			mutate: func(card *a2a.Card) {
+				card.Channels = append(card.Channels, a2a.Channel{Type: channelTypeMattermost, Username: "imposter"})
+			},
 		},
 	}
 
@@ -174,5 +188,63 @@ func TestCardMarshalRoundTripsThroughJSON(t *testing.T) {
 
 	if decoded.Protocol != a2a.ProtocolVersion {
 		t.Fatalf("decoded protocol = %q, want %q", decoded.Protocol, a2a.ProtocolVersion)
+	}
+}
+
+// TestCardChannelsSurviveJSONRoundTrip proves the channel block is carried by
+// the served card and is covered by the signature: a consumer decoding the card
+// reads the same chat surfaces the node signed.
+func TestCardChannelsSurviveJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	card, pub := newSignedCard(t)
+
+	raw, err := card.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded a2a.Card
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal card JSON: %v", err)
+	}
+
+	if err := a2a.Verify(&decoded, pub); err != nil {
+		t.Fatalf("Verify a card carrying channels: %v", err)
+	}
+
+	want := fixtureChannels()
+	if !slices.Equal(decoded.Channels, want) {
+		t.Fatalf("decoded channels = %+v, want %+v", decoded.Channels, want)
+	}
+}
+
+// TestCardWithoutChannelsOmitsTheKey pins the empty case. A nil channel list
+// and an empty one must render identically, because the builder produces either
+// depending on how identities resolved and that choice must never change the
+// bytes Sign covers. Omitting the key also leaves a chat-less node's card
+// byte-identical to the one it published before channels existed.
+func TestCardWithoutChannelsOmitsTheKey(t *testing.T) {
+	t.Parallel()
+
+	nilChannels := &a2a.Card{Name: nodeName, Protocol: a2a.ProtocolVersion}
+	emptyChannels := &a2a.Card{Name: nodeName, Protocol: a2a.ProtocolVersion, Channels: []a2a.Channel{}}
+
+	nilJSON, err := json.Marshal(nilChannels)
+	if err != nil {
+		t.Fatalf("marshal card with nil channels: %v", err)
+	}
+
+	emptyJSON, err := json.Marshal(emptyChannels)
+	if err != nil {
+		t.Fatalf("marshal card with empty channels: %v", err)
+	}
+
+	if !bytes.Equal(nilJSON, emptyJSON) {
+		t.Fatalf("nil channels rendered %s, empty channels rendered %s; the two must agree", nilJSON, emptyJSON)
+	}
+
+	if strings.Contains(string(nilJSON), `"channels"`) {
+		t.Fatalf("card with no channels carried the key: %s", nilJSON)
 	}
 }

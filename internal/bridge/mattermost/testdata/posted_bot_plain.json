@@ -1,0 +1,22 @@
+{
+  "event": "posted",
+  "data": {
+    "channel_display_name": "",
+    "channel_name": "",
+    "channel_type": "O",
+    "sender_name": "@ci-bot",
+    "set_online": true,
+    "team_id": "tmq3w7zkx5np8dcv2rfh6yjtbm",
+    "post": "{\"id\":\"pstbot2w7kq9xz4mnt6rvdhcpj\",\"create_at\":1789000000000,\"update_at\":1789000000000,\"edit_at\":0,\"delete_at\":0,\"is_pinned\":false,\"user_id\":\"hokz8m4vqt6ncr9dwy2fjs7blx\",\"channel_id\":\"chn5y8dwq2kt7mxr4pzc9nvfhj\",\"root_id\":\"\",\"original_id\":\"\",\"message\":\"@cairn build #4812 failed on main\",\"type\":\"\",\"props\":{\"from_webhook\":\"true\",\"override_icon_url\":\"https://ci.example.test/icon.png\",\"attachments\":[{\"text\":\"step: unit tests\",\"color\":\"#d24b4b\"}]},\"hashtags\":\"\",\"pending_post_id\":\"\",\"reply_count\":0,\"last_reply_at\":0,\"participants\":null,\"metadata\":{}}",
+    "mentions": "[\"bot4k9x2mf7qytr3dnw8phe6suc\"]"
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "",
+    "channel_id": "chn5y8dwq2kt7mxr4pzc9nvfhj",
+    "team_id": "",
+    "connection_id": "",
+    "omit_connection_id": ""
+  },
+  "seq": 13
+}

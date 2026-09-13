@@ -41,6 +41,24 @@ type Skill struct {
 	Description string `json:"description"`
 }
 
+// Channel is one chat surface the node answers on, so a peer that would rather
+// hold a conversation than drive the task API knows where to reach this agent
+// and under what name (FR35). One entry per enabled chat identity.
+type Channel struct {
+	// Type names the transport, such as "mattermost".
+	Type string `json:"type"`
+
+	// URL is the chat server the identity lives on.
+	URL string `json:"url"`
+
+	// Username is the bot account a peer addresses on that server.
+	Username string `json:"username"`
+
+	// DisplayName is the operator-facing label for the identity, empty when the
+	// operator set none.
+	DisplayName string `json:"display_name"`
+}
+
 // AuthInfo tells a consumer how to authenticate: the scheme and the login
 // endpoint where an access key is exchanged for a bearer token.
 type AuthInfo struct {
@@ -64,13 +82,21 @@ type SigningInfo struct {
 // reach it, what it can do, how to authenticate, and the signature that lets a
 // consumer trust the card came from this node untampered.
 type Card struct {
-	Name     string      `json:"name"`
-	Version  string      `json:"version"`
-	Protocol string      `json:"protocol"`
-	Endpoint string      `json:"endpoint"`
-	Skills   []Skill     `json:"skills"`
-	Auth     AuthInfo    `json:"auth"`
-	Signing  SigningInfo `json:"signing"`
+	Name     string  `json:"name"`
+	Version  string  `json:"version"`
+	Protocol string  `json:"protocol"`
+	Endpoint string  `json:"endpoint"`
+	Skills   []Skill `json:"skills"`
+
+	// Channels are the chat surfaces the node answers on. omitempty is what keeps
+	// the key off a node with no chat identities: the builder hands over a nil
+	// slice or an empty one depending on how the identities were resolved, and
+	// with omitempty both render identically, so that choice can never change the
+	// bytes Sign covers.
+	Channels []Channel `json:"channels,omitempty"`
+
+	Auth    AuthInfo    `json:"auth"`
+	Signing SigningInfo `json:"signing"`
 }
 
 // Sign fills the card's signing block: it records the algorithm and public

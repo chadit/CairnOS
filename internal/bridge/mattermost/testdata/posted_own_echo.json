@@ -1,0 +1,21 @@
+{
+  "event": "posted",
+  "data": {
+    "channel_display_name": "",
+    "channel_name": "",
+    "channel_type": "O",
+    "sender_name": "@cairn",
+    "set_online": true,
+    "team_id": "tmq3w7zkx5np8dcv2rfh6yjtbm",
+    "post": "{\"id\":\"pstown3k7qz9wx2mnt5rvdhcpj\",\"create_at\":1789000000000,\"update_at\":1789000000000,\"edit_at\":0,\"delete_at\":0,\"is_pinned\":false,\"user_id\":\"bot4k9x2mf7qytr3dnw8phe6suc\",\"channel_id\":\"chn5y8dwq2kt7mxr4pzc9nvfhj\",\"root_id\":\"pstroot4m9kx2wqz7tdn5cvbhp\",\"original_id\":\"\",\"message\":\"Last night's alerts were all disk pressure on the build hosts.\",\"type\":\"\",\"props\":{\"from_bot\":\"true\"},\"hashtags\":\"\",\"pending_post_id\":\"\",\"reply_count\":0,\"last_reply_at\":0,\"participants\":null,\"metadata\":{}}"
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "",
+    "channel_id": "chn5y8dwq2kt7mxr4pzc9nvfhj",
+    "team_id": "",
+    "connection_id": "",
+    "omit_connection_id": ""
+  },
+  "seq": 17
+}

@@ -1,4 +1,4 @@
-package bridge_test
+package telegram_test
 
 import (
 	"encoding/json"
@@ -10,17 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chadit/CairnOS/internal/bridge"
+	"github.com/chadit/CairnOS/internal/bridge/telegram"
 )
 
 // botEnvelope is the Bot API response wrapper the fake server writes and the
 // client decodes: an ok flag plus the method's raw result, or a description on a
-// failure. It mirrors the wire contract without touching the bridge's unexported
+// failure. It mirrors the wire contract without touching the adapter's unexported
 // envelope type.
 type botEnvelope struct {
-	OK          bool            `json:"ok"`
 	Description string          `json:"description,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
+	OK          bool            `json:"ok"`
 }
 
 // botServer is a minimal httptest Bot API server, the one place a client test
@@ -28,11 +28,10 @@ type botEnvelope struct {
 // sendMessage text so the round-trip test can assert real marshaling and
 // decoding end to end.
 type botServer struct {
-	server *httptest.Server
-
-	mu      sync.Mutex
-	updates []bridge.Update
+	server  *httptest.Server
+	updates []telegram.Update
 	sent    []string
+	mu      sync.Mutex
 }
 
 // newBotServer starts the fake Bot API server and registers its shutdown.
@@ -48,7 +47,7 @@ func newBotServer(t *testing.T) *botServer {
 }
 
 // setUpdates scripts the batch the next getUpdates returns.
-func (bs *botServer) setUpdates(updates []bridge.Update) {
+func (bs *botServer) setUpdates(updates []telegram.Update) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 
@@ -83,7 +82,7 @@ func (bs *botServer) handle(writer http.ResponseWriter, request *http.Request) {
 		bs.sent = append(bs.sent, req.Text)
 		bs.mu.Unlock()
 
-		writeEnvelope(writer, bridge.Message{MessageID: wantMessageID})
+		writeEnvelope(writer, telegram.Message{MessageID: wantMessageID})
 	default:
 		http.Error(writer, "unknown method", http.StatusNotFound)
 	}
@@ -109,7 +108,7 @@ func writeEnvelope(writer http.ResponseWriter, result any) {
 func TestClientRedactsTokenOnConnectionFailure(t *testing.T) {
 	t.Parallel()
 
-	bot := bridge.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second)
+	bot := telegram.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second)
 
 	_, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err == nil {
@@ -140,7 +139,7 @@ func TestClientRedactsTokenInAPIError(t *testing.T) {
 
 	t.Cleanup(server.Close)
 
-	bot := bridge.NewClient(testToken, server.URL, time.Second, time.Second)
+	bot := telegram.NewClient(testToken, server.URL, time.Second, time.Second)
 
 	_, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err == nil {
@@ -158,9 +157,9 @@ func TestClientRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	server := newBotServer(t)
-	server.setUpdates([]bridge.Update{*messageUpdate(1, 100, "hi")})
+	server.setUpdates([]telegram.Update{*messageUpdate(1, 100, "hi")})
 
-	bot := bridge.NewClient(testToken, server.server.URL, time.Second, time.Second)
+	bot := telegram.NewClient(testToken, server.server.URL, time.Second, time.Second)
 
 	updates, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err != nil {

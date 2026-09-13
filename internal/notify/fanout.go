@@ -11,79 +11,122 @@ import (
 // it, lines drop rather than block a producer.
 const fanoutBuffer = 64
 
-// Poster is the single-string webhook sink a Fanout drains onto.
-// *DiscordNotifier satisfies it through Post. The interface keeps fan-out tests
-// off a live webhook and lets serve swap the sink.
+// Poster is the single-string sink a Fanout drains onto. *DiscordNotifier
+// satisfies it through Post, and so does the Mattermost sink from
+// MattermostSink. The interface keeps fan-out tests off a live webhook and lets
+// serve pick which destinations exist.
 type Poster interface {
 	Post(ctx context.Context, content string) error
 }
 
-// Fanout posts selected engine and queue events to a Discord webhook, one line
-// each, off the producer goroutine (.agents/spec/parity/messaging-bridge.md,
-// decision 7). Producers call Emit from any goroutine; a single drainer started
-// by Run posts each queued line. The buffer drops on overflow so a slow or
-// failing webhook never blocks an engine, queue, or chat goroutine: a dropped
-// notification changes no run, queue, or chat outcome. A nil *Fanout is the
-// "no webhook configured" state; every method is a no-op on it, so serve wires
-// producers without a nil guard at each call site.
-type Fanout struct {
-	poster   Poster
-	selected map[string]struct{}
-	lines    chan string
-	logger   *slog.Logger
+// Sink is one destination plus the event names it wants, as serve declares it.
+// Events is the same four-name vocabulary config validates, so two sinks can
+// subscribe to different slices of it: Discord to everything, Mattermost to the
+// held alert only, say.
+type Sink struct {
+	Poster Poster
+	Events []string
 }
 
-// NewFanout builds a fan-out over poster that emits only the named events. A nil
-// logger falls back to slog.Default. The result is inert until Run drains it.
-func NewFanout(poster Poster, events []string, logger *slog.Logger) *Fanout {
-	selected := make(map[string]struct{}, len(events))
-	for _, event := range events {
-		selected[event] = struct{}{}
-	}
+// sink is a Sink with its event list turned into a set, which is the form Emit
+// and Run ask about on every line.
+type sink struct {
+	poster   Poster
+	selected map[string]struct{}
+}
 
+// selects reports whether this sink wants event.
+func (s *sink) selects(event string) bool {
+	_, ok := s.selected[event]
+
+	return ok
+}
+
+// queuedLine is one enqueued notification. The event travels with the line
+// because the sinks disagree about which events they want, so the drainer has
+// to re-ask per sink rather than filtering once at Emit.
+type queuedLine struct {
+	event string
+	line  string
+}
+
+// Fanout posts selected engine and queue events to every sink, off the producer
+// goroutine (D8). Producers call Emit from any goroutine; a single drainer,
+// started by Run, posts each queued line to the sinks that selected its event.
+// A nil *Fanout is the "nothing configured" state where every method is a no-op,
+// so serve wires producers without nil guards.
+type Fanout struct {
+	logger *slog.Logger
+
+	// lines drops on overflow so a slow or failing destination never blocks an
+	// engine, queue, or chat goroutine: a dropped notification changes no run,
+	// queue, or chat outcome.
+	lines chan queuedLine
+
+	sinks []sink
+}
+
+// NewFanout builds a fan-out over the given sinks. A nil logger falls back to
+// slog.Default. The result is inert until Run drains it. Sinks come last and
+// variadic so serve appends the destinations it has configured and passes them
+// in one call.
+func NewFanout(logger *slog.Logger, sinks ...Sink) *Fanout {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
+	built := make([]sink, 0, len(sinks))
+
+	for _, declared := range sinks {
+		selected := make(map[string]struct{}, len(declared.Events))
+		for _, event := range declared.Events {
+			selected[event] = struct{}{}
+		}
+
+		built = append(built, sink{poster: declared.Poster, selected: selected})
+	}
+
 	return &Fanout{
-		poster:   poster,
-		selected: selected,
-		lines:    make(chan string, fanoutBuffer),
-		logger:   logger,
+		sinks:  built,
+		lines:  make(chan queuedLine, fanoutBuffer),
+		logger: logger,
 	}
 }
 
-// Selects reports whether event is in the configured set, so a producer can skip
-// building a line no one posts. A nil fan-out selects nothing.
+// Selects reports whether any sink wants event, so a producer can skip building
+// a line no one posts. A nil fan-out selects nothing.
 func (f *Fanout) Selects(event string) bool {
 	if f == nil {
 		return false
 	}
 
-	_, ok := f.selected[event]
+	for idx := range f.sinks {
+		if f.sinks[idx].selects(event) {
+			return true
+		}
+	}
 
-	return ok
+	return false
 }
 
-// Emit queues line for event when event is selected, dropping it with a warn log
-// when the buffer is full so the calling producer goroutine never blocks on a
-// slow webhook. A ctx already canceled skips the enqueue: the producing
-// operation is gone, so its notification is moot. Safe from any goroutine and a
-// no-op on a nil fan-out or an unselected event.
+// Emit queues line for event when some sink selected it, dropping it with a warn
+// log when the buffer is full so the calling producer never blocks on a slow
+// destination. A canceled ctx skips the enqueue, since the notification is moot.
+// Safe from any goroutine and a no-op on a nil fan-out or an unselected event.
 func (f *Fanout) Emit(ctx context.Context, event, line string) {
 	if !f.Selects(event) {
 		return
 	}
 
 	select {
-	case f.lines <- line:
+	case f.lines <- queuedLine{event: event, line: line}:
 	case <-ctx.Done():
 	default:
-		f.logger.Warn("discord fan-out buffer full; dropping event line", "event", event)
+		f.logger.Warn("notify fan-out buffer full; dropping event line", "event", event)
 	}
 }
 
-// Run drains queued lines and posts each until ctx cancels. A webhook failure
+// Run drains queued lines and posts each until ctx cancels. A delivery failure
 // logs and never propagates: a dropped notification changes no run, queue, or
 // chat outcome. A nil fan-out returns at once, so the serve drain needs no nil
 // guard around the goroutine.
@@ -96,10 +139,25 @@ func (f *Fanout) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case line := <-f.lines:
-			if err := f.poster.Post(ctx, line); err != nil {
-				f.logger.Error("discord fan-out post failed", "error", err)
-			}
+		case queued := <-f.lines:
+			f.post(ctx, queued)
+		}
+	}
+}
+
+// post delivers one queued line to every sink that selected its event. Each sink
+// is attempted independently so a failing destination costs the others nothing:
+// a Mattermost identity that never registered must not silence the Discord
+// webhook.
+func (f *Fanout) post(ctx context.Context, queued queuedLine) {
+	for idx := range f.sinks {
+		target := &f.sinks[idx]
+		if !target.selects(queued.event) {
+			continue
+		}
+
+		if err := target.poster.Post(ctx, queued.line); err != nil {
+			f.logger.Error("notify fan-out post failed", "event", queued.event, "error", err)
 		}
 	}
 }

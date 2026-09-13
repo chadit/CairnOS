@@ -41,6 +41,7 @@ Commands:
   webhook   Manage webhook triggers: add <file>, list, rotate <workflow>, remove <workflow>
   serve     Serve the gRPC and HTTP API with the scheduler daemon embedded
   chat      Talk to CairnOS: an interactive conversation over a running serve
+  msg       Send chat messages as a configured identity: send, list
   keys      Manage API access keys: add, list, enable <id>, disable <id>
   workspace Manage workspaces and members: create <name>, list, add-member, members
   auth      Token revocation: revoke --jti X | --key K
@@ -107,8 +108,9 @@ func (a *App) WithInterrupts(interrupts <-chan os.Signal) *App {
 }
 
 // Run dispatches one invocation and returns the process exit code. Codes
-// travel up because only main may call os.Exit. Governance commands split
-// into dispatchGovernance so neither switch crosses the complexity ceiling.
+// travel up because only main may call os.Exit. Serve-client and governance
+// commands split into dispatchServeClients and dispatchGovernance so no switch
+// crosses the complexity ceiling.
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", usageText)
@@ -133,8 +135,6 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdSchedule(ctx, rest)
 	case "serve":
 		return a.cmdServe(ctx, rest)
-	case "chat":
-		return a.cmdChat(ctx, rest)
 	case "keys":
 		return a.cmdKeys(ctx, rest)
 	case "workspace":
@@ -155,6 +155,21 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdPrune(ctx, rest)
 	case "health":
 		return a.cmdHealth(ctx, rest)
+	default:
+		return a.dispatchServeClients(ctx, name, rest)
+	}
+}
+
+// dispatchServeClients handles the commands that talk to a running serve over
+// gRPC rather than opening the local store, then hands anything else on. They
+// live here rather than in Run's switch because Run is at the complexity
+// ceiling and these two are the family with the least to do with local state.
+func (a *App) dispatchServeClients(ctx context.Context, name string, rest []string) int {
+	switch name {
+	case "chat":
+		return a.cmdChat(ctx, rest)
+	case "msg":
+		return a.cmdMsg(ctx, rest)
 	default:
 		return a.dispatchGovernance(ctx, name, rest)
 	}

@@ -130,11 +130,25 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "BRIDGE_TELEGRAM_SEND_TIMEOUT", set: intoDuration(&cfg.Bridge.Telegram.SendTimeout)},
 		{suffix: "BRIDGE_TELEGRAM_CONFIRM_TTL", set: intoDuration(&cfg.Bridge.Telegram.ConfirmTTL)},
 		{suffix: "BRIDGE_TELEGRAM_VERBOSE", set: intoBool(&cfg.Bridge.Telegram.Verbose)},
-		// The token and the Discord webhook URL are credentials, so they come only
-		// from CAIRNOS_BRIDGE_TELEGRAM_TOKEN and CAIRNOS_NOTIFY_DISCORD_WEBHOOK at
-		// serve wiring, never a config field bound here. The users table is
-		// file-only: a map has no single env form.
+		{suffix: "BRIDGE_MATTERMOST_URL", set: intoString(&cfg.Bridge.Mattermost.URL)},
+		{suffix: "BRIDGE_MATTERMOST_TEAM", set: intoString(&cfg.Bridge.Mattermost.Team)},
+		{suffix: "BRIDGE_MATTERMOST_INSECURE_HTTP", set: intoBool(&cfg.Bridge.Mattermost.InsecureHTTP)},
+		{suffix: "BRIDGE_MATTERMOST_SEND_TIMEOUT", set: intoDuration(&cfg.Bridge.Mattermost.SendTimeout)},
+		{suffix: "BRIDGE_MATTERMOST_CONFIRM_TTL", set: intoDuration(&cfg.Bridge.Mattermost.ConfirmTTL)},
+		{suffix: "BRIDGE_MATTERMOST_RATE_PER_SEC", set: intoInt(&cfg.Bridge.Mattermost.RatePerSec)},
+		{suffix: "BRIDGE_MATTERMOST_RATE_BURST", set: intoInt(&cfg.Bridge.Mattermost.RateBurst)},
+		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_MAX_EVENTS", set: intoInt(&cfg.Bridge.Mattermost.BotLoop.MaxEvents)},
+		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_WINDOW", set: intoDuration(&cfg.Bridge.Mattermost.BotLoop.Window)},
+		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_COOLDOWN", set: intoDuration(&cfg.Bridge.Mattermost.BotLoop.Cooldown)},
+		// The bot tokens and the Discord webhook URL are credentials, so they reach
+		// serve from CAIRNOS_BRIDGE_TELEGRAM_TOKEN, the per-identity env
+		// MattermostTokenEnv names, and CAIRNOS_NOTIFY_DISCORD_WEBHOOK, never a
+		// config field bound here. The telegram users and mattermost identity
+		// tables stay file-only: a map has no single env form.
 		{suffix: "NOTIFY_DISCORD_EVENTS", set: intoList(&cfg.Notify.Discord.Events)},
+		{suffix: "NOTIFY_MATTERMOST_IDENTITY", set: intoString(&cfg.Notify.Mattermost.Identity)},
+		{suffix: "NOTIFY_MATTERMOST_CHANNEL", set: intoString(&cfg.Notify.Mattermost.Channel)},
+		{suffix: "NOTIFY_MATTERMOST_EVENTS", set: intoList(&cfg.Notify.Mattermost.Events)},
 	}
 
 	return bindings

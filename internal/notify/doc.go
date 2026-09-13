@@ -4,4 +4,11 @@
 // which tool to sign back in (.agents/spec/14-open-decisions.md, D12). The
 // webhook URL is a credential, so it is sourced from the environment, never a
 // config file.
+//
+// Fanout is the shared producer surface: engine, queue, and budget producers
+// emit one rendered line per event and the fan-out delivers it to every sink
+// that asked for that event. Sinks are a list rather than one poster so an
+// operator can run the Discord webhook and a Mattermost channel at once, each
+// subscribed to its own slice of the four event names, without producers
+// holding two handles (mattermost-messaging design, D8 and FR34).
 package notify

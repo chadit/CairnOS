@@ -52,6 +52,12 @@ func captureServer(t *testing.T, status int) (*httptest.Server, chan string) {
 	return server, bodies
 }
 
+// discordSink builds the one-sink slice most of these cases want: a Discord
+// notifier pointed at the capture server, subscribed to the named events.
+func discordSink(url string, events ...string) notify.Sink {
+	return notify.Sink{Poster: notify.NewDiscordNotifier(url), Events: events}
+}
+
 // runFanout starts the drainer on a canceled-on-cleanup context.
 func runFanout(t *testing.T, fanout *notify.Fanout) {
 	t.Helper()
@@ -66,7 +72,7 @@ func TestFanoutFiltersUnselectedEvents(t *testing.T) {
 	t.Parallel()
 
 	server, bodies := captureServer(t, http.StatusNoContent)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL), []string{eventHeld}, nil)
+	fanout := notify.NewFanout(nil, discordSink(server.URL, eventHeld))
 
 	runFanout(t, fanout)
 
@@ -95,10 +101,8 @@ func TestFanoutPostsOneLinePerSelectedEvent(t *testing.T) {
 	t.Parallel()
 
 	server, bodies := captureServer(t, http.StatusNoContent)
-	fanout := notify.NewFanout(
-		notify.NewDiscordNotifier(server.URL),
-		[]string{eventHeld, eventRunFailed, eventDeadLetter, eventBudget},
-		nil,
+	fanout := notify.NewFanout(nil,
+		discordSink(server.URL, eventHeld, eventRunFailed, eventDeadLetter, eventBudget),
 	)
 
 	runFanout(t, fanout)
@@ -136,7 +140,7 @@ func TestFanoutDropsOnOverflowWithoutBlocking(t *testing.T) {
 	// No drainer runs, so the buffer fills and never empties. Emit past capacity
 	// must still return promptly rather than block the producer goroutine.
 	server, _ := captureServer(t, http.StatusNoContent)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL), []string{eventHeld}, nil)
+	fanout := notify.NewFanout(nil, discordSink(server.URL, eventHeld))
 
 	ctx := t.Context()
 	done := make(chan struct{})
@@ -163,7 +167,7 @@ func TestFanoutWebhookFailurePropagatesNothing(t *testing.T) {
 	// the drainer swallows the post error. The producer sees no panic and no
 	// block, and the webhook is still attempted.
 	server, bodies := captureServer(t, http.StatusInternalServerError)
-	fanout := notify.NewFanout(notify.NewDiscordNotifier(server.URL), []string{eventBudget}, nil)
+	fanout := notify.NewFanout(nil, discordSink(server.URL, eventBudget))
 
 	runFanout(t, fanout)
 
@@ -215,7 +219,7 @@ func TestFanoutMatchesNotifyBody(t *testing.T) {
 
 	direct := <-bodies
 
-	fanout := notify.NewFanout(notifier, []string{eventHeld}, nil)
+	fanout := notify.NewFanout(nil, notify.Sink{Poster: notifier, Events: []string{eventHeld}})
 	runFanout(t, fanout)
 	fanout.Emit(t.Context(), eventHeld, alert.Message())
 

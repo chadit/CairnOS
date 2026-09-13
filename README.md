@@ -207,6 +207,91 @@ every action.
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.
 
+## Chat in Mattermost
+
+Run your agents as bot users in a self-hosted Mattermost. Each identity is one
+bot account: it answers DMs, answers `@mentions` in channels, holds a
+conversation per thread, and can gate a workflow run behind a named approver.
+
+Create the bot account in Mattermost yourself, then declare it. CairnOS never
+creates or edits a bot account.
+
+```toml
+[bridge.mattermost]
+url  = "https://mm.example.com"
+team = "main"            # needed when you name channels by #name
+
+[bridge.mattermost.identity.ops]
+username      = "ops-agent"      # must match the account the token belongs to
+display_name  = "Ops Agent"
+workspace     = "default"
+personality   = "ops"
+approvers     = ["alice"]
+allow_bots_in = ["#agents"]
+```
+
+The token is read only from the environment, one variable per identity, named
+after the identity:
+
+```sh
+export CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN=...
+```
+
+No token means no connection for that identity, and serve logs one line naming
+the variable it looked for. No identity at all means the whole bridge stays off.
+
+A DM needs no mention. In a channel the bot answers only when you `@mention` it
+in ordinary text, and it replies in that post's thread, so each thread is its
+own conversation with its own history.
+
+`approvers` lists the usernames that may answer `approve` or `deny` when the
+agent proposes a workflow run. Leave it empty and every proposal expires
+unanswered, which is the safe default: being able to chat with an agent is not
+the same as being able to start its runs.
+
+`allow_bots_in` lists the channels where a post from another bot or a webhook
+still earns a reply. Everywhere else those posts are dropped, which is what
+keeps two agents from talking to each other forever. A sender that wants a reply
+outside those channels can set the post prop `activate_ai = "true"`. Inside an
+allowed channel a sliding window still applies, so a runaway conversation goes
+quiet for a cooldown instead of running up your bill.
+
+### Sending messages
+
+Every identity is also a send target, from three places.
+
+From the command line, against a running serve:
+
+```sh
+cairnos msg list
+cairnos msg send --as ops --to '#alerts' "deploy finished"
+cairnos msg send --as ops --to '@alice' --thread <post-id> -   # text from stdin
+```
+
+From a workflow, with the `message` runner. It needs no runner block:
+
+```toml
+[action.announce]
+runner = "message"
+params = { identity = "ops", to = "#alerts", text = "run ${run.id} finished" }
+```
+
+The action outputs the created post id, so a later action can answer in the
+same thread with `thread = "${action.announce.output}"`.
+
+And from the notification fan-out, which posts held jobs and failed runs into a
+channel:
+
+```toml
+[notify.mattermost]
+identity = "ops"
+channel  = "#alerts"
+events   = ["held", "run_failed"]
+```
+
+The Discord webhook and this block both deliver when both are set. Targets are
+written as `#channel`, `@user`, `channel:<id>`, or `user:<id>`.
+
 ## Development
 
 ```sh

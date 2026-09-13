@@ -44,9 +44,18 @@ const (
 	// save could strand a file the resolver maps under a different name than
 	// the URL the client used (.agents/spec/parity/builder-ops.md).
 	codeWorkflowNameMismatch = "api.workflow_name_mismatch"
-	codeInvalidArgument      = "api.invalid_argument"
-	codeUnimplemented        = "api.unimplemented"
-	codeInternal             = "api.internal"
+	// codeIdentityNotFound reports a send addressed to a messaging identity
+	// the registry never held: the caller named an identity this serve was
+	// not configured with, which is a caller mistake rather than a transport
+	// failure (FR26).
+	codeIdentityNotFound = "api.identity_not_found"
+	// codeChatDisabled reports a conversational request on a node whose chat
+	// surface is off. The peer asked for something this serve is not configured
+	// to do, which is a precondition rather than a missing route (FR36).
+	codeChatDisabled    = "api.chat_disabled"
+	codeInvalidArgument = "api.invalid_argument"
+	codeUnimplemented   = "api.unimplemented"
+	codeInternal        = "api.internal"
 )
 
 // Canonical agent.* codes from the 04 mapping table. The agent loop ships in
@@ -132,9 +141,10 @@ func exactGRPCCode(code string) (codes.Code, bool) {
 // apiGRPCCode maps the API-layer codes the transport itself produces.
 func apiGRPCCode(code string) codes.Code {
 	switch code {
-	case codeWorkflowNotFound, codeRunNotFound, codeMemoryNotFound, codeBreakerNotFound, codeSuggestionNotFound:
+	case codeWorkflowNotFound, codeRunNotFound, codeMemoryNotFound, codeBreakerNotFound,
+		codeSuggestionNotFound, codeIdentityNotFound:
 		return codes.NotFound
-	case codeRunFinished, codeRunNotManaged:
+	case codeRunFinished, codeRunNotManaged, codeChatDisabled:
 		return codes.FailedPrecondition
 	case codeInvalidArgument, codeWorkflowNameMismatch:
 		return codes.InvalidArgument

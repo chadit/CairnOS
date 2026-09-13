@@ -1,0 +1,21 @@
+{
+  "event": "posted",
+  "data": {
+    "channel_display_name": "",
+    "channel_name": "",
+    "channel_type": "O",
+    "sender_name": "@alice",
+    "set_online": true,
+    "team_id": "tmq3w7zkx5np8dcv2rfh6yjtbm",
+    "post": "{\"id\": \"pstbad\", "
+  },
+  "broadcast": {
+    "omit_users": null,
+    "user_id": "",
+    "channel_id": "chn5y8dwq2kt7mxr4pzc9nvfhj",
+    "team_id": "",
+    "connection_id": "",
+    "omit_connection_id": ""
+  },
+  "seq": 18
+}

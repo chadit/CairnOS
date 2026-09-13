@@ -25,6 +25,12 @@ const (
 	// (.agents/spec/13-roadmap.md, Phase 9; .agents/spec/14-open-decisions.md,
 	// D9).
 	ScopeChatSession = "chat:session"
+	// ScopeMessageSend gates the outbound send surface: posting a message as a
+	// configured identity and listing the identities a caller may send as.
+	// Sending is separable from chat because a workflow or an operator script
+	// posts without ever holding a conversation, and a key scoped to send
+	// should not also read transcripts (FR30).
+	ScopeMessageSend = "message:send"
 	ScopeAdmin       = "admin"
 )
 
@@ -37,6 +43,7 @@ func ValidScope(name string) bool {
 		ScopeReadVault, ScopeWriteVault,
 		ScopeA2ATask,
 		ScopeChatSession,
+		ScopeMessageSend,
 		ScopeAdmin:
 		return true
 	default:

@@ -118,6 +118,15 @@ func (b *breakerAdmin) ResetBreaker(name string) bool {
 func startServer(t *testing.T) *fixture {
 	t.Helper()
 
+	return startServerWith(t)
+}
+
+// startServerWith is startServer with extra gRPC services attached. Auth is off
+// here, which is what the principal cases need to see a handler context that
+// carries no verified token at all.
+func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
+	t.Helper()
+
 	dir := t.TempDir()
 	workflowsDir := filepath.Join(dir, "workflows")
 
@@ -184,6 +193,7 @@ func startServer(t *testing.T) *fixture {
 		Registry:     testRegistry(t),
 		Breakers:     &breakerAdmin{set: breakers},
 		Manager:      manager,
+		Extensions:   extensions,
 		Logger:       logger,
 		// Security middleware on for the M1/M4 gateway tests: an explicit CORS
 		// origin and a small body cap so the assertions have something to bite.

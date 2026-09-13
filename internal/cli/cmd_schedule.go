@@ -262,7 +262,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager)
+	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager, nil)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
@@ -311,10 +311,12 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 
 	// The standalone `schedule run` worker fans held and dead_lettered alerts out
 	// the same way serve does, so an operator running the scheduler outside serve
-	// still gets Discord notifications. The drainer rides a child context so it
-	// always stops once the producer and worker return, even on an early error.
+	// still gets Discord notifications. It holds no messaging identities, so the
+	// nil registry leaves the Mattermost sink out. The drainer rides a child
+	// context so it always stops once the producer and worker return, even on an
+	// early error.
 	fanoutCtx, stopFanout := context.WithCancel(ctx)
-	fanout := BuildDiscordFanout(&cfg, a.logger)
+	fanout := BuildFanout(&cfg, nil, a.logger)
 	fanoutDone := StartFanout(fanoutCtx, fanout)
 
 	worker := newQueueWorker(queue, &queueRunnerAdapter{fire: fireRunner}, &cfg.Scheduler, nil, fanout, a.logger)

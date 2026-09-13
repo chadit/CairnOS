@@ -1,6 +1,10 @@
 package a2a
 
-import "github.com/chadit/CairnOS/internal/api"
+import (
+	"google.golang.org/grpc/status"
+
+	"github.com/chadit/CairnOS/internal/api"
+)
 
 // The wire* funnels below adapt the api package's canonical status helpers
 // (.agents/spec/04-execution-engine.md, "Mapping to gRPC status codes"). Each
@@ -37,8 +41,8 @@ func wireRunLookup(runID string, err error) error {
 // targets an already-terminal run.
 //
 //nolint:wrapcheck // api.WireRunFinished returns a gRPC status error; wrapping it would mask the code
-func wireRunFinished(runID, status string) error {
-	return api.WireRunFinished(runID, status)
+func wireRunFinished(runID, runStatus string) error {
+	return api.WireRunFinished(runID, runStatus)
 }
 
 // wireRunNotManaged builds the FailedPrecondition error for a cancel that
@@ -47,4 +51,29 @@ func wireRunFinished(runID, status string) error {
 //nolint:wrapcheck // api.WireRunNotManaged returns a gRPC status error; wrapping it would mask the code
 func wireRunNotManaged(runID string) error {
 	return api.WireRunNotManaged(runID)
+}
+
+// wireInvalidArgument builds the InvalidArgument error for a request this
+// adapter rejects before any work starts.
+//
+//nolint:wrapcheck // api.WireInvalidArgument returns a gRPC status error; wrapping it would mask the code
+func wireInvalidArgument(format string, args ...any) error {
+	return api.WireInvalidArgument(format, args...)
+}
+
+// wireChatDisabled builds the FailedPrecondition error for a conversational
+// request on a node with no chat surface configured.
+//
+//nolint:wrapcheck // api.WireChatDisabled returns a gRPC status error; wrapping it would mask the code
+func wireChatDisabled() error {
+	return api.WireChatDisabled()
+}
+
+// wireContext maps a canceled or expired request context onto its gRPC code,
+// so a peer whose deadline lapsed mid-turn reads DeadlineExceeded rather than
+// an internal error.
+//
+//nolint:wrapcheck // status.FromContextError yields the gRPC status error itself; wrapping it would mask the code
+func wireContext(err error) error {
+	return status.FromContextError(err).Err()
 }

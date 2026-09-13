@@ -72,8 +72,7 @@ schema gains it. Until then the actions name their repos directly.
 
 The issues repo is `CairnOS-Issues`, corrected from the vision's
 `CairOS-Issues` (S6 in `.agents/spec/14-open-decisions.md`). The default
-`issues_repo` input reflects the corrected name. Any -task migration is
-tracked as a separate concern and is not wired into this workflow.
+`issues_repo` input reflects the corrected name.
 
 ## Config
 

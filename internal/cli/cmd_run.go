@@ -171,7 +171,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		return nil, nil, ExitFailure, false
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager)
+	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager, nil)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
 		a.closeSecretSource(closeSource)

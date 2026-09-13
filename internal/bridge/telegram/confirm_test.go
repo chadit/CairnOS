@@ -1,4 +1,4 @@
-package bridge_test
+package telegram_test
 
 import (
 	"strings"
@@ -6,11 +6,8 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bridge"
+	"github.com/chadit/CairnOS/internal/bridge/bridgetest"
 )
-
-// otherUserID is a second allowlisted operator, used to prove a non-opener tap
-// is refused.
-const otherUserID = 2
 
 // TestConfirmProposalRendersKeyboard proves a raised proposal renders an
 // Approve/Deny inline keyboard whose callback_data carries the session id and
@@ -18,15 +15,15 @@ const otherUserID = 2
 func TestConfirmProposalRendersKeyboard(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(rig.tg, messageUpdate(testUserID, testChatID, msgPropose))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return len(rig.tg.sentMessages()) == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.tg.sentMessages()) == 1 })
 
 	sent := rig.tg.sentMessages()
 	proposal := sent[0]
@@ -42,15 +39,15 @@ func TestConfirmProposalRendersKeyboard(t *testing.T) {
 	approve := proposal.keyboard.InlineKeyboard[0][0]
 	deny := proposal.keyboard.InlineKeyboard[0][1]
 
-	if want := confirmData(testSessionID, actionApprove); approve.CallbackData != want {
+	if want := confirmData(bridgetest.FirstSessionID, actionApprove); approve.CallbackData != want {
 		t.Errorf("approve callback_data = %q, want %q", approve.CallbackData, want)
 	}
 
-	if want := confirmData(testSessionID, actionDeny); deny.CallbackData != want {
+	if want := confirmData(bridgetest.FirstSessionID, actionDeny); deny.CallbackData != want {
 		t.Errorf("deny callback_data = %q, want %q", deny.CallbackData, want)
 	}
 
-	if !strings.Contains(proposal.text, workflowDeploy) {
+	if !strings.Contains(proposal.text, bridgetest.WorkflowName) {
 		t.Errorf("proposal text %q missing workflow name", proposal.text)
 	}
 }
@@ -61,31 +58,31 @@ func TestConfirmProposalRendersKeyboard(t *testing.T) {
 func TestConfirmApproveGrantedRunsAndRelays(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, testUserID, testChatID, confirmData(testSessionID, actionApprove)),
+		callbackUpdate(2, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionApprove)),
 	)
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.confirmCount(confirmApproved) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.confirmCount(confirmApproved) == 1 })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || calls[0].sessionID != testSessionID || !calls[0].approve {
-		t.Fatalf("confirm calls = %+v, want one approve for %q", calls, testSessionID)
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || calls[0].SessionID != bridgetest.FirstSessionID || !calls[0].Approve {
+		t.Fatalf("confirm calls = %+v, want one approve for %q", calls, bridgetest.FirstSessionID)
 	}
 
 	sent := rig.tg.sentMessages()
-	if !sentContains(sent, "Started run "+confirmRunID) {
+	if !sentContains(sent, "Started run "+bridgetest.RunID) {
 		t.Errorf("run-started not relayed: %+v", sent)
 	}
 
-	if !sentContains(sent, "finished as "+confirmRunStatus) {
+	if !sentContains(sent, "finished as "+bridgetest.RunStatus) {
 		t.Errorf("run-finished not relayed: %+v", sent)
 	}
 }
@@ -95,26 +92,26 @@ func TestConfirmApproveGrantedRunsAndRelays(t *testing.T) {
 func TestConfirmDenyCallsConfirmActionFalse(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, testUserID, testChatID, confirmData(testSessionID, actionDeny)),
+		callbackUpdate(2, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionDeny)),
 	)
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.confirmCount(confirmDenied) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.confirmCount(confirmDenied) == 1 })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || calls[0].approve {
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || calls[0].Approve {
 		t.Fatalf("confirm calls = %+v, want one deny", calls)
 	}
 
-	if !sentContains(rig.tg.sentMessages(), denialText) {
+	if !sentContains(rig.tg.sentMessages(), bridgetest.DenialText) {
 		t.Errorf("denial line not relayed")
 	}
 }
@@ -127,33 +124,33 @@ func TestConfirmDenyCallsConfirmActionFalse(t *testing.T) {
 func TestConfirmApproveWithoutGrantRefused(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: false}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: false}}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, testUserID, testChatID, confirmData(testSessionID, actionApprove)),
-		callbackUpdate(3, testUserID, testChatID, confirmData(testSessionID, actionDeny)),
+		callbackUpdate(2, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionApprove)),
+		callbackUpdate(3, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionDeny)),
 	)
 
 	runBridge(t, rig.br)
 
 	// The follow-up Deny only resolves if the refused Approve left the proposal
 	// pending, so a single denied confirm is the observable proof it stayed.
-	waitFor(t, func() bool { return rig.metrics.confirmCount(confirmDenied) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.confirmCount(confirmDenied) == 1 })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || calls[0].approve {
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || calls[0].Approve {
 		t.Fatalf("confirm calls = %+v, want a single deny (the approve was refused, not run)", calls)
 	}
 
-	if got := rig.metrics.confirmCount(confirmRefused); got != 1 {
+	if got := rig.confirmCount(confirmRefused); got != 1 {
 		t.Errorf("refused count = %d, want 1", got)
 	}
 
-	if got := rig.metrics.confirmCount(confirmApproved); got != 0 {
+	if got := rig.confirmCount(confirmApproved); got != 0 {
 		t.Errorf("approved count = %d, want 0", got)
 	}
 
@@ -168,30 +165,30 @@ func TestConfirmApproveWithoutGrantRefused(t *testing.T) {
 func TestConfirmNonOpenerRefused(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{
+	users := map[int64]bridge.Grant{
 		testUserID:  {Workspace: wsDefault, AllowConfirm: true},
 		otherUserID: {Workspace: wsDefault, AllowConfirm: true},
 	}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, otherUserID, testChatID, confirmData(testSessionID, actionApprove)),
-		callbackUpdate(3, testUserID, testChatID, confirmData(testSessionID, actionDeny)),
+		callbackUpdate(2, otherUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionApprove)),
+		callbackUpdate(3, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionDeny)),
 	)
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.confirmCount(confirmDenied) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.confirmCount(confirmDenied) == 1 })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || calls[0].approve {
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || calls[0].Approve {
 		t.Fatalf("confirm calls = %+v, want a single deny (the non-opener approve refused)", calls)
 	}
 
-	if got := rig.metrics.confirmCount(confirmRefused); got != 1 {
+	if got := rig.confirmCount(confirmRefused); got != 1 {
 		t.Errorf("refused count = %d, want 1", got)
 	}
 
@@ -206,26 +203,30 @@ func TestConfirmNonOpenerRefused(t *testing.T) {
 func TestConfirmTTLExpiresAsDeny(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newTunedFixture(t, users, 20*time.Millisecond)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(rig.tg, messageUpdate(testUserID, testChatID, msgPropose))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return rig.metrics.confirmCount(confirmExpired) == 1 })
+	bridgetest.WaitFor(t, func() bool { return rig.confirmCount(confirmExpired) == 1 })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || calls[0].approve {
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || calls[0].Approve {
 		t.Fatalf("confirm calls = %+v, want one deny from expiry", calls)
 	}
 
-	waitFor(t, func() bool { return len(rig.tg.editedMessages()) == 1 })
+	bridgetest.WaitFor(t, func() bool { return len(rig.tg.editedMessages()) == 1 })
 
 	edit := rig.tg.editedMessages()[0]
 	if edit.text != msgExpired {
 		t.Errorf("edited text = %q, want %q", edit.text, msgExpired)
+	}
+
+	if edit.messageID != wantMessageID {
+		t.Errorf("edited message id = %d, want the proposal's own id %d", edit.messageID, wantMessageID)
 	}
 }
 
@@ -235,16 +236,16 @@ func TestConfirmTTLExpiresAsDeny(t *testing.T) {
 func TestConfirmStaleTapReplies(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newFixture(t, users)
 
 	scriptSingles(rig.tg, callbackUpdate(1, testUserID, testChatID, confirmData("ghost", actionApprove)))
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool { return sentContains(rig.tg.sentMessages(), msgStaleExpired) })
+	bridgetest.WaitFor(t, func() bool { return sentContains(rig.tg.sentMessages(), msgStaleExpired) })
 
-	if calls := rig.chat.confirmCalls(); len(calls) != 0 {
+	if calls := rig.chat.Confirms(); len(calls) != 0 {
 		t.Fatalf("ConfirmAction called on a stale tap: %+v", calls)
 	}
 }
@@ -255,68 +256,68 @@ func TestConfirmStaleTapReplies(t *testing.T) {
 func TestConfirmTapAfterGateClearedRepliesExpired(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newFixture(t, users)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
-	// Raise the proposal so the bridge routes it, but leave the agent's gate
+	// Raise the proposal so the core routes it, but leave the agent's gate
 	// unarmed, standing in for an expiry that cleared the gate before the tap.
-	rig.chat.armGate = false
+	rig.chat.DisarmGate()
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, testUserID, testChatID, confirmData(testSessionID, actionApprove)),
+		callbackUpdate(2, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionApprove)),
 	)
 
 	runBridge(t, rig.br)
 
-	// The fake records the ConfirmAction call on entry, but resolveConfirm only
-	// replies expired after that call returns, so waiting on the call count can
-	// observe the assertions below before the reply is sent. The reply is the
-	// last step on this path, which makes it the wait that covers the rest.
-	waitFor(t, func() bool { return sentContains(rig.tg.sentMessages(), msgStaleExpired) })
+	// The fake records the ConfirmAction call on entry, but the core only replies
+	// expired after that call returns, so waiting on the call count can observe
+	// the assertions below before the reply is sent. The reply is the last step on
+	// this path, which makes it the wait that covers the rest.
+	bridgetest.WaitFor(t, func() bool { return sentContains(rig.tg.sentMessages(), msgStaleExpired) })
 
-	calls := rig.chat.confirmCalls()
-	if len(calls) != 1 || !calls[0].approve {
+	calls := rig.chat.Confirms()
+	if len(calls) != 1 || !calls[0].Approve {
 		t.Fatalf("confirm calls = %+v, want one approve", calls)
 	}
 
-	if got := rig.metrics.confirmCount(confirmApproved); got != 0 {
+	if got := rig.confirmCount(confirmApproved); got != 0 {
 		t.Errorf("approved count = %d, want 0 on a cleared gate", got)
 	}
 }
 
 // TestConfirmExpiryTapRaceUnderRace drives a tap and a short-TTL expiry against
 // one proposal so the race detector proves the shared routing map is safe. The
-// timer's expireProposal and the worker's tap both take the map under confirmMu;
+// timer's expiry and the worker's tap both take the map under the core's mutex;
 // however the interleaving settles, exactly one path wins the gate (approved or
 // expired) and nothing is refused (acceptance 2, decision 2).
 func TestConfirmExpiryTapRaceUnderRace(t *testing.T) {
 	t.Parallel()
 
-	users := map[int64]bridge.AllowedUser{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
+	users := map[int64]bridge.Grant{testUserID: {Workspace: wsDefault, AllowConfirm: true}}
 	rig := newTunedFixture(t, users, time.Millisecond)
-	rig.chat.proposeOn = msgPropose
+	rig.chat.ProposeOn(msgPropose)
 
 	scriptSingles(
 		rig.tg,
 		messageUpdate(testUserID, testChatID, msgPropose),
-		callbackUpdate(2, testUserID, testChatID, confirmData(testSessionID, actionApprove)),
+		callbackUpdate(2, testUserID, testChatID, confirmData(bridgetest.FirstSessionID, actionApprove)),
 	)
 
 	runBridge(t, rig.br)
 
-	waitFor(t, func() bool {
-		return rig.metrics.confirmCount(confirmApproved)+rig.metrics.confirmCount(confirmExpired) == 1
+	bridgetest.WaitFor(t, func() bool {
+		return rig.confirmCount(confirmApproved)+rig.confirmCount(confirmExpired) == 1
 	})
 
-	won := rig.metrics.confirmCount(confirmApproved) + rig.metrics.confirmCount(confirmExpired)
+	won := rig.confirmCount(confirmApproved) + rig.confirmCount(confirmExpired)
 	if won != 1 {
 		t.Errorf("winners = %d, want exactly one (approved or expired)", won)
 	}
 
-	if got := rig.metrics.confirmCount(confirmRefused); got != 0 {
+	if got := rig.confirmCount(confirmRefused); got != 0 {
 		t.Errorf("refused count = %d, want 0 for an opener with grant", got)
 	}
 }

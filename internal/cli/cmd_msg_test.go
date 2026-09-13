@@ -1,0 +1,402 @@
+package cli_test
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"strings"
+	"sync"
+	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
+	"github.com/chadit/CairnOS/internal/cli"
+)
+
+// Command, flag, and fixture literals the msg cases share, named so a typo
+// fails in one place and goconst stays quiet.
+const (
+	msgCmd        = "msg"
+	msgSendCmd    = "send"
+	flagAsArg     = "--as"
+	flagToArg     = "--to"
+	flagThreadArg = "--thread"
+	flagAddrArg   = "--addr"
+	flagTokenArg  = "--token"
+
+	// msgTestToken is the throwaway bearer the plaintext-warning cases pass.
+	msgTestToken = "cairnos-msg-test-token"
+
+	msgIdentity = "ops-bot"
+	msgTarget   = "#general"
+	msgPostID   = "p-9000"
+	msgThreadID = "p-root"
+
+	// msgBody is the throwaway message the cases that care about flags rather
+	// than text all send.
+	msgBody = "hello"
+)
+
+// fakeMessagingServer answers the two MessagingService calls from a script, and
+// records the send requests so a case can prove which text and thread the CLI
+// put on the wire. The mutex guards against the gRPC server's own goroutine.
+type fakeMessagingServer struct {
+	cairnosv1.UnimplementedMessagingServiceServer
+
+	sendErr    error
+	sends      []*cairnosv1.MessagingServiceSendMessageRequest
+	identities []*cairnosv1.Identity
+	mu         sync.Mutex
+}
+
+func (s *fakeMessagingServer) SendMessage(
+	_ context.Context,
+	req *cairnosv1.MessagingServiceSendMessageRequest,
+) (*cairnosv1.MessagingServiceSendMessageResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.sends = append(s.sends, req)
+
+	if s.sendErr != nil {
+		return nil, s.sendErr
+	}
+
+	return &cairnosv1.MessagingServiceSendMessageResponse{PostId: msgPostID, ChannelId: "c-1"}, nil
+}
+
+func (s *fakeMessagingServer) ListIdentities(
+	_ context.Context,
+	_ *cairnosv1.ListIdentitiesRequest,
+) (*cairnosv1.ListIdentitiesResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return &cairnosv1.ListIdentitiesResponse{Identities: s.identities}, nil
+}
+
+// lastSend returns the request the server saw most recently, failing the test
+// when the CLI never made the call.
+func (s *fakeMessagingServer) lastSend(t *testing.T) *cairnosv1.MessagingServiceSendMessageRequest {
+	t.Helper()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.sends) == 0 {
+		t.Fatal("the server saw no SendMessage call")
+	}
+
+	return s.sends[len(s.sends)-1]
+}
+
+// sendCount reports how many sends reached the server, so a rejected invocation
+// can be shown never to have dialed.
+func (s *fakeMessagingServer) sendCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.sends)
+}
+
+// startMessagingServer serves the fake on an ephemeral loopback port and returns
+// the address for --addr.
+func startMessagingServer(t *testing.T, fake *fakeMessagingServer) string {
+	t.Helper()
+
+	listenConfig := net.ListenConfig{}
+
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	server := grpc.NewServer()
+	cairnosv1.RegisterMessagingServiceServer(server, fake)
+
+	go func() {
+		// Serve exits with ErrServerStopped when the cleanup fires.
+		_ = server.Serve(listener)
+	}()
+
+	t.Cleanup(server.Stop)
+
+	return listener.Addr().String()
+}
+
+// runMsgCLI drives one msg invocation with the given stdin and returns the exit
+// code and both streams.
+func runMsgCLI(t *testing.T, stdin io.Reader, args ...string) (int, string, string) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	code := cli.New(&stdout, &stderr).WithStdin(stdin).Run(t.Context(), args)
+
+	return code, stdout.String(), stderr.String()
+}
+
+func TestMsgSendJoinsPositionalTextAndPrintsThePostID(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{}
+	addr := startMessagingServer(t, fake)
+
+	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
+		"deploy", "finished", "clean")
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	if got := strings.TrimSpace(stdout); got != msgPostID {
+		t.Errorf("stdout %q, want the post id %q", got, msgPostID)
+	}
+
+	sent := fake.lastSend(t)
+
+	if sent.GetText() != "deploy finished clean" {
+		t.Errorf("sent text %q, want the words joined by spaces", sent.GetText())
+	}
+
+	if sent.GetIdentity() != msgIdentity || sent.GetTo() != msgTarget {
+		t.Errorf("sent identity %q to %q, want %q and %q",
+			sent.GetIdentity(), sent.GetTo(), msgIdentity, msgTarget)
+	}
+
+	if sent.GetThreadId() != "" {
+		t.Errorf("sent thread id %q with no --thread", sent.GetThreadId())
+	}
+}
+
+func TestMsgSendReadsTextFromStdinOnDash(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{}
+	addr := startMessagingServer(t, fake)
+
+	body := "line one\nline two\n"
+
+	code, _, stderr := runMsgCLI(t, strings.NewReader(body),
+		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget, "-")
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	// One trailing newline comes from the pipeline, not the message, so the
+	// posted body keeps the interior newline and drops only the last one.
+	if got := fake.lastSend(t).GetText(); got != "line one\nline two" {
+		t.Errorf("sent text %q, want the piped body without its trailing newline", got)
+	}
+}
+
+func TestMsgSendPassesThreadThrough(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{}
+	addr := startMessagingServer(t, fake)
+
+	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
+		flagThreadArg, msgThreadID, "replying")
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	if got := fake.lastSend(t).GetThreadId(); got != msgThreadID {
+		t.Errorf("sent thread id %q, want %q", got, msgThreadID)
+	}
+}
+
+func TestMsgSendReportsAServerRefusal(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{
+		sendErr: status.Error(codes.NotFound, fmt.Sprintf("no messaging identity named %q is configured", msgIdentity)),
+	}
+	addr := startMessagingServer(t, fake)
+
+	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
+
+	if code != cli.ExitFailure {
+		t.Fatalf("exit %d, want %d", code, cli.ExitFailure)
+	}
+
+	if stdout != "" {
+		t.Errorf("stdout %q on a refused send, want nothing", stdout)
+	}
+
+	if !strings.Contains(stderr, msgIdentity) {
+		t.Errorf("stderr %q does not name the identity the server rejected", stderr)
+	}
+}
+
+func TestMsgSendRejectsBadInvocations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		stdin string
+		args  []string
+	}{
+		{
+			name: "missing --as",
+			args: []string{flagToArg, msgTarget, msgBody},
+		},
+		{
+			name: "missing --to",
+			args: []string{flagAsArg, msgIdentity, msgBody},
+		},
+		{
+			name: "no text",
+			args: []string{flagAsArg, msgIdentity, flagToArg, msgTarget},
+		},
+		{
+			name:  "empty stdin body",
+			stdin: "   \n",
+			args:  []string{flagAsArg, msgIdentity, flagToArg, msgTarget, "-"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fake := &fakeMessagingServer{}
+			addr := startMessagingServer(t, fake)
+
+			args := append([]string{msgCmd, msgSendCmd, flagAddrArg, addr}, tt.args...)
+
+			code, _, stderr := runMsgCLI(t, strings.NewReader(tt.stdin), args...)
+
+			if code != cli.ExitUsage {
+				t.Fatalf("exit %d, want %d", code, cli.ExitUsage)
+			}
+
+			if stderr == "" {
+				t.Error("a rejected invocation printed nothing to stderr")
+			}
+
+			if got := fake.sendCount(); got != 0 {
+				t.Errorf("the server saw %d sends; a rejected invocation must not dial", got)
+			}
+		})
+	}
+}
+
+func TestMsgListPrintsTheConfiguredIdentities(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{identities: []*cairnosv1.Identity{{
+		Name:        msgIdentity,
+		Transport:   "mattermost",
+		Username:    "cairnos",
+		DisplayName: "CairnOS",
+		Url:         "https://mm.example",
+	}}}
+	addr := startMessagingServer(t, fake)
+
+	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, "list", flagAddrArg, addr)
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	for _, want := range []string{msgIdentity, "mattermost", "cairnos", "https://mm.example"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("listing %q is missing %q", stdout, want)
+		}
+	}
+}
+
+func TestMsgListSaysSoWhenNoIdentitiesAreConfigured(t *testing.T) {
+	t.Parallel()
+
+	addr := startMessagingServer(t, &fakeMessagingServer{})
+
+	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""), msgCmd, "list", flagAddrArg, addr)
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	if !strings.Contains(stdout, "no messaging identities") {
+		t.Errorf("stdout %q does not say the listing is empty", stdout)
+	}
+}
+
+func TestMsgRejectsAnUnknownSubcommand(t *testing.T) {
+	t.Parallel()
+
+	code, _, stderr := runMsgCLI(t, strings.NewReader(""), msgCmd, "broadcast")
+
+	if code != cli.ExitUsage {
+		t.Fatalf("exit %d, want %d", code, cli.ExitUsage)
+	}
+
+	if !strings.Contains(stderr, "broadcast") {
+		t.Errorf("stderr %q does not name the unknown subcommand", stderr)
+	}
+}
+
+// TestMsgSendWarnsAboutAPlaintextTokenOffLoopback proves a bearer token bound
+// for another host is called out. dialServe always uses insecure credentials, so
+// the invocation the README shows puts an access token on the wire in the clear
+// against a remote serve, and nothing said so.
+func TestMsgSendWarnsAboutAPlaintextTokenOffLoopback(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{}
+	addr := startMessagingServer(t, fake)
+
+	// The server listens on loopback; addressing it through the unspecified
+	// address reaches the same socket while reading as a network address, so the
+	// case exercises the warning without waiting on an unroutable host.
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split %q: %v", addr, err)
+	}
+
+	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, net.JoinHostPort("0.0.0.0", port),
+		flagTokenArg, msgTestToken, flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	if !strings.Contains(stderr, "unencrypted") {
+		t.Fatalf("stderr = %q, want a warning that the token crosses the network in the clear", stderr)
+	}
+}
+
+// TestMsgSendStaysQuietWithATokenOnLoopback proves the warning is about the
+// network rather than about passing a token at all.
+func TestMsgSendStaysQuietWithATokenOnLoopback(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeMessagingServer{}
+	addr := startMessagingServer(t, fake)
+
+	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, addr, flagTokenArg, msgTestToken,
+		flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
+	}
+
+	if strings.Contains(stderr, "unencrypted") {
+		t.Fatalf("stderr = %q, want no warning for a loopback address", stderr)
+	}
+}

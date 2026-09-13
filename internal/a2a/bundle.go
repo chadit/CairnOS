@@ -47,6 +47,16 @@ type BundleConfig struct {
 	// Skills overrides the advertised capability list; nil uses the default.
 	Skills []Skill
 
+	// Channels are the chat surfaces the card advertises, one per enabled chat
+	// identity (FR35). Nil leaves the card's channels key off entirely, which is
+	// what a node with chat disabled publishes.
+	Channels []Channel
+
+	// Bridge is the chat core SendMessage runs a conversational turn through.
+	// Nil means chat is off on this node, and SendMessage answers
+	// FailedPrecondition rather than pretending a turn ran.
+	Bridge BridgeHandler
+
 	// Manager, Resolver, and Store back the A2A service handlers.
 	Manager  *api.Manager
 	Resolver *api.WorkflowResolver
@@ -98,6 +108,7 @@ func NewBundle(cfg *BundleConfig) (*Bundle, error) {
 		Protocol: ProtocolVersion,
 		Endpoint: cfg.Endpoint,
 		Skills:   skills,
+		Channels: cfg.Channels,
 		Auth:     AuthInfo{Type: AuthTypeJWT, Login: cfg.LoginURL},
 	}
 
@@ -115,7 +126,7 @@ func NewBundle(cfg *BundleConfig) (*Bundle, error) {
 		return nil, err
 	}
 
-	service := NewService(cfg.Manager, cfg.Resolver, cfg.Store)
+	service := NewService(cfg.Manager, cfg.Resolver, cfg.Store, cfg.Bridge)
 
 	extension := &api.Extension{
 		Name: "a2a",

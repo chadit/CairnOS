@@ -33,12 +33,23 @@ type Service struct {
 	manager  *api.Manager
 	resolver *api.WorkflowResolver
 	store    store.Store
+
+	// bridge runs the conversational half (chat.go). Nil means chat is off on
+	// this node and SendMessage answers FailedPrecondition.
+	bridge BridgeHandler
 }
 
 // NewService wires the adapter over the shared run manager, a workflow
-// resolver for the node's workflows directory, and the run store.
-func NewService(manager *api.Manager, resolver *api.WorkflowResolver, runStore store.Store) *Service {
-	return &Service{manager: manager, resolver: resolver, store: runStore}
+// resolver for the node's workflows directory, the run store, and the chat
+// bridge SendMessage runs turns through. A nil bridge leaves the task surface
+// working and the conversational one refusing.
+func NewService(
+	manager *api.Manager,
+	resolver *api.WorkflowResolver,
+	runStore store.Store,
+	chatBridge BridgeHandler,
+) *Service {
+	return &Service{manager: manager, resolver: resolver, store: runStore, bridge: chatBridge}
 }
 
 // CreateTask starts a run from an A2A task request and returns the created

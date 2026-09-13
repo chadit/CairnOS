@@ -595,7 +595,8 @@ type Webhook struct {
 // (.agents/spec/parity/messaging-bridge.md). Off by default; a second transport
 // beyond Telegram is additive.
 type Bridge struct {
-	Telegram Telegram
+	Telegram   Telegram
+	Mattermost Mattermost
 }
 
 // Telegram configures the Telegram long-poll bridge. The bot token is a
@@ -655,7 +656,8 @@ type TelegramUser struct {
 // is a credential, so it stays in CAIRNOS_NOTIFY_DISCORD_WEBHOOK, never a config
 // key.
 type Notify struct {
-	Discord Discord
+	Discord    Discord
+	Mattermost NotifyMattermost
 }
 
 // Discord selects which engine and queue events fan out to the shipped Discord
@@ -745,11 +747,30 @@ func Default() Config {
 				SendTimeout: defaultBridgeSendTimeout,
 				ConfirmTTL:  defaultBridgeConfirmTTL,
 			},
+			Mattermost: Mattermost{
+				// Send timeout and confirm TTL mean the same thing on both
+				// transports, so they share one constant rather than drifting.
+				SendTimeout: defaultBridgeSendTimeout,
+				ConfirmTTL:  defaultBridgeConfirmTTL,
+				RatePerSec:  defaultMattermostRatePerSec,
+				RateBurst:   defaultMattermostRateBurst,
+				BotLoop: BotLoop{
+					MaxEvents: defaultMattermostBotLoopMaxEvents,
+					Window:    defaultMattermostBotLoopWindow,
+					Cooldown:  defaultMattermostBotLoopCooldown,
+				},
+			},
 		},
 		Notify: Notify{
 			Discord: Discord{
 				// A fresh slice per call so a mutated result never leaks into
 				// the next Default(); ["held"] keeps today's behavior.
+				Events: []string{NotifyEventHeld},
+			},
+			Mattermost: NotifyMattermost{
+				// Same default set as Discord, so naming an identity and a
+				// channel is the only step to the hold notice. A fresh slice
+				// per call, for the same reason as above.
 				Events: []string{NotifyEventHeld},
 			},
 		},
@@ -894,7 +915,11 @@ func Load(path string) (Config, error) {
 		return cfg, validErr
 	}
 
-	if validErr := validateNotify(&cfg.Notify.Discord); validErr != nil {
+	if validErr := validateMattermost(&cfg.Bridge.Mattermost, cfg.Notify.Mattermost.Channel); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateNotify(&cfg.Notify, cfg.Bridge.Mattermost.Identity); validErr != nil {
 		return cfg, validErr
 	}
 
@@ -1023,14 +1048,29 @@ func validateBridge(telegram *Telegram) error {
 	return nil
 }
 
-// validateNotify rejects any notify.discord.events value outside the known set,
-// so a typo'd event name fails at load rather than silently emitting nothing.
-// It runs regardless of the bridge: the Discord fan-out is its own subsystem.
-func validateNotify(d *Discord) error {
-	for _, event := range d.Events {
+// validateNotify rejects any event value outside the known set, so a typo'd
+// event name fails at load rather than silently emitting nothing. It runs
+// regardless of the bridge: fan-out is its own subsystem. identities is the
+// declared Mattermost identity set, which the Mattermost sink must name one of.
+func validateNotify(notify *Notify, identities map[string]MattermostIdentity) error {
+	if err := validateNotifyEvents("notify.discord.events", notify.Discord.Events); err != nil {
+		return err
+	}
+
+	if err := validateNotifyEvents("notify.mattermost.events", notify.Mattermost.Events); err != nil {
+		return err
+	}
+
+	return validateNotifyMattermost(&notify.Mattermost, identities)
+}
+
+// validateNotifyEvents reports the failing value under the key it was read
+// from, so an operator with both sinks configured knows which list to fix.
+func validateNotifyEvents(key string, events []string) error {
+	for _, event := range events {
 		if !validNotifyEvent(event) {
-			return fmt.Errorf("%w: notify.discord.events %q is not one of %s, %s, %s, %s",
-				ErrInvalidConfig, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied)
+			return fmt.Errorf("%w: %s %q is not one of %s, %s, %s, %s",
+				ErrInvalidConfig, key, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied)
 		}
 	}
 
@@ -1185,11 +1225,13 @@ type fileConfig struct {
 			Verbose     *bool                     `toml:"verbose"`
 			Users       map[string]fileBridgeUser `toml:"users"`
 		} `toml:"telegram"`
+		Mattermost fileMattermost `toml:"mattermost"`
 	} `toml:"bridge"`
 	Notify struct {
 		Discord struct {
 			Events []string `toml:"events"`
 		} `toml:"discord"`
+		Mattermost fileNotifyMattermost `toml:"mattermost"`
 	} `toml:"notify"`
 	Runner map[string]map[string]any `toml:"runner"`
 	// Credential holds each [credential.<name>] block verbatim so parsing can
@@ -1225,6 +1267,10 @@ func applyTOML(cfg *Config, data []byte) error {
 	}
 
 	applyScalars(cfg, &file)
+
+	if err := rejectMattermostToken(file.Bridge.Mattermost.Identity); err != nil {
+		return err
+	}
 
 	if err := applyDurations(cfg, &file); err != nil {
 		return err
@@ -1324,8 +1370,25 @@ func applyScalars(cfg *Config, file *fileConfig) {
 		cfg.Bridge.Telegram.Users = convertBridgeUsers(file.Bridge.Telegram.Users)
 	}
 
+	setIf(&cfg.Bridge.Mattermost.URL, file.Bridge.Mattermost.URL)
+	setIf(&cfg.Bridge.Mattermost.Team, file.Bridge.Mattermost.Team)
+	setIf(&cfg.Bridge.Mattermost.InsecureHTTP, file.Bridge.Mattermost.InsecureHTTP)
+	setIf(&cfg.Bridge.Mattermost.RatePerSec, file.Bridge.Mattermost.RatePerSec)
+	setIf(&cfg.Bridge.Mattermost.RateBurst, file.Bridge.Mattermost.RateBurst)
+	setIf(&cfg.Bridge.Mattermost.BotLoop.MaxEvents, file.Bridge.Mattermost.BotLoop.MaxEvents)
+	setIf(&cfg.Notify.Mattermost.Identity, file.Notify.Mattermost.Identity)
+	setIf(&cfg.Notify.Mattermost.Channel, file.Notify.Mattermost.Channel)
+
+	if file.Bridge.Mattermost.Identity != nil {
+		cfg.Bridge.Mattermost.Identity = convertMattermostIdentities(file.Bridge.Mattermost.Identity)
+	}
+
 	if file.Notify.Discord.Events != nil {
 		cfg.Notify.Discord.Events = file.Notify.Discord.Events
+	}
+
+	if file.Notify.Mattermost.Events != nil {
+		cfg.Notify.Mattermost.Events = file.Notify.Mattermost.Events
 	}
 
 	if file.Chat.Personalities != nil {
@@ -1393,6 +1456,10 @@ func applyDurations(cfg *Config, file *fileConfig) error {
 		{name: "bridge.telegram.poll_timeout", raw: file.Bridge.Telegram.PollTimeout, dst: &cfg.Bridge.Telegram.PollTimeout},
 		{name: "bridge.telegram.send_timeout", raw: file.Bridge.Telegram.SendTimeout, dst: &cfg.Bridge.Telegram.SendTimeout},
 		{name: "bridge.telegram.confirm_ttl", raw: file.Bridge.Telegram.ConfirmTTL, dst: &cfg.Bridge.Telegram.ConfirmTTL},
+		{name: "bridge.mattermost.send_timeout", raw: file.Bridge.Mattermost.SendTimeout, dst: &cfg.Bridge.Mattermost.SendTimeout},
+		{name: "bridge.mattermost.confirm_ttl", raw: file.Bridge.Mattermost.ConfirmTTL, dst: &cfg.Bridge.Mattermost.ConfirmTTL},
+		{name: "bridge.mattermost.bot_loop.window", raw: file.Bridge.Mattermost.BotLoop.Window, dst: &cfg.Bridge.Mattermost.BotLoop.Window},
+		{name: "bridge.mattermost.bot_loop.cooldown", raw: file.Bridge.Mattermost.BotLoop.Cooldown, dst: &cfg.Bridge.Mattermost.BotLoop.Cooldown},
 	}
 
 	if file.Engine.Retry != nil {

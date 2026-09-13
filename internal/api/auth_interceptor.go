@@ -46,21 +46,13 @@ const (
 // case-insensitive per RFC 9110.
 const bearerScheme = "bearer "
 
-// scopeForMethod maps one full gRPC method name onto its required scope,
-// per the tables in .agents/spec/07-api-protocols.md. The second result
-// reports a public method needing no token: Health (liveness must work
-// from probes) and Login (the way in cannot demand a token).
+// ScopeForMethod maps one full gRPC method name onto its required scope, per
+// the tables in .agents/spec/07-api-protocols.md. The second result marks a
+// public method: Health and Login carry no token.
 //
-// SuggestionService is absent from the 07 tables (it postdates them), so
-// the mapping follows the same logic the tables apply elsewhere: listing
-// suggestions reads run-derived history (read:run, like GetRun/ListRuns),
-// while approve/reject change operator state and sit with the other
-// operator mutations under admin.
-//
-// Methods not named here (server reflection, future services) fail closed
-// to admin rather than passing unchecked; extending the API means
-// extending this table.
-func scopeForMethod(fullMethod string) (string, bool) {
+// Exported because this table is the contract an operator reads when minting a
+// key: `cairnos keys add --scopes` has to name the scope a method will demand.
+func ScopeForMethod(fullMethod string) (string, bool) {
 	switch fullMethod {
 	case "/cairnos.v1.AdminService/Health", "/cairnos.v1.LoginService/Login":
 		return "", true
@@ -76,6 +68,9 @@ func scopeForMethod(fullMethod string) (string, bool) {
 		return auth.ScopeReadWorkflow, false
 	case "/cairnos.v1.WorkflowService/GetRun", "/cairnos.v1.WorkflowService/ListRuns",
 		"/cairnos.v1.SuggestionService/ListSuggestions":
+		// SuggestionService postdates the 07 tables. Listing reads run-derived
+		// history, so it sits with GetRun; approve and reject change operator
+		// state and sit under admin below.
 		return auth.ScopeReadRun, false
 	case "/cairnos.v1.MemoryService/GetMemory", "/cairnos.v1.MemoryService/SearchMemory":
 		return auth.ScopeReadMemory, false
@@ -114,15 +109,24 @@ func scopeForMethod(fullMethod string) (string, bool) {
 		// "Control actions"), and the budget-state and audit reads are operator
 		// concerns that sit alongside them rather than with run history.
 		return auth.ScopeAdmin, false
+	case "/cairnos.v1.MessagingService/SendMessage", "/cairnos.v1.MessagingService/ListIdentities":
+		// Both messaging methods take the single message:send scope (FR30).
+		// ListIdentities sits with the send because its answer is the argument
+		// list for a send. The method names are literals rather than package
+		// constants, matching the A2A entries below, since internal/messaging
+		// depends on this package.
+		return auth.ScopeMessageSend, false
 	case "/cairnos.a2a.v1.A2AService/CreateTask", "/cairnos.a2a.v1.A2AService/GetTask",
 		"/cairnos.a2a.v1.A2AService/ListTasks", "/cairnos.a2a.v1.A2AService/CancelTask",
-		"/cairnos.a2a.v1.A2AService/TaskUpdates":
+		"/cairnos.a2a.v1.A2AService/TaskUpdates", "/cairnos.a2a.v1.A2AService/SendMessage":
 		// Every A2A method takes the single a2a:task scope
 		// (.agents/spec/09-a2a-and-hive.md, "Core methods"). The method names
 		// are literals rather than a2a package constants because importing
 		// internal/a2a here would cycle: a2a depends on this package.
 		return auth.ScopeA2ATask, false
 	default:
+		// Server reflection and any future service fail closed to admin rather
+		// than passing unchecked; extending the API means extending this table.
 		return auth.ScopeAdmin, false
 	}
 }
@@ -165,14 +169,12 @@ func newAuthGuard(authenticator Authenticator, streamRecheck time.Duration, now 
 // filter by the caller's tenant (.agents/spec/12-ui-and-governance.md,
 // "Multi-tenancy").
 func (g *authGuard) unary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	workspace, scopes, err := g.authorize(ctx, info.FullMethod)
+	caller, err := g.authorize(ctx, info.FullMethod)
 	if err != nil {
 		return nil, err
 	}
 
-	authed := contextWithScopes(store.ContextWithWorkspace(ctx, workspace), scopes)
-
-	return handler(authed, req)
+	return handler(caller.stamp(ctx), req)
 }
 
 // stream is the grpc.StreamServerInterceptor face of the guard: the scope
@@ -181,12 +183,12 @@ func (g *authGuard) unary(ctx context.Context, req any, info *grpc.UnaryServerIn
 // so revoking or expiring a token ends a long-lived stream (spec M4). Public
 // methods skip the wrapper since they carried no token to re-check.
 func (g *authGuard) stream(srv any, serverStream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	workspace, scopes, err := g.authorize(serverStream.Context(), info.FullMethod)
+	caller, err := g.authorize(serverStream.Context(), info.FullMethod)
 	if err != nil {
 		return err
 	}
 
-	if _, public := scopeForMethod(info.FullMethod); public {
+	if _, public := ScopeForMethod(info.FullMethod); public {
 		return handler(srv, serverStream)
 	}
 
@@ -200,8 +202,7 @@ func (g *authGuard) stream(srv any, serverStream grpc.ServerStream, info *grpc.S
 	// handler can make a finer-grained scope check (the chat confirm path).
 	wrapped := &recheckStream{
 		ServerStream:  serverStream,
-		workspace:     workspace,
-		scopes:        scopes,
+		caller:        caller,
 		authenticator: g.authenticator,
 		token:         token,
 		interval:      g.streamRecheck,
@@ -212,35 +213,61 @@ func (g *authGuard) stream(srv any, serverStream grpc.ServerStream, info *grpc.S
 	return handler(srv, wrapped)
 }
 
+// principal is what one verified token grants the handler: the tenant its store
+// queries filter by, the subject that names the caller inside that tenant, and
+// the scopes a handler can re-check. It is one value rather than three results
+// so authorize does not grow another return every time a handler needs a
+// further claim.
+type principal struct {
+	Workspace string
+	Subject   string
+	Scopes    []string
+}
+
+// stamp returns the context the handler runs under. The workspace makes store
+// queries filter by the caller's tenant
+// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"), the scopes let a
+// handler make a finer check the method table cannot express, and the subject
+// tells one caller from another within the tenant.
+func (p *principal) stamp(ctx context.Context) context.Context {
+	authed := contextWithScopes(store.ContextWithWorkspace(ctx, p.Workspace), p.Scopes)
+
+	if p.Subject == "" {
+		return authed
+	}
+
+	return contextWithSubject(authed, p.Subject)
+}
+
 // authorize runs the verify path for one call: public methods pass, then
 // the bearer token must verify (algorithm, signature, iss/aud, exp, jti,
-// denylist), then the token's scopes must cover the method. It returns the
-// context the handler should run under, carrying the token's workspace so the
-// store filters by the caller's tenant (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy"). A public method passes the context through unchanged,
-// which leaves it on the default workspace.
-func (g *authGuard) authorize(ctx context.Context, fullMethod string) (string, []string, error) {
-	requiredScope, public := scopeForMethod(fullMethod)
+// denylist), then the token's scopes must cover the method. A public method
+// carried no token, so it comes back on the default workspace with no subject
+// and no scopes, and stamping it leaves the context unchanged.
+func (g *authGuard) authorize(ctx context.Context, fullMethod string) (principal, error) {
+	anonymous := principal{Workspace: store.DefaultWorkspace}
+
+	requiredScope, public := ScopeForMethod(fullMethod)
 	if public {
-		return store.DefaultWorkspace, nil, nil
+		return anonymous, nil
 	}
 
 	token, err := bearerToken(ctx)
 	if err != nil {
-		return store.DefaultWorkspace, nil, err
+		return anonymous, err
 	}
 
 	claims, err := g.authenticator.Verify(ctx, token)
 	if err != nil {
-		return store.DefaultWorkspace, nil, verifyStatus(err)
+		return anonymous, verifyStatus(err)
 	}
 
 	if !auth.HasScope(claims.Scopes, requiredScope) {
-		return store.DefaultWorkspace, nil, errorStatus(codes.PermissionDenied,
+		return anonymous, errorStatus(codes.PermissionDenied,
 			cairnerr.Newf(codeAuthForbidden, "method %s requires the %q scope", fullMethod, requiredScope))
 	}
 
-	return claims.Workspace, claims.Scopes, nil
+	return principal{Workspace: claims.Workspace, Subject: claims.Subject, Scopes: claims.Scopes}, nil
 }
 
 // actorFromContext derives who performed a mutating call: the authenticated
@@ -294,18 +321,12 @@ func bearerToken(ctx context.Context) (string, error) {
 type recheckStream struct {
 	grpc.ServerStream
 
-	// workspace is the caller's tenant, lifted from the verified token. Context
-	// derives the handler's context from the embedded stream's, so the store
-	// queries a streaming handler runs filter by the right tenant. Storing the
-	// string rather than the whole context keeps the context request-derived
-	// instead of struct-held (.agents/spec/12-ui-and-governance.md,
-	// "Multi-tenancy").
-	workspace string
-
-	// scopes are the verified token's granted scopes, stamped onto the handler
-	// context so a streaming handler can make a finer-grained check the method
-	// table cannot express (the chat confirm path's write:workflow gate).
-	scopes []string
+	// caller is what the verified token granted. Context stamps it onto the
+	// embedded stream's context per call, so a streaming handler reads the same
+	// tenant, subject, and scopes a unary handler does. Storing the claims rather
+	// than a whole context keeps the handler's context request-derived instead of
+	// struct-held.
+	caller principal
 
 	authenticator Authenticator
 	token         string
@@ -314,11 +335,11 @@ type recheckStream struct {
 	lastCheck     time.Time
 }
 
-// Context returns the embedded stream's context with the caller's workspace and
-// granted scopes stamped on, so a streaming handler reads the tenant the same
-// way a unary handler does and can re-check a scope at handler time.
+// Context returns the embedded stream's context with the caller's claims
+// stamped on, so a streaming handler reads the tenant the same way a unary
+// handler does and can re-check a scope at handler time.
 func (r *recheckStream) Context() context.Context {
-	return contextWithScopes(store.ContextWithWorkspace(r.ServerStream.Context(), r.workspace), r.scopes)
+	return r.caller.stamp(r.ServerStream.Context())
 }
 
 // SendMsg re-verifies the token when interval has elapsed since the last

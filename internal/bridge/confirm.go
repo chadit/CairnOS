@@ -11,118 +11,133 @@ import (
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/chat"
-	"github.com/chadit/CairnOS/internal/store"
+)
+
+// Confirm outcome labels for the confirms_total counter. They are exported for
+// the same reason the Outcome labels in core.go are: the counter vocabulary has
+// to be one list that callers and tests read rather than re-declare, so a rename
+// breaks compilation instead of silently breaking a dashboard query.
+const (
+	// ConfirmApproved counts one proposal the opener approved.
+	ConfirmApproved = "approved"
+
+	// ConfirmDenied counts one proposal the opener denied.
+	ConfirmDenied = "denied"
+
+	// ConfirmExpired counts one proposal the TTL timer auto-denied.
+	ConfirmExpired = "expired"
+
+	// ConfirmRefused counts a decision from anyone but the session opener, or an
+	// approve from a sender without the allow_confirm grant.
+	ConfirmRefused = "refused"
 )
 
 const (
-	// callbackPrefix and callbackSep frame a proposal keyboard's callback_data as
-	// "confirm:<sessionID>:approve|deny" (.agents/spec/parity/messaging-bridge.md,
-	// decision 5). The session id is parsed from the last separator so an id that
-	// itself carries a colon still round-trips.
-	callbackPrefix = "confirm"
-	callbackSep    = ":"
 
-	// actionApprove and actionDeny are the callback_data verbs a tap carries.
-	actionApprove = "approve"
-	actionDeny    = "deny"
-
-	// buttonApprove and buttonDeny label the inline keyboard.
-	buttonApprove = "Approve"
-	buttonDeny    = "Deny"
-
-	// Confirm outcome labels for the confirms_total counter: approved, denied,
-	// expired, and refused. refused covers a wrong-user tap or an Approve from a
-	// user without allow_confirm.
-	confirmApproved = "approved"
-	confirmDenied   = "denied"
-	confirmExpired  = "expired"
-	confirmRefused  = "refused"
-
-	// Operator-facing lines. A refused or stale tap is answered as a chat message
-	// rather than a second answerCallbackQuery: the poll loop already answers every
-	// callback once to clear the spinner, and Telegram allows only one answer per
-	// query, so a worker-side second answer would fail against the real API.
+	// Operator-facing lines. A refused or stale decision is answered as an
+	// ordinary message rather than a transport-specific acknowledgement: Telegram
+	// allows only one answerCallbackQuery per tap and the poll loop already spent
+	// it clearing the spinner, and no other transport has such an acknowledgement
+	// at all.
 	msgNoGrant      = "Approval isn't granted for this user."
 	msgNotOpener    = "Only the operator who started this proposal can answer it."
 	msgStaleExpired = "This proposal expired."
-
-	// msgExpired is the edited-in-place text an expired proposal keyboard is
-	// rewritten to, so the operator sees it lapsed rather than a live keyboard.
-	msgExpired = "This proposal expired; nothing was run."
 )
 
-// proposalRoute is one live D9 proposal's routing state: the chat and message the
-// keyboard was sent to, the opener allowed to answer it, and the expiry timer.
-// The D9 gate state itself stays inside chat.Agent; this is only what the bridge
-// needs to route a tap and edit the message on expiry.
-type proposalRoute struct {
-	chatID    int64
-	messageID int64
-	openerID  int64
-	timer     *time.Timer
+// route is one live D9 proposal's routing state: where the proposal went, the
+// send surface that can mark it expired, the transport's reference for it, the
+// opener allowed to answer it, and the expiry timer. The D9 gate state itself
+// stays inside chat.Agent; this is only what the core needs to route a decision
+// and settle the message on expiry.
+type route struct {
+	addr   Address
+	out    Outbound
+	timer  *time.Timer
+	ref    string
+	opener string
 }
 
-// sendProposal renders a D9 workflow proposal as an inline Approve/Deny keyboard,
-// records the routing entry keyed by session id, and arms the expiry timer. A
-// failed send counts on send_failures_total and leaves nothing pending, since
-// without a delivered keyboard there is nothing to answer.
-func (b *Bridge) sendProposal(ctx context.Context, chatID int64, sessionID string, openerID int64, proposal *chat.Proposal) {
+// sendProposal asks the transport to render a D9 workflow proposal, records the
+// routing entry keyed by session id, and arms the expiry timer. A failed send
+// counts on send_failures_total and leaves nothing pending, since without a
+// delivered proposal there is nothing to answer.
+func (c *Core) sendProposal(ctx context.Context, inbound *Inbound, sessionID string, proposal *chat.Proposal) {
 	if proposal == nil {
 		return
 	}
 
-	keyboard := &InlineKeyboardMarkup{
-		InlineKeyboard: [][]InlineKeyboardButton{{
-			{Text: buttonApprove, CallbackData: callbackData(sessionID, actionApprove)},
-			{Text: buttonDeny, CallbackData: callbackData(sessionID, actionDeny)},
-		}},
-	}
-
-	messageID, err := b.api.SendMessage(ctx, chatID, proposalText(proposal), keyboard)
+	ref, err := inbound.Out.SendProposal(ctx, &inbound.Addr, sessionID, proposal)
 	if err != nil {
-		b.metrics.SendFailure()
-		b.log.ErrorContext(ctx, "bridge proposal send failed",
-			"error", errf(CodeSendFailed, "send proposal to chat %d: %v", chatID, err))
+		c.metrics.SendFailure(inbound.Addr.Transport, inbound.Addr.Identity)
+		c.log.ErrorContext(ctx, "bridge proposal send failed",
+			"error", errf(CodeSendFailed, "send proposal to %s %s: %v", inbound.Addr.Transport, inbound.Addr.ChatKey, err))
 
 		return
 	}
 
-	b.armProposal(ctx, sessionID, &proposalRoute{chatID: chatID, messageID: messageID, openerID: openerID})
+	c.armProposal(ctx, sessionID, &route{
+		addr:   inbound.Addr,
+		out:    inbound.Out,
+		ref:    ref,
+		opener: inbound.Sender.ID,
+	})
 }
 
 // armProposal stores the routing entry and arms its TTL timer. The timer fires
-// expireProposal directly rather than through the chat worker, so an expiry never
-// queues behind a busy chat. ctx is the workspace-stamped turn context, kept live
-// for the eventual ConfirmAction and message edit.
-func (b *Bridge) armProposal(ctx context.Context, sessionID string, entry *proposalRoute) {
-	b.confirmMu.Lock()
-	defer b.confirmMu.Unlock()
+// expireProposal directly rather than through the conversation worker, so an
+// expiry never queues behind a busy conversation. ctx is the workspace-stamped
+// turn context, kept live for the eventual ConfirmAction and expiry mark.
+func (c *Core) armProposal(ctx context.Context, sessionID string, entry *route) {
+	c.confirmMu.Lock()
+	defer c.confirmMu.Unlock()
 
-	entry.timer = time.AfterFunc(b.confirmTTL, func() {
-		b.expireProposal(ctx, sessionID, entry)
+	// A turn can raise a second proposal while the first is still pending, and
+	// chat.Agent's own gate overwrites the same way. An incumbent timer left armed
+	// would later expire the replacement and is invisible to stopAllProposals.
+	if prior, ok := c.pending[sessionID]; ok && prior.timer != nil {
+		prior.timer.Stop()
+	}
+
+	// The timer runs on a context detached from the turn's. A turn can carry a
+	// deadline, A2A bounds its detached turn with one, and expiry fires up to
+	// confirmTTL after that turn ended, so sharing the deadline would cancel the
+	// expiry's ConfirmAction before it ran. Drain stops every armed timer.
+	timerCtx := context.WithoutCancel(ctx)
+
+	entry.timer = time.AfterFunc(c.confirmTTL, func() {
+		c.expireProposal(timerCtx, sessionID, entry)
 	})
-	b.pending[sessionID] = entry
+	c.pending[sessionID] = entry
 }
 
 // lookupRoute returns the live routing entry for a session id without removing
-// it, so an opener or grant check that refuses a tap leaves the proposal pending.
-func (b *Bridge) lookupRoute(sessionID string) (*proposalRoute, bool) {
-	b.confirmMu.Lock()
-	defer b.confirmMu.Unlock()
+// it, so an opener or grant check that refuses a decision leaves the proposal
+// pending.
+func (c *Core) lookupRoute(sessionID string) (*route, bool) {
+	c.confirmMu.Lock()
+	defer c.confirmMu.Unlock()
 
-	entry, ok := b.pending[sessionID]
+	entry, ok := c.pending[sessionID]
 
 	return entry, ok
 }
 
-// takeRoute removes a session's routing entry and stops its timer, best-effort:
-// if the timer already fired, chat.Agent's mutex settles the tap-vs-expiry race
-// and the loser reads CodeNoPendingAction.
-func (b *Bridge) takeRoute(sessionID string) {
-	b.confirmMu.Lock()
-	defer b.confirmMu.Unlock()
+// routed reports whether the session has a proposal awaiting a decision, which is
+// what makes a bare approve or deny a decision rather than chat text.
+func (c *Core) routed(sessionID string) bool {
+	_, ok := c.lookupRoute(sessionID)
 
-	entry, ok := b.pending[sessionID]
+	return ok
+}
+
+// takeRoute removes a session's routing entry and stops its timer, best-effort:
+// if the timer already fired, chat.Agent's mutex settles the decision-vs-expiry
+// race and the loser reads CodeNoPendingAction.
+func (c *Core) takeRoute(sessionID string) {
+	c.confirmMu.Lock()
+	defer c.confirmMu.Unlock()
+
+	entry, ok := c.pending[sessionID]
 	if !ok {
 		return
 	}
@@ -131,203 +146,194 @@ func (b *Bridge) takeRoute(sessionID string) {
 		entry.timer.Stop()
 	}
 
-	delete(b.pending, sessionID)
+	delete(c.pending, sessionID)
+}
+
+// takeRouteIf removes the session's routing entry only when the stored entry is
+// this exact one, and reports whether it did. Expiry identifies its proposal by
+// pointer rather than by session id so a timer that lost to a replacement
+// proposal cannot delete and deny the replacement.
+func (c *Core) takeRouteIf(sessionID string, entry *route) bool {
+	c.confirmMu.Lock()
+	defer c.confirmMu.Unlock()
+
+	if stored, ok := c.pending[sessionID]; !ok || stored != entry {
+		return false
+	}
+
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+
+	delete(c.pending, sessionID)
+
+	return true
 }
 
 // stopAllProposals stops every armed expiry timer and clears the routing map,
-// called from Run on shutdown so no timer fires after the bridge stops.
-func (b *Bridge) stopAllProposals() {
-	b.confirmMu.Lock()
-	defer b.confirmMu.Unlock()
+// called from Drain so no timer fires after the transports stop.
+func (c *Core) stopAllProposals() {
+	c.confirmMu.Lock()
+	defer c.confirmMu.Unlock()
 
-	for _, entry := range b.pending {
+	for _, entry := range c.pending {
 		if entry.timer != nil {
 			entry.timer.Stop()
 		}
 	}
 
-	b.pending = map[string]*proposalRoute{}
+	c.pending = map[string]*route{}
 }
 
-// handleCallback resolves one inline-keyboard tap. The poll loop already answered
-// the callback to clear the client spinner; here the worker checks the opener and
-// the allow_confirm grant, then approves, denies, or refuses. Authorization is
-// operator-set config, not a token scope: approving a workflow is the distinct
-// allow_confirm grant, and only the session opener may answer (doc.go, decision 4).
-func (b *Bridge) handleCallback(ctx context.Context, item *inbound) {
-	callback := item.update.CallbackQuery
-	chatID := item.chatKey
-
-	sessionID, action, valid := parseCallback(callback.Data)
-	if !valid {
-		b.log.WarnContext(ctx, "bridge bad callback",
-			"error", errf(CodeBadCallback, "callback data %q", callback.Data))
+// resolveDecision settles one approve or deny against the session's live
+// proposal. Order matters: a decision with no live proposal counts nothing, one
+// from anyone but the opener is refused, and an approve without the
+// allow_confirm grant is refused the same way. A deny always proceeds, since
+// denying is safe. Authorization is operator-set config, not a token scope
+// (doc.go).
+func (c *Core) resolveDecision(ctx context.Context, inbound *Inbound, sessionID string, approve bool) {
+	entry, ok := c.lookupRoute(sessionID)
+	if !ok {
+		c.send(ctx, inbound.Out, &inbound.Addr, msgStaleExpired)
 
 		return
 	}
 
-	// Stamp the tapper's workspace exactly as the gRPC interceptor would, before
-	// touching the agent. A non-opener is refused below, so by the time
-	// ConfirmAction runs the tapper is the opener and this is their workspace.
-	ctx = store.ContextWithWorkspace(ctx, item.user.Workspace)
-
-	entry, routed := b.lookupRoute(sessionID)
-	if !routed {
-		b.reply(ctx, chatID, msgStaleExpired)
+	if inbound.Sender.ID != entry.opener {
+		c.metrics.Confirm(inbound.Addr.Transport, inbound.Addr.Identity, ConfirmRefused)
+		c.send(ctx, inbound.Out, &inbound.Addr, msgNotOpener)
 
 		return
 	}
 
-	if callback.From == nil || callback.From.ID != entry.openerID {
-		b.metrics.Confirm(confirmRefused)
-		b.reply(ctx, chatID, msgNotOpener)
+	if approve && !inbound.Grant.AllowConfirm {
+		c.metrics.Confirm(inbound.Addr.Transport, inbound.Addr.Identity, ConfirmRefused)
+		c.send(ctx, inbound.Out, &inbound.Addr, msgNoGrant)
 
 		return
 	}
 
-	if action == actionApprove && !item.user.AllowConfirm {
-		b.metrics.Confirm(confirmRefused)
-		b.reply(ctx, chatID, msgNoGrant)
-
-		return
-	}
-
-	b.resolveConfirm(ctx, chatID, sessionID, action == actionApprove)
+	c.resolveConfirm(ctx, inbound, sessionID, approve)
 }
 
-// resolveConfirm fires ConfirmAction for an authorized tap and relays the run
-// events. If the TTL timer won the race first, ConfirmAction reports
-// CodeNoPendingAction and the tap is answered as expired. Otherwise the outcome
-// counts approved or denied.
-func (b *Bridge) resolveConfirm(ctx context.Context, chatID int64, sessionID string, approve bool) {
-	b.takeRoute(sessionID)
+// resolveConfirm fires ConfirmAction for an authorized decision and relays the
+// run events. If the TTL timer won the race first, ConfirmAction reports
+// CodeNoPendingAction and the decision is answered as expired. Otherwise the
+// outcome counts approved or denied.
+func (c *Core) resolveConfirm(ctx context.Context, inbound *Inbound, sessionID string, approve bool) {
+	c.takeRoute(sessionID)
 
 	events := make(chan chat.Event, turnEventBuffer)
 	result := make(chan error, 1)
 
 	go func() {
-		result <- b.chat.ConfirmAction(ctx, sessionID, approve, events)
+		result <- c.chat.ConfirmAction(ctx, sessionID, approve, events)
 	}()
 
-	b.relayConfirm(ctx, chatID, events)
+	c.relayConfirm(ctx, inbound, events)
 
 	err := <-result
 	if isNoPending(err) {
-		b.reply(ctx, chatID, msgStaleExpired)
+		c.send(ctx, inbound.Out, &inbound.Addr, msgStaleExpired)
 
 		return
 	}
 
 	if err != nil {
-		b.log.ErrorContext(ctx, "bridge confirm failed", "error", err)
+		c.log.ErrorContext(ctx, "bridge confirm failed", "error", err)
 
 		return
 	}
 
 	if approve {
-		b.metrics.Confirm(confirmApproved)
+		c.metrics.Confirm(inbound.Addr.Transport, inbound.Addr.Identity, ConfirmApproved)
 
 		return
 	}
 
-	b.metrics.Confirm(confirmDenied)
+	c.metrics.Confirm(inbound.Addr.Transport, inbound.Addr.Identity, ConfirmDenied)
 }
 
-// relayConfirm streams a confirmed turn's events to the chat: run-started and
-// run-finished go as their own status lines, and a denial's turn-done text is
+// relayConfirm streams a confirmed turn's events to the conversation: run-started
+// and run-finished go as their own status lines, and a denial's turn-done text is
 // relayed only when no run started, so an approve does not double-report its run.
-func (b *Bridge) relayConfirm(ctx context.Context, chatID int64, events <-chan chat.Event) {
+func (c *Core) relayConfirm(ctx context.Context, inbound *Inbound, events <-chan chat.Event) {
 	var sawRun bool
 
 	for event := range events {
 		switch event.Type {
 		case chat.EventRunStarted:
-			b.reply(ctx, chatID, "Started run "+event.RunID+".")
+			c.send(ctx, inbound.Out, &inbound.Addr, "Started run "+event.RunID+".")
 
 			sawRun = true
 		case chat.EventRunFinished:
-			b.reply(ctx, chatID, "Run "+event.RunID+" finished as "+event.RunStatus+".")
+			c.send(ctx, inbound.Out, &inbound.Addr, "Run "+event.RunID+" finished as "+event.RunStatus+".")
 		case chat.EventTurnDone:
-			if !sawRun && event.Text != "" {
-				b.reply(ctx, chatID, event.Text)
-			}
+			c.relayTurnDone(ctx, inbound, event.Text, sawRun)
 		case chat.EventAssistantChunk, chat.EventToolCall, chat.EventConfirmationRequired:
 		}
 	}
 }
 
-// expireProposal denies an unanswered proposal so the denial persists to history,
-// then edits the keyboard message to say it lapsed. It fires straight from the
-// TTL timer, not through the chat worker, so a busy chat never delays expiry. If a
-// tap resolved the proposal first, ConfirmAction reports CodeNoPendingAction and
-// expiry does nothing.
-func (b *Bridge) expireProposal(ctx context.Context, sessionID string, entry *proposalRoute) {
-	b.takeRoute(sessionID)
+// relayTurnDone posts a confirmed turn's closing text, which is the explanation a
+// denial carries. An approve already reported its run through the lifecycle
+// lines, so relaying the text there would report the same run twice.
+func (c *Core) relayTurnDone(ctx context.Context, inbound *Inbound, text string, sawRun bool) {
+	if sawRun || text == "" {
+		return
+	}
 
-	// The denial event stream is left unread on purpose: expiry edits the proposal
+	c.send(ctx, inbound.Out, &inbound.Addr, text)
+}
+
+// expireProposal denies an unanswered proposal so the denial persists to history,
+// then asks the transport to mark it lapsed. It fires straight from the TTL
+// timer, not through the conversation worker, so a busy conversation never
+// delays expiry. A decision or a replacement that got there first leaves this
+// entry off the map, and the take reports false.
+func (c *Core) expireProposal(ctx context.Context, sessionID string, entry *route) {
+	if !c.takeRouteIf(sessionID, entry) {
+		return
+	}
+
+	// The denial event stream is left unread on purpose: expiry marks the proposal
 	// message rather than relaying the denial line, and the buffered channel holds
 	// the single turn-done event ConfirmAction emits before it closes.
 	events := make(chan chat.Event, turnEventBuffer)
 
-	err := b.chat.ConfirmAction(ctx, sessionID, false, events)
+	err := c.chat.ConfirmAction(ctx, sessionID, false, events)
 	if isNoPending(err) {
 		return
 	}
 
 	if err != nil {
-		b.log.ErrorContext(ctx, "bridge proposal expiry failed", "error", err)
+		c.log.ErrorContext(ctx, "bridge proposal expiry failed", "error", err)
 
 		return
 	}
 
-	b.metrics.Confirm(confirmExpired)
+	c.metrics.Confirm(entry.addr.Transport, entry.addr.Identity, ConfirmExpired)
 
-	if editErr := b.api.EditMessageText(ctx, entry.chatID, entry.messageID, msgExpired); editErr != nil {
-		b.log.WarnContext(ctx, "bridge edit expired proposal failed", "error", editErr)
+	if markErr := entry.out.Expired(ctx, &entry.addr, entry.ref); markErr != nil {
+		c.log.WarnContext(ctx, "bridge mark expired proposal failed", "error", markErr)
 	}
-}
-
-// callbackData builds a proposal button's callback_data from a session id and a
-// verb.
-func callbackData(sessionID, action string) string {
-	return callbackPrefix + callbackSep + sessionID + callbackSep + action
-}
-
-// parseCallback splits a proposal button's callback_data back into its session id
-// and verb, reporting ok false for anything that is not a known confirm verb. The
-// session id is taken up to the last separator so an id carrying a colon survives.
-func parseCallback(data string) (string, string, bool) {
-	rest, found := strings.CutPrefix(data, callbackPrefix+callbackSep)
-	if !found {
-		return "", "", false
-	}
-
-	idx := strings.LastIndex(rest, callbackSep)
-	if idx < 0 {
-		return "", "", false
-	}
-
-	sessionID := rest[:idx]
-	action := rest[idx+1:]
-
-	if sessionID == "" || (action != actionApprove && action != actionDeny) {
-		return "", "", false
-	}
-
-	return sessionID, action, true
 }
 
 // isNoPending reports whether err is chat's CodeNoPendingAction, the signal that a
-// concurrent tap or expiry already cleared the gate and this caller lost the race.
+// concurrent decision or expiry already cleared the gate and this caller lost the
+// race.
 func isNoPending(err error) bool {
 	apiErr, ok := errors.AsType[*cairnerr.Error](err)
 
 	return ok && apiErr.Code == chat.CodeNoPendingAction
 }
 
-// proposalText renders the proposal's workflow, inputs, and estimated budget as
-// plain text (no parse_mode, so nothing needs escaping).
-func proposalText(proposal *chat.Proposal) string {
+// ProposalText renders a proposal's workflow, inputs, and budget as plain text,
+// closing with the line that asks for a decision. It is exported because every
+// transport renders the same body: Telegram wraps it in an inline keyboard, and
+// a transport without buttons takes the typed approve or deny. Nothing here
+// needs escaping, so no transport picks a parse mode.
+func ProposalText(proposal *chat.Proposal) string {
 	var builder strings.Builder
 
 	builder.WriteString("Proposed workflow: ")
