@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      # Linux is the only platform this pipeline runs. These two compiles catch
+      # a macOS or Windows build break for the price of two builds, without
+      # paying the 10x/2x runner multipliers on every push. They prove the code
+      # compiles there, never that it behaves there.
+      - name: cross-compile darwin and windows
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/cairnos
+          GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/cairnos
+      - name: unit tests
+        run: make test-unit
+      - name: integration tests
+        run: make test-integration
+
+  # Scoped deliberately to the plugin packages. The plugin subsystem is the one
+  # part of CairnOS whose contract cannot be verified by cross-compilation: a
+  # process-tree kill either works on real Windows or it does not. Everything
+  # else stays on ubuntu-latest, so this job stays small enough that the 2x
+  # Windows multiplier costs a few minutes per run. Do not widen it.
+  windows-plugin:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # internal/runner/plugin holds the host-side lifetime tests, which is
+      # what needs a real Windows kernel: the job object either takes the whole
+      # process tree down or it does not. pkg/plugin's own server tests bind a
+      # unix socket and stay Unix-only, so they are not run here.
+      - name: plugin lifetime tests
+        run: go test -race ./internal/runner/plugin/...
+
+  # The SPA bundle is committed at internal/webui/dist because go:embed reads
+  # from disk at compile time, so `go install <module>@latest` has to find it
+  # already built. The container image and CI both use that same committed
+  # bundle rather than rebuilding it, which keeps every build producing the same
+  # binary. The cost of that choice is drift, so this job is the guard: rebuild
+  # from web/src and fail if the result differs from what is committed.
+  webui-current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: rebuild the bundle
+        working-directory: web
+        run: npm ci && npm run build
+      - name: fail when the committed bundle is stale
+        run: |
+          if ! git diff --exit-code -- internal/webui/dist; then
+            echo "E: internal/webui/dist is out of date; run 'make build-web' and commit the result" >&2
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8

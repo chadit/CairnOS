@@ -80,6 +80,7 @@ const (
 	subcmdAdd    = "add"
 	subcmdGet    = "get"
 	subcmdImport = "import"
+	subcmdStatus = "status"
 )
 
 // defaultListLimit caps tabular output when no --limit is given.
@@ -968,8 +969,10 @@ func newRegistry(
 // whose type string selects a registration path, additional to the built-in
 // names: "plugin" wires an out-of-process runner (Phase 1b), "mcp_client"
 // wires a per-name instance of the built-in MCP client factory (the shape
-// `cairnos mcp import` emits). Blocks without a type key, or with another
-// value, stay plain config for the built-in of that name. A configured name
+// `cairnos mcp import` emits), and "openai" wires a second chat-completions
+// runner under its own name, which is how a [runner.local] block pointed at a
+// local llama-server sits beside the hosted one. Blocks without a type key, or
+// with another value, stay plain config for the built-in of that name. A configured name
 // colliding with an already-registered one surfaces as the registry's
 // duplicate-registration error rather than silently shadowing it. The one
 // exception is a block literally named mcp_client: the built-in is already
@@ -991,6 +994,18 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 
 			if err := registry.Register(name, builtins.MCPClientFactoryForWithCredentials(name, credLookup)); err != nil {
 				return fmt.Errorf("register mcp_client runner %q: %w", name, err)
+			}
+		case builtins.OpenAIName:
+			// The built-in is already registered under this exact name with
+			// the same factory, and BuildAll hands it that block, so only a
+			// differently named block needs its own registration. A local
+			// server reached this way is an openai block with a base_url.
+			if name == builtins.OpenAIName {
+				continue
+			}
+
+			if err := registry.Register(name, builtins.OpenAIFactory); err != nil {
+				return fmt.Errorf("register openai runner %q: %w", name, err)
 			}
 		}
 	}

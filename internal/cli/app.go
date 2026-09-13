@@ -57,6 +57,7 @@ Commands:
   prune     Delete runs and outputs past the retention window
   health    Exit 0 when the config loads and the store answers
   service   Run serve under the host supervisor: setup, status, uninstall
+  model     Managed local LLM: setup, status, check, upgrade, uninstall
 
 Use "cairnos <command> -h" for the command's flags.
 `
@@ -182,6 +183,8 @@ func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string
 	switch name {
 	case "service":
 		return a.cmdService(ctx, rest)
+	case "model":
+		return a.cmdModel(ctx, rest)
 	case "webhook":
 		return a.cmdWebhook(ctx, rest)
 	case "vault":

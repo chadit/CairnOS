@@ -66,8 +66,8 @@ func planLaunchdSetup(host *Host, opts Options) Plan {
 			{Path: envFile, Content: envFileTemplate, Perm: filePerm, KeepExisting: true},
 		},
 		Commands: []Command{
-			{Argv: []string{launchctlBin, "bootout", launchdTarget(host)}, Optional: true},
-			{Argv: []string{launchctlBin, "bootstrap", "gui/" + host.UID, plistPath}},
+			{Argv: []string{launchctlBin, cmdBootout, launchdTarget(host)}, Optional: true},
+			{Argv: []string{launchctlBin, cmdBootstrap, "gui/" + host.UID, plistPath}},
 		},
 		Notices: []string{
 			"config and data: " + opts.Home,
@@ -83,7 +83,7 @@ func planLaunchdUninstall(host *Host) Plan {
 	return Plan{
 		Label: labelLaunchdUser,
 		Commands: []Command{
-			{Argv: []string{launchctlBin, "bootout", launchdTarget(host)}, Optional: true},
+			{Argv: []string{launchctlBin, cmdBootout, launchdTarget(host)}, Optional: true},
 		},
 		Removals: []string{launchdAgentPath(host)},
 		Notices:  []string{"config, data, and the env file were left in place"},

@@ -38,7 +38,7 @@ func (a *App) cmdService(ctx context.Context, args []string) int {
 	switch args[0] {
 	case "setup":
 		return a.cmdServiceSetup(ctx, args[1:])
-	case "status":
+	case subcmdStatus:
 		return a.cmdServiceStatus(ctx, args[1:])
 	case "uninstall":
 		return a.cmdServiceUninstall(ctx, args[1:])

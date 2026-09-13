@@ -34,7 +34,7 @@ func (a *App) cmdHive(ctx context.Context, args []string) int {
 		return a.cmdHiveSubscribe(ctx, args[1:])
 	case "publish":
 		return a.cmdHivePublish(ctx, args[1:])
-	case "status":
+	case subcmdStatus:
 		return a.cmdHiveStatus(args[1:])
 	default:
 		a.printErrf("unknown hive subcommand %q\n", args[0])

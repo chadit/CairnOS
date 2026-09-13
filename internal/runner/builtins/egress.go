@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"syscall"
 	"time"
@@ -107,6 +108,35 @@ func isBlockedIP(addr net.IP) bool {
 		addr.IsPrivate() ||
 		addr.IsUnspecified() ||
 		addr.IsMulticast()
+}
+
+// isLocalNetworkIP reports whether addr sits on a network only this machine or
+// the people who run it can reach: loopback, RFC 1918 private space, and the
+// 100.64.0.0/10 carrier-grade NAT block a tailnet hands its nodes.
+//
+// It is deliberately not isBlockedIP inverted. That predicate answers a
+// security question, "may a workflow dial this", and so also refuses
+// link-local, multicast, and the unspecified address. This one answers a
+// narrower question, "is this a server on our own side of the network", which
+// is what decides whether a hosted provider's credential is required. The
+// carrier-grade range is the difference that matters in practice: a Mac
+// reaching llama-server on a tailnet box dials 100.x and needs no API key.
+func isLocalNetworkIP(addr net.IP) bool {
+	addr = ipUnmap(addr)
+
+	return addr.IsLoopback() || addr.IsPrivate() || isCarrierGradeNAT(addr)
+}
+
+// isCarrierGradeNAT reports whether addr falls in 100.64.0.0/10, the range
+// RFC 6598 reserves for carrier-grade NAT and Tailscale assigns to tailnet
+// nodes.
+func isCarrierGradeNAT(addr net.IP) bool {
+	parsed, ok := netip.AddrFromSlice(ipUnmap(addr))
+	if !ok {
+		return false
+	}
+
+	return netip.MustParsePrefix("100.64.0.0/10").Contains(parsed.Unmap())
 }
 
 // ipUnmap returns the 4-byte form of an IPv4-mapped IPv6 address so the v4

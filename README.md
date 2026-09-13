@@ -179,6 +179,57 @@ stop a workflow:
 codex = ["omp_qwen", "anthropic"]
 ```
 
+### Local model
+
+`cairnos model setup` gives a node its own model. It downloads a pinned
+llama.cpp `llama-server` build and a pinned Gemma 4 E4B GGUF, then puts the
+server under the same supervisor that runs `cairnos serve`. It also writes the
+config block that points a runner at it.
+
+```sh
+cairnos model setup            # about 5 GB of download, then a supervised server
+cairnos model status           # installed versus pinned, plus a liveness probe
+cairnos model check --json     # have the pins fallen behind upstream?
+cairnos model upgrade          # re-download, restart, roll back if it won't start
+cairnos model uninstall        # stop the service; --purge deletes the download too
+```
+
+Defaults: loopback port 8089, a 32K context, and two fewer threads than the
+machine has cores so the model server doesn't starve the engine beside it. Each
+is a flag (`--port`, `--ctx-size`, `--threads`, `--model`, `--dir`). `--dry-run`
+prints the plan and writes nothing. `--no-service` installs the files without
+registering a service, and `--offline` refuses to touch the network.
+
+CPU is fine here. There's no GPU or driver stack to set up. Budget about 5 GB of
+disk for the weights and 7-9 GB of memory while the server holds a 32K context.
+On a laptop expect a few tokens per second, which suits background workflows
+better than an interactive chat.
+
+Setup appends an ordinary openai runner block pointed at loopback:
+
+```toml
+[runner.local]
+type = "openai"
+model = "gemma-4-e4b"
+base_url = "http://127.0.0.1:8089/v1"
+```
+
+Reach it from a workflow with `runner = "local"`. No API key is involved: the
+openai runner skips its key check when `base_url` names loopback, a private
+network, or a tailnet address, since a server on your own side of the network
+is the one case where demanding a provider credential buys nothing. An edited
+block survives a re-run, so change the port or the model and setup will leave
+your version alone.
+
+One server can feed more than CairnOS. Anything that speaks chat-completions
+takes the same endpoint, so another local tool can point at
+`http://127.0.0.1:8089/v1` and share the loaded weights instead of starting a
+second copy of a 5 GB model.
+
+The supervised server needs systemd (user) on Linux or launchd on macOS.
+Everywhere else, run `cairnos model setup --no-service`: it installs the
+runtime and the weights and prints the llama-server command to start by hand.
+
 ### Host commands
 
 The `exec` runner launches a plain host process on a schedule. It is for the

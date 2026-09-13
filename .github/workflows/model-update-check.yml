@@ -1,0 +1,38 @@
+name: model-update-check
+
+on:
+  schedule:
+    # 09:17 UTC rather than the top of the hour: GitHub queues cron jobs in
+    # bursts, and an off-minute slot gets picked up without the backlog.
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One check at a time. A run in flight owns the issue set, so a second run
+# racing it could file a duplicate. Queue instead of cancel so a dispatch
+# triggered mid-cron still happens.
+concurrency:
+  group: model-update-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: [self-hosted, Linux, X64, cairnos]
+    steps:
+      - uses: actions/checkout@v4
+      # The runner host has a Go toolchain, but not on the runner account's
+      # PATH. setup-go puts a known version there and reads the same go.mod
+      # the rest of CI does.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: check pinned runtime and models against upstream
+        run: go run ./cmd/cairnos model check --json > "${RUNNER_TEMP}/check.json"
+      - name: file or close update issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/model-update-issues.sh "${RUNNER_TEMP}/check.json"

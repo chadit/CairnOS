@@ -28,3 +28,12 @@ var ErrEmptyCommand = errors.New("service: empty command")
 // ErrCommandFailed wraps a required plan command that exited non-zero, with
 // the supervisor's own output attached for the operator.
 var ErrCommandFailed = errors.New("service: command failed")
+
+// ErrSidecarUnsupported reports a local-model service request on a host whose
+// supervisor this package cannot give a second per-user job: Windows, and a
+// Linux box running neither systemd nor a supervisor we drive. Saying so beats
+// installing something that never starts.
+var ErrSidecarUnsupported = errors.New(
+	"service: the local model service is not supported on this host; " +
+		"start llama-server by hand and point [runner.local] base_url at it",
+)

@@ -1,0 +1,7 @@
+# actionlint rejects a runs-on label it does not recognize, so the self-hosted
+# fleet's repo label has to be declared here. The label comes from the fleet
+# config in ops (config/runners.conf, entry "CairnOS:2:cairnos"); keep the
+# two in sync or the workflow queues against a runner that never picks it up.
+self-hosted-runner:
+  labels:
+    - cairnos

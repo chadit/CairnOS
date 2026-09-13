@@ -61,9 +61,9 @@ func planSystemdSetup(host *Host, opts Options) Plan {
 			{Path: envFile, Content: envFileTemplate, Perm: filePerm, KeepExisting: true},
 		},
 		Commands: []Command{
-			{Argv: []string{systemctlBin, userScope, "daemon-reload"}},
-			{Argv: []string{systemctlBin, userScope, "enable", unitName}},
-			{Argv: []string{systemctlBin, userScope, "restart", unitName}},
+			{Argv: []string{systemctlBin, userScope, cmdDaemonReload}},
+			{Argv: []string{systemctlBin, userScope, cmdEnable, unitName}},
+			{Argv: []string{systemctlBin, userScope, cmdRestart, unitName}},
 			{
 				Argv:     []string{"loginctl", "enable-linger", host.Username},
 				Optional: true,
@@ -97,9 +97,9 @@ func planSystemdSystemSetup(host *Host, opts Options) Plan {
 		// The data dir must belong to the service account, not the installing
 		// root, or the first run fails on the store file.
 		Command{Argv: []string{"chown", "-R", systemUser + ":" + systemUser, opts.Home}},
-		Command{Argv: []string{systemctlBin, "daemon-reload"}},
-		Command{Argv: []string{systemctlBin, "enable", unitName}},
-		Command{Argv: []string{systemctlBin, "restart", unitName}},
+		Command{Argv: []string{systemctlBin, cmdDaemonReload}},
+		Command{Argv: []string{systemctlBin, cmdEnable, unitName}},
+		Command{Argv: []string{systemctlBin, cmdRestart, unitName}},
 	)
 
 	unit := fmt.Sprintf(systemdSystemUnit, systemUser, systemUser, opts.Binary, opts.Home, systemEnvPath)
@@ -143,11 +143,11 @@ func planSystemdUninstall(host *Host, system bool) Plan {
 		Commands: []Command{
 			// Optional: uninstalling an already-stopped or half-removed
 			// service should still clear the unit file.
-			{Argv: scope("disable", "--now", unitName), Optional: true},
+			{Argv: scope(cmdDisable, "--now", unitName), Optional: true},
 		},
 		Removals: []string{unitPath},
 		After: []Command{
-			{Argv: scope("daemon-reload")},
+			{Argv: scope(cmdDaemonReload)},
 		},
 		Notices: []string{"config, data, and the env file were left in place"},
 	}

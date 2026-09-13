@@ -27,6 +27,18 @@ const (
 	launchctlBin = "launchctl"
 	userScope    = "--user"
 
+	// Supervisor verbs shared by the serve and local-model planners, named
+	// once so a typo in either planner is a compile error rather than a
+	// command the supervisor silently rejects.
+	cmdRestart      = "restart"
+	cmdEnable       = "enable"
+	cmdDisable      = "disable"
+	cmdDaemonReload = "daemon-reload"
+	cmdIsActive     = "is-active"
+	cmdBootout      = "bootout"
+	cmdBootstrap    = "bootstrap"
+	cmdPrint        = "print"
+
 	goosDarwin = "darwin"
 	goosLinux  = "linux"
 
@@ -180,7 +192,7 @@ func candidates(host *Host) []Install {
 			Label:      labelLaunchdUser,
 			System:     false,
 			UnitPath:   launchdAgentPath(host),
-			StatusArgv: []string{launchctlBin, "print", launchdTarget(host)},
+			StatusArgv: []string{launchctlBin, cmdPrint, launchdTarget(host)},
 		}}
 	}
 
@@ -189,13 +201,13 @@ func candidates(host *Host) []Install {
 			Label:      labelSystemdUser,
 			System:     false,
 			UnitPath:   userUnitPath(host),
-			StatusArgv: []string{systemctlBin, userScope, "is-active", unitName},
+			StatusArgv: []string{systemctlBin, userScope, cmdIsActive, unitName},
 		},
 		{
 			Label:      labelSystemdSystem,
 			System:     true,
 			UnitPath:   systemUnitPath,
-			StatusArgv: []string{systemctlBin, "is-active", unitName},
+			StatusArgv: []string{systemctlBin, cmdIsActive, unitName},
 		},
 	}
 }

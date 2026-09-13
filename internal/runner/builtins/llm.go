@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -231,12 +233,58 @@ func (c *llmConfig) validateTask(task *runner.Task, name, keyEnv string) error {
 			"set model in params or in the runner config")
 	}
 
+	if err := c.requireAPIKey(name, keyEnv); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// requireAPIKey enforces the provider key everywhere except a server on our
+// own side of the network, where the common case is a llama-server that wants
+// no credential at all and demanding one would fail a workflow over a secret
+// nothing reads.
+//
+// The exemption is keyed on the address rather than on "differs from the
+// vendor default" because those are not the same set. A typo in a hosted
+// base_url differs from the default too, and exempting it would trade a clear
+// validate-time complaint for a 401 mid-run.
+func (c *llmConfig) requireAPIKey(name, keyEnv string) error {
+	if localEndpoint(c.baseURL) {
+		return nil
+	}
+
 	if os.Getenv(keyEnv) == "" {
 		return runner.NewError(runner.ClassPermanent, name+".missing_api_key",
 			"set the "+keyEnv+" environment variable")
 	}
 
 	return nil
+}
+
+// localEndpoint reports whether a base_url names a server this machine or its
+// operators run. A bare "localhost" counts because it is the spelling people
+// reach for and it resolves to loopback everywhere; any other name that is not
+// already an address keeps the credential requirement, since what it resolves
+// to is not knowable at validate time and a hosted endpoint is the likelier
+// answer.
+func localEndpoint(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+
+	host := parsed.Hostname()
+	if host == "localhost" {
+		return true
+	}
+
+	addr := net.ParseIP(host)
+	if addr == nil {
+		return false
+	}
+
+	return isLocalNetworkIP(addr)
 }
 
 // formatModelOutput maps a model's text answer onto Result.Output for the
@@ -299,7 +347,7 @@ func configFloat(cfg map[string]any, key string) (float64, bool, error) {
 // sendJSON posts one JSON payload and hands back the response with its
 // status already classified, so callers only see 2xx bodies. The caller owns
 // closing the body.
-func sendJSON(ctx context.Context, client *http.Client, name, url string, headers map[string]string, payload any) (*http.Response, error) {
+func sendJSON(ctx context.Context, client *http.Client, name, endpoint string, headers map[string]string, payload any) (*http.Response, error) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, &runner.Error{
@@ -308,7 +356,7 @@ func sendJSON(ctx context.Context, client *http.Client, name, url string, header
 		}
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
 	if err != nil {
 		return nil, &runner.Error{
 			Class: runner.ClassPermanent, Code: name + ".bad_url",
