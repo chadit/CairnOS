@@ -13,19 +13,13 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgVaultSchema mirrors the sqlite vault tables with JSONB tags and
-// timestamptz, plus IF NOT EXISTS so opening an existing database is
-// idempotent. Keyword search uses a GIN index over to_tsvector(title||body),
-// the Postgres analog of sqlite's FTS5; there is no separate virtual table
-// because Postgres full-text search runs against the base row. The links table
-// and its target index match the sqlite schema so backlink derivation behaves
-// identically.
+// pgVaultSchema mirrors the sqlite vault tables, down to the links table and
+// its target index, so backlink derivation behaves identically. Keyword search
+// uses a GIN index over to_tsvector(title||body) because Postgres full-text
+// search runs against the base row, not a separate virtual table.
 //
-// The pgvector path stays a stub: when semantic search ships, this schema
-// gains an `embedding vector(768)` column and an ivfflat/hnsw index, populated
-// by embedding title+body through a configured embedding runner
-// (.agents/spec/14-open-decisions.md, D2). No vector backend ships now, so a
-// semantic Query falls back to keyword and flags it, like the sqlite backend.
+// The pgvector path stays a stub (.agents/spec/14-open-decisions.md, D2): a
+// semantic Query falls back to keyword and flags it.
 const pgVaultSchema = `
 CREATE TABLE IF NOT EXISTS documents (
     id           TEXT PRIMARY KEY,

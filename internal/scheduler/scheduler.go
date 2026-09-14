@@ -25,13 +25,13 @@ const backlogCap = 1000
 // Schedule is one persisted scheduled workflow. A zero LastFired means the
 // schedule has never fired.
 type Schedule struct {
+	LastFired    time.Time
+	NextFire     time.Time
+	CreatedAt    time.Time
 	ID           string
 	WorkflowPath string
 	WorkflowName string
 	Cron         string
-	LastFired    time.Time
-	NextFire     time.Time
-	CreatedAt    time.Time
 }
 
 // Schedules is the persistence surface the daemon and the CLI share. The

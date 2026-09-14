@@ -350,8 +350,8 @@ func TestInlineRunRejectsBadDefinitions(t *testing.T) {
 	fix := startServer(t)
 
 	cases := []struct {
-		name     string
 		req      *cairnosv1.RunWorkflowRequest
+		name     string
 		wantCode codes.Code
 	}{
 		{

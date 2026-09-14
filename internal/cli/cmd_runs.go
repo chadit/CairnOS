@@ -293,9 +293,9 @@ func outputTruncated(prior *store.ActionResult) bool {
 type approveRequest struct {
 	runID        string
 	actionName   string // empty means resolve the single pending gate
-	deny         bool
 	comment      string
 	workflowsDir string
+	deny         bool
 }
 
 // cmdRunsApprove decides one human-approval gate and resumes the parked run.

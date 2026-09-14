@@ -33,8 +33,8 @@ func TestWebhookClassifiesStatusCodes(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		status     int
 		retryAfter string
+		status     int
 		wantClass  runner.ErrorClass
 		wantRetry  time.Duration
 		wantOK     bool
@@ -136,9 +136,9 @@ func TestWebhookValidate(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		params  map[string]any
 		name    string
 		cfgURL  string
-		params  map[string]any
 		wantErr bool
 	}{
 		{name: "missing body", cfgURL: exampleURL, params: map[string]any{}, wantErr: true},

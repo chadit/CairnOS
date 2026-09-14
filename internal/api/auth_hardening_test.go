@@ -32,8 +32,8 @@ const wireTooManyLogins = "auth.too_many_logins" //nolint:gosec // canonical err
 // recheck deterministically.
 type hardeningOptions struct {
 	limiter       *auth.LoginLimiter
-	streamRecheck time.Duration
 	streamClock   func() time.Time
+	streamRecheck time.Duration
 }
 
 // hardeningFixture is one auth-enabled server built with the M1/M4 knobs set,
@@ -126,16 +126,16 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 		Logger:        logger,
 	})
 
-	if err := server.Start(t.Context()); err != nil {
-		t.Fatalf("start server: %v", err)
+	if startErr := server.Start(t.Context()); startErr != nil {
+		t.Fatalf("start server: %v", startErr)
 	}
 
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), shutdownTimeout)
 		defer cancel()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			t.Errorf("shutdown server: %v", err)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			t.Errorf("shutdown server: %v", shutdownErr)
 		}
 	})
 

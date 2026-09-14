@@ -29,12 +29,12 @@ var errMemoryDown = errors.New("memory store down")
 // fakeMemoryStore records every call so tests can assert scope and
 // argument passthrough.
 type fakeMemoryStore struct {
-	mu       sync.Mutex
+	failWith error
 	entries  []memory.Entry
 	searches []memory.Query
 	added    []memory.Entry
 	loads    []string
-	failWith error
+	mu       sync.Mutex
 }
 
 var _ memory.Store = (*fakeMemoryStore)(nil)
@@ -205,8 +205,8 @@ func TestMemoryToolValidateRejectsBadParams(t *testing.T) {
 	tool := builtins.NewMemoryTool(&fakeMemoryStore{})
 
 	tests := []struct {
-		name   string
 		params map[string]any
+		name   string
 	}{
 		{name: "missing op", params: map[string]any{queryKey: "x"}},
 		{name: "unknown op", params: map[string]any{opKey: "purge"}},

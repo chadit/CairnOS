@@ -13,6 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/poll"
+	"github.com/chadit/CairnOS/internal/reach"
 	"github.com/chadit/CairnOS/internal/reauth"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/scheduler"
@@ -71,13 +72,12 @@ func (m *queueMetricsAdapter) Depth(stats scheduler.QueueStats) {
 // dedup key.
 const triggerPoll = "poll"
 
-// schedulePayload is what a cron fire stores on a queued work item: enough to
-// load and run the workflow when a worker claims it. The queue treats the
-// payload as opaque bytes; this is the CLI's agreed shape on both ends. Inputs
+// SchedulePayload is what a cron fire stores on a queued work item. The queue
+// treats it as opaque bytes; this is the CLI's agreed shape on both ends. Inputs
 // and Trigger are omitempty so rows queued before the poll feature still
-// unmarshal: an absent Trigger keeps meaning "schedule", an absent Inputs means
-// the workflow's declared defaults.
-type schedulePayload struct {
+// unmarshal: absent Trigger means "schedule", absent Inputs means the workflow's
+// declared defaults.
+type SchedulePayload struct {
 	WorkflowPath string         `json:"workflow_path"`
 	WorkflowName string         `json:"workflow_name"`
 	Inputs       map[string]any `json:"inputs,omitempty"`
@@ -98,7 +98,7 @@ type scheduleEnqueueRunner struct {
 // enqueued this occurrence) is a clean no-op, logged at debug so it does not
 // look like a fire was lost.
 func (r *scheduleEnqueueRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
-	payload, err := json.Marshal(schedulePayload{
+	payload, err := json.Marshal(SchedulePayload{
 		WorkflowPath: sched.WorkflowPath,
 		WorkflowName: sched.WorkflowName,
 	})
@@ -131,28 +131,41 @@ func (r *scheduleEnqueueRunner) Fire(ctx context.Context, sched *scheduler.Sched
 // label, so the queue adapter carries a poll fire's mapped inputs and "poll"
 // trigger through to the run. Both the manager fire runner (serve) and the
 // engine fire runner (schedule run) satisfy it; a plain scheduled item decodes
-// to nil inputs and the schedule trigger, so the run is unchanged.
+// to nil inputs and the schedule trigger.
 type inputsRunner interface {
 	FireRun(ctx context.Context, sched *scheduler.Schedule, inputs map[string]any, trigger string) error
 }
 
-// queueRunnerAdapter turns an inputsRunner (one that runs a workflow given a
-// Schedule, inputs, and trigger) into a QueueRunner (one that runs a workflow
-// given a claimed work item). It decodes the payload back into the schedule
-// fields the inner runner reads, so the queue model reuses the engine and
-// manager fire paths unchanged.
-type queueRunnerAdapter struct {
-	fire inputsRunner
+// QueueRunnerAdapter turns an inputsRunner into a QueueRunner, so a claimed work
+// item drives a fire. It decodes the payload back into the schedule fields the
+// inner runner reads, so the queue model reuses the engine and manager fire
+// paths unchanged. The reach monitor gates the run on the workflow's
+// [workflow.requires] hosts.
+type QueueRunnerAdapter struct {
+	fire  inputsRunner
+	reach *reach.Monitor
 }
 
-// Run decodes the work item and delegates to the inner runner, carrying the
-// payload's inputs and trigger. An empty trigger (a row queued before the poll
-// feature) reads as the schedule trigger. A failure returns to the worker, which
-// naks the item for backoff retry or dead-letters it.
-func (a *queueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) error {
-	var payload schedulePayload
+// Run decodes the work item and delegates to the inner runner. A failure goes
+// back to the worker for backoff or dead-letter, unless the required host is
+// down: that is an UnreachableError, which the worker holds. The host is
+// re-probed after a failure so a mid-run outage is caught on the run that hit it.
+func (a *QueueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) error {
+	var payload SchedulePayload
 	if err := json.Unmarshal(item.Payload, &payload); err != nil {
 		return fmt.Errorf("decode work item payload: %w", err)
+	}
+
+	// Registered here as well as on the daemon's fire, because a held item
+	// resumed after a restart reaches the worker before any fire has told the
+	// fresh monitor what the workflow needs. A load failure is left for FireRun
+	// to report; an unregistered workflow is merely ungated.
+	if flow, err := workflow.Load(payload.WorkflowPath); err == nil {
+		a.reach.Register(payload.WorkflowName, flow.Requires)
+	}
+
+	if reason, blocked := a.reach.Blocked(ctx, payload.WorkflowName); blocked {
+		return reach.NewUnreachable(payload.WorkflowName, reason, nil)
 	}
 
 	trigger := payload.Trigger
@@ -165,11 +178,22 @@ func (a *queueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) 
 		WorkflowName: payload.WorkflowName,
 	}
 
-	if err := a.fire.FireRun(ctx, sched, payload.Inputs, trigger); err != nil {
+	err := a.fire.FireRun(ctx, sched, payload.Inputs, trigger)
+	if err == nil {
+		return nil
+	}
+
+	// A run cut short by shutdown failed because of the shutdown; probing on
+	// the dead context would only report the cancellation as an outage.
+	if ctx.Err() != nil {
 		return fmt.Errorf("run queued workflow %q: %w", payload.WorkflowName, err)
 	}
 
-	return nil
+	if reason, blocked := a.reach.Check(ctx, payload.WorkflowName); blocked {
+		return reach.NewUnreachable(payload.WorkflowName, reason, err)
+	}
+
+	return fmt.Errorf("run queued workflow %q: %w", payload.WorkflowName, err)
 }
 
 // openWorkQueue opens the durable work-queue for the configured backend. On
@@ -201,13 +225,13 @@ func openWorkQueue(ctx context.Context, dir string, cfg *config.Config, scheds s
 	return queue, queue.Close, nil
 }
 
-// newQueueWorker builds the queue worker from the scheduler config block, mapping
-// the [scheduler] knobs onto the worker's tuning. It wires runner.IsReauth as the
-// hold predicate, so a NeedsReauth failure parks the job for a human rather than
-// dead-lettering it (D12). The fan-out routes the held and dead_lettered alerts
-// to Discord when those events are selected; a nil fan-out leaves both callbacks
-// unset (.agents/spec/parity/messaging-bridge.md, decision 7).
-func newQueueWorker(queue scheduler.WorkQueue, queueRunner scheduler.QueueRunner, cfg *config.Scheduler, metrics scheduler.QueueMetrics, fanout *notify.Fanout, logger *slog.Logger) *scheduler.Worker {
+// newQueueWorker builds the queue worker from the [scheduler] config block. It
+// wires runner.IsReauth as the hold predicate, so a NeedsReauth failure parks
+// the job for a human rather than dead-lettering it (D12). The fan-out routes
+// held and dead_lettered alerts to Discord when those events are selected; a
+// nil fan-out leaves both callbacks unset
+// (.agents/spec/parity/messaging-bridge.md, decision 7).
+func newQueueWorker(queue scheduler.WorkQueue, queueRunner scheduler.QueueRunner, cfg *config.Scheduler, metrics scheduler.QueueMetrics, fanout *notify.Fanout, monitor *reach.Monitor, logger *slog.Logger) *scheduler.Worker {
 	return scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
 		Runner:        queueRunner,
@@ -219,12 +243,72 @@ func newQueueWorker(queue scheduler.WorkQueue, queueRunner scheduler.QueueRunner
 		SweepInterval: cfg.SweepInterval,
 		MaxAge:        cfg.MaxAge,
 		Metrics:       metrics,
-		Holdable:      runner.IsReauth,
-		HoldKey:       reauthHoldKey,
-		OnHold:        NewReauthOnHold(fanout, logger),
+		Holdable:      Holdable,
+		HoldKey:       HoldKey,
+		OnHold:        SkipReachHolds(NewReauthOnHold(fanout, logger)),
 		OnDeadLetter:  NewDeadLetterFanout(fanout),
-		ResumeProbe:   newReauthResumeProbe(logger),
+		ResumeProbe:   ResumeProbe(monitor, newReauthResumeProbe(logger)),
 		Logger:        logger,
+	})
+}
+
+// Holdable is the worker's hold predicate: a run that needs re-auth waits for
+// a human, and a run whose required host is down waits for the host. Both are
+// failures a redelivery cannot fix and a dead-letter would misreport.
+func Holdable(runErr error) bool {
+	return runner.IsReauth(runErr) || reach.IsUnreachable(runErr)
+}
+
+// HoldKey names what a held item waits on: the credential provider for a
+// re-auth hold, the workflow's reach key for a host hold.
+func HoldKey(runErr error) string {
+	if reach.IsUnreachable(runErr) {
+		return reach.HoldKey(runErr)
+	}
+
+	return reauthHoldKey(runErr)
+}
+
+// SkipReachHolds wraps the re-auth hold alert so a host hold posts nothing
+// from the worker: the reach monitor already announced the outage, and one
+// line per outage is the whole point. A nil inner stays nil.
+func SkipReachHolds(inner func(context.Context, *scheduler.WorkItem, error)) func(context.Context, *scheduler.WorkItem, error) {
+	if inner == nil {
+		return nil
+	}
+
+	return func(ctx context.Context, item *scheduler.WorkItem, runErr error) {
+		if reach.IsUnreachable(runErr) {
+			return
+		}
+
+		inner(ctx, item, runErr)
+	}
+}
+
+// ResumeProbe routes a held item's key to whichever prober owns it: the reach
+// monitor for a host hold, the credential probe for a re-auth hold. A nil
+// credential probe (no resolvable home) still lets host holds resume.
+func ResumeProbe(monitor *reach.Monitor, reauthProbe func(string, time.Time) bool) func(string, time.Time) bool {
+	return func(key string, now time.Time) bool {
+		if strings.HasPrefix(key, reach.HoldPrefix) {
+			return monitor.Resumable(key)
+		}
+
+		return reauthProbe != nil && reauthProbe(key, now)
+	}
+}
+
+// newReachMonitor builds the reachability monitor the daemon gates fires on
+// and the worker holds items on, posting its lines through the fan-out under
+// the connectivity event. A nil fan-out or a deselected event leaves the gate
+// working and the operator untold, the same shape as the other producers.
+func newReachMonitor(fanout *notify.Fanout, logger *slog.Logger) *reach.Monitor {
+	return reach.New(reach.Config{
+		Notify: func(ctx context.Context, line string) {
+			fanout.Emit(ctx, config.NotifyEventConnectivity, line)
+		},
+		Logger: logger,
 	})
 }
 
@@ -292,8 +376,8 @@ func reauthHomeDir(logger *slog.Logger) string {
 // reauthHoldKey maps a re-auth run error to the credential provider the held job
 // waits on, stored on the item so the resume probe knows which credential to
 // check (D12). It returns "" when the error is not a runner error or its tool is
-// not a provider the prober recognizes, in which case the job is held but only an
-// operator can resume it.
+// not a provider the prober knows, leaving the job held until an operator
+// resumes it.
 func reauthHoldKey(runErr error) string {
 	rerr, ok := errors.AsType[*runner.Error](runErr)
 	if !ok {
@@ -308,13 +392,12 @@ func reauthHoldKey(runErr error) string {
 	return string(provider)
 }
 
-// NewReauthOnHold builds the worker's hold callback, routing the alert through
-// the Discord fan-out when "held" is selected. It returns nil when the fan-out
-// is off (no webhook) or "held" is deselected, so holds are only logged and
-// counted, today's behavior with no webhook. The alert renders the same content
-// the direct notifier posted, so the default ["held"] set stays byte-identical
-// (.agents/spec/parity/messaging-bridge.md, decision 7). Emit is fire-and-forget:
-// a dropped alert never changes the held job's fate (D12).
+// NewReauthOnHold builds the worker's hold callback, routing alerts through the
+// Discord fan-out when "held" is selected. Returns nil when the fan-out is off
+// or "held" is deselected, leaving holds logged and counted. The alert matches
+// the direct notifier's content, keeping the default ["held"] set byte-identical
+// (.agents/spec/parity/messaging-bridge.md, decision 7). Emit is
+// fire-and-forget: a dropped alert never changes the job's fate (D12).
 func NewReauthOnHold(fanout *notify.Fanout, logger *slog.Logger) func(context.Context, *scheduler.WorkItem, error) {
 	if !fanout.Selects(config.NotifyEventHeld) {
 		return nil
@@ -361,11 +444,12 @@ func deadLetteredLine(item *scheduler.WorkItem, runErr error) string {
 // "codex.needs_reauth", returning the part before the last dot. A code with no
 // dot comes back unchanged.
 func reauthTool(code string) string {
-	if idx := strings.LastIndex(code, "."); idx > 0 {
-		return code[:idx]
+	before, _, found := strings.CutLast(code, ".")
+	if !found || before == "" {
+		return code
 	}
 
-	return code
+	return before
 }
 
 // pollQueue is what a poll fire needs from the work queue: enqueue one work item
@@ -383,25 +467,26 @@ type pollPauseChecker interface {
 	GetWorkflowPause(ctx context.Context, workflowName string) (*store.WorkflowPause, bool, error)
 }
 
-// pollAwareRunner wraps the enqueue runner so a [workflow.poll] fire turns one
+// PollAwareRunner wraps the enqueue runner so a [workflow.poll] fire turns one
 // cron occurrence into zero or more enqueued events, deduped through the queue's
 // PollDedupKeyFor key. A non-poll workflow delegates straight to the wrapped
 // runner, byte-for-byte today's behavior
 // (.agents/spec/parity/triggers-webhooks.md, "Firing path").
-type pollAwareRunner struct {
+type PollAwareRunner struct {
 	inner   scheduler.Runner
 	queue   pollQueue
 	sources poll.Sources
 	pauses  pollPauseChecker
+	reach   *reach.Monitor
 	logger  *slog.Logger
 }
 
-// newPollAwareRunner wraps inner with poll awareness. The work queue also
-// persists poll cursors (both shipped backends do), so the wrapper reads it as a
-// pollQueue. A queue without cursor support could only run plain schedules, so
-// the wrapper falls back to inner and poll workflows fail at fire time rather
-// than the process panicking; in practice this branch is unreachable.
-func newPollAwareRunner(inner scheduler.Runner, queue scheduler.WorkQueue, sources poll.Sources, pauses pollPauseChecker, logger *slog.Logger) scheduler.Runner {
+// newPollAwareRunner wraps inner with poll awareness and the reach gate. Both
+// shipped work queues persist poll cursors, so the wrapper reads the queue as a
+// pollQueue. A queue without cursor support falls back to inner, so poll
+// workflows fail at fire time rather than panicking the process; in practice
+// that branch is unreachable.
+func newPollAwareRunner(inner scheduler.Runner, queue scheduler.WorkQueue, sources poll.Sources, pauses pollPauseChecker, monitor *reach.Monitor, logger *slog.Logger) scheduler.Runner {
 	cursors, ok := queue.(pollQueue)
 	if !ok {
 		logger.Warn("work queue does not persist poll cursors; poll workflows disabled")
@@ -409,25 +494,37 @@ func newPollAwareRunner(inner scheduler.Runner, queue scheduler.WorkQueue, sourc
 		return inner
 	}
 
-	return &pollAwareRunner{inner: inner, queue: cursors, sources: sources, pauses: pauses, logger: logger}
+	return &PollAwareRunner{inner: inner, queue: cursors, sources: sources, pauses: pauses, reach: monitor, logger: logger}
 }
+
+// A workflow whose required host is down is skipped without enqueueing, so an
+// outage leaves no backlog to run when it ends. A paused workflow polls nothing
+// and holds its cursor, so events wait for resume instead of being dropped. A
+// source error returns without advancing the cursor, so the next poll re-reads
+// the same window.
 
 // Fire loads the workflow fresh (FireRunner precedent). A plain scheduled
 // workflow delegates to the wrapped enqueue runner. A poll workflow polls its
-// source for events newer than the stored cursor, enqueues one deduped work item
-// per event with the event's mapped inputs, then advances the cursor. A paused
-// workflow polls nothing and holds its cursor, so events wait for resume instead
-// of being dropped. A source error returns without advancing the cursor, so the
-// next poll re-reads the same window.
-func (r *pollAwareRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
+// source for events newer than the stored cursor, enqueues one deduped item per
+// event with the event's mapped inputs, then advances the cursor.
+func (r *PollAwareRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
 	flow, err := workflow.Load(sched.WorkflowPath)
 	if err != nil {
 		return fmt.Errorf("load %s: %w", sched.WorkflowPath, err)
 	}
 
+	r.reach.Register(sched.WorkflowName, flow.Requires)
+
+	if reason, blocked := r.reach.Blocked(ctx, sched.WorkflowName); blocked {
+		r.logger.Info("skipping fire while a required host is unreachable",
+			"schedule", sched.ID, "workflow", flow.Name, "reason", reason)
+
+		return nil
+	}
+
 	if flow.Poll == nil {
-		if err := r.inner.Fire(ctx, sched); err != nil {
-			return fmt.Errorf("fire schedule %s: %w", sched.ID, err)
+		if fireErr := r.inner.Fire(ctx, sched); fireErr != nil {
+			return fmt.Errorf("fire schedule %s: %w", sched.ID, fireErr)
 		}
 
 		return nil
@@ -463,7 +560,7 @@ func (r *pollAwareRunner) Fire(ctx context.Context, sched *scheduler.Schedule) e
 
 // paused reports whether the workflow is paused. A nil checker never pauses; a
 // read failure logs and proceeds rather than silently dropping a poll.
-func (r *pollAwareRunner) paused(ctx context.Context, workflowName string) bool {
+func (r *PollAwareRunner) paused(ctx context.Context, workflowName string) bool {
 	if r.pauses == nil {
 		return false
 	}
@@ -482,9 +579,9 @@ func (r *pollAwareRunner) paused(ctx context.Context, workflowName string) bool 
 // the schedule payload with the event's mapped inputs and the poll trigger, then
 // enqueues under the poll dedup key. A dedup hit (an overlapping poll window or a
 // concurrent leader already enqueued this event) is a clean no-op.
-func (r *pollAwareRunner) enqueueFor(sched *scheduler.Schedule, flow *workflow.Workflow) poll.EnqueueEvent {
+func (r *PollAwareRunner) enqueueFor(sched *scheduler.Schedule, flow *workflow.Workflow) poll.EnqueueEvent {
 	return func(ctx context.Context, event poll.Event) error {
-		payload, err := json.Marshal(schedulePayload{
+		payload, err := json.Marshal(SchedulePayload{
 			WorkflowPath: sched.WorkflowPath,
 			WorkflowName: sched.WorkflowName,
 			Inputs:       filterPollInputs(event.Inputs, flow.Inputs),

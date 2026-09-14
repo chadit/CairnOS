@@ -28,9 +28,9 @@ type fakeHive struct {
 // publishCapture is the decoded body of one publish request, so a test can
 // assert the pseudonym, the observation count, and the tip the client sent.
 type publishCapture struct {
+	Tip           hive.Tip `json:"tip"`
 	NodePseudonym string   `json:"node_pseudonym"`
 	Observations  int      `json:"observations"`
-	Tip           hive.Tip `json:"tip"`
 }
 
 // newFakeHive starts a mock hive that returns the given tips on GET and records

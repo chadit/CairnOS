@@ -21,10 +21,9 @@ const localBaseURL = "http://127.0.0.1:8089/v1"
 
 // TestOpenAIValidateKeyRequirementFollowsTheAddress proves the credential is
 // waived for a server on our own side of the network and demanded everywhere
-// else. The tailnet row is the one that would be easy to get wrong: a Mac
-// running CairnOS reaches llama-server on another box at a 100.64.0.0/10
-// address, which is neither loopback nor RFC 1918. The typo row is why the
-// rule is about the address and not about differing from the vendor default.
+// else. The tailnet row is easy to get wrong: a 100.64.0.0/10 address is
+// neither loopback nor RFC 1918. The typo row is why the rule keys on the
+// address rather than on differing from the vendor default.
 func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 	cases := []struct {
 		name    string

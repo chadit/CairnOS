@@ -109,67 +109,15 @@ type AgentExecutor interface {
 
 	// Execute drives the loop for one agent action. The action arrives with
 	// its goal already interpolated; the task carries run identity, inputs,
-	// and the action deadline. A returned *cairnerr.Error keeps its code
-	// (the agent.* walls); anything else classifies like a runner failure.
-	// The Result is meaningful even on error: it carries the usage spent
-	// before the failure so cost accounting survives blown budgets.
+	// and the action deadline. A returned *cairnerr.Error keeps its code (the
+	// agent.* walls); anything else classifies like a runner failure. The
+	// Result carries usage spent before a failure, so cost accounting survives
+	// blown budgets.
 	Execute(ctx context.Context, action *workflow.Action, task *runner.Task) (runner.Result, error)
 }
 
 // Config tunes one Engine.
 type Config struct {
-	// MaxConcurrentActions caps in-flight runner calls across the engine so
-	// a burst of ready actions cannot exhaust rate limits or local CPU.
-	// Values below one fall back to the spec default of four.
-	MaxConcurrentActions int
-
-	// Workflows resolves a workflow-call action's child by name. Nil makes
-	// every workflow-call action fail with engine.workflow_source_missing
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
-	Workflows WorkflowSource
-
-	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
-	// engine.call_depth_exceeded. Values below one fall back to the spec
-	// default of three.
-	MaxCallDepth int
-
-	// DefaultTimeout bounds actions that declare no timeout of their own.
-	// Zero means no per-action ceiling beyond the run's.
-	DefaultTimeout time.Duration
-
-	// DefaultRetry applies to actions without a retry table.
-	DefaultRetry reliability.Policy
-
-	// Fallback is the mixed-model chain keyed by primary runner name: when an
-	// action's runner fails terminally, the engine tries the listed runners in
-	// order before failing the action (.agents/spec/14-open-decisions.md, D12).
-	// An absent entry means the action's runner runs alone, exactly as before.
-	Fallback map[string][]string
-
-	// Breaker is shared by every per-runner circuit breaker.
-	Breaker reliability.BreakerConfig
-
-	// EnvAllowlist names the only environment variables ${{ env.* }} may
-	// read; anything else fails with config.invalid.
-	EnvAllowlist []string
-
-	// Secrets resolves ${{ secrets.* }} references. Nil means every secret
-	// reference fails with config.missing_secret.
-	Secrets SecretSource
-
-	// AgentExecutor runs agent-kind actions (the Phase 1c loop). Nil makes
-	// every agent action fail with engine.agent_not_available.
-	AgentExecutor AgentExecutor
-
-	// NewID mints run IDs. Injected so tests get repeatable IDs; nil falls
-	// back to a timestamp-plus-random generator.
-	NewID func() string
-
-	// Clock supplies the current time for budget period-start math. Injected
-	// so a fixed test clock makes the period boundary repeatable; nil means
-	// time.Now.
-	Clock func() time.Time
-
 	// Budget sums a workflow's spend over a period so the engine can compare
 	// it to the budget limit (.agents/spec/12-ui-and-governance.md,
 	// "Budgets"). Nil turns budget enforcement off, the pre-governance
@@ -181,10 +129,44 @@ type Config struct {
 	// Nil turns the pause check off; the store satisfies it.
 	Pause PauseChecker
 
+	// Instrumentation observes runs, actions, and runner calls for the
+	// telemetry layer. Nil means no instrumentation. Unlike OnEvent, which
+	// feeds the API's live event stream, these hooks return scope contexts
+	// so spans nest; both hooks can be active at once.
+	Instrumentation Instrumentation
+
 	// Notifier is fired when a warn-mode budget is exceeded so a run that
 	// proceeds still raises an alert. Nil falls back to a slog warning; the
 	// budget metric fires through Instrumentation regardless.
 	Notifier BudgetNotifier
+
+	// Secrets resolves ${{ secrets.* }} references. Nil means every secret
+	// reference fails with config.missing_secret.
+	Secrets SecretSource
+
+	// AgentExecutor runs agent-kind actions (the Phase 1c loop). Nil makes
+	// every agent action fail with engine.agent_not_available.
+	AgentExecutor AgentExecutor
+
+	// Workflows resolves a workflow-call action's child by name. Nil makes
+	// every workflow-call action fail with engine.workflow_source_missing
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	Workflows WorkflowSource
+
+	// Fallback is the mixed-model chain keyed by primary runner name: when an
+	// action's runner fails terminally, the engine tries the listed runners in
+	// order before failing the action (.agents/spec/14-open-decisions.md, D12).
+	// An absent entry means the action's runner runs alone, exactly as before.
+	Fallback map[string][]string
+
+	// Clock supplies the current time for budget period-start math. Injected
+	// so a fixed test clock makes the period boundary repeatable; nil means
+	// time.Now.
+	Clock func() time.Time
+
+	// NewID mints run IDs. Injected so tests get repeatable IDs; nil falls
+	// back to a timestamp-plus-random generator.
+	NewID func() string
 
 	// OnEvent observes run starts, action transitions, and run finishes, so
 	// the API can stream a run live. Nil means no observer. The engine calls
@@ -192,20 +174,38 @@ type Config struct {
 	// to come back promptly and never block, or it stalls the scheduler.
 	OnEvent func(Event)
 
-	// Instrumentation observes runs, actions, and runner calls for the
-	// telemetry layer. Nil means no instrumentation. Unlike OnEvent, which
-	// feeds the API's live event stream, these hooks return scope contexts
-	// so spans nest; both hooks can be active at once.
-	Instrumentation Instrumentation
+	// EnvAllowlist names the only environment variables ${{ env.* }} may
+	// read; anything else fails with config.invalid.
+	EnvAllowlist []string
+
+	// DefaultRetry applies to actions without a retry table.
+	DefaultRetry reliability.Policy
+
+	// Breaker is shared by every per-runner circuit breaker.
+	Breaker reliability.BreakerConfig
+
+	// MaxConcurrentActions caps in-flight runner calls across the engine so
+	// a burst of ready actions cannot exhaust rate limits or local CPU.
+	// Values below one fall back to the spec default of four.
+	MaxConcurrentActions int
+
+	// DefaultTimeout bounds actions that declare no timeout of their own.
+	// Zero means no per-action ceiling beyond the run's.
+	DefaultTimeout time.Duration
+
+	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
+	// engine.call_depth_exceeded. Values below one fall back to the spec
+	// default of three.
+	MaxCallDepth int
 }
 
 // Engine executes workflows against a runner registry and a durable store.
 // Safe for concurrent use; runs share the breaker set and the registry.
 type Engine struct {
-	cfg      Config
-	registry *runner.Registry
 	store    store.Store
+	registry *runner.Registry
 	breakers *reliability.BreakerSet
+	cfg      Config
 }
 
 // New builds an engine, normalizing config defaults.
@@ -262,12 +262,11 @@ func (e *Engine) ResetBreaker(name string) bool {
 	return e.breakers.Reset(name)
 }
 
-// RunWorkflow executes one run of a parsed workflow: it validates the
-// supplied inputs, checks every task runner is registered, creates the run
-// record, executes the DAG, and finalizes the run. The returned run is
-// terminal; its Status and Error carry the outcome, so a failed run returns
-// a nil error here. A non-nil error means the run was rejected before any
-// record was created.
+// RunWorkflow executes one run of a parsed workflow: it validates inputs,
+// checks every task runner is registered, creates the run record, executes the
+// DAG, and finalizes. The returned run is terminal; its Status and Error carry
+// the outcome, so a failed run returns a nil error. A non-nil error means the
+// run was rejected before any record was created.
 func (e *Engine) RunWorkflow(ctx context.Context, flow *workflow.Workflow, inputs map[string]any, trigger string) (*store.Run, error) {
 	if flow == nil {
 		return nil, ErrNilWorkflow

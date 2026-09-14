@@ -281,7 +281,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// A2A mounts after the bridges so the card is signed over a registry the
 	// Mattermost builder has already populated, and so SendMessage gets the same
 	// core the chat transports hand their turns to.
-	if code, a2aMounted := a.attachA2AServe(ctx, cfg, tel, apiCfg, &a2aServeDeps{
+	if attachA2AServeErr, a2aMounted := a.attachA2AServe(ctx, cfg, tel, apiCfg, &a2aServeDeps{
 		manager:      manager,
 		store:        db,
 		core:         bridges.core,
@@ -289,14 +289,14 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		workflowsDir: workflowsDir,
 		logger:       logger,
 	}); !a2aMounted {
-		return code
+		return attachA2AServeErr
 	}
 
 	// OAuth human login mounts when configured and auth is on: a minted
 	// CairnOS token is only useful if the interceptor verifies it, which needs
 	// authn. tenants is the membership store the callback resolves roles in.
-	if code, oauthMounted := a.attachOAuthServe(ctx, cfg, tel, authn, stores.tenants, apiCfg, logger); !oauthMounted {
-		return code
+	if attachOAuthServeErr, oauthMounted := a.attachOAuthServe(ctx, cfg, tel, authn, stores.tenants, apiCfg, logger); !oauthMounted {
+		return attachOAuthServeErr
 	}
 
 	// Webhook ingress mounts only when [webhook] enabled is true; unregistered
@@ -502,15 +502,15 @@ func (a *App) openServeSecretSourceAt(ctx context.Context, cfg *config.Config, d
 // serveEngineDeps bundles what buildServeEngine wires onto the serve-mode
 // engine, so the helper takes one argument instead of a long parameter list.
 type serveEngineDeps struct {
+	db           store.Store
+	mem          memory.Store
+	secrets      secrets.Source
 	manager      *api.Manager
 	tel          *telemetry.Telemetry
 	registry     *runner.Registry
-	db           store.Store
-	mem          memory.Store
-	workflowsDir string
 	fanout       *notify.Fanout
-	secrets      secrets.Source
 	logger       *slog.Logger
+	workflowsDir string
 }
 
 // buildServeEngine assembles and wires the serve-mode engine: the file-config
@@ -565,12 +565,11 @@ func (a *App) announceHiveSubscribe(hiveDone <-chan struct{}) {
 const hiveSubscribeInterval = time.Hour
 
 // startHiveSubscribe runs a periodic hive subscribe on its own goroutine when
-// [hive] is enabled, landing received tips in the suggestion queue so they
-// flow through the same human review as local suggestions
-// (.agents/spec/09-a2a-and-hive.md). It returns nil (and starts nothing) when
-// the hive is disabled, so the serve loop adds no overhead for the common case.
-// Subscribing is receive-only and never publishes, so the periodic loop is safe
-// regardless of the publish gate.
+// [hive] is enabled, landing tips in the suggestion queue so they flow through
+// the same human review as local suggestions (.agents/spec/09-a2a-and-hive.md).
+// It returns nil and starts nothing when the hive is disabled. Subscribing is
+// receive-only and never publishes, so the loop is safe regardless of the
+// publish gate.
 func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.Source, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
 	if !cfg.Hive.Enabled {
 		return nil
@@ -727,12 +726,13 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore) (*auth.Authentic
 	}), nil
 }
 
-// serveUntilCanceled runs the scheduler daemon alongside the API and drains
-// both on cancellation. The daemon runs in a goroutine because a scheduled
-// fire blocks inside the daemon loop until its run finishes; shutdown
-// cancels active runs through the manager, which is what unblocks a daemon
-// stuck mid-fire. The coordinator is the advisory-lock PostgresCoordinator on
-// a Postgres backend, so only one serving node fires schedules, and the
+// The daemon runs in a goroutine because a scheduled fire blocks inside the
+// daemon loop until its run finishes. Shutdown cancels active runs through the
+// manager, which is what unblocks a daemon stuck mid-fire.
+
+// serveUntilCanceled runs the scheduler daemon alongside the API and drains both
+// on cancellation. The coordinator is the advisory-lock PostgresCoordinator on a
+// Postgres backend, so only one serving node fires schedules, and the
 // SoloCoordinator on sqlite (.agents/spec/14-open-decisions.md, S2).
 func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
 	coord, closeCoord := newCoordinator(sched.scheds)
@@ -745,8 +745,15 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 	// away waits in the queue rather than being skipped (S8). The poll-aware
 	// wrapper turns a [workflow.poll] fire into per-event enqueues and leaves a
 	// plain schedule untouched.
+
+	// The reach monitor probes every workflow's [workflow.requires] hosts on a
+	// timer; the daemon skips fires and the worker holds items while one is
+	// down. It rides the serve context and needs no drain: a probe cut off by
+	// shutdown has nothing left to record.
+	monitor := newReachMonitor(sched.fanout, a.logger)
+
 	enqueue := &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}
-	pollRunner := newPollAwareRunner(enqueue, sched.queue, sched.sources, sched.pauses, a.logger)
+	pollRunner := newPollAwareRunner(enqueue, sched.queue, sched.sources, sched.pauses, monitor, a.logger)
 
 	daemon := scheduler.New(scheduler.Config{
 		Store:       sched.scheds,
@@ -756,11 +763,12 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 	})
 
 	fire := api.NewFireRunner(sched.manager, sched.pauses, a.logger)
-	worker := newQueueWorker(sched.queue, &queueRunnerAdapter{fire: fire}, sched.cfg, sched.metrics, sched.fanout, a.logger)
+	worker := newQueueWorker(sched.queue, &QueueRunnerAdapter{fire: fire, reach: monitor}, sched.cfg, sched.metrics, sched.fanout, monitor, a.logger)
 
 	daemonDone := make(chan error, 1)
 	workerDone := make(chan error, 1)
 
+	go monitor.Run(ctx)
 	go func() { daemonDone <- daemon.Run(ctx) }()
 	go func() { workerDone <- worker.Run(ctx) }()
 

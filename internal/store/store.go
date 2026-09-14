@@ -53,37 +53,38 @@ const (
 
 // Run is one execution of a workflow.
 type Run struct {
+	CreatedAt    time.Time
+	StartedAt    time.Time // zero until the run starts
+	FinishedAt   time.Time // zero until terminal
+	Inputs       map[string]any
+	Error        *cairnerr.Error
 	ID           string
 	WorkflowName string
 	WorkflowHash string
 	WorkspaceID  string // reserved for multi-tenancy; "default" until Phase 5
 	Status       RunStatus
-	Inputs       map[string]any
 	Trigger      string // cli|schedule|api|a2a|webhook|webhook_test|poll|replay|error|workflow
-	Error        *cairnerr.Error
+
 	// ParentRunID links a child run to the run that spawned it: a replay to
 	// the run it reruns, a workflow-call child to its caller, an error
 	// workflow to the failed run that fired it. Empty means a root run
 	// (.agents/spec/parity/workflow-language.md, "Replay from failed action").
 	ParentRunID string
-	CreatedAt   time.Time
-	StartedAt   time.Time // zero until the run starts
-	FinishedAt  time.Time // zero until terminal
 }
 
 // ActionResult is the persisted outcome of one action within a run.
 type ActionResult struct {
+	StartedAt  time.Time
+	FinishedAt time.Time
+	Output     any
+	Meta       map[string]string
+	Error      *cairnerr.Error
 	RunID      string
 	ActionName string
 	Runner     string
 	Status     ActionStatus
-	Attempt    int
-	Output     any
 	Usage      runner.Usage
-	Meta       map[string]string
-	Error      *cairnerr.Error
-	StartedAt  time.Time
-	FinishedAt time.Time
+	Attempt    int
 }
 
 // Agent-step kinds (.agents/spec/15-agent-loop.md, "Transcript persistence").
@@ -101,15 +102,15 @@ const (
 // row per driver decision and per tool result, so a failed or budget-blown
 // agent action is debuggable from history alone.
 type AgentStep struct {
+	CreatedAt  time.Time
+	Input      any // tool arguments for StepToolCall rows
+	Output     any // driver decision, tool result, or final answer
 	RunID      string
 	ActionName string
-	Step       int    // 1-based position within the action's transcript
 	Kind       string // StepDriverCall, StepToolCall, or StepFinal
 	Tool       string // tool name, set on StepToolCall rows
-	Input      any    // tool arguments for StepToolCall rows
-	Output     any    // driver decision, tool result, or final answer
 	Usage      runner.Usage
-	CreatedAt  time.Time
+	Step       int // 1-based position within the action's transcript
 }
 
 // SuggestionStatus is the review state of a tuning suggestion.
@@ -152,24 +153,24 @@ const (
 // Savings is an estimated improvement, never a promise: the numbers come
 // from observed run history and carry a confidence band.
 type Savings struct {
+	Confidence    string // ConfidenceLow, ConfidenceMedium, or ConfidenceHigh
 	CostUSDPerRun float64
 	LatencyDelta  time.Duration
-	Confidence    string // ConfidenceLow, ConfidenceMedium, or ConfidenceHigh
 }
 
 // Suggestion is one evidence-backed tuning proposal. Nothing in Phase 3
 // applies it: a human approves or rejects, and approval only renders the
 // proposed change for manual application.
 type Suggestion struct {
+	CreatedAt  time.Time
+	Evidence   map[string]any
+	Proposed   map[string]any
 	ID         string
 	Kind       SuggestionKind
 	Target     string // workflow or "workflow.action"
 	Rationale  string // why, in plain language, with the evidence
-	Evidence   map[string]any
-	Proposed   map[string]any
-	EstSavings Savings
 	Status     SuggestionStatus
-	CreatedAt  time.Time
+	EstSavings Savings
 }
 
 // SuggestionFilter narrows ListSuggestions.
@@ -182,14 +183,14 @@ type SuggestionFilter struct {
 // WorkflowVersion is one captured snapshot of a workflow definition, the
 // rollback point auto-apply records before it edits a file
 // (.agents/spec/13-roadmap.md, Phase 6; .agents/spec/09-a2a-and-hive.md). The
-// hash identifies the exact bytes (it is the same SHA-256 a run records), so a
-// version captured twice from the same file collides on its primary key rather
-// than duplicating; DefinitionTOML is the verbatim file content to restore.
+// hash identifies the exact bytes (the same SHA-256 a run records), so
+// capturing one file twice collides on the primary key rather than duplicating.
+// DefinitionTOML is the verbatim content to restore.
 type WorkflowVersion struct {
+	CreatedAt      time.Time
 	Hash           string
 	WorkflowName   string
 	DefinitionTOML string
-	CreatedAt      time.Time
 }
 
 // WorkflowVersionStore is the rollback slice of the store
@@ -221,13 +222,15 @@ type ListFilter struct {
 // PruneOptions bounds a retention sweep (.agents/spec/04-execution-engine.md,
 // "Retention and pruning").
 type PruneOptions struct {
+	// Now anchors age math so tests can use a fixed clock.
+	Now time.Time
+
 	// RunsOlderThan deletes runs and their action results past this age.
 	RunsOlderThan time.Duration
+
 	// OutputsOlderThan truncates action outputs sooner than run deletion, so
 	// large outputs do not linger while run metadata stays for reporting.
 	OutputsOlderThan time.Duration
-	// Now anchors age math so tests can use a fixed clock.
-	Now time.Time
 }
 
 // PruneStats reports what a sweep removed.
@@ -261,8 +264,7 @@ type SuggestionStore interface {
 // alternates user prompts and assistant replies, with tool rows recording the
 // agent's tool calls so a replayed history shows what the agent did, not just
 // what it said. A system row carries framing a client seeds ahead of the first
-// user turn, the shape the OpenAI-compatible adapter maps a client `system`
-// message onto (.agents/spec/parity/openai-compat.md).
+// user turn (.agents/spec/parity/openai-compat.md).
 const (
 	// ChatRoleUser marks a message the human or bot sent.
 	ChatRoleUser = "user"
@@ -282,11 +284,11 @@ const (
 // (system prompt) that frames every turn. The session outlives any single
 // turn, so its context persists across calls.
 type ChatSession struct {
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 	ID          string
 	WorkspaceID string // reserved for multi-tenancy; "default" until a token scopes it
 	Personality string // named personality whose system prompt frames the turn
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
 }
 
 // ChatMessage is one entry in a conversation, ordered by Seq within its
@@ -294,11 +296,11 @@ type ChatSession struct {
 // ChatRoleTool; the content is the message text (or the rendered tool exchange
 // for a tool row).
 type ChatMessage struct {
+	CreatedAt time.Time
 	SessionID string
-	Seq       int // 1-based position within the session
 	Role      string
 	Content   string
-	CreatedAt time.Time
+	Seq       int // 1-based position within the session
 }
 
 // ChatSessionFilter narrows ListSessions.
@@ -362,12 +364,11 @@ type ChatStore interface {
 }
 
 // BridgeSessionStore maps a messaging-transport chat to its chat session, so
-// the binding survives a serve restart rather than living in bridge memory
+// the binding survives a serve restart
 // (.agents/spec/parity/messaging-bridge.md, decision 1). Every method is
-// workspace-scoped through the request context the way chat sessions are: the
-// bridge stamps the mapped workspace before it binds or looks up, exactly as
-// the gRPC interceptor stamps a verified token's workspace, so a chat bound in
-// one tenant is invisible from another.
+// workspace-scoped through the request context: the bridge stamps the mapped
+// workspace the way the gRPC interceptor stamps a verified token's workspace,
+// so a chat bound in one tenant is invisible from another.
 type BridgeSessionStore interface {
 	// BindBridgeSession upserts the binding for (transport, chatKey) in the
 	// request workspace. A rebind (the bridge's /new path) overwrites the prior
@@ -395,11 +396,12 @@ const (
 
 // Approval is one human-approval gate on a run's approval action. The primary
 // key is (RunID, ActionName): parallel branches can each park an approval, so
-// two pending approvals in one run is a legal state. Message is the resolved,
-// secret-free approval prompt (validation bans secret refs in it, so it never
-// carries a credential). Actor and Comment record who decided and why, empty
-// while pending.
+// two pending approvals in one run is a legal state. Message is the resolved
+// prompt, which validation keeps secret-free. Actor and Comment record who
+// decided and why, empty while pending.
 type Approval struct {
+	CreatedAt   time.Time
+	DecidedAt   time.Time // zero while pending
 	RunID       string
 	ActionName  string
 	WorkspaceID string // scoping, same convention as runs
@@ -407,8 +409,6 @@ type Approval struct {
 	Message     string
 	Actor       string
 	Comment     string
-	CreatedAt   time.Time
-	DecidedAt   time.Time // zero while pending
 }
 
 // ApprovalStore is the human-approval slice of the store

@@ -99,12 +99,12 @@ func scanAgentStep(row rowScanner) (*store.AgentStep, error) {
 		step.Tool = *tool
 	}
 
-	if err := unmarshalJSON(input, &step.Input); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(input, &step.Input); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
-	if err := unmarshalJSON(output, &step.Output); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(output, &step.Output); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
 	step.Usage, err = unmarshalUsage(usage)

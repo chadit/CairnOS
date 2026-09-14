@@ -59,20 +59,18 @@ func searchHitFixtures() []*cairnosv1.ChatMessage {
 type scriptedChatServer struct {
 	cairnosv1.UnimplementedChatServiceServer
 
-	mu sync.Mutex
-
-	sessions    map[string]*cairnosv1.ChatSession
-	listed      []*cairnosv1.ChatSession
-	sendEvents  []*cairnosv1.ChatEvent
-	searchHits  []*cairnosv1.ChatMessage
-	blockSend   bool
-	sendStarted chan struct{}
 	sendErr     error
-
-	createReqs []*cairnosv1.CreateSessionRequest
-	sendReqs   []*cairnosv1.SendMessageRequest
-	searchReqs []*cairnosv1.SearchMessagesRequest
-	approvals  []bool
+	sendStarted chan struct{}
+	sessions    map[string]*cairnosv1.ChatSession
+	createReqs  []*cairnosv1.CreateSessionRequest
+	searchHits  []*cairnosv1.ChatMessage
+	sendEvents  []*cairnosv1.ChatEvent
+	listed      []*cairnosv1.ChatSession
+	sendReqs    []*cairnosv1.SendMessageRequest
+	searchReqs  []*cairnosv1.SearchMessagesRequest
+	approvals   []bool
+	mu          sync.Mutex
+	blockSend   bool
 }
 
 // newScriptedChat seeds the starting session every test continues via
@@ -240,8 +238,8 @@ func startScriptedChat(t *testing.T, script *scriptedChatServer) string {
 // syncBuffer is a mutex-guarded buffer: the REPL's interrupt watcher prints
 // from its own goroutine, so the interrupt tests need synchronized writes.
 type syncBuffer struct {
-	mu  sync.Mutex
 	buf bytes.Buffer
+	mu  sync.Mutex
 }
 
 func (b *syncBuffer) Write(data []byte) (int, error) {

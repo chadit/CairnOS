@@ -102,11 +102,11 @@ type Event struct {
 // with what inputs, and the estimated spend, so the user can approve or deny
 // from full information (.agents/spec/13-roadmap.md, Phase 9 guardrail).
 type Proposal struct {
-	// WorkflowName is the workflow the agent proposes to run.
-	WorkflowName string
-
 	// Inputs are the run inputs the agent proposes.
 	Inputs map[string]any
+
+	// WorkflowName is the workflow the agent proposes to run.
+	WorkflowName string
 
 	// EstimatedBudgetUSD is the soft budget ceiling the spawned run would carry,
 	// shown so a costly trigger is visible before it fires. It is the workflow's
@@ -118,7 +118,7 @@ type Proposal struct {
 // proposal plus the timestamp it was raised, so a turn that resumes on
 // ConfirmAction has everything it needs to fire the run. Held per session.
 type pendingProposal struct {
-	proposal  Proposal
-	sessionID string
 	raisedAt  time.Time
+	sessionID string
+	proposal  Proposal
 }

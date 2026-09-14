@@ -279,11 +279,17 @@ func composeMessage(from, recipient, subject, body string) []byte {
 
 	msg.Grow(len(from) + len(recipient) + len(subject) + len(body) + headerOverhead)
 
-	msg.WriteString("From: " + from + crlf)
-	msg.WriteString("To: " + recipient + crlf)
+	msg.WriteString("From: ")
+	msg.WriteString(from)
+	msg.WriteString(crlf)
+	msg.WriteString("To: ")
+	msg.WriteString(recipient)
+	msg.WriteString(crlf)
 
 	if subject != "" {
-		msg.WriteString("Subject: " + subject + crlf)
+		msg.WriteString("Subject: ")
+		msg.WriteString(subject)
+		msg.WriteString(crlf)
 	}
 
 	msg.WriteString(crlf)

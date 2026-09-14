@@ -50,24 +50,24 @@ func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.W
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(*testing.T, scheduler.WorkQueue)
+		name string
 	}{
-		{"EnqueueIsExactlyOnce", testQueueEnqueueExactlyOnce},
-		{"ClaimLeasesDueItems", testQueueClaimLeasesDueItems},
-		{"ClaimSkipsFutureItems", testQueueClaimSkipsFutureItems},
-		{"AckRemovesItem", testQueueAckRemovesItem},
-		{"NakRequeuesWithBackoff", testQueueNakRequeuesWithBackoff},
-		{"NakDeadLettersAtLimit", testQueueNakDeadLettersAtLimit},
-		{"SweepReclaimsExpiredLease", testQueueSweepReclaimsExpiredLease},
-		{"SweepDeadLettersExhaustedLease", testQueueSweepDeadLettersExhaustedLease},
-		{"HoldThenResume", testQueueHoldThenResume},
-		{"PurgeDeadRemovesOldItems", testQueuePurgeDeadRemovesOldItems},
-		{"StatsReportsOldestReadyAge", testQueueStatsReportsOldestReadyAge},
-		{"CursorSetThenGet", testCursorSetThenGet},
-		{"CursorUpsertOverwrites", testCursorUpsertOverwrites},
-		{"CursorMissingReportsNotFound", testCursorMissingReportsNotFound},
-		{"CursorPerScheduleIsolation", testCursorPerScheduleIsolation},
+		{name: "EnqueueIsExactlyOnce", run: testQueueEnqueueExactlyOnce},
+		{name: "ClaimLeasesDueItems", run: testQueueClaimLeasesDueItems},
+		{name: "ClaimSkipsFutureItems", run: testQueueClaimSkipsFutureItems},
+		{name: "AckRemovesItem", run: testQueueAckRemovesItem},
+		{name: "NakRequeuesWithBackoff", run: testQueueNakRequeuesWithBackoff},
+		{name: "NakDeadLettersAtLimit", run: testQueueNakDeadLettersAtLimit},
+		{name: "SweepReclaimsExpiredLease", run: testQueueSweepReclaimsExpiredLease},
+		{name: "SweepDeadLettersExhaustedLease", run: testQueueSweepDeadLettersExhaustedLease},
+		{name: "HoldThenResume", run: testQueueHoldThenResume},
+		{name: "PurgeDeadRemovesOldItems", run: testQueuePurgeDeadRemovesOldItems},
+		{name: "StatsReportsOldestReadyAge", run: testQueueStatsReportsOldestReadyAge},
+		{name: "CursorSetThenGet", run: testCursorSetThenGet},
+		{name: "CursorUpsertOverwrites", run: testCursorUpsertOverwrites},
+		{name: "CursorMissingReportsNotFound", run: testCursorMissingReportsNotFound},
+		{name: "CursorPerScheduleIsolation", run: testCursorPerScheduleIsolation},
 	}
 
 	for _, testCase := range cases {
@@ -307,8 +307,8 @@ func testQueueHoldThenResume(t *testing.T, queue scheduler.WorkQueue) {
 		t.Fatalf("ListHeld = %+v, want one held item with hold key codex", listed)
 	}
 
-	if err := queue.Resume(t.Context(), claimed.ID); err != nil {
-		t.Fatalf("resume: %v", err)
+	if innerErr := queue.Resume(t.Context(), claimed.ID); innerErr != nil {
+		t.Fatalf("resume: %v", innerErr)
 	}
 
 	// Resume clears the hold key and empties the held set.

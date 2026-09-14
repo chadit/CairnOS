@@ -42,14 +42,16 @@ const fileRefSigil = '@'
 // @-ref path must resolve inside an operator-configured allowlist root
 // (.agents/spec/parity/skills-context.md, "Trust boundary").
 
+// A node without a context directory runs chat unchanged. The request
+// workspace is charset-checked before a path is built: a traversal-shaped id
+// fails the turn visibly rather than reading another workspace's file. A read
+// error other than absence fails the turn because silently dropping context
+// the operator wrote would be a surprise.
+
 // loadContext reads the per-workspace context doc once for this turn and holds
 // it on the turn, so every driver iteration renders the same section. Context
-// is off when no context directory is wired, so a node without one runs chat
-// unchanged. The request workspace is charset-checked before a path is built:
-// a traversal-shaped id fails the turn visibly rather than reading another
-// workspace's file. An absent doc is no section and no error; any other read
-// error fails the turn, since silently dropping context the operator wrote
-// would be a surprise.
+// is off when no context directory is wired. An absent doc is no section and
+// no error; any other read error fails the turn.
 func (t *chatTurn) loadContext(ctx context.Context) error {
 	if t.agent.cfg.ContextDir == "" {
 		return nil
@@ -131,11 +133,11 @@ func truncateContextDoc(doc string) string {
 const truncationMarkerText = "... (truncated)"
 
 // inlineFileRefs processes the @-file references in a user message, persisting
-// one tool-role note per reference so the content (or the refusal) replays into
-// later turns through the existing history mechanism. It is a no-op when the
-// allowlist is empty, so the secure-by-default posture leaves every @-token
-// inert: no reads, no notes, plain text. More than maxFileRefsPerTurn candidates
-// process the first cap and record one ignored-count note.
+// one tool-role note per reference so the content (or the refusal) replays
+// into later turns through the existing history mechanism. An empty allowlist
+// is a no-op, so the secure-by-default posture leaves every @-token inert.
+// Past maxFileRefsPerTurn candidates it processes the first cap and records
+// one ignored-count note.
 func (t *chatTurn) inlineFileRefs(ctx context.Context, userMessage string) error {
 	if len(t.agent.cfg.FileAllowlist) == 0 {
 		return nil
@@ -235,11 +237,11 @@ func containedInAny(roots []string, target string) (string, bool) {
 }
 
 // contained resolves target against one allowlisted root. Both sides go through
-// Abs then EvalSymlinks, so a symlink inside a root cannot point out of it (and
-// the macOS /tmp -> /private/tmp case normalizes the same on both sides), and
-// the comparison uses filepath.Rel, so a sibling directory sharing the root's
-// name prefix (root /data, target /databank/secret) is rejected. A resolve
-// error on either side (a missing file included) reports not-contained.
+// Abs then EvalSymlinks, so a symlink inside a root cannot point out of it
+// (macOS /tmp -> /private/tmp normalizes identically). The comparison uses
+// filepath.Rel, so a sibling sharing the root's name prefix (root /data,
+// target /databank/secret) is rejected. Any resolve error, including a missing
+// file, reports not-contained.
 func contained(root, target string) (string, bool) {
 	realRoot, err := filepath.EvalSymlinks(absOf(root))
 	if err != nil {

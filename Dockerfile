@@ -29,7 +29,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /out/cairnos /usr/local/bin/cairnos
 
-USER nonroot:nonroot
+USER 65532:65532
 
 # gRPC, HTTP API, and Prometheus metrics per the spec's port assignments.
 EXPOSE 7777 8080 9090

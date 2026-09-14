@@ -15,18 +15,16 @@ import (
 // MockName is the registry name of the test runner.
 const MockName = "mock"
 
-// Mock returns canned output or canned failures, driven entirely by action
-// params. The engine's own acceptance tests run against it.
+// Mock returns canned output or failures driven by action params. The engine's
+// acceptance tests run against it.
 //
-// Recognized params (all optional):
+// All params are optional; unknown ones are ignored:
 //
-//	output      any     returned as the action output (default "ok")
+//	output      any     the action output (default "ok")
 //	fail_class  string  "transient", "permanent", or "rate_limited"
-//	fail_times  int     fail only the first N attempts, then succeed
+//	fail_times  int     fail the first N attempts, then succeed
 //	delay_ms    int     sleep before answering, honoring cancellation
-//	cost_usd    float   reported in usage for cost-accounting tests
-//
-// Unknown params are ignored so workflows can pass arbitrary fixture data.
+//	cost_usd    float   reported in run usage
 type Mock struct {
 	// attempts counts executions per run/action so fail_times can model a
 	// flaky service that recovers after a few tries.

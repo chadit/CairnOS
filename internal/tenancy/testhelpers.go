@@ -7,13 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OpenPostgresSchema opens a tenancy store whose tables live in their own
-// Postgres schema, giving each integration subtest the isolation the sqlite
-// backend gets from a per-case temp file. The pool pins search_path to schema
-// (plus public), the schema is created if absent, the tenancy DDL runs inside
-// it, and the default workspace is seeded. It is exported package code (not a
-// _test.go file) because the backend's external suite package needs it and Go
-// cannot share unexported helpers across packages.
+// OpenPostgresSchema opens a tenancy store in its own Postgres schema, giving
+// each integration subtest the isolation the sqlite backend gets from a
+// per-case temp file. It lives outside a _test.go file because the backend's
+// external suite package needs it and Go cannot share unexported helpers
+// across packages.
 //
 // DropPostgresSchema is the cleanup counterpart.
 func OpenPostgresSchema(ctx context.Context, dsn, schema string) (*Postgres, error) {

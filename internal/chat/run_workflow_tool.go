@@ -26,11 +26,10 @@ const (
 )
 
 // runWorkflowTool is the descriptor side of the D9 gate. It implements
-// runner.Describer so the driver can see and call it, but its Execute never
-// runs a workflow: the chat agent intercepts a run_workflow call before any
-// execution, turning it into a ConfirmationRequired event. Execute is wired to
-// fail loudly so the gate cannot be bypassed by a code path that calls the
-// tool directly, which is the safety property D9 rests on.
+// runner.Describer so the driver can see and call it, but Execute never runs a
+// workflow: the chat agent intercepts a run_workflow call and turns it into a
+// ConfirmationRequired event. Execute fails loudly so a code path calling the
+// tool directly cannot bypass the gate.
 type runWorkflowTool struct{}
 
 var (

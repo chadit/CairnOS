@@ -244,12 +244,11 @@ func timeFromNull(value *time.Time) time.Time {
 	return *value
 }
 
-// collectRows drains rows, scanning each into a *T with scan and wrapping any
-// failure under operation. It owns closing rows, so list queries that share the
-// same next-scan-append-Err shape call it instead of repeating that loop, which
-// also keeps two such lists from reading as a dupl false positive when their
-// only real difference is the column set and scan func. It mirrors the sqlite
-// backend's helper of the same name.
+// collectRows drains rows into a *T slice with scan, wrapping any failure under
+// operation and closing rows itself. List queries sharing the
+// next-scan-append-Err shape call it rather than repeat that loop, which also
+// keeps two such lists from reading as a dupl false positive when only their
+// columns and scan func differ. Mirrors the sqlite backend's helper.
 func collectRows[T any](rows pgx.Rows, operation string, scan func(rowScanner) (*T, error)) ([]*T, error) {
 	defer rows.Close()
 

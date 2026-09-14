@@ -93,8 +93,8 @@ exit 1`)
 	cases := []struct {
 		name      string
 		binary    string
-		wantClass runner.ErrorClass
 		wantCode  string
+		wantClass runner.ErrorClass
 	}{
 		{name: "non-zero exit is permanent", binary: failing, wantClass: runner.ClassPermanent, wantCode: "codex.exit"},
 		{name: "missing binary is permanent", binary: filepath.Join(tmpDir, "missing"), wantClass: runner.ClassPermanent, wantCode: "codex.not_found"},
@@ -135,8 +135,8 @@ exit 1`)
 	cases := []struct {
 		name      string
 		binary    string
-		wantClass runner.ErrorClass
 		wantCode  string
+		wantClass runner.ErrorClass
 	}{
 		{name: "invalid_grant is needs-reauth", binary: reauth, wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
 		{name: "rate-limit text wins over reauth", binary: throttled, wantClass: runner.ClassRateLimited, wantCode: "codex.rate_limited"},
@@ -304,8 +304,8 @@ func TestCLIValidatePromptParam(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
 		params   map[string]any
+		name     string
 		resolved bool
 		wantErr  bool
 	}{

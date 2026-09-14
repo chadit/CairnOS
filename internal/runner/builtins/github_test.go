@@ -219,11 +219,11 @@ func TestGitHubClassifiesStatusCodes(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		status    int
 		headers   map[string]string
-		wantClass runner.ErrorClass
+		name      string
 		wantCode  string
+		status    int
+		wantClass runner.ErrorClass
 	}{
 		{
 			name: "403 with exhausted rate limit", status: http.StatusForbidden,
@@ -286,8 +286,8 @@ func TestGitHubValidate(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
 		params   map[string]any
+		name     string
 		resolved bool
 		wantErr  bool
 	}{

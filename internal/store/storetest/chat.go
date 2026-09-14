@@ -21,12 +21,11 @@ const (
 	chatSystemFraming    = "you are a terse ops assistant"
 )
 
-// Search fixtures. The strong message repeats the term so it outranks the
-// weak one on both bm25 (higher term frequency) and ts_rank (more matches);
-// the weak message appears verbatim in two sessions so equal scores force the
-// (session_id, seq) tie-break. The quoted/decoy/operators trio proves FTS
-// syntax in a query matches literally: an unsanitized FTS5 query would treat
-// the OR as an operator and return the decoy.
+// Search fixtures. The strong message repeats the term so it outranks the weak
+// one under both bm25 and ts_rank; the weak message is byte-identical in two
+// sessions so equal scores force the (session_id, seq) tie-break. The quoted
+// and decoy pair catches an unsanitized FTS5 query treating a literal OR as an
+// operator.
 const (
 	chatSearchTerm      = "budget"
 	chatSearchStrong    = "budget review of the budget against the budget cap"
@@ -258,12 +257,10 @@ func testChatSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-// testChatSearchRanksBestMatchFirst proves SearchMessages finds matching
-// messages with content intact, best match first, breaking equal-relevance
-// ties on (session_id, seq) so the order is stable across runs. bm25 and
-// ts_rank disagree on scores, so ordering is only asserted where both agree:
-// the strong message repeats the term (both rankers place it first) and the
-// two weak hits are byte-identical (equal scores force the tie-break).
+// testChatSearchRanksBestMatchFirst proves SearchMessages returns matching
+// messages content-intact, best match first, with equal-relevance ties broken
+// on (session_id, seq) so the order is stable across runs. bm25 and ts_rank
+// disagree on scores, so ordering is only asserted where both rankers agree.
 func testChatSearchRanksBestMatchFirst(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
@@ -276,9 +273,9 @@ func testChatSearchRanksBestMatchFirst(t *testing.T, openFn OpenFunc) {
 	}
 
 	assertChatHits(t, hits, []chatHit{
-		{sessionA, twoUnits, chatSearchStrong},
-		{sessionA, 1, chatSearchWeak},
-		{sessionB, 1, chatSearchWeak},
+		{session: sessionA, seq: twoUnits, content: chatSearchStrong},
+		{session: sessionA, seq: 1, content: chatSearchWeak},
+		{session: sessionB, seq: 1, content: chatSearchWeak},
 	})
 
 	for idx, hit := range hits {
@@ -302,7 +299,7 @@ func testChatSearchFiltersBySession(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("search messages with session filter: %v", err)
 	}
 
-	assertChatHits(t, hits, []chatHit{{sessionB, 1, chatSearchWeak}})
+	assertChatHits(t, hits, []chatHit{{session: sessionB, seq: 1, content: chatSearchWeak}})
 
 	missing, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, SessionID: "missing"})
 	if err != nil {
@@ -329,8 +326,8 @@ func testChatSearchLimitsResults(t *testing.T, openFn OpenFunc) {
 	}
 
 	assertChatHits(t, limited, []chatHit{
-		{sessionA, twoUnits, chatSearchStrong},
-		{sessionA, 1, chatSearchWeak},
+		{session: sessionA, seq: twoUnits, content: chatSearchStrong},
+		{session: sessionA, seq: 1, content: chatSearchWeak},
 	})
 
 	everything, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm})
@@ -339,9 +336,9 @@ func testChatSearchLimitsResults(t *testing.T, openFn OpenFunc) {
 	}
 
 	assertChatHits(t, everything, []chatHit{
-		{sessionA, twoUnits, chatSearchStrong},
-		{sessionA, 1, chatSearchWeak},
-		{sessionB, 1, chatSearchWeak},
+		{session: sessionA, seq: twoUnits, content: chatSearchStrong},
+		{session: sessionA, seq: 1, content: chatSearchWeak},
+		{session: sessionB, seq: 1, content: chatSearchWeak},
 	})
 }
 
@@ -372,14 +369,14 @@ func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("search acme messages: %v", err)
 	}
 
-	assertChatHits(t, acmeHits, []chatHit{{acmeSession, 1, chatSearchWeak}})
+	assertChatHits(t, acmeHits, []chatHit{{session: acmeSession, seq: 1, content: chatSearchWeak}})
 
 	globexHits, err := db.SearchMessages(globexCtx, store.ChatSearchQuery{Text: chatSearchTerm})
 	if err != nil {
 		t.Fatalf("search globex messages: %v", err)
 	}
 
-	assertChatHits(t, globexHits, []chatHit{{globexSession, 1, chatSearchWeak}})
+	assertChatHits(t, globexHits, []chatHit{{session: globexSession, seq: 1, content: chatSearchWeak}})
 }
 
 // testChatSearchTreatsQuerySyntaxLiterally proves a query carrying quotes and
@@ -403,7 +400,7 @@ func testChatSearchTreatsQuerySyntaxLiterally(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("search with operator syntax: %v", err)
 	}
 
-	assertChatHits(t, hits, []chatHit{{sessionID, 1, chatSearchQuoted}})
+	assertChatHits(t, hits, []chatHit{{session: sessionID, seq: 1, content: chatSearchQuoted}})
 }
 
 // testChatSearchEmptyTextReturnsNothing proves an empty or blank query
@@ -455,11 +452,11 @@ func seedChatSearchCorpus(t *testing.T, db store.Store) (string, string) {
 	return sessionA, sessionB
 }
 
-// chatHit is the (session, seq, content) identity of one expected search hit.
+// chatHit is the session, sequence, and content identity of one expected search hit.
 type chatHit struct {
 	session string
-	seq     int
 	content string
+	seq     int
 }
 
 // assertChatHits compares search results against the expected hits in order,

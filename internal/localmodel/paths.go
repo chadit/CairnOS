@@ -28,7 +28,7 @@ const (
 	dirStaging  = "runtime.incoming"
 	dirPrevious = "runtime.previous"
 
-	manifestFileName = "manifest.json"
+	ManifestFileName = "manifest.json"
 )
 
 // Layout resolves every path the local model uses, rooted at one directory so
@@ -60,7 +60,7 @@ func (l Layout) PreviousDir() string { return filepath.Join(l.root, dirPrevious)
 
 // ServerPath is the llama-server executable inside the live runtime.
 func (l Layout) ServerPath() string {
-	return filepath.Join(l.RuntimeDir(), hostServerBinary())
+	return filepath.Join(l.RuntimeDir(), HostServerBinary())
 }
 
 // ModelsDir holds the downloaded GGUF files.
@@ -70,7 +70,7 @@ func (l Layout) ModelsDir() string { return filepath.Join(l.root, dirModels) }
 func (l Layout) ModelPath(m *Model) string { return filepath.Join(l.ModelsDir(), m.File) }
 
 // ManifestPath is the record of what is actually installed.
-func (l Layout) ManifestPath() string { return filepath.Join(l.root, manifestFileName) }
+func (l Layout) ManifestPath() string { return filepath.Join(l.root, ManifestFileName) }
 
 // EnsureDirs creates the runtime and models directories so later writes find
 // their parents present.
@@ -84,11 +84,11 @@ func (l Layout) EnsureDirs() error {
 	return nil
 }
 
-// hostServerBinary is the server executable's name on the running platform.
-func hostServerBinary() string {
-	if runtime.GOOS == osWindows {
-		return serverBinaryWin
+// HostServerBinary is the server executable's name on the running platform.
+func HostServerBinary() string {
+	if runtime.GOOS == OSWindows {
+		return ServerBinaryWin
 	}
 
-	return serverBinary
+	return ServerBinary
 }

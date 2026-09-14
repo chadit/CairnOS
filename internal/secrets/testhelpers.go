@@ -8,13 +8,10 @@ import (
 )
 
 // OpenPostgresSchema opens a secret store whose table lives in its own Postgres
-// schema, giving each integration subtest the isolation the sqlite backend gets
-// from a per-case temp file. A shared database would let parallel subtests stomp
-// each other; a unique schema per call removes the contention. The pool pins
-// search_path to schema (plus public), the schema is created if absent, and the
-// secrets DDL runs inside it. It is exported package code (not a _test.go file)
-// because the backend's external conformance suite needs it and Go cannot share
-// unexported helpers across packages.
+// schema, so parallel integration subtests get the isolation the sqlite backend
+// gets from a per-case temp file. It is exported because the backend's external
+// conformance suite needs it, and Go cannot share unexported helpers across
+// packages.
 //
 // DropPostgresSchema is the cleanup counterpart.
 func OpenPostgresSchema(ctx context.Context, dsn, schema string, sealer *Sealer) (*Postgres, error) {
@@ -27,6 +24,8 @@ func OpenPostgresSchema(ctx context.Context, dsn, schema string, sealer *Sealer)
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
 
+	// search_path applies to every pooled connection, so the unqualified table
+	// name in the store's queries resolves to this schema.
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

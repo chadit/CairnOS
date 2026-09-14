@@ -11,17 +11,12 @@ import { defineConfig, type Plugin } from 'vite';
 const gateway = process.env.CAIRNOS_GATEWAY ?? 'http://localhost:8080';
 
 // productionCSP injects a strict Content-Security-Policy meta tag into the
-// built index.html, the M2 hardening that keeps the localStorage bearer token
-// from being exfiltrated by injected script (.agents/spec/14-open-decisions.md,
-// M2). It is build-only on purpose: the dev server needs inline scripts, eval,
-// and a websocket for HMR, which this policy would block.
-//
-// The built SPA loads only its own hashed bundle and talks to a same-origin
-// API, so 'self' covers script and connect. style keeps 'unsafe-inline'
-// because React and reactflow set element styles inline. A cross-origin API
-// deployment must widen connect-src to name the API origin, and frame-ancestors
-// can only come from a real response header, so the static host should also
-// send `Content-Security-Policy: frame-ancestors 'none'` (see web/README.md).
+// built index.html so injected script cannot exfiltrate the localStorage
+// bearer token (.agents/spec/14-open-decisions.md, M2). Build-only, because
+// the dev server needs inline script, eval, and an HMR websocket.
+// style-src keeps 'unsafe-inline' since React and reactflow set element
+// styles inline. frame-ancestors needs a real response header, so the static
+// host sends it (web/README.md).
 function productionCSP(): Plugin {
   const policy = [
     "default-src 'self'",

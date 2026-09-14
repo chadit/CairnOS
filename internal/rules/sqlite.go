@@ -89,11 +89,11 @@ func (s *SQLite) PutRule(ctx context.Context, rule *Rule) error {
 }
 
 // GetRules returns the merged rule set for a language, with the project's
-// overrides applied over the language defaults (.agents/spec/05-memory-and-knowledge.md).
-// A language with no rows at all is ErrUnknownLanguage, matching the
-// static-file stub's "no rules file for language" so the runner's error code
-// stays stable. A known language with no matching project overlay returns the
-// defaults, which is normal: most projects ride the language defaults.
+// overrides applied over the language defaults
+// (.agents/spec/05-memory-and-knowledge.md). A language with no rows at all is
+// ErrUnknownLanguage, matching the static-file stub's "no rules file for
+// language" so the runner's error code stays stable. A known language with no
+// project overlay returns the defaults, which is normal.
 func (s *SQLite) GetRules(ctx context.Context, language, project string) (RuleSet, error) {
 	workspace := workspaceFromContext(ctx)
 

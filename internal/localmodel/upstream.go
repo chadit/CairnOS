@@ -15,16 +15,16 @@ import (
 const (
 	githubAPIBase      = "https://api.github.com"
 	githubDownloadBase = "https://github.com"
-	huggingFaceBase    = "https://huggingface.co"
+	HuggingFaceBase    = "https://huggingface.co"
 
 	// llamaRepo is the upstream project, used to build both API and download
 	// paths.
 	llamaRepo = "ggml-org/llama.cpp"
 )
 
-// buildTagAsset is the file a stable llama.cpp release carries instead of
+// BuildTagAsset is the file a stable llama.cpp release carries instead of
 // binaries: one line naming the nightly build tag whose assets hold them.
-const buildTagAsset = "nightly-tag.txt"
+const BuildTagAsset = "nightly-tag.txt"
 
 // lookupTimeout bounds one upstream metadata call. These are small JSON
 // documents, so a slow answer means something is wrong rather than large.
@@ -61,7 +61,7 @@ func NewUpstream(opts UpstreamOptions) *Upstream {
 		client:      opts.Client,
 		githubAPI:   orDefault(opts.GitHubAPI, githubAPIBase),
 		github:      orDefault(opts.GitHubDownload, githubDownloadBase),
-		huggingFace: orDefault(opts.HuggingFace, huggingFaceBase),
+		huggingFace: orDefault(opts.HuggingFace, HuggingFaceBase),
 	}
 
 	if client.client == nil {
@@ -133,11 +133,11 @@ func (u *Upstream) Model(ctx context.Context, repo, file string) (LatestModel, e
 	var listing struct {
 		SHA      string `json:"sha"`
 		Siblings []struct {
-			Filename string `json:"rfilename"`
-			Size     int64  `json:"size"`
-			LFS      *struct {
+			LFS *struct {
 				SHA256 string `json:"sha256"`
 			} `json:"lfs"`
+			Filename string `json:"rfilename"`
+			Size     int64  `json:"size"`
 		} `json:"siblings"`
 	}
 
@@ -160,7 +160,7 @@ func (u *Upstream) Model(ctx context.Context, repo, file string) (LatestModel, e
 // buildTag fetches one stable release's nightly-tag.txt, whose entire content
 // is the build tag.
 func (u *Upstream) buildTag(ctx context.Context, version string) (string, error) {
-	endpoint := fmt.Sprintf("%s/%s/releases/download/%s/%s", u.github, llamaRepo, version, buildTagAsset)
+	endpoint := fmt.Sprintf("%s/%s/releases/download/%s/%s", u.github, llamaRepo, version, BuildTagAsset)
 
 	raw, err := u.get(ctx, endpoint)
 	if err != nil {

@@ -70,18 +70,17 @@ const metaStatusCode = "status_code"
 // short, unlike model generations.
 const defaultGitHubTimeout = 30 * time.Second
 
-// GitHub reads release feeds, lists issues, and creates issues over the REST v3
-// API, backing the Phase 8 release monitor and the github_issues poll source
+// GitHub reads release feeds and lists or creates issues over the REST v3 API,
+// backing the release monitor and the github_issues poll source
 // (.agents/spec/03-runner-interface.md, .agents/spec/parity/triggers-webhooks.md).
 //
 // Config: base_url (default https://api.github.com). Params: op (releases,
-// list_issues, or create_issue) and repo as owner/name, plus limit for
-// releases, since/state for list_issues, and title/body/labels for
-// create_issue. The token comes from CAIRNOS_RUNNER_GITHUB_TOKEN at call time
-// and is optional for public reads.
+// list_issues, create_issue), repo as owner/name, plus limit for releases,
+// since/state for list_issues, title/body/labels for create_issue. The token
+// comes from CAIRNOS_RUNNER_GITHUB_TOKEN and is optional for public reads.
 type GitHub struct {
-	baseURL string
 	client  *http.Client
+	baseURL string
 }
 
 // NewGitHub builds the runner over an injected HTTP client so tests can
@@ -247,13 +246,11 @@ func (g *GitHub) createIssue(ctx context.Context, task *runner.Task) (runner.Res
 	}, nil
 }
 
-// listIssues handles op = list_issues: GET the repo's open (or state-scoped)
-// issues and map each new one onto the fields the github_issues poll source
-// offers a workflow. Two GitHub quirks are absorbed here because the API won't:
-// its since filter matches updated_at, so a fresh comment resurfaces an old
-// issue, which the created_at check below drops; and pull requests come back as
-// issue rows carrying a pull_request field, which are skipped
-// (.agents/spec/parity/triggers-webhooks.md, "Sources").
+// listIssues handles op = list_issues, mapping each issue onto the fields the
+// github_issues poll source offers a workflow. Two GitHub quirks need absorbing
+// here: the since filter matches updated_at, so a fresh comment resurfaces an
+// old issue, and pull requests come back as issue rows carrying a pull_request
+// field (.agents/spec/parity/triggers-webhooks.md, "Sources").
 func (g *GitHub) listIssues(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	repo, _ := task.Params[paramRepo].(string)
 
@@ -397,8 +394,8 @@ func (g *GitHub) send(ctx context.Context, method, url string, payload any) ([]b
 
 	defer func() { _ = response.Body.Close() }()
 
-	if err := classifyGitHubStatus(response); err != nil {
-		return nil, response.StatusCode, err
+	if classifyGitHubStatusErr := classifyGitHubStatus(response); classifyGitHubStatusErr != nil {
+		return nil, response.StatusCode, classifyGitHubStatusErr
 	}
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxCapturedOutput))
@@ -554,13 +551,13 @@ type githubRelease struct {
 // non-empty PullRequest marks a pull request, which GitHub returns on the
 // issues endpoint and the poll source drops.
 type githubIssue struct {
-	Number      int64           `json:"number"`
 	Title       string          `json:"title"`
 	Body        string          `json:"body"`
 	HTMLURL     string          `json:"html_url"`
 	CreatedAt   string          `json:"created_at"`
 	User        githubUser      `json:"user"`
 	PullRequest json.RawMessage `json:"pull_request"`
+	Number      int64           `json:"number"`
 }
 
 // githubUser is the subset of an issue's author the output carries.
@@ -577,6 +574,6 @@ type githubIssueRequest struct {
 
 // githubIssueResponse is the subset of the created issue the output carries.
 type githubIssueResponse struct {
-	Number  int64  `json:"number"`
 	HTMLURL string `json:"html_url"`
+	Number  int64  `json:"number"`
 }

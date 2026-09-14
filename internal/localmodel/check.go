@@ -21,8 +21,8 @@ type RuntimeReport struct {
 	PinnedBuild string `json:"pinned_build"`
 	Latest      string `json:"latest"`
 	LatestBuild string `json:"latest_build"`
-	Outdated    bool   `json:"outdated"`
 	URL         string `json:"url"`
+	Outdated    bool   `json:"outdated"`
 }
 
 // ModelReport compares one pinned GGUF against its upstream repository. The
@@ -36,8 +36,8 @@ type ModelReport struct {
 	LatestRevision string `json:"latest_revision"`
 	PinnedSHA256   string `json:"pinned_sha256"`
 	LatestSHA256   string `json:"latest_sha256"`
-	Outdated       bool   `json:"outdated"`
 	URL            string `json:"url"`
+	Outdated       bool   `json:"outdated"`
 }
 
 // Check compares every pin against upstream. A failed lookup is returned as an

@@ -12,8 +12,8 @@ var (
 
 	// ErrTokenEndpoint reports the token endpoint refusing the grant. It carries
 	// the HTTP status code and the RFC 6749 error code parsed from the response,
-	// and deliberately drops the raw response body: a broken or hostile endpoint
-	// can echo the client secret or refresh token back in that body, so the body
-	// must never reach an error string or a log line.
+	// and drops the raw response body: a broken or hostile endpoint can echo the
+	// client secret or refresh token in that body, so the body must never reach an
+	// error string or a log line.
 	ErrTokenEndpoint = errors.New("token endpoint refused the grant")
 )

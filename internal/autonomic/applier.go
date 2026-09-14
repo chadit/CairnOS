@@ -72,10 +72,9 @@ type Store interface {
 // 6 auto-apply). AutoApplyEnabled is the master switch and defaults off; even
 // on, the kind and approval gates still apply.
 type Config struct {
-	// AutoApplyEnabled is the [autonomic] master switch. Default false: nothing
-	// auto-applies until the operator opts in, and even then only the
-	// output-neutral kinds.
-	AutoApplyEnabled bool
+	// Now anchors the version-snapshot and audit timestamps so a test can use a
+	// fixed clock. Nil means time.Now.
+	Now func() time.Time
 
 	// WorkflowsDir is where workflow TOML files live, so apply can find the
 	// file a suggestion's workflow names.
@@ -85,9 +84,10 @@ type Config struct {
 	// and the served path passes the auth subject.
 	Actor string
 
-	// Now anchors the version-snapshot and audit timestamps so a test can use a
-	// fixed clock. Nil means time.Now.
-	Now func() time.Time
+	// AutoApplyEnabled is the [autonomic] master switch. Default false: nothing
+	// auto-applies until the operator opts in, and even then only the
+	// output-neutral kinds.
+	AutoApplyEnabled bool
 }
 
 // Applier applies approved output-neutral suggestions and reverts them. It
@@ -185,14 +185,14 @@ func (a *Applier) applyToFile(ctx context.Context, suggestion *store.Suggestion,
 		return ApplyResult{}, err
 	}
 
-	if err := a.captureVersion(ctx, workflowName, priorFlow.Hash, priorBytes); err != nil {
-		return ApplyResult{}, err
+	if captureVersionErr := a.captureVersion(ctx, workflowName, priorFlow.Hash, priorBytes); captureVersionErr != nil {
+		return ApplyResult{}, captureVersionErr
 	}
 
 	updated := annotate(priorBytes, suggestion)
 
-	if err := os.WriteFile(path, updated, applyFilePerm); err != nil {
-		return ApplyResult{}, fmt.Errorf("auto-apply: write workflow %s: %w", workflowName, err)
+	if writeFileErr := os.WriteFile(path, updated, applyFilePerm); writeFileErr != nil {
+		return ApplyResult{}, fmt.Errorf("auto-apply: write workflow %s: %w", workflowName, writeFileErr)
 	}
 
 	newFlow, err := workflow.Load(path)
@@ -364,7 +364,7 @@ func annotate(original []byte, suggestion *store.Suggestion) []byte {
 	fmt.Fprintf(&block, "# kind: %s\n", suggestion.Kind)
 	fmt.Fprintf(&block, "# target: %s\n", suggestion.Target)
 	fmt.Fprintf(&block, "# from suggestion: %s\n", suggestion.ID)
-	block.WriteString("# action: " + applyHint(suggestion.Kind) + "\n")
+	fmt.Fprintf(&block, "# action: %s\n", applyHint(suggestion.Kind))
 	block.WriteString("# status: recorded, not yet honored by the engine (see the version store for rollback)\n")
 	block.WriteString(annotationEnd + "\n")
 

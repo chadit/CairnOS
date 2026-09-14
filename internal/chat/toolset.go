@@ -18,11 +18,10 @@ type ToolSet struct {
 }
 
 // BuildToolSet assembles the chat tool set from the read tools the wiring
-// supplies (memory, vault_query) and the always-present run_workflow gate. A
-// nil or unimplemented read tool is skipped, so a node without a vault still
-// runs chat with memory and the gate. The run_workflow descriptor is always
-// offered, since the gate is the whole point of the chat exception; an
-// approval still needs a workflow trigger wired to actually fire.
+// supplies (memory, vault_query) plus the run_workflow gate. A nil or
+// unimplemented read tool is skipped, so a node without a vault still runs chat.
+// run_workflow is always offered because the gate is the point of the chat
+// exception. An approval needs a workflow trigger wired to fire.
 func BuildToolSet(readTools map[string]runner.Runner) ToolSet {
 	tools := make(map[string]runner.Runner, len(readTools))
 	specs := make([]runner.ToolSpec, 0, len(readTools)+1)

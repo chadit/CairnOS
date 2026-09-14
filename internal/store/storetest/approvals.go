@@ -66,8 +66,8 @@ func testApprovalRoundTrip(t *testing.T, openFn OpenFunc) {
 		t.Errorf("pending approval has decided_at %v", got.DecidedAt)
 	}
 
-	if err := db.DecideApproval(ctx, runID, actionFetch, store.ApprovalApproved, approvalActor, approvalComment); err != nil {
-		t.Fatalf("decide approval: %v", err)
+	if decideApprovalErr := db.DecideApproval(ctx, runID, actionFetch, store.ApprovalApproved, approvalActor, approvalComment); decideApprovalErr != nil {
+		t.Fatalf("decide approval: %v", decideApprovalErr)
 	}
 
 	decided, err := db.GetApproval(ctx, runID, actionFetch)
@@ -171,8 +171,8 @@ func testApprovalListPending(t *testing.T, openFn OpenFunc) {
 			pending[0].ActionName, pending[1].ActionName, actionBrain, actionFetch)
 	}
 
-	if err := db.DecideApproval(ctx, runID, actionBrain, store.ApprovalApproved, approvalActor, ""); err != nil {
-		t.Fatalf("decide brain: %v", err)
+	if decideApprovalErr := db.DecideApproval(ctx, runID, actionBrain, store.ApprovalApproved, approvalActor, ""); decideApprovalErr != nil {
+		t.Fatalf("decide brain: %v", decideApprovalErr)
 	}
 
 	remaining, err := db.ListPendingApprovals(ctx, runID)

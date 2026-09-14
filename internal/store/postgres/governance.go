@@ -145,12 +145,11 @@ func (s *Store) ListWorkflowPauses(ctx context.Context) ([]*store.WorkflowPause,
 	return collectRows(rows, "list workflow pauses", scanPause)
 }
 
-// SpendSince sums estimated cost_usd across every action result of the named
-// workflow's runs created at or after since, matching the sqlite backend. The
-// usage_json JSONB column carries cost_usd; ->> reads it as text, cast to
-// double. COALESCE keeps an all-NULL sum from returning NULL. The workspace
-// clause scopes the budget to the request tenant, so two workspaces running
-// the same workflow name keep separate budgets
+// SpendSince sums cost_usd across every action result of the named workflow's
+// runs created at or after since, matching the sqlite backend. usage_json
+// carries cost_usd as JSONB text, so ->> reads it out for the cast, and
+// COALESCE keeps an all-NULL sum from returning NULL. The workspace clause
+// gives two tenants running the same workflow name separate budgets
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
 func (s *Store) SpendSince(ctx context.Context, workflowName string, since time.Time) (float64, error) {
 	row := s.pool.QueryRow(ctx,

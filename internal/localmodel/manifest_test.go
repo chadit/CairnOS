@@ -1,9 +1,11 @@
-package localmodel
+package localmodel_test
 
 import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // TestManifestRoundTripsAndComparesToPins proves the install record survives a
@@ -12,24 +14,24 @@ import (
 func TestManifestRoundTripsAndComparesToPins(t *testing.T) {
 	t.Parallel()
 
-	build, err := HostBuild()
+	build, err := localmodel.HostBuild()
 	if err != nil {
 		t.Skipf("no pinned build for this platform: %v", err)
 	}
 
-	model, err := Lookup(DefaultModel)
+	model, err := localmodel.Lookup(localmodel.DefaultModel)
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
 
-	path := filepath.Join(t.TempDir(), manifestFileName)
-	written := Manifest{Runtime: runtimeRecord(&build), Model: modelRecord(&model)}
+	path := filepath.Join(t.TempDir(), localmodel.ManifestFileName)
+	written := localmodel.Manifest{Runtime: localmodel.RuntimeRecord(&build), Model: localmodel.ModelRecord(&model)}
 
-	if err := SaveManifest(path, &written, time.Unix(1, 0).UTC()); err != nil {
-		t.Fatalf("save: %v", err)
+	if saveManifestErr := localmodel.SaveManifest(path, &written, time.Unix(1, 0).UTC()); saveManifestErr != nil {
+		t.Fatalf("save: %v", saveManifestErr)
 	}
 
-	loaded, found, err := LoadManifest(path)
+	loaded, found, err := localmodel.LoadManifest(path)
 	if err != nil || !found {
 		t.Fatalf("load: found=%t err=%v", found, err)
 	}
@@ -48,7 +50,7 @@ func TestManifestRoundTripsAndComparesToPins(t *testing.T) {
 func TestMissingManifestReadsAsNothingInstalled(t *testing.T) {
 	t.Parallel()
 
-	manifest, found, err := LoadManifest(filepath.Join(t.TempDir(), manifestFileName))
+	manifest, found, err := localmodel.LoadManifest(filepath.Join(t.TempDir(), localmodel.ManifestFileName))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -68,14 +70,14 @@ func TestMissingManifestReadsAsNothingInstalled(t *testing.T) {
 func TestModelMatchesIgnoresRevisionAndTracksDigest(t *testing.T) {
 	t.Parallel()
 
-	model := Model{Name: "m", SHA256: "aaa", Revision: "r1"}
-	manifest := Manifest{Model: InstalledModel{Name: "m", SHA256: "aaa", Revision: "r0"}}
+	model := localmodel.Model{Name: "m", SHA256: "aaa", Revision: "r1"}
+	manifest := localmodel.Manifest{Model: localmodel.InstalledModel{Name: "m", SHA256: "aaa", Revision: "r0"}}
 
 	if !manifest.ModelMatches(&model) {
 		t.Error("same digest under a different revision should match")
 	}
 
-	changed := Model{Name: "m", SHA256: "bbb", Revision: "r0"}
+	changed := localmodel.Model{Name: "m", SHA256: "bbb", Revision: "r0"}
 	if manifest.ModelMatches(&changed) {
 		t.Error("a different digest should not match")
 	}

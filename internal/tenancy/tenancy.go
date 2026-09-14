@@ -48,16 +48,16 @@ type Store interface {
 // Workspace is one tenancy boundary: an id, a unique name, and a creation
 // instant (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
 type Workspace struct {
+	CreatedAt time.Time
 	ID        string
 	Name      string
-	CreatedAt time.Time
 }
 
 // Member is one user's membership in a workspace, carrying the role that maps
 // to a scope set.
 type Member struct {
+	CreatedAt   time.Time
 	WorkspaceID string
 	Subject     string
 	Role        string
-	CreatedAt   time.Time
 }

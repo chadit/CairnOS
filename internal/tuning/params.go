@@ -37,13 +37,12 @@ type tokenDist struct {
 	totalTokens  int64
 }
 
-// detectParamTuning finds actions whose runner-configured max_tokens sits
-// far above the output lengths the action actually produces. The cap lives
-// in the [runner.<name>] config block (workflow params cannot override it),
-// so the proposal targets that block; the rationale says so, because the
-// change touches every action sharing the runner. Tightening a cap can
-// change output, which is why this kind is always low confidence and goes
-// through the replay guardrail before a human sees it.
+// detectParamTuning finds actions whose runner-configured max_tokens sits far
+// above the output lengths they produce. The cap lives in the [runner.<name>]
+// block that workflow params cannot override, so the proposal targets that
+// block and says so: the change touches every action sharing the runner.
+// Tightening a cap can change output, so this kind stays low confidence behind
+// the replay guardrail.
 func (e *Engine) detectParamTuning(corpus []*runRecord) []*store.Suggestion {
 	if len(e.cfg.RunnerConfigs) == 0 {
 		return nil

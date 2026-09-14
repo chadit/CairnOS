@@ -17,10 +17,10 @@ const DefaultPort = 8089
 // what an ordinary laptop can spare.
 const DefaultContextSize = 32768
 
-// modelsPath is the OpenAI-compatible endpoint the probe calls. It answers
+// ModelsPath is the OpenAI-compatible endpoint the probe calls. It answers
 // once the model is loaded and needs no request body, which makes it the
 // cheapest honest liveness check the server offers.
-const modelsPath = "/models"
+const ModelsPath = "/models"
 
 // probeInterval is how often WaitHealthy retries. A cold start spends its time
 // mapping several gigabytes of weights, so polling faster buys nothing.
@@ -43,7 +43,7 @@ func Probe(ctx context.Context, client *http.Client, baseURL string) error {
 	}
 
 	// #nosec G107 -- baseURL is built from the configured loopback port
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+modelsPath, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+ModelsPath, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("build probe request: %w", err)
 	}

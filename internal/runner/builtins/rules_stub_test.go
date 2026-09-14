@@ -150,9 +150,9 @@ func TestLanguageRulesValidate(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		params  map[string]any
 		name    string
 		dir     string
-		params  map[string]any
 		wantErr bool
 	}{
 		{name: "no dir configured", params: map[string]any{langKey: langGo}, wantErr: true},
@@ -196,9 +196,9 @@ func TestLanguageRulesValidate(t *testing.T) {
 // hard error when failWith is set, so the runner's precedence is testable
 // without the real store.
 type fakeRulesLookup struct {
-	language string
-	merged   map[string]string
 	failWith error
+	merged   map[string]string
+	language string
 }
 
 func (f *fakeRulesLookup) GetRules(_ context.Context, language, _ string) (map[string]string, error) {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -55,12 +54,6 @@ const (
 	maxPort = 65535
 )
 
-// errFlagValue reports a flag whose value cannot work. Catching it here beats
-// finding out from a server that started on the wrong port: --port 0 makes
-// llama-server bind an ephemeral port while every probe still targets :0, so
-// an upgrade would roll back a runtime that was running fine.
-var errFlagValue = errors.New("model: flag value out of range")
-
 // stateNotInstalled is what status prints for a component that was never set
 // up, on the same line the supervisor state would otherwise occupy.
 const stateNotInstalled = "not installed"
@@ -92,9 +85,9 @@ base_url = "%s"
 // a second run leaves an operator's edited block alone.
 const localRunnerHeader = "[runner.local]"
 
-// modelOptions collects every model subcommand flag; each subcommand
+// ModelOptions collects every model subcommand flag; each subcommand
 // registers only the ones it honors.
-type modelOptions struct {
+type ModelOptions struct {
 	dir       string
 	model     string
 	port      int
@@ -142,11 +135,11 @@ func (a *App) cmdModel(ctx context.Context, args []string) int {
 }
 
 // installFlags registers the flags setup and upgrade share.
-func installFlags(flags *flag.FlagSet, opts *modelOptions) {
+func installFlags(flags *flag.FlagSet, opts *ModelOptions) {
 	flags.StringVar(&opts.dir, flagDir, "", flagDirUsage)
 	flags.StringVar(&opts.model, flagModel, localmodel.DefaultModel, "catalog model to install")
 	flags.IntVar(&opts.port, flagPort, localmodel.DefaultPort, "loopback port the model server listens on")
-	flags.IntVar(&opts.threads, flagThreads, defaultThreads(), "CPU threads the model server may use")
+	flags.IntVar(&opts.threads, flagThreads, DefaultThreads(), "CPU threads the model server may use")
 	flags.IntVar(&opts.ctxSize, flagCtxSize, localmodel.DefaultContextSize, "context window in tokens")
 	flags.BoolVar(&opts.force, flagForce, false, "re-download and re-extract even when the pins already match")
 	flags.BoolVar(&opts.offline, flagOffline, false, "never reach the network; fail when something is not cached")
@@ -154,9 +147,9 @@ func installFlags(flags *flag.FlagSet, opts *modelOptions) {
 	flags.BoolVar(&opts.dryRun, flagDryRun, false, "print the plan without touching anything")
 }
 
-// defaultThreads leaves threadHeadroom cores for the rest of the machine,
+// DefaultThreads leaves threadHeadroom cores for the rest of the machine,
 // floored at one so a single-core or dual-core host still gets a server.
-func defaultThreads() int {
+func DefaultThreads() int {
 	threads := runtime.NumCPU() - threadHeadroom
 	if threads < 1 {
 		return 1
@@ -173,7 +166,7 @@ func (a *App) cmdModelInstall(ctx context.Context, prefix string, args []string,
 	flags := flag.NewFlagSet(prefix, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
 
-	var opts modelOptions
+	var opts ModelOptions
 
 	installFlags(flags, &opts)
 
@@ -187,7 +180,7 @@ func (a *App) cmdModelInstall(ctx context.Context, prefix string, args []string,
 		return ExitFailure
 	}
 
-	target, err := resolveModelTarget(&opts)
+	target, err := ResolveModelTarget(&opts)
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -203,18 +196,18 @@ func (a *App) cmdModelInstall(ctx context.Context, prefix string, args []string,
 	return a.applyInstall(ctx, prefix, target, &opts, upgrade)
 }
 
-// modelTarget is everything an install pass needs that comes from flags and
+// ModelTarget is everything an install pass needs that comes from flags and
 // the catalog rather than from the network.
-type modelTarget struct {
+type ModelTarget struct {
 	home   string
 	layout localmodel.Layout
 	model  localmodel.Model
 	build  localmodel.Build
 }
 
-// resolveModelTarget turns the flags into the home, catalog entry, and
+// ResolveModelTarget turns the flags into the home, catalog entry, and
 // platform build an install pass works against.
-func resolveModelTarget(opts *modelOptions) (*modelTarget, error) {
+func ResolveModelTarget(opts *ModelOptions) (*ModelTarget, error) {
 	// Only the port is checked here. Every subcommand that resolves a target
 	// carries one, while the two server knobs exist on setup and upgrade alone
 	// and are checked where they are registered.
@@ -237,7 +230,7 @@ func resolveModelTarget(opts *modelOptions) (*modelTarget, error) {
 		return nil, fmt.Errorf("resolve runtime build: %w", err)
 	}
 
-	return &modelTarget{home: home, layout: localmodel.NewLayout(home), model: model, build: build}, nil
+	return &ModelTarget{home: home, layout: localmodel.NewLayout(home), model: model, build: build}, nil
 }
 
 // validatePortFlag rejects a port the server cannot listen on or the probe
@@ -253,7 +246,7 @@ func validatePortFlag(port int) error {
 
 // validateServerFlags rejects thread and context values llama-server cannot
 // start on, before anything is downloaded or any supervisor file is written.
-func validateServerFlags(opts *modelOptions) error {
+func validateServerFlags(opts *ModelOptions) error {
 	if opts.threads < 1 {
 		return fmt.Errorf("%w: --%s must be at least 1, got %d", errFlagValue, flagThreads, opts.threads)
 	}
@@ -266,7 +259,7 @@ func validateServerFlags(opts *modelOptions) error {
 }
 
 // printInstallPlan renders what setup or upgrade would do without doing it.
-func (a *App) printInstallPlan(prefix string, target *modelTarget, opts *modelOptions) {
+func (a *App) printInstallPlan(prefix string, target *ModelTarget, opts *ModelOptions) {
 	a.printOutf("plan: %s\n", prefix)
 	a.printOutf("runtime: %s %s (%s) %s -> %s\n",
 		localmodel.RuntimeName, localmodel.PinnedVersion, localmodel.PinnedBuild,
@@ -311,7 +304,7 @@ func configBlockPlan(home string, port int) string {
 // applyInstall performs the install, writes the config block, and puts the
 // server under supervision.
 func (a *App) applyInstall(
-	ctx context.Context, prefix string, target *modelTarget, opts *modelOptions, upgrade bool,
+	ctx context.Context, prefix string, target *ModelTarget, opts *ModelOptions, upgrade bool,
 ) int {
 	result, err := localmodel.Install(ctx, &localmodel.InstallOptions{
 		Layout: target.layout,
@@ -326,14 +319,14 @@ func (a *App) applyInstall(
 
 	a.printInstallResult(target, &result)
 
-	if err := a.writeConfigBlock(target.home, target.model.Name, opts.port); err != nil {
+	if err := a.WriteConfigBlock(target.home, target.model.Name, opts.port); err != nil {
 		a.printCmdErr(prefix, err)
 
 		return ExitFailure
 	}
 
 	if opts.noService {
-		a.printOutf("service: skipped (--no-service); start it with: %s\n", manualStartHint(target, opts))
+		a.printOutf("service: skipped (--no-service); start it with: %s\n", ManualStartHint(target, opts))
 
 		return a.settleRuntime(target, &result, nil)
 	}
@@ -343,7 +336,7 @@ func (a *App) applyInstall(
 
 // printInstallResult reports what the pass changed, so a re-run that
 // downloaded nothing reads differently from a fresh install.
-func (a *App) printInstallResult(target *modelTarget, result *localmodel.InstallResult) {
+func (a *App) printInstallResult(target *ModelTarget, result *localmodel.InstallResult) {
 	a.printOutf("runtime: %s %s (%s) %s -> %s\n",
 		localmodel.RuntimeName, localmodel.PinnedVersion, localmodel.PinnedBuild,
 		changeWord(result.RuntimeInstalled), result.ServerPath)
@@ -362,7 +355,7 @@ func changeWord(installed bool) string {
 // installSidecar registers and starts the model server, then, for an upgrade,
 // waits for it to answer before letting go of the runtime it replaced.
 func (a *App) installSidecar(
-	ctx context.Context, prefix string, target *modelTarget, opts *modelOptions,
+	ctx context.Context, prefix string, target *ModelTarget, opts *ModelOptions,
 	result *localmodel.InstallResult, upgrade bool,
 ) int {
 	plan, err := sidecarPlan(target, opts)
@@ -370,7 +363,7 @@ func (a *App) installSidecar(
 		a.printCmdErr(prefix, err)
 		a.printErrf("%s: the runtime and model are installed; re-run with --%s to skip this step\n",
 			prefix, flagNoService)
-		a.printErrf("%s: start the server yourself with: %s\n", prefix, manualStartHint(target, opts))
+		a.printErrf("%s: start the server yourself with: %s\n", prefix, ManualStartHint(target, opts))
 
 		return ExitFailure
 	}
@@ -398,7 +391,7 @@ func (a *App) installSidecar(
 }
 
 // sidecarPlan builds the supervisor plan for the model server on this host.
-func sidecarPlan(target *modelTarget, opts *modelOptions) (*service.Plan, error) {
+func sidecarPlan(target *ModelTarget, opts *ModelOptions) (*service.Plan, error) {
 	host, err := service.DetectHost()
 	if err != nil {
 		return nil, fmt.Errorf("detect host: %w", err)
@@ -434,12 +427,11 @@ func (a *App) verifyUpgrade(ctx context.Context, port int) error {
 }
 
 // settleRuntime decides the fate of a displaced runtime: discard it when the
-// pass succeeded, put it back when the new server never answered. The rollback
-// restores the install record along with the binary, so status and the next
-// pass both see the build that is actually on disk. A rollback failure is
-// reported alongside the original problem rather than replacing it, because
-// the first error is what the operator has to act on.
-func (a *App) settleRuntime(target *modelTarget, result *localmodel.InstallResult, cause error) int {
+// pass succeeded, restore it when the new server never answered. Rollback
+// restores the install record with the binary, so status and the next pass
+// agree with disk. A rollback failure joins the original error rather than
+// replacing it; the first error is what the operator acts on.
+func (a *App) settleRuntime(target *ModelTarget, result *localmodel.InstallResult, cause error) int {
 	if cause == nil {
 		if err := target.layout.CommitRuntime(); err != nil {
 			a.printErrf("model: %v\n", err)
@@ -461,21 +453,21 @@ func (a *App) settleRuntime(target *modelTarget, result *localmodel.InstallResul
 	return ExitFailure
 }
 
-// manualStartHint is the command that starts the server by hand. Both callers
+// ManualStartHint is the command that starts the server by hand. Both callers
 // need it: --no-service asked for no supervisor, and a host this package
 // cannot supervise, Windows today, has no other way to run what it just
 // downloaded.
-func manualStartHint(target *modelTarget, opts *modelOptions) string {
+func ManualStartHint(target *ModelTarget, opts *ModelOptions) string {
 	return fmt.Sprintf("%s -m %s --host 127.0.0.1 --port %d --threads %d --ctx-size %d --jinja",
 		target.layout.ServerPath(), target.layout.ModelPath(&target.model),
 		opts.port, opts.threads, opts.ctxSize)
 }
 
-// writeConfigBlock appends the [runner.local] block unless the config already
+// WriteConfigBlock appends the [runner.local] block unless the config already
 // carries one. It appends rather than rewrites because config.toml belongs to
 // the operator: an edited base_url, a different model, or an added key all
 // survive a re-run untouched.
-func (a *App) writeConfigBlock(home, modelName string, port int) error {
+func (a *App) WriteConfigBlock(home, modelName string, port int) error {
 	path := filepath.Join(home, configFileName)
 
 	present, err := hasLocalRunnerBlock(path)
@@ -592,11 +584,11 @@ func (a *App) cmdModelCheck(ctx context.Context, args []string) int {
 // modelStatus is what `model status` reports: what is installed, whether it
 // matches the pins, and whether the server is answering.
 type modelStatus struct {
-	Runtime       statusComponent `json:"runtime"`
-	Model         statusComponent `json:"model"`
 	Service       string          `json:"service"`
 	ServiceLabel  string          `json:"service_label"`
 	Endpoint      string          `json:"endpoint"`
+	Runtime       statusComponent `json:"runtime"`
+	Model         statusComponent `json:"model"`
 	ServerAnswers bool            `json:"server_answers"`
 }
 
@@ -614,7 +606,7 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet(prefix, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
 
-	var opts modelOptions
+	var opts ModelOptions
 
 	flags.StringVar(&opts.dir, flagDir, "", flagDirUsage)
 	flags.StringVar(&opts.model, flagModel, localmodel.DefaultModel, "catalog model to report on")
@@ -625,7 +617,7 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 		return code
 	}
 
-	target, err := resolveModelTarget(&opts)
+	target, err := ResolveModelTarget(&opts)
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -644,7 +636,7 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 
 // collectStatus reads the manifest, asks the supervisor for the service state,
 // and probes the endpoint.
-func collectStatus(ctx context.Context, target *modelTarget, opts *modelOptions) (*modelStatus, error) {
+func collectStatus(ctx context.Context, target *ModelTarget, opts *ModelOptions) (*modelStatus, error) {
 	manifest, _, err := localmodel.LoadManifest(target.layout.ManifestPath())
 	if err != nil {
 		return nil, fmt.Errorf("read the install record: %w", err)
@@ -723,15 +715,23 @@ func (a *App) printStatus(prefix string, status *modelStatus, asJSON bool) int {
 		}
 
 		a.printOutf("%s\n", raw)
-	} else {
-		a.printOutf("runtime: %s, pinned %s %s\n",
-			status.Runtime.Installed, status.Runtime.Pinned, matchWord(status.Runtime.Matches))
-		a.printOutf("model:   %s, pinned %s %s\n",
-			status.Model.Installed, status.Model.Pinned, matchWord(status.Model.Matches))
-		a.printOutf("service: %s %s\n", status.ServiceLabel, status.Service)
-		a.printOutf("server:  %s %s\n", status.Endpoint, answerWord(status.ServerAnswers))
+
+		return statusExitCode(status)
 	}
 
+	a.printOutf("runtime: %s, pinned %s %s\n",
+		status.Runtime.Installed, status.Runtime.Pinned, matchWord(status.Runtime.Matches))
+	a.printOutf("model:   %s, pinned %s %s\n",
+		status.Model.Installed, status.Model.Pinned, matchWord(status.Model.Matches))
+	a.printOutf("service: %s %s\n", status.ServiceLabel, status.Service)
+	a.printOutf("server:  %s %s\n", status.Endpoint, answerWord(status.ServerAnswers))
+
+	return statusExitCode(status)
+}
+
+// statusExitCode reports the CLI exit code for a status snapshot: failure when
+// any component is out of pin or the server didn't answer, success otherwise.
+func statusExitCode(status *modelStatus) int {
 	if !status.Runtime.Matches || !status.Model.Matches || !status.ServerAnswers {
 		return ExitFailure
 	}
@@ -765,7 +765,7 @@ func (a *App) cmdModelUninstall(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet(prefix, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
 
-	var opts modelOptions
+	var opts ModelOptions
 
 	flags.StringVar(&opts.dir, flagDir, "", flagDirUsage)
 	flags.BoolVar(&opts.dryRun, flagDryRun, false, "print the plan without touching anything")

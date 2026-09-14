@@ -50,13 +50,11 @@ func (r *FireRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error 
 	return r.FireRun(ctx, sched, nil, triggerSchedule)
 }
 
-// FireRun loads and runs one scheduled workflow, fresh from disk each fire so
-// edits apply without re-adding the schedule, with caller-supplied inputs and a
-// trigger label. The poll fire path enters here carrying the event's mapped
-// inputs and trigger "poll"; a paused workflow is skipped cleanly (no run, no
-// error) so the scheduler does not log a refusal every poll. A failed run
-// surfaces as an error so the daemon logs it; the daemon keeps running either
-// way.
+// FireRun loads and runs one scheduled workflow with caller-supplied inputs and
+// trigger label. It reads the workflow fresh from disk each fire, so edits apply
+// without re-adding the schedule. A paused workflow is skipped without running
+// or erroring, so the scheduler does not log a refusal every poll. A failed run
+// returns an error and the daemon keeps running.
 func (r *FireRunner) FireRun(ctx context.Context, sched *scheduler.Schedule, inputs map[string]any, trigger string) error {
 	flow, err := workflow.Load(sched.WorkflowPath)
 	if err != nil {

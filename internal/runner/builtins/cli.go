@@ -29,15 +29,11 @@ type CLITool struct {
 	Args   []string
 }
 
-// CLIDefaults maps each built-in CLI runner name to its launch defaults when
-// its config block overrides neither binary nor args. The omp_* names differ
-// from their binaries because those carry a dash while runner names use
-// underscores. Every argv template picks the tool's headless one-shot mode,
-// because a workflow action can never answer an interactive UI: a bare
-// `codex <prompt>` or `claude <prompt>` opens the tool's TUI and hangs the
-// run, so codex routes through its `exec` subcommand and claude, qwen, and
-// the omp family take `-p` (print-and-exit). antigravity keeps the bare
-// positional its wrapper expects.
+// CLIDefaults maps each built-in CLI runner name to its launch defaults. The
+// omp_* names differ from their binaries because those carry a dash while
+// runner names use underscores. Every argv template picks the tool's headless
+// one-shot mode, because a workflow action can never answer an interactive UI:
+// a bare `claude <prompt>` opens the tool's TUI and hangs the run.
 func CLIDefaults() map[string]CLITool {
 	return map[string]CLITool{
 		ClaudeName:      {Binary: "claude", Args: []string{printFlag, promptToken}},

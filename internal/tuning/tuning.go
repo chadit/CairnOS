@@ -113,6 +113,25 @@ type RunnerSource interface {
 // Config bounds one scan. Zero thresholds fall back to the documented
 // defaults, so callers only set what they tune.
 type Config struct {
+	// Since drops runs created before it; zero scans the whole retained
+	// history.
+	Since time.Time
+
+	// Runners resolves runner names for Replay. Nil disables replay, which
+	// is the default: replay spends real tokens and must be asked for.
+	Runners RunnerSource
+
+	// Comparator decides output equivalence during replay. Nil means the
+	// v1 exact-match comparator (the R1 placeholder; see Comparator).
+	Comparator Comparator
+
+	// RunnerConfigs carries the [runner.<name>] config blocks so the param
+	// detector can read each runner's configured max_tokens.
+	RunnerConfigs map[string]map[string]any
+
+	// NewID mints suggestion IDs; nil means ULIDs.
+	NewID func() string
+
 	// MinSavingsUSD is the savings floor: suggestions whose estimated
 	// per-run saving falls below it never appear
 	// (config [tuning] min_savings_usd).
@@ -139,25 +158,6 @@ type Config struct {
 
 	// ReplayMaxSamples caps recorded inputs per Replay call.
 	ReplayMaxSamples int
-
-	// Since drops runs created before it; zero scans the whole retained
-	// history.
-	Since time.Time
-
-	// RunnerConfigs carries the [runner.<name>] config blocks so the param
-	// detector can read each runner's configured max_tokens.
-	RunnerConfigs map[string]map[string]any
-
-	// Runners resolves runner names for Replay. Nil disables replay, which
-	// is the default: replay spends real tokens and must be asked for.
-	Runners RunnerSource
-
-	// Comparator decides output equivalence during replay. Nil means the
-	// v1 exact-match comparator (the R1 placeholder; see Comparator).
-	Comparator Comparator
-
-	// NewID mints suggestion IDs; nil means ULIDs.
-	NewID func() string
 }
 
 // DefaultConfig returns the documented detector defaults.

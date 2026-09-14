@@ -26,9 +26,9 @@ func TestCoerceInputs(t *testing.T) {
 	}
 
 	tests := []struct {
+		want    map[string]any
 		name    string
 		pairs   []string
-		want    map[string]any
 		wantErr bool
 	}{
 		{

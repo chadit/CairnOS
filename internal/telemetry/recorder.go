@@ -568,13 +568,12 @@ func (r *Recorder) recordAction(ctx context.Context, workflowName string, result
 	r.recordUsage(ctx, workflowName, result)
 }
 
-// recordUsage moves the token, cost, cache, and retry counters from one
-// action's usage. Cache accounting is action-level by design: an action
-// whose usage reports cached tokens counts one hit, an action that
-// consumed input tokens without any cached ones counts one miss, and an
-// action with no token usage at all (CLI wrappers, webhooks) touches
-// neither counter. Per-request hit ratios need the runner's own numbers;
-// this is the workflow-level view the Phase 3 tuning engine reads.
+// recordUsage moves one action's token, cost, cache, and retry counters.
+// Cache accounting is action-level by design: cached tokens count a hit,
+// input tokens with none cached count a miss, and no token usage at all
+// (CLI wrappers, webhooks) counts neither. Per-request hit ratios need the
+// runner's own numbers; this is the workflow-level view the tuning engine
+// reads.
 func (r *Recorder) recordUsage(ctx context.Context, workflowName string, result *store.ActionResult) {
 	usage := result.Usage
 	runnerAttr := attribute.String(keyRunner, result.Runner)

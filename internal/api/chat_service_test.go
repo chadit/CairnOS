@@ -41,9 +41,9 @@ params = { output = "hi" }
 // scriptedChatDriver is an in-test ToolCaller that serves a canned sequence of
 // turns, so the chat agent's behavior is reproducible without a real LLM.
 type scriptedChatDriver struct {
-	mu    sync.Mutex
 	turns []runner.Result
 	calls int
+	mu    sync.Mutex
 }
 
 var (

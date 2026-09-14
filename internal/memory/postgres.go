@@ -13,18 +13,11 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgMemorySchema mirrors the spec memory table with JSONB tags and
-// timestamptz, plus IF NOT EXISTS so opening an existing database is
-// idempotent. Keyword search uses a GIN index over to_tsvector(content),
-// the Postgres analog of sqlite's FTS5; there is no separate virtual table
-// because Postgres full-text search runs against the base row.
-//
-// The pgvector path stays a stub for Phase 4c: when semantic search ships,
-// this schema gains an `embedding vector(768)` column and an ivfflat/hnsw
-// index, populated by embedding content through a configured embedding
-// runner (.agents/spec/05-memory-and-knowledge.md, "Backends"). No vector
-// backend ships in this phase, so a semantic query falls back to keyword and
-// flags it, exactly like the sqlite backend.
+// pgMemorySchema mirrors the spec memory table. Keyword search rides a GIN
+// index over to_tsvector(content) instead of a separate virtual table, since
+// Postgres full-text search runs against the base row. Semantic search is a
+// Phase 4c stub, so a semantic query falls back to keyword and flags it just as
+// the sqlite backend does (.agents/spec/05-memory-and-knowledge.md, "Backends").
 const pgMemorySchema = `
 CREATE TABLE IF NOT EXISTS memory_entries (
     id           TEXT PRIMARY KEY,

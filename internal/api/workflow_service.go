@@ -45,10 +45,10 @@ type workflowService struct {
 	cairnosv1.UnimplementedWorkflowServiceServer
 
 	store         store.Store
-	manager       *Manager
-	workflowsDir  string
 	authenticator Authenticator
+	manager       *Manager
 	logger        *slog.Logger
+	workflowsDir  string
 }
 
 // RunWorkflow starts a run by name and streams its events until the run
@@ -141,13 +141,12 @@ func (s *workflowService) CancelRun(ctx context.Context, req *cairnosv1.CancelRu
 		cairnerr.Newf(codeRunNotManaged, "run %s was not started by this server; cancel it where it was started", runID))
 }
 
-// ReplayRun reruns a prior run from its first failed action and streams the
-// new run's events until it finalizes. The prior run and its action results
-// are read workspace-scoped (a foreign run reads as not-found), the workflow
-// is resolved fresh by name, and a workflow-hash mismatch is refused unless
-// force is set. The replay run is watchable and cancelable like any run
-// because it goes through the manager (.agents/spec/parity/workflow-language.md,
-// "Replay from failed action").
+// ReplayRun reruns a prior run from its first failed action and streams the new
+// run's events until it finalizes. A foreign run reads as not-found, the
+// workflow is resolved fresh by name, and a workflow-hash mismatch is refused
+// unless force is set. The replay goes through the manager, so it is watchable
+// and cancelable (.agents/spec/parity/workflow-language.md, "Replay from failed
+// action").
 func (s *workflowService) ReplayRun(req *cairnosv1.ReplayRunRequest, stream cairnosv1.WorkflowService_ReplayRunServer) error {
 	ctx := stream.Context()
 
@@ -230,8 +229,8 @@ func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveW
 		return nil, err
 	}
 
-	if err := os.WriteFile(path, req.GetToml(), savedFilePerm); err != nil {
-		return nil, errorStatus(codes.Internal, cairnerr.Newf(codeInternal, "write workflow %q: %v", name, err))
+	if writeFileErr := os.WriteFile(path, req.GetToml(), savedFilePerm); writeFileErr != nil {
+		return nil, errorStatus(codes.Internal, cairnerr.Newf(codeInternal, "write workflow %q: %v", name, writeFileErr))
 	}
 
 	// Reloading proves the written file loads and returns the stamped hash the
@@ -249,14 +248,12 @@ func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveW
 	}, nil
 }
 
-// ApproveRun decides a pending approval gate on a held run and resumes the
-// run through the manager, detached from this call like every managed run:
-// the response is an ack (mirroring CancelRun) and GetRun reports where the
-// resumed loop lands. Everything that can fail resolves before the decision
-// is written, so a resolver or store failure never strands a decided gate on
-// a still-held run. The run is read workspace-scoped, so a foreign run
-// answers not-found, never forbidden
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// ApproveRun decides an approval gate on a held run, then resumes it through the
+// manager. The resume is detached, so the response is only an ack and GetRun
+// reports the outcome. Everything fallible resolves before the decision is
+// written, so nothing strands a decided gate on a held run. A foreign run is
+// not-found, never forbidden (.agents/spec/parity/workflow-language.md,
+// "Human approval").
 func (s *workflowService) ApproveRun(ctx context.Context, req *cairnosv1.ApproveRunRequest) (*cairnosv1.ApproveRunResponse, error) {
 	held, err := s.store.GetRun(ctx, req.GetRunId())
 	if err != nil {
@@ -372,13 +369,12 @@ func approvalActionNames(pending []*store.Approval) []string {
 	return names
 }
 
-// resolveRunFlow picks the definition a run executes. An empty toml resolves
-// the named file from the workflows directory, the ordinary path. A non-empty
-// toml runs that definition inline (the builder's test action): it is parsed,
-// name-checked against the path param, and hash-stamped so the run records the
-// same identity a saved file would, all before any stream event. Running an
-// unsaved definition is scope-equivalent to save-then-run, so no privilege
-// change is needed (.agents/spec/parity/builder-ops.md, "Inline run").
+// resolveRunFlow picks the definition a run executes. An empty toml resolves the
+// named file from the workflows directory. A non-empty toml runs inline: parsed,
+// name-checked against the path param, and hash-stamped so the run records a
+// saved file's identity, all before any stream event. Running unsaved is
+// scope-equivalent to save-then-run, so no extra privilege is needed
+// (.agents/spec/parity/builder-ops.md, "Inline run").
 func (s *workflowService) resolveRunFlow(req *cairnosv1.RunWorkflowRequest) (*workflow.Workflow, error) {
 	if len(req.GetToml()) == 0 {
 		return NewWorkflowResolver(s.workflowsDir, s.logger).Resolve(req.GetWorkflowName())
@@ -394,14 +390,14 @@ func (s *workflowService) resolveRunFlow(req *cairnosv1.RunWorkflowRequest) (*wo
 	return flow, nil
 }
 
-// captureRollbackPoint resolves where a save writes and, when a file already
-// carries the name, records its prior bytes in the version store before the
-// write returns the target. That capture-before-write ordering is what makes
-// the save revertible. A not-found name is a create whose target is
-// name.toml; the join is traversal-safe because the caller already pinned name
-// to the definition's validated lowercase-identifier workflow name. A
-// NotFound from an unreadable directory also lands in the create branch, so the
-// later write fails honestly as INTERNAL rather than being masked here.
+// A not-found name is a create targeting name.toml. The join is traversal-safe
+// because the caller pinned name to a validated lowercase identifier. A NotFound
+// from an unreadable directory also lands there, so the later write fails as
+// INTERNAL rather than masking the problem here.
+
+// captureRollbackPoint resolves the save target and, for an existing name,
+// records its prior bytes in the version store first. Capturing before the write
+// makes the save revertible.
 func (s *workflowService) captureRollbackPoint(ctx context.Context, name string) (string, string, bool, error) {
 	path, priorFlow, err := NewWorkflowResolver(s.workflowsDir, s.logger).ResolvePath(name)
 	if err != nil {
@@ -431,14 +427,12 @@ func (s *workflowService) captureRollbackPoint(ctx context.Context, name string)
 	return path, priorFlow.Hash, false, nil
 }
 
-// parseNamedDefinition parses definition bytes and requires the definition's
-// own name to match the path param. A parse failure returns the canonical
-// INVALID_ARGUMENT list, the same envelope ValidateWorkflow reports, so the
-// client sees every workflow.* problem at once. A name mismatch answers
-// api.workflow_name_mismatch: without it a save could strand a file the
-// resolver maps under a name other than the URL the client used, and an inline
-// run could execute under the wrong identity
-// (.agents/spec/parity/builder-ops.md).
+// parseNamedDefinition parses definition bytes and requires its name to match
+// the path param. A parse failure returns the INVALID_ARGUMENT list
+// ValidateWorkflow reports, so the client sees every workflow.* problem. A
+// mismatch answers api.workflow_name_mismatch: without it a save could strand a
+// file under a name the client never used, and an inline run could execute under
+// the wrong identity (.agents/spec/parity/builder-ops.md).
 func parseNamedDefinition(toml []byte, name string) (*workflow.Workflow, error) {
 	flow, err := workflow.Parse(toml)
 	if err != nil {

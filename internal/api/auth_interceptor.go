@@ -142,12 +142,13 @@ const defaultStreamRecheck = 15 * time.Second
 type authGuard struct {
 	authenticator Authenticator
 
+	// now injects the clock so tests drive the stream recheck without sleeping.
+	now func() time.Time
+
 	// streamRecheck bounds how often an open stream re-verifies its token
 	// (spec M4): a long-lived stream must not keep delivering after the token
-	// expires or is revoked. now injects the clock so tests drive the recheck
-	// without sleeping.
+	// expires or is revoked.
 	streamRecheck time.Duration
-	now           func() time.Time
 }
 
 // newAuthGuard wires the interceptor pair over one authenticator. A
@@ -321,6 +322,11 @@ func bearerToken(ctx context.Context) (string, error) {
 type recheckStream struct {
 	grpc.ServerStream
 
+	lastCheck     time.Time
+	authenticator Authenticator
+	now           func() time.Time
+	token         string
+
 	// caller is what the verified token granted. Context stamps it onto the
 	// embedded stream's context per call, so a streaming handler reads the same
 	// tenant, subject, and scopes a unary handler does. Storing the claims rather
@@ -328,11 +334,7 @@ type recheckStream struct {
 	// struct-held.
 	caller principal
 
-	authenticator Authenticator
-	token         string
-	interval      time.Duration
-	now           func() time.Time
-	lastCheck     time.Time
+	interval time.Duration
 }
 
 // Context returns the embedded stream's context with the caller's claims

@@ -16,33 +16,36 @@ import (
 
 // Config is the fully resolved settings tree.
 type Config struct {
-	Engine    Engine
-	Store     Store
-	Secrets   Secrets
-	Memory    Memory
-	Retention Retention
-	Env       Env
-	Telemetry Telemetry
-	API       API
-	Auth      Auth
-	OAuth     OAuth
-	A2A       A2A
-	MCP       MCP
-	Hive      Hive
-	Autonomic Autonomic
-	Tuning    Tuning
-	Scheduler Scheduler
-	Chat      Chat
-	Webhook   Webhook
-	Bridge    Bridge
-	Notify    Notify
+	Engine Engine
+
 	// Runners carries each [runner.<name>] block verbatim for the registry's
 	// factories, including nested tables like circuit_breaker.
 	Runners map[string]map[string]any
+
 	// Credentials carries each [credential.<name>] block parsed and validated
 	// into a typed Credential (unlike Runners, which stays verbatim, because a
 	// credential's grant, token_url, and secret refs validate at Load).
 	Credentials map[string]Credential
+
+	Hive      Hive
+	MCP       MCP
+	A2A       A2A
+	Telemetry Telemetry
+	Memory    Memory
+	Store     Store
+	Secrets   Secrets
+	OAuth     OAuth
+	Notify    Notify
+	Tuning    Tuning
+	Env       Env
+	Chat      Chat
+	API       API
+	Auth      Auth
+	Bridge    Bridge
+	Scheduler Scheduler
+	Webhook   Webhook
+	Retention Retention
+	Autonomic Autonomic
 }
 
 // Grant names a [credential.<name>] block's OAuth2 grant. Named so config
@@ -92,26 +95,26 @@ type Credential struct {
 
 // Engine bounds execution.
 type Engine struct {
-	MaxConcurrentActions int
-	DefaultTimeout       time.Duration
-	Retry                Retry
-
-	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
-	// engine.call_depth_exceeded. Below 1 falls back to the engine default
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
-	MaxCallDepth int
-
 	// Fallback is the mixed-model chain, keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
 	// order before the action fails (.agents/spec/14-open-decisions.md, D12). An
 	// absent or empty entry means the action's runner has no fallback.
 	Fallback map[string][]string
+
+	Retry                Retry
+	MaxConcurrentActions int
+	DefaultTimeout       time.Duration
+
+	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
+	// engine.call_depth_exceeded. Below 1 falls back to the engine default
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	MaxCallDepth int
 }
 
 // Retry is the engine-wide default policy; actions override it per file.
 type Retry struct {
-	MaxAttempts int
 	Backoff     string
+	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
 	Jitter      bool
@@ -124,19 +127,13 @@ type Store struct {
 }
 
 // Secrets selects how a ${{ secrets.name }} reference resolves
-// (.agents/spec/parity/secrets-credentials.md, "Config"). The default "env"
-// backend is byte-for-byte today's behavior: values come only from
-// CAIRNOS_SECRET_<NAME> variables. The "store" backend prepends the env source
-// to an encrypted-at-rest store, Chain(env, store), so env stays first and a
-// value set in the environment still wins.
+// (.agents/spec/parity/secrets-credentials.md, "Config"). "env" reads only
+// CAIRNOS_SECRET_<NAME>; "store" chains env ahead of an encrypted store, so
+// env wins.
 //
-// Threat model, stated so a reader does not over-trust the word "encrypted":
-// the store defends a database-dump / read-at-rest attacker only, never an
-// attacker who can inject environment variables (env is trusted in the
-// single-operator model, and env wins the chain). A secret interpolated into an
-// action's output is recoverable in plaintext from run history: this backend
-// encrypts the secret store, not the run store. Env-sourced secrets stay
-// visible to child CLI runners through the inherited process environment.
+// "Encrypted" is narrow: the store defends a read-at-rest attacker, not one
+// who injects environment variables. Secrets interpolated into action output
+// stay plaintext in run history, and env secrets reach child CLI runners.
 type Secrets struct {
 	// Backend is "env" (default) or "store".
 	Backend string
@@ -156,8 +153,8 @@ const (
 // Memory selects the memory backend.
 type Memory struct {
 	Backend         string
-	Vector          bool
 	EmbeddingRunner string
+	Vector          bool
 }
 
 // Retention bounds state growth (.agents/spec/04-execution-engine.md).
@@ -175,16 +172,15 @@ type Env struct {
 
 // Telemetry configures exporters.
 type Telemetry struct {
-	Enabled      bool
 	Prometheus   string
 	OTLPEndpoint string
+	Enabled      bool
 }
 
 // API configures the gRPC and HTTP listeners (off until Phase 1a serves).
 type API struct {
-	Enabled bool
-	GRPC    string
-	HTTP    string
+	GRPC string
+	HTTP string
 
 	// CORSOrigins is the explicit CORS allowlist for the gateway. Empty (the
 	// default) sends no CORS headers, so the browser enforces same-origin. A
@@ -201,6 +197,8 @@ type API struct {
 	// so the transport rejects an over-limit frame rather than relying on the
 	// library default (spec M4). Zero falls back to the default.
 	MaxRecvMsgBytes int
+
+	Enabled bool
 }
 
 // Auth gates external calls (.agents/spec/08-auth-and-access.md,
@@ -208,19 +206,36 @@ type API struct {
 // secret and the EdDSA key file paths come from CAIRNOS_AUTH_HS256_SECRET
 // and CAIRNOS_AUTH_PRIVATE_KEY_FILE / CAIRNOS_AUTH_PUBLIC_KEY_FILE.
 type Auth struct {
-	Enabled bool
+	// SigningAlgorithm picks the token tier: HS256 (self-issued, shared
+	// secret) or EdDSA (asymmetric, cross-org-ready; spec Change 3).
+	SigningAlgorithm string
 
 	// Issuer and Audience fill and check the iss/aud token claims.
 	Issuer   string
 	Audience string
 
+	// MaxConcurrentLogins bounds simultaneous credential derivations, since
+	// each unauthenticated argon2id login costs ~64 MiB; excess logins get
+	// RESOURCE_EXHAUSTED rather than pinning memory (spec M1).
+	MaxConcurrentLogins int
+
 	// AccessTokenTTL bounds each token; refresh is re-login with the
 	// access key (spec Change 2), so the default stays short at 1h.
 	AccessTokenTTL time.Duration
 
-	// SigningAlgorithm picks the token tier: HS256 (self-issued, shared
-	// secret) or EdDSA (asymmetric, cross-org-ready; spec Change 3).
-	SigningAlgorithm string
+	// LoginRatePerMinute bounds one peer's logins per minute (also its
+	// burst), throttling a single source on top of the global cap (spec M1).
+	LoginRatePerMinute int
+
+	// StreamRecheck is how often an open stream re-verifies its token's
+	// expiry and denylist state, so a long-lived stream stops after a
+	// mid-stream revoke or expiry (spec M4).
+	StreamRecheck time.Duration
+
+	// ClockSkew is the leeway the cross-instance EdDSA verifier allows on the
+	// time claims, absorbing small clock differences between issuer and
+	// verifier (spec L2).
+	ClockSkew time.Duration
 
 	// RequireExp and RequireJTI reject tokens missing those claims. Both
 	// default on and are overridden only deliberately.
@@ -238,24 +253,7 @@ type Auth struct {
 	// operator makes this claim.
 	TLSTerminated bool
 
-	// MaxConcurrentLogins bounds simultaneous credential derivations, since
-	// each unauthenticated argon2id login costs ~64 MiB; excess logins get
-	// RESOURCE_EXHAUSTED rather than pinning memory (spec M1).
-	MaxConcurrentLogins int
-
-	// LoginRatePerMinute bounds one peer's logins per minute (also its
-	// burst), throttling a single source on top of the global cap (spec M1).
-	LoginRatePerMinute int
-
-	// StreamRecheck is how often an open stream re-verifies its token's
-	// expiry and denylist state, so a long-lived stream stops after a
-	// mid-stream revoke or expiry (spec M4).
-	StreamRecheck time.Duration
-
-	// ClockSkew is the leeway the cross-instance EdDSA verifier allows on the
-	// time claims, absorbing small clock differences between issuer and
-	// verifier (spec L2).
-	ClockSkew time.Duration
+	Enabled bool
 }
 
 // OAuth configures the Phase 5b OIDC human-login path
@@ -265,8 +263,6 @@ type Auth struct {
 // not in place of it. Off by default; the client secret never lives in the
 // config file, only in CAIRNOS_OAUTH_CLIENT_SECRET.
 type OAuth struct {
-	Enabled bool
-
 	// Issuer is the IdP's OIDC issuer URL; the provider's discovery document
 	// and JWKS are fetched from it.
 	Issuer string
@@ -289,14 +285,6 @@ type OAuth struct {
 	DefaultWorkspace string
 	DefaultRole      string
 
-	// AutoProvision gates first-login auto-provisioning. Default false: an
-	// IdP-authenticated subject with no pre-existing membership is refused
-	// rather than silently added to DefaultWorkspace, closing the open-door
-	// provisioning hole (spec H1). With it true, AllowedEmailDomains and
-	// AllowedSubjects still gate which subjects may self-provision when either
-	// list is set.
-	AutoProvision bool
-
 	// AllowedEmailDomains is the auto-provision domain allowlist, matched
 	// against the verified email claim's domain (the part after @). Empty means
 	// domain is not checked, so AllowedSubjects (or an empty pair, which only
@@ -306,6 +294,16 @@ type OAuth struct {
 	// AllowedSubjects is the auto-provision subject allowlist, matched against
 	// the verified ID token subject. Empty means subject is not checked.
 	AllowedSubjects []string
+
+	Enabled bool
+
+	// AutoProvision gates first-login auto-provisioning. Default false: an
+	// IdP-authenticated subject with no pre-existing membership is refused
+	// rather than silently added to DefaultWorkspace, closing the open-door
+	// provisioning hole (spec H1). With it true, AllowedEmailDomains and
+	// AllowedSubjects still gate which subjects may self-provision when either
+	// list is set.
+	AutoProvision bool
 }
 
 // A2A configures the Phase 4b Agent-to-Agent protocol adapter
@@ -313,8 +311,6 @@ type OAuth struct {
 // process registers the A2A service, serves the signed agent card at the
 // well-known path, and optionally fronts the gRPC listener with mTLS.
 type A2A struct {
-	Enabled bool
-
 	// CardSigningKeyFile names a PEM ed25519 private key that signs the agent
 	// card. Empty reuses the auth EdDSA key when the auth tier is asymmetric;
 	// with neither, the node generates an ephemeral keypair at boot and logs a
@@ -334,19 +330,17 @@ type A2A struct {
 	CertFile     string
 	KeyFile      string
 	ClientCAFile string
+
+	Enabled bool
 }
 
 // MCP configures the Phase 7a MCP server
-// (.agents/spec/10-mcp-integration.md, "MCP Server"). Off by default; when
-// enabled with the http transport, the serve process mounts the streamable MCP
-// handler on the API mux at Path, and an external MCP client presents the same
-// bearer token CairnOS enforces the same scopes for. The stdio transport is the
-// `cairnos mcp serve` subcommand instead, where auth is the process boundary.
+// (.agents/spec/10-mcp-integration.md, "MCP Server"). Off by default; with the
+// http transport the serve process mounts the streamable handler on the API
+// mux at Path, and an external client presents the same bearer token, under
+// the same scopes. The stdio transport is the `cairnos mcp serve` subcommand,
+// where auth is the process boundary.
 type MCP struct {
-	// Enabled turns the server on. With it off, the serve process mounts no MCP
-	// handler and the mcp serve subcommand still works on demand.
-	Enabled bool
-
 	// Transport selects how the server is reached: "http" mounts the streamable
 	// handler on the shared API mux, "stdio" is served only by the mcp serve
 	// subcommand and ignored by serve. Empty defaults to http.
@@ -372,6 +366,10 @@ type MCP struct {
 	// address mcp publish registers so other nodes can import and call its tools.
 	// Empty leaves nothing publishable, so publish requires it.
 	AdvertiseURL string
+
+	// Enabled turns the server on. With it off, the serve process mounts no MCP
+	// handler and the mcp serve subcommand still works on demand.
+	Enabled bool
 }
 
 // MCP transport values.
@@ -389,10 +387,6 @@ const defaultMCPPath = "/mcp"
 // gated and off by default, pending the privacy review (R2) and the hosting
 // decision (R3) in .agents/spec/14-open-decisions.md.
 type Hive struct {
-	// Enabled turns the hive client on. With it off, no client is built and
-	// neither subscribe nor publish runs.
-	Enabled bool
-
 	// Endpoint is the hive API base URL.
 	Endpoint string
 
@@ -400,22 +394,6 @@ type Hive struct {
 	// means the wiring mints a fresh random pseudonym at startup; it is never
 	// the hostname or a stable instance name.
 	NodePseudonym string
-
-	// PublishEnabled gates publishing. Default false: the node receives tips
-	// but sends none until the operator opts in, after the privacy review.
-	PublishEnabled bool
-
-	// Categories are the opted-in categories. Sharing is per-category, off
-	// until a category is listed here.
-	Categories []string
-
-	// KAnonymityFloor is the server-side k the node knows about; informational
-	// on the client, which still refuses below MinObservations locally.
-	KAnonymityFloor int
-
-	// MinObservations is the local floor: the node refuses to publish a pattern
-	// it has seen fewer than this many times, ahead of the server's k.
-	MinObservations int
 
 	// KeyRef is the secret name of the shared cluster key, resolved through the
 	// SecretSource seam (R2/R3 in .agents/spec/14-open-decisions.md). Empty means
@@ -430,6 +408,26 @@ type Hive struct {
 	// so a cluster rotates keys without a flag day (R2/R3 in
 	// .agents/spec/14-open-decisions.md).
 	PrevKeyRef string
+
+	// Categories are the opted-in categories. Sharing is per-category, off
+	// until a category is listed here.
+	Categories []string
+
+	// KAnonymityFloor is the server-side k the node knows about; informational
+	// on the client, which still refuses below MinObservations locally.
+	KAnonymityFloor int
+
+	// MinObservations is the local floor: the node refuses to publish a pattern
+	// it has seen fewer than this many times, ahead of the server's k.
+	MinObservations int
+
+	// Enabled turns the hive client on. With it off, no client is built and
+	// neither subscribe nor publish runs.
+	Enabled bool
+
+	// PublishEnabled gates publishing. Default false: the node receives tips
+	// but sends none until the operator opts in, after the privacy review.
+	PublishEnabled bool
 }
 
 // hiveBackend is the only store backend that can run the hive: it is a private
@@ -456,16 +454,16 @@ type Autonomic struct {
 // Tuning bounds the Phase 3 suggestion scan
 // (.agents/spec/06-observability-and-tuning.md, "Guardrail").
 type Tuning struct {
-	// MinSavingsUSD is the savings floor: suggestions whose estimated
-	// per-run saving falls below it never appear.
-	MinSavingsUSD float64
-
 	// EmbeddingModel opts the replay guardrail into similarity comparison
 	// (R1): when set, an output-changing suggestion's replay judges
 	// equivalence by the cosine similarity of OpenAI embeddings instead of
 	// exact byte match, so harmless rephrasing no longer reads as divergence.
 	// Empty keeps the exact-match default, so similarity comparison is opt-in.
 	EmbeddingModel string
+
+	// MinSavingsUSD is the savings floor: suggestions whose estimated
+	// per-run saving falls below it never appear.
+	MinSavingsUSD float64
 
 	// EquivalenceThreshold is the cosine similarity at or above which the
 	// embedding comparator calls two outputs equivalent. Zero falls back to a
@@ -520,10 +518,9 @@ const (
 // serve process mounts ChatService and the chat agent over the same engine the
 // workflows run on.
 type Chat struct {
-	// Enabled turns the chat surface on. With it off, serve mounts no
-	// ChatService and the cairnos chat command reports the node has chat
-	// disabled.
-	Enabled bool
+	// Personalities maps personality names to their system prompts, overlaid on
+	// the built-ins. A name matching a built-in overrides it.
+	Personalities map[string]string
 
 	// Driver is the LLM runner name the chat agent uses to plan turns. It must
 	// be a registered runner.ToolCaller (the openai and anthropic runners),
@@ -534,33 +531,34 @@ type Chat struct {
 	// request asks for none. Empty falls back to the assistant built-in.
 	DefaultPersonality string
 
-	// Personalities maps personality names to their system prompts, overlaid on
-	// the built-ins. A name matching a built-in overrides it.
-	Personalities map[string]string
+	// FileAllowlist lists the absolute directory roots an @-file reference may
+	// read from (.agents/spec/parity/skills-context.md, Part 2). Empty (the
+	// default) leaves every @-token inert. A path is readable only when its
+	// symlink-resolved form sits inside a symlink-resolved root, so a symlink
+	// cannot escape a root and a sibling sharing a root's name prefix is
+	// rejected.
+	FileAllowlist []string
 
 	// TurnBudgetUSD caps one chat turn's estimated driver-and-tool spend, the
 	// Phase 9 guardrail against a runaway conversation. Zero leaves turns
 	// uncapped.
 	TurnBudgetUSD float64
 
+	// MaxFileBytes caps how much of one @-file reference inlines into the
+	// transcript; a larger file truncates at the cap with the byte counts in the
+	// record. Default 64 KiB.
+	MaxFileBytes int
+
+	// Enabled turns the chat surface on. With it off, serve mounts no
+	// ChatService and the cairnos chat command reports the node has chat
+	// disabled.
+	Enabled bool
+
 	// OpenAICompat mounts the OpenAI-compatible chat completions adapter over
 	// the chat surface, so off-the-shelf OpenAI clients can point at this node
 	// (.agents/spec/parity/openai-compat.md). Default false; it requires chat
 	// enabled, so serve fails fast when this is on with chat off.
 	OpenAICompat bool
-
-	// FileAllowlist is the set of absolute directory roots an @-file reference in
-	// a chat message may read from (.agents/spec/parity/skills-context.md,
-	// Part 2). Empty (the default) leaves every @-token inert: no reads, no
-	// notes, plain text. A path is readable only when its symlink-resolved form
-	// sits inside a symlink-resolved root, so a symlink cannot escape a root and
-	// a sibling sharing a root's name prefix is rejected.
-	FileAllowlist []string
-
-	// MaxFileBytes caps how much of one @-file reference inlines into the
-	// transcript; a larger file truncates at the cap with the byte counts in the
-	// record. Default 64 KiB.
-	MaxFileBytes int
 }
 
 // Webhook configures the webhook-ingress subsystem
@@ -606,9 +604,10 @@ type Bridge struct {
 // vector, so the client's base URL stays a test-only unexported field
 // (.agents/spec/parity/messaging-bridge.md, decision 3).
 type Telegram struct {
-	// Enabled turns the bridge on. With it off, serve starts no long-poll loop
-	// and logs one line. It is also treated as off when the token env is unset.
-	Enabled bool
+	// Users is the allowlist keyed by Telegram user ID (as a string), mapping
+	// each permitted sender to a workspace and its grants. An enabled bridge with
+	// no users is a configuration error. The map has no env form; it is file-only.
+	Users map[string]TelegramUser
 
 	// PollTimeout is the long-poll hold time per getUpdates call.
 	PollTimeout time.Duration
@@ -620,14 +619,13 @@ type Telegram struct {
 	// expires as a deny.
 	ConfirmTTL time.Duration
 
+	// Enabled turns the bridge on. With it off, serve starts no long-poll loop
+	// and logs one line. It is also treated as off when the token env is unset.
+	Enabled bool
+
 	// Verbose relays tool-call status lines as italic messages when true;
 	// otherwise only assistant text and confirmations reach the chat.
 	Verbose bool
-
-	// Users is the allowlist keyed by Telegram user ID (as a string), mapping
-	// each permitted sender to a workspace and its grants. An enabled bridge with
-	// no users is a configuration error. The map has no env form; it is file-only.
-	Users map[string]TelegramUser
 }
 
 // TelegramUser maps one allowlisted Telegram sender to a workspace and its
@@ -828,6 +826,10 @@ const (
 	NotifyEventRunFailed    = "run_failed"
 	NotifyEventDeadLettered = "dead_lettered"
 	NotifyEventBudgetDenied = "budget_denied"
+	// NotifyEventConnectivity carries the reachability monitor's lines: a
+	// workflow paused because a host it requires is down, the hourly reminder
+	// while it stays down, and the recovery.
+	NotifyEventConnectivity = "connectivity"
 )
 
 // Hive publish floor defaults (.agents/spec/09-a2a-and-hive.md,
@@ -983,10 +985,9 @@ const (
 
 // validateOAuth fails fast when the OIDC login path is enabled but
 // misconfigured: a missing issuer, client id, redirect url, or client secret
-// would break the login or callback at the first request, and an unknown
-// default role would auto-provision a member into a role that grants no
-// scopes. OAuth-off configs skip this. The client secret is checked here
-// rather than at first login so a misconfigured deployment fails at startup.
+// breaks login at the first request, and an unknown default role grants no
+// scopes. The client secret is checked here so a misconfigured deployment
+// fails at startup, not at first login.
 func validateOAuth(oauth *OAuth) error {
 	if !oauth.Enabled {
 		return nil
@@ -1016,13 +1017,11 @@ func validOAuthRole(role string) bool {
 	return role == roleAdmin || role == roleEditor || role == roleViewer
 }
 
-// validateBridge fails fast when the Telegram bridge is enabled but unusable: an
-// enabled bridge with no allowlisted users would accept nobody, and a user entry
-// with no workspace has nothing to stamp turns with. Bridge-off configs skip
-// this. The chat cross-check (bridge enabled while [chat] is disabled) lives at
-// serve wiring, where both blocks are visible
-// (.agents/spec/parity/messaging-bridge.md, decision 6). Iteration is over
-// sorted IDs so the reported entry is reproducible.
+// validateBridge fails fast when the Telegram bridge is enabled but unusable:
+// no allowlisted users accepts nobody, and a user entry with no workspace has
+// nothing to stamp turns with. The chat cross-check (bridge on while [chat] is
+// off) lives at serve wiring (.agents/spec/parity/messaging-bridge.md,
+// decision 6). Iteration is sorted by ID so the reported entry is reproducible.
 func validateBridge(telegram *Telegram) error {
 	if !telegram.Enabled {
 		return nil
@@ -1069,8 +1068,9 @@ func validateNotify(notify *Notify, identities map[string]MattermostIdentity) er
 func validateNotifyEvents(key string, events []string) error {
 	for _, event := range events {
 		if !validNotifyEvent(event) {
-			return fmt.Errorf("%w: %s %q is not one of %s, %s, %s, %s",
-				ErrInvalidConfig, key, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied)
+			return fmt.Errorf("%w: %s %q is not one of %s, %s, %s, %s, %s",
+				ErrInvalidConfig, key, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered,
+				NotifyEventBudgetDenied, NotifyEventConnectivity)
 		}
 	}
 
@@ -1080,7 +1080,7 @@ func validateNotifyEvents(key string, events []string) error {
 // validNotifyEvent reports whether event is one of the fan-out event names.
 func validNotifyEvent(event string) bool {
 	switch event {
-	case NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied:
+	case NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied, NotifyEventConnectivity:
 		return true
 	default:
 		return false
@@ -1090,46 +1090,17 @@ func validNotifyEvent(event string) bool {
 // fileConfig mirrors the TOML layout with string durations, so duration
 // parsing (including the day suffix) goes through workflow.ParseDuration.
 type fileConfig struct {
-	Engine struct {
-		MaxConcurrentActions *int                `toml:"max_concurrent_actions"`
-		DefaultTimeout       *string             `toml:"default_timeout"`
-		MaxCallDepth         *int                `toml:"max_call_depth"`
-		Retry                *fileRetry          `toml:"retry"`
-		Fallback             map[string][]string `toml:"fallback"`
-	} `toml:"engine"`
-	Store struct {
-		Backend *string `toml:"backend"`
-		DSN     *string `toml:"dsn"`
-	} `toml:"store"`
-	Secrets struct {
-		Backend *string `toml:"backend"`
-	} `toml:"secrets"`
-	Memory struct {
-		Backend         *string `toml:"backend"`
-		Vector          *bool   `toml:"vector"`
-		EmbeddingRunner *string `toml:"embedding_runner"`
-	} `toml:"memory"`
-	Retention struct {
-		Runs    *string `toml:"runs"`
-		Outputs *string `toml:"outputs"`
-		Sweep   *string `toml:"sweep"`
-	} `toml:"retention"`
-	Env struct {
-		Allowlist []string `toml:"allowlist"`
-	} `toml:"env"`
-	Telemetry struct {
-		Enabled      *bool   `toml:"enabled"`
-		Prometheus   *string `toml:"prometheus"`
-		OTLPEndpoint *string `toml:"otlp_endpoint"`
-	} `toml:"telemetry"`
-	API struct {
-		Enabled         *bool    `toml:"enabled"`
-		GRPC            *string  `toml:"grpc"`
-		HTTP            *string  `toml:"http"`
-		CORSOrigins     []string `toml:"cors_origins"`
-		MaxBodyBytes    *int64   `toml:"max_body_bytes"`
-		MaxRecvMsgBytes *int     `toml:"max_recv_msg_bytes"`
-	} `toml:"api"`
+	Bridge struct {
+		Telegram struct {
+			Enabled     *bool                     `toml:"enabled"`
+			PollTimeout *string                   `toml:"poll_timeout"`
+			SendTimeout *string                   `toml:"send_timeout"`
+			ConfirmTTL  *string                   `toml:"confirm_ttl"`
+			Verbose     *bool                     `toml:"verbose"`
+			Users       map[string]fileBridgeUser `toml:"users"`
+		} `toml:"telegram"`
+		Mattermost fileMattermost `toml:"mattermost"`
+	} `toml:"bridge"`
 	Auth struct {
 		Enabled                   *bool   `toml:"enabled"`
 		Issuer                    *string `toml:"issuer"`
@@ -1145,17 +1116,44 @@ type fileConfig struct {
 		StreamRecheck             *string `toml:"stream_recheck"`
 		ClockSkew                 *string `toml:"clock_skew"`
 	} `toml:"auth"`
-	OAuth struct {
-		Enabled             *bool    `toml:"enabled"`
-		Issuer              *string  `toml:"issuer"`
-		ClientID            *string  `toml:"client_id"`
-		RedirectURL         *string  `toml:"redirect_url"`
-		DefaultWorkspace    *string  `toml:"default_workspace"`
-		DefaultRole         *string  `toml:"default_role"`
-		AutoProvision       *bool    `toml:"auto_provision"`
-		AllowedEmailDomains []string `toml:"allowed_email_domains"`
-		AllowedSubjects     []string `toml:"allowed_subjects"`
-	} `toml:"oauth"`
+	Hive struct {
+		Enabled         *bool    `toml:"enabled"`
+		Endpoint        *string  `toml:"endpoint"`
+		NodePseudonym   *string  `toml:"node_pseudonym"`
+		PublishEnabled  *bool    `toml:"publish_enabled"`
+		KAnonymityFloor *int     `toml:"k_anonymity_floor"`
+		MinObservations *int     `toml:"min_observations"`
+		KeyRef          *string  `toml:"key_ref"`
+		PrevKeyRef      *string  `toml:"prev_key_ref"`
+		Categories      []string `toml:"categories"`
+	} `toml:"hive"`
+	Chat struct {
+		Enabled            *bool             `toml:"enabled"`
+		Driver             *string           `toml:"driver"`
+		DefaultPersonality *string           `toml:"default_personality"`
+		Personalities      map[string]string `toml:"personalities"`
+		TurnBudgetUSD      *float64          `toml:"turn_budget_usd"`
+		OpenAICompat       *bool             `toml:"openai_compat"`
+		MaxFileBytes       *int              `toml:"max_file_bytes"`
+		FileAllowlist      []string          `toml:"file_allowlist"`
+	} `toml:"chat"`
+	API struct {
+		Enabled         *bool    `toml:"enabled"`
+		GRPC            *string  `toml:"grpc"`
+		HTTP            *string  `toml:"http"`
+		MaxBodyBytes    *int64   `toml:"max_body_bytes"`
+		MaxRecvMsgBytes *int     `toml:"max_recv_msg_bytes"`
+		CORSOrigins     []string `toml:"cors_origins"`
+	} `toml:"api"`
+	Scheduler struct {
+		AckWait           *string `toml:"ack_wait"`
+		Backoff           *string `toml:"backoff"`
+		MaxDeliveries     *int    `toml:"max_deliveries"`
+		MaxAge            *string `toml:"max_age"`
+		WorkerConcurrency *int    `toml:"worker_concurrency"`
+		Prefetch          *int    `toml:"prefetch"`
+		SweepInterval     *string `toml:"sweep_interval"`
+	} `toml:"scheduler"`
 	A2A struct {
 		Enabled            *bool   `toml:"enabled"`
 		CardSigningKeyFile *string `toml:"card_signing_key_file"`
@@ -1172,73 +1170,77 @@ type fileConfig struct {
 		RegistryURL  *string `toml:"registry_url"`
 		AdvertiseURL *string `toml:"advertise_url"`
 	} `toml:"mcp"`
-	Hive struct {
-		Enabled         *bool    `toml:"enabled"`
-		Endpoint        *string  `toml:"endpoint"`
-		NodePseudonym   *string  `toml:"node_pseudonym"`
-		PublishEnabled  *bool    `toml:"publish_enabled"`
-		Categories      []string `toml:"categories"`
-		KAnonymityFloor *int     `toml:"k_anonymity_floor"`
-		MinObservations *int     `toml:"min_observations"`
-		KeyRef          *string  `toml:"key_ref"`
-		PrevKeyRef      *string  `toml:"prev_key_ref"`
-	} `toml:"hive"`
-	Autonomic struct {
-		AutoApplyEnabled *bool `toml:"auto_apply_enabled"`
-	} `toml:"autonomic"`
-	Tuning struct {
-		MinSavingsUSD        *float64 `toml:"min_savings_usd"`
-		EmbeddingModel       *string  `toml:"embedding_model"`
-		EquivalenceThreshold *float64 `toml:"equivalence_threshold"`
-	} `toml:"tuning"`
-	Scheduler struct {
-		AckWait           *string `toml:"ack_wait"`
-		Backoff           *string `toml:"backoff"`
-		MaxDeliveries     *int    `toml:"max_deliveries"`
-		MaxAge            *string `toml:"max_age"`
-		WorkerConcurrency *int    `toml:"worker_concurrency"`
-		Prefetch          *int    `toml:"prefetch"`
-		SweepInterval     *string `toml:"sweep_interval"`
-	} `toml:"scheduler"`
-	Chat struct {
-		Enabled            *bool             `toml:"enabled"`
-		Driver             *string           `toml:"driver"`
-		DefaultPersonality *string           `toml:"default_personality"`
-		Personalities      map[string]string `toml:"personalities"`
-		TurnBudgetUSD      *float64          `toml:"turn_budget_usd"`
-		OpenAICompat       *bool             `toml:"openai_compat"`
-		FileAllowlist      []string          `toml:"file_allowlist"`
-		MaxFileBytes       *int              `toml:"max_file_bytes"`
-	} `toml:"chat"`
+	Engine struct {
+		MaxConcurrentActions *int                `toml:"max_concurrent_actions"`
+		DefaultTimeout       *string             `toml:"default_timeout"`
+		MaxCallDepth         *int                `toml:"max_call_depth"`
+		Retry                *fileRetry          `toml:"retry"`
+		Fallback             map[string][]string `toml:"fallback"`
+	} `toml:"engine"`
 	Webhook struct {
 		Enabled       *bool   `toml:"enabled"`
 		RatePerMinute *int    `toml:"rate_per_minute"`
 		TestWait      *string `toml:"test_wait"`
 		SignatureSkew *string `toml:"signature_skew"`
 	} `toml:"webhook"`
-	Bridge struct {
-		Telegram struct {
-			Enabled     *bool                     `toml:"enabled"`
-			PollTimeout *string                   `toml:"poll_timeout"`
-			SendTimeout *string                   `toml:"send_timeout"`
-			ConfirmTTL  *string                   `toml:"confirm_ttl"`
-			Verbose     *bool                     `toml:"verbose"`
-			Users       map[string]fileBridgeUser `toml:"users"`
-		} `toml:"telegram"`
-		Mattermost fileMattermost `toml:"mattermost"`
-	} `toml:"bridge"`
+	Memory struct {
+		Backend         *string `toml:"backend"`
+		Vector          *bool   `toml:"vector"`
+		EmbeddingRunner *string `toml:"embedding_runner"`
+	} `toml:"memory"`
+	Retention struct {
+		Runs    *string `toml:"runs"`
+		Outputs *string `toml:"outputs"`
+		Sweep   *string `toml:"sweep"`
+	} `toml:"retention"`
+	Telemetry struct {
+		Enabled      *bool   `toml:"enabled"`
+		Prometheus   *string `toml:"prometheus"`
+		OTLPEndpoint *string `toml:"otlp_endpoint"`
+	} `toml:"telemetry"`
+	Tuning struct {
+		MinSavingsUSD        *float64 `toml:"min_savings_usd"`
+		EmbeddingModel       *string  `toml:"embedding_model"`
+		EquivalenceThreshold *float64 `toml:"equivalence_threshold"`
+	} `toml:"tuning"`
+	Store struct {
+		Backend *string `toml:"backend"`
+		DSN     *string `toml:"dsn"`
+	} `toml:"store"`
+	Autonomic struct {
+		AutoApplyEnabled *bool `toml:"auto_apply_enabled"`
+	} `toml:"autonomic"`
+	Secrets struct {
+		Backend *string `toml:"backend"`
+	} `toml:"secrets"`
+	Runner map[string]map[string]any `toml:"runner"`
+
+	// Credential holds each [credential.<name>] block verbatim so parsing can
+	// reject unknown keys itself: go-toml drops unknown struct fields silently,
+	// which would let a plaintext client_secret or a typo'd secret key sit in the
+	// file unnoticed (security amendment 4).
+	Credential map[string]map[string]any `toml:"credential"`
+
+	OAuth struct {
+		Enabled             *bool    `toml:"enabled"`
+		Issuer              *string  `toml:"issuer"`
+		ClientID            *string  `toml:"client_id"`
+		RedirectURL         *string  `toml:"redirect_url"`
+		DefaultWorkspace    *string  `toml:"default_workspace"`
+		DefaultRole         *string  `toml:"default_role"`
+		AutoProvision       *bool    `toml:"auto_provision"`
+		AllowedEmailDomains []string `toml:"allowed_email_domains"`
+		AllowedSubjects     []string `toml:"allowed_subjects"`
+	} `toml:"oauth"`
 	Notify struct {
 		Discord struct {
 			Events []string `toml:"events"`
 		} `toml:"discord"`
 		Mattermost fileNotifyMattermost `toml:"mattermost"`
 	} `toml:"notify"`
-	Runner map[string]map[string]any `toml:"runner"`
-	// Credential holds each [credential.<name>] block verbatim so parsing can
-	// reject unknown keys itself: go-toml drops unknown struct fields silently,
-	// which would let a plaintext client_secret or a typo'd secret key sit in the
-	// file unnoticed (security amendment 4).
-	Credential map[string]map[string]any `toml:"credential"`
+	Env struct {
+		Allowlist []string `toml:"allowlist"`
+	} `toml:"env"`
 }
 
 // fileBridgeUser mirrors one [bridge.telegram.users.<id>] table. Each entry
@@ -1433,9 +1435,9 @@ func applyScalars(cfg *Config, file *fileConfig) {
 // durTarget pairs one optional file value with its destination so duration
 // parsing reports the failing key by its TOML name.
 type durTarget struct {
-	name string
 	raw  *string
 	dst  *time.Duration
+	name string
 }
 
 func applyDurations(cfg *Config, file *fileConfig) error {

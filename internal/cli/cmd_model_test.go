@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
@@ -21,7 +22,7 @@ func runModel(t *testing.T, args ...string) (int, string, string) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := New(&stdout, &stderr).Run(t.Context(), append([]string{cmdModelName}, args...))
+	code := cli.New(&stdout, &stderr).Run(t.Context(), append([]string{cmdModelName}, args...))
 
 	return code, stdout.String(), stderr.String()
 }
@@ -32,8 +33,8 @@ func TestModelWithoutSubcommandPrintsUsage(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runModel(t)
-	if code != ExitUsage {
-		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	if code != cli.ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitUsage)
 	}
 
 	for _, want := range []string{"setup", "status", "check", "upgrade", "uninstall"} {
@@ -48,8 +49,8 @@ func TestModelUnknownSubcommandIsUsageError(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runModel(t, "reinstall")
-	if code != ExitUsage {
-		t.Fatalf("exit = %d, want %d", code, ExitUsage)
+	if code != cli.ExitUsage {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitUsage)
 	}
 
 	if !strings.Contains(stderr, `unknown model subcommand "reinstall"`) {
@@ -65,7 +66,7 @@ func TestModelSetupDryRunPlansAndTouchesNothing(t *testing.T) {
 	home := t.TempDir()
 
 	code, stdout, stderr := runModel(t, "setup", "--dir", home, "--dry-run")
-	if code != ExitOK {
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 
@@ -95,7 +96,7 @@ func TestModelSetupDryRunSkipsServiceOnRequest(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runModel(t, "setup", "--dir", t.TempDir(), "--dry-run", "--no-service")
-	if code != ExitOK {
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 
@@ -110,8 +111,8 @@ func TestModelSetupRejectsUnknownModel(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runModel(t, "setup", "--dir", t.TempDir(), "--dry-run", "--model", "llama-9000")
-	if code != ExitFailure {
-		t.Fatalf("exit = %d, want %d", code, ExitFailure)
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitFailure)
 	}
 
 	if !strings.Contains(stderr, "llama-9000") {
@@ -129,7 +130,7 @@ func TestModelSetupDryRunLeavesAnExistingRunnerBlockAlone(t *testing.T) {
 	seedConfig(t, home, "[runner.local]\ntype = \"openai\"\n")
 
 	code, stdout, stderr := runModel(t, "setup", "--dir", home, "--dry-run")
-	if code != ExitOK {
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 
@@ -146,12 +147,12 @@ func TestWriteConfigBlockAppendsRunnerLocal(t *testing.T) {
 	home := t.TempDir()
 	seedConfig(t, home, "[engine]\nmax_concurrent_actions = 4\n")
 
-	app := New(&bytes.Buffer{}, &bytes.Buffer{})
-	if err := app.writeConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
+	app := cli.New(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := app.WriteConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
 		t.Fatalf("writeConfigBlock: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(home, configFileName))
+	raw, err := os.ReadFile(filepath.Join(home, cli.ConfigFileName))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -175,20 +176,20 @@ func TestWriteConfigBlockIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	app := New(&bytes.Buffer{}, &bytes.Buffer{})
+	app := cli.New(&bytes.Buffer{}, &bytes.Buffer{})
 
 	for range 2 {
-		if err := app.writeConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
+		if err := app.WriteConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
 			t.Fatalf("writeConfigBlock: %v", err)
 		}
 	}
 
-	raw, err := os.ReadFile(filepath.Join(home, configFileName))
+	raw, err := os.ReadFile(filepath.Join(home, cli.ConfigFileName))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
 
-	if count := strings.Count(string(raw), localRunnerHeader); count != 1 {
+	if count := strings.Count(string(raw), cli.LocalRunnerHeader); count != 1 {
 		t.Errorf("config carries %d [runner.local] sections, want 1:\n%s", count, raw)
 	}
 }
@@ -202,12 +203,12 @@ func TestWriteConfigBlockKeepsAnEditedBlock(t *testing.T) {
 	edited := "[runner.local]\ntype = \"openai\"\nbase_url = \"http://127.0.0.1:9999/v1\"\n"
 	seedConfig(t, home, edited)
 
-	app := New(&bytes.Buffer{}, &bytes.Buffer{})
-	if err := app.writeConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
+	app := cli.New(&bytes.Buffer{}, &bytes.Buffer{})
+	if err := app.WriteConfigBlock(home, "gemma-4-e4b", 8089); err != nil {
 		t.Fatalf("writeConfigBlock: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(home, configFileName))
+	raw, err := os.ReadFile(filepath.Join(home, cli.ConfigFileName))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestModelStatusReportsNothingInstalled(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runModel(t, "status", "--dir", t.TempDir())
-	if code != ExitFailure {
+	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 
@@ -243,8 +244,8 @@ func TestModelStatusSeesAnAnsweringServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	code, stdout, _ := runModel(t, "status", "--dir", t.TempDir(), "--"+flagPort, portOf(t, server.URL))
-	if code != ExitFailure {
+	code, stdout, _ := runModel(t, "status", "--dir", t.TempDir(), "--"+cli.FlagPort, portOf(t, server.URL))
+	if code != cli.ExitFailure {
 		t.Errorf("exit = %d, want failure while the runtime is still missing", code)
 	}
 
@@ -275,7 +276,7 @@ func TestModelUninstallDryRunKeepsTheDownloadByDefault(t *testing.T) {
 	home := t.TempDir()
 
 	code, stdout, stderr := runModel(t, "uninstall", "--dir", home, "--dry-run")
-	if code != ExitOK {
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 
@@ -294,7 +295,7 @@ func TestModelUninstallDryRunKeepsTheDownloadByDefault(t *testing.T) {
 func TestDefaultThreadsLeavesHeadroom(t *testing.T) {
 	t.Parallel()
 
-	if got := defaultThreads(); got < 1 {
+	if got := cli.DefaultThreads(); got < 1 {
 		t.Errorf("defaultThreads = %d, want at least 1", got)
 	}
 }
@@ -303,7 +304,7 @@ func TestDefaultThreadsLeavesHeadroom(t *testing.T) {
 func seedConfig(t *testing.T, home, content string) {
 	t.Helper()
 
-	if err := os.WriteFile(filepath.Join(home, configFileName), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, cli.ConfigFileName), []byte(content), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 }
@@ -327,11 +328,9 @@ func portOf(t *testing.T, rawURL string) string {
 func TestModelRejectsUnusableFlagValues(t *testing.T) {
 	t.Parallel()
 
-	const (
-		portArg    = "--" + flagPort
-		threadsArg = "--" + flagThreads
-		ctxArg     = "--" + flagCtxSize
-	)
+	portArg := "--" + cli.FlagPort
+	threadsArg := "--" + cli.FlagThreads
+	ctxArg := "--" + cli.FlagCtxSize
 
 	cases := []struct {
 		name string
@@ -353,8 +352,8 @@ func TestModelRejectsUnusableFlagValues(t *testing.T) {
 
 			code, _, stderr := runModel(t,
 				"setup", "--dir", t.TempDir(), "--dry-run", testCase.flag, testCase.arg)
-			if code != ExitFailure {
-				t.Fatalf("exit = %d, want %d", code, ExitFailure)
+			if code != cli.ExitFailure {
+				t.Fatalf("exit = %d, want %d", code, cli.ExitFailure)
 			}
 
 			if !strings.Contains(stderr, strings.TrimPrefix(testCase.flag, "--")) {
@@ -370,8 +369,8 @@ func TestModelAcceptsTheFlagBounds(t *testing.T) {
 	t.Parallel()
 
 	code, _, stderr := runModel(t, "setup", "--dir", t.TempDir(), "--dry-run",
-		"--"+flagPort, "65535", "--"+flagThreads, "1", "--"+flagCtxSize, "1")
-	if code != ExitOK {
+		"--"+cli.FlagPort, "65535", "--"+cli.FlagThreads, "1", "--"+cli.FlagCtxSize, "1")
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, stderr = %s", code, stderr)
 	}
 }
@@ -381,9 +380,9 @@ func TestModelAcceptsTheFlagBounds(t *testing.T) {
 func TestModelStatusRejectsABadPort(t *testing.T) {
 	t.Parallel()
 
-	code, _, stderr := runModel(t, "status", "--dir", t.TempDir(), "--"+flagPort, "0")
-	if code != ExitFailure {
-		t.Fatalf("exit = %d, want %d", code, ExitFailure)
+	code, _, stderr := runModel(t, "status", "--dir", t.TempDir(), "--"+cli.FlagPort, "0")
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitFailure)
 	}
 
 	if !strings.Contains(stderr, "port") {
@@ -397,18 +396,18 @@ func TestModelStatusRejectsABadPort(t *testing.T) {
 func TestManualStartHintIsRunnable(t *testing.T) {
 	t.Parallel()
 
-	opts := modelOptions{dir: t.TempDir(), model: localmodel.DefaultModel, port: 9100, threads: 3, ctxSize: 4096}
+	opts := cli.NewModelOptions(t.TempDir(), localmodel.DefaultModel, 9100, 3, 4096)
 
-	target, err := resolveModelTarget(&opts)
+	target, err := cli.ResolveModelTarget(opts)
 	if err != nil {
 		t.Fatalf("resolve target: %v", err)
 	}
 
-	hint := manualStartHint(target, &opts)
+	hint := cli.ManualStartHint(target, opts)
 
 	for _, want := range []string{
-		target.layout.ServerPath(),
-		target.layout.ModelPath(&target.model),
+		target.ServerPath(),
+		target.ModelPath(),
 		"--port 9100", "--threads 3", "--ctx-size 4096", "--host 127.0.0.1", "--jinja",
 	} {
 		if !strings.Contains(hint, want) {

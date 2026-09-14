@@ -82,14 +82,11 @@ runner = "mock"
 params = { delay_ms = 60000 }
 `
 
-// streamTOML holds its first action long enough that a consumer calling
-// TaskUpdates right after CreateTask still attaches to the live run. The
-// manager drops a run's retained handle the moment the run finishes (release in
-// api/manager.go), and a late consumer then falls back to the stored terminal
-// record, which carries no per-action steps. hello's actions are instant, so a
-// loaded machine can finish the run between the two calls; the delay here is
-// what makes the per-action assertions about the live stream hold. It is not
-// padding, so do not trim it away.
+// streamTOML delays its first action so a consumer calling TaskUpdates right
+// after CreateTask attaches to the live run. The manager releases a run's handle
+// when the run finishes (api/manager.go), and a late consumer falls back to the
+// stored terminal record, which has no per-action steps. The delay keeps the
+// live-stream assertions meaningful, so don't trim it.
 const streamTOML = `
 [workflow]
 name = "stream"
@@ -168,8 +165,8 @@ type fixture struct {
 	bundle    *a2a.Bundle
 	authStore *auth.SQLite
 	chat      *chatRig
-	cardKey   ed25519.PublicKey
 	httpBase  string
+	cardKey   ed25519.PublicKey
 }
 
 // fixtureOptions tunes the server the fixture boots.
@@ -264,22 +261,22 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 
 	authStore := wireFixtureAuth(t, opts, dbPath, apiCfg)
 
-	if err := bundle.Attach(apiCfg); err != nil {
-		t.Fatalf("attach a2a bundle: %v", err)
+	if attachErr := bundle.Attach(apiCfg); attachErr != nil {
+		t.Fatalf("attach a2a bundle: %v", attachErr)
 	}
 
 	server := api.NewServer(apiCfg)
 
-	if err := server.Start(t.Context()); err != nil {
-		t.Fatalf("start server: %v", err)
+	if startErr := server.Start(t.Context()); startErr != nil {
+		t.Fatalf("start server: %v", startErr)
 	}
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), shutdownTimeout)
 		defer cancel()
 
-		if err := server.Shutdown(ctx); err != nil {
-			t.Errorf("shutdown server: %v", err)
+		if shutdownErr := server.Shutdown(ctx); shutdownErr != nil {
+			t.Errorf("shutdown server: %v", shutdownErr)
 		}
 	})
 
@@ -371,8 +368,8 @@ func (f *fixture) tokenInWorkspace(t *testing.T, workspace string, scopes ...str
 		t.Fatalf("NewKey: %v", err)
 	}
 
-	if err := f.authStore.CreateKey(t.Context(), key); err != nil {
-		t.Fatalf("CreateKey: %v", err)
+	if createKeyErr := f.authStore.CreateKey(t.Context(), key); createKeyErr != nil {
+		t.Fatalf("CreateKey: %v", createKeyErr)
 	}
 
 	resp, err := f.login.Login(t.Context(), &cairnosv1.LoginRequest{Key: plaintext})

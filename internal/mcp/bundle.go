@@ -20,15 +20,10 @@ const DefaultHTTPPath = "/mcp"
 const bearerScheme = "bearer "
 
 // HTTPHandler builds the streamable-HTTP http.Handler for the MCP server. Each
-// request gets a fresh *mcp.Server bound to that request's bearer token, so the
-// tool and resource handlers enforce scopes against the caller who made the
-// call. With auth enabled and no token present, the handlers themselves answer
-// auth.unauthenticated, so the token check sits in one place rather than split
-// between the transport and the handlers.
-//
-// The SDK's getServer callback is the per-request hook: it receives the
-// *http.Request, so the Authorization header is read here and threaded into the
-// server the SDK then drives for that session.
+// request gets a fresh *mcp.Server bound to that request's bearer token, read
+// from the Authorization header by the SDK's per-request getServer callback,
+// so the handlers enforce scopes against the caller and answer
+// auth.unauthenticated themselves rather than the transport doing it.
 func (s *Service) HTTPHandler() http.Handler {
 	getServer := func(req *http.Request) *mcp.Server {
 		return s.build(bearerFromHeader(req.Header))
@@ -37,15 +32,13 @@ func (s *Service) HTTPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(getServer, nil)
 }
 
-// Extension returns the api.Extension that mounts the MCP HTTP handler on the
-// shared API server's root mux at path. The handler sits outside the gRPC
-// gateway and outside the gRPC auth interceptor (the MCP handlers enforce auth
-// themselves), the same way the A2A well-known route and the OAuth login route
-// mount as root HTTP routes.
+// Extension mounts the MCP HTTP handler on the shared API server's root mux at
+// path. It sits outside the gRPC gateway and its auth interceptor, since the
+// MCP handlers enforce auth themselves, like the A2A well-known and OAuth
+// login routes.
 //
-// The path is registered as a prefix ("/mcp/") plus the bare path ("/mcp") so a
-// client can POST to either, matching how the streamable transport addresses a
-// session.
+// Both the prefix ("/mcp/") and the bare path ("/mcp") are registered, because
+// a client may POST to either.
 func (s *Service) Extension(path string) *api.Extension {
 	if path == "" {
 		path = DefaultHTTPPath
@@ -65,14 +58,12 @@ func (s *Service) Extension(path string) *api.Extension {
 	}
 }
 
-// ServeStdio runs the MCP server over the stdio transport until ctx cancels or
-// the peer closes the connection. This is the `cairnos mcp serve` path: an MCP
-// client spawns CairnOS as a subprocess and speaks MCP over its stdin and
-// stdout. Auth is the process boundary here, not a token: whoever can spawn the
-// process already holds the machine, so the server is built with an empty token
-// and (when an authenticator is configured) the handlers authorize on the
-// default workspace. The stdio transport carries no HTTP header to lift a token
-// from, which is why the boundary, not a scope check, is the control.
+// ServeStdio runs the MCP server over stdio until ctx cancels or the peer
+// closes the connection. It backs `cairnos mcp serve`.
+//
+// Auth is the process boundary, not a token: whoever can spawn the process
+// already holds the machine, and stdio carries no header to lift a token from.
+// The empty token leaves handlers on the default workspace.
 func (s *Service) ServeStdio(ctx context.Context) error {
 	server := s.build("")
 

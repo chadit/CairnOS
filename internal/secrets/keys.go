@@ -56,10 +56,9 @@ func LoadKeys(getenv func(string) string) ([]byte, [][]byte, error) {
 
 // GenerateKey returns a fresh 32-byte AES-256 key from the OS CSPRNG, base64
 // standard encoded for CAIRNOS_SECRETS_KEY. cairnos secrets keygen prints this.
-// A hand-typed or passphrase-derived 32-byte key passes LoadKeys' length check
-// yet is insecure: the length check cannot see entropy, so a master key must
-// come from a CSPRNG. Key compromise loses the whole store; the previous-key
-// window is the only partial mitigation.
+// A hand-typed or passphrase-derived key passes LoadKeys' length check yet is
+// insecure, since that check cannot see entropy. Key compromise loses the whole
+// store; the previous-key window is the only partial mitigation.
 func GenerateKey() (string, error) {
 	key := make([]byte, keySize)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {

@@ -1,0 +1,23 @@
+# betterleaks configuration for CairnOS.
+#
+# betterleaks picks this up as the repo's config. extend.useDefault keeps the
+# upstream rule set intact; the only thing this file adds is the allowlist
+# below.
+
+[extend]
+useDefault = true
+
+# Every Postgres-backed store has a test that dials a deliberately dead address
+# to assert Open* surfaces a connection error. The DSN is a placeholder, not a
+# credential: "user:pass" is literal, port 1 on loopback is closed, and the
+# database "nope" does not exist. condition = "AND" keeps the entry from
+# blanket-allowlisting Go test files; both the path and the literal DSN have to
+# match. regexTarget = "line" is needed because the rule reports only the
+# password word as the secret, so the DSN pattern has nothing to match against
+# the default target.
+[[allowlists]]
+description = "placeholder Postgres DSN in store connection-failure tests"
+condition = "AND"
+regexTarget = "line"
+paths = ['''_test\.go$''']
+regexes = ['''postgres://user:pass@127\.0\.0\.1:1/nope''']

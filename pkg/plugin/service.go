@@ -117,8 +117,8 @@ func (s *service) run(ctx context.Context, task *runner.Task, stream grpc.Server
 // sends and the terminal event has to go out last.
 func runStreaming(ctx context.Context, task *runner.Task, streamer runner.Streamer, stream grpc.ServerStreamingServer[pluginv1.ExecuteEvent]) (runner.Result, error) {
 	type outcome struct {
-		result runner.Result
 		err    error
+		result runner.Result
 	}
 
 	chunks := make(chan runner.Chunk, chunkBuffer)

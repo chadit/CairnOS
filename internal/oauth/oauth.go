@@ -70,11 +70,6 @@ type Tenancy interface {
 // membership is refused unless an operator turns Enabled on, and even then the
 // allowlists, when set, decide which subjects may self-provision.
 type ProvisionPolicy struct {
-	// Enabled turns auto-provisioning on. With it off, a first-time subject with
-	// no membership is refused (errAutoProvisionDisabled) so an admin must
-	// pre-create the membership.
-	Enabled bool
-
 	// AllowedEmailDomains gates by the verified email's domain (the part after
 	// @). Empty means domain is not checked.
 	AllowedEmailDomains []string
@@ -82,6 +77,11 @@ type ProvisionPolicy struct {
 	// AllowedSubjects gates by the verified ID token subject. Empty means
 	// subject is not checked.
 	AllowedSubjects []string
+
+	// Enabled turns auto-provisioning on. With it off, a first-time subject with
+	// no membership is refused (errAutoProvisionDisabled) so an admin must
+	// pre-create the membership.
+	Enabled bool
 }
 
 // identity is the verified caller resolveRole acts on: the IdP subject plus the
@@ -93,12 +93,11 @@ type identity struct {
 }
 
 // resolveRole returns the scopes for a subject's role in the configured
-// workspace. An existing member's stored role is honored. A first-time login is
+// workspace. An existing member's stored role wins. A first-time login is
 // auto-provisioned only when the policy allows it: provisioning is off by
-// default and, when on, the email-domain and subject allowlists gate which
-// subjects may self-provision. The role-to-scope map lives in internal/tenancy;
-// cross-workspace OAuth needs a workspace selector at the IdP, which is a
-// follow-up.
+// default, and the email-domain and subject allowlists gate who may
+// self-provision. Cross-workspace OAuth needs a workspace selector at the IdP,
+// which is a follow-up.
 func resolveRole(ctx context.Context, members Tenancy, policy ProvisionPolicy, workspace, defaultRole string, who identity) (string, []string, error) {
 	role, err := members.GetMemberRole(ctx, workspace, who.subject)
 	if err == nil {
@@ -159,12 +158,10 @@ func checkAutoProvision(policy ProvisionPolicy, who identity) error {
 // never matches, so a subject with an empty or malformed email cannot slip past
 // a domain allowlist.
 func emailDomainAllowed(email string, allowed []string) bool {
-	at := strings.LastIndex(email, "@")
-	if at < 0 || at == len(email)-1 {
+	_, domain, found := strings.CutLast(email, "@")
+	if !found || domain == "" {
 		return false
 	}
-
-	domain := email[at+1:]
 
 	for _, candidate := range allowed {
 		if strings.EqualFold(candidate, domain) {

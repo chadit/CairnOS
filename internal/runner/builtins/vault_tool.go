@@ -23,12 +23,11 @@ const (
 	defaultVaultDocs = 10
 )
 
-// VaultQuery is the built-in agent-loop tool over the vault's typed graph
-// query (.agents/spec/15-agent-loop.md, "Tools"; the vault DSL in
-// .agents/spec/14-open-decisions.md, S1). It exposes the read side of the
-// vault to a chat agent: keyword text match, tag and project filters, and
-// bounded link traversal. There is no write op, so a chat turn can read the
-// knowledge graph but cannot mutate it through this tool.
+// VaultQuery is the built-in agent-loop tool over the vault's typed graph query
+// (.agents/spec/15-agent-loop.md, "Tools"; the vault DSL in
+// .agents/spec/14-open-decisions.md, S1). It exposes only the read side:
+// keyword text match, tag and project filters, and bounded link traversal.
+// There is no write op, so a chat turn cannot mutate the knowledge graph here.
 type VaultQuery struct {
 	store vault.Store
 }

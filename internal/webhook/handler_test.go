@@ -48,8 +48,8 @@ const (
 // syncBuffer is a concurrency-safe log sink, so the background drain goroutine
 // and the test's log assertions never race on the underlying buffer.
 type syncBuffer struct {
-	mu  sync.Mutex
 	buf bytes.Buffer
+	mu  sync.Mutex
 }
 
 func (s *syncBuffer) Write(data []byte) (int, error) {
@@ -72,8 +72,8 @@ func (s *syncBuffer) String() string {
 // timestamp check all read, so rate windows and freshness stay repeatable
 // without sleeping.
 type frozen struct {
-	mu sync.Mutex
 	at time.Time
+	mu sync.Mutex
 }
 
 func (f *frozen) now() time.Time {
@@ -145,17 +145,16 @@ func (s *fakeStore) putHash(hash string, reg *webhook.Registration, endpoint web
 // outcome. block leaves the outcome undelivered (a slow run); deliver pushes a
 // terminal result to unblock the drain.
 type fakeRunStarter struct {
-	mu            sync.Mutex
-	calls         int
-	lastWorkspace string
+	result        webhook.RunResult
+	startErr      error
 	lastInputs    map[string]any
-	lastTrigger   string
 	lastOutcome   chan webhook.RunResult
-
-	startErr error
-	runID    string
-	block    bool
-	result   webhook.RunResult
+	lastWorkspace string
+	lastTrigger   string
+	runID         string
+	calls         int
+	mu            sync.Mutex
+	block         bool
 }
 
 func (f *fakeRunStarter) StartRun(ctx context.Context, _ string, inputs map[string]any, trigger string) (webhook.StartedRun, error) {
@@ -221,8 +220,8 @@ func (f *fakeRunStarter) startedTrigger() string {
 
 // fakePauseChecker answers the pause gate.
 type fakePauseChecker struct {
-	paused bool
 	err    error
+	paused bool
 }
 
 func (f *fakePauseChecker) IsPaused(context.Context, string) (bool, error) {
@@ -231,8 +230,8 @@ func (f *fakePauseChecker) IsPaused(context.Context, string) (bool, error) {
 
 // fakeSecrets resolves the HMAC secret or fails closed.
 type fakeSecrets struct {
-	secret string
 	err    error
+	secret string
 }
 
 func (f *fakeSecrets) Get(context.Context, string) (string, error) {
@@ -359,12 +358,12 @@ func mint(t *testing.T) (string, string) {
 
 // errBody and okBody decode the two response envelope shapes.
 type errBody struct {
-	Status string `json:"status"`
-	Error  struct {
+	Error struct {
+		Details map[string]any `json:"details"`
 		Code    string         `json:"code"`
 		Message string         `json:"message"`
-		Details map[string]any `json:"details"`
 	} `json:"error"`
+	Status string `json:"status"`
 }
 
 type okBody struct {

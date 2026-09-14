@@ -43,8 +43,8 @@ func Known(provider Provider) bool {
 // when it expires and which account it belongs to. Both fields are best-effort.
 // A field the reader could not resolve is left zero rather than guessed.
 type Credential struct {
-	Account   string
 	ExpiresAt time.Time
+	Account   string
 }
 
 // Valid reports whether the credential is present and not yet expired at now. A
@@ -111,8 +111,8 @@ func readCodex(homeDir string) (Credential, error) {
 // qwenCreds is the slice of ~/.qwen/oauth_creds.json the probe reads: qwen stores
 // an explicit expiry_date in epoch milliseconds.
 type qwenCreds struct {
-	ExpiryDate int64  `json:"expiry_date"`
 	Email      string `json:"email"`
+	ExpiryDate int64  `json:"expiry_date"`
 }
 
 // readQwen reads ~/.qwen/oauth_creds.json, taking the expiry from the explicit

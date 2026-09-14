@@ -33,11 +33,10 @@ type TokenLookup interface {
 }
 
 // requireCredential resolves a runner's credential config against the wired
-// lookup at build time. An empty key is the no-credential path and returns "".
-// A named credential with a nil lookup (no [credential.*] blocks wired) or an
-// unknown name is a config error, so a typo or a missing manager fails BuildAll
-// at startup rather than mid-run. The error names the credential, never a
-// secret value.
+// lookup at build time. A named credential with a nil lookup (no [credential.*]
+// blocks wired) or an unknown name is a config error, so a typo or a missing
+// manager fails BuildAll at startup rather than mid-run. The error names the
+// credential, never a secret value.
 func requireCredential(cfg map[string]any, lookup TokenLookup) (string, error) {
 	name, err := configValue(cfg, cfgKeyCredential, "")
 	if err != nil {
@@ -84,11 +83,10 @@ func setBearerIfAbsent(ctx context.Context, request *http.Request, lookup TokenL
 }
 
 // bearerRoundTripper injects the credential's bearer token into every request
-// the mcp_client streamable HTTP transport makes, unless the request already
-// carries an Authorization header. It clones the request before mutating it so
-// the SDK's own request is untouched (the RoundTripper contract), and mints the
-// token under the request's own context. The token is a secret: it rides the
-// header only, never a log line or error.
+// the mcp_client streamable HTTP transport makes. It clones the request before
+// mutating it so the SDK's own request is untouched (the RoundTripper
+// contract), and mints the token under the request's own context. The token is
+// a secret: it rides the header only, never a log line or error.
 type bearerRoundTripper struct {
 	base       http.RoundTripper
 	lookup     TokenLookup

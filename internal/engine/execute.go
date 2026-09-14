@@ -18,9 +18,9 @@ import (
 // neither succeeded nor failed, so runAction records it as ActionWaiting and
 // the run quiesces to held (.agents/spec/parity/workflow-language.md).
 type attemptOutcome struct {
+	cerr     *cairnerr.Error
 	result   runner.Result
 	attempts int
-	cerr     *cairnerr.Error
 	waiting  bool
 }
 
@@ -231,10 +231,10 @@ func (e *Engine) runProvider(actCtx context.Context, action *workflow.Action, pr
 
 // agentAttempt is the agent-kind counterpart of attempt: resolve the goal,
 // derive the action deadline, and delegate to the configured AgentExecutor.
-// No retry, breaker, or runner Validate wraps the loop itself: iteration
-// and budget walls are its failure story, re-running a half-spent loop
-// would double the spend, and the loop validates its driver and tools
-// internally. attempts stays 1 so Usage.Retries reads zero.
+// No retry, breaker, or runner Validate wraps the loop: budget walls are its
+// failure story, re-running a half-spent loop would double spend, and the loop
+// validates its driver and tools itself. attempts stays 1 so Usage.Retries
+// reads zero.
 func (e *Engine) agentAttempt(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any) attemptOutcome {
 	goal, err := e.resolveGoal(ctx, action, inputs, outputs)
 	if err != nil {

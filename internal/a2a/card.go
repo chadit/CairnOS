@@ -82,11 +82,13 @@ type SigningInfo struct {
 // reach it, what it can do, how to authenticate, and the signature that lets a
 // consumer trust the card came from this node untampered.
 type Card struct {
-	Name     string  `json:"name"`
-	Version  string  `json:"version"`
-	Protocol string  `json:"protocol"`
-	Endpoint string  `json:"endpoint"`
-	Skills   []Skill `json:"skills"`
+	Signing  SigningInfo `json:"signing"`
+	Auth     AuthInfo    `json:"auth"`
+	Name     string      `json:"name"`
+	Version  string      `json:"version"`
+	Protocol string      `json:"protocol"`
+	Endpoint string      `json:"endpoint"`
+	Skills   []Skill     `json:"skills"`
 
 	// Channels are the chat surfaces the node answers on. omitempty is what keeps
 	// the key off a node with no chat identities: the builder hands over a nil
@@ -94,9 +96,6 @@ type Card struct {
 	// with omitempty both render identically, so that choice can never change the
 	// bytes Sign covers.
 	Channels []Channel `json:"channels,omitempty"`
-
-	Auth    AuthInfo    `json:"auth"`
-	Signing SigningInfo `json:"signing"`
 }
 
 // Sign fills the card's signing block: it records the algorithm and public

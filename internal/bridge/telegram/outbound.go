@@ -144,13 +144,10 @@ func parseCallback(data string) (string, string, bool) {
 		return "", "", false
 	}
 
-	idx := strings.LastIndex(rest, callbackSep)
-	if idx < 0 {
+	sessionID, action, found := strings.CutLast(rest, callbackSep)
+	if !found {
 		return "", "", false
 	}
-
-	sessionID := rest[:idx]
-	action := rest[idx+1:]
 
 	if sessionID == "" || (action != actionApprove && action != actionDeny) {
 		return "", "", false

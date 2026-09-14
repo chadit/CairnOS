@@ -33,8 +33,8 @@ const defaultWebhookTimeout = 30 * time.Second
 // verbatim, anything else JSON-encodes) and url (overrides the config
 // target). Timeouts come from ctx and the task deadline, not the client.
 type Webhook struct {
-	url    string
 	client *http.Client
+	url    string
 }
 
 // NewWebhook builds the runner over an injected HTTP client so tests can

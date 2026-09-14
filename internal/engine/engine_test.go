@@ -447,9 +447,9 @@ func TestRetryPolicyHonorsIdempotence(t *testing.T) {
 		flowTOML    string
 		wantRun     store.RunStatus
 		wantAction  store.ActionStatus
+		wantCode    string
 		wantAttempt int
 		wantRetries int
-		wantCode    string
 	}{
 		{
 			name:        "idempotent transient failure retries then succeeds",
@@ -776,11 +776,10 @@ func TestOperatorCancelEndsRunCanceled(t *testing.T) {
 }
 
 // TestCanceledStartStillPersistsRunRecord proves the run insert survives a
-// context that is already canceled when RunWorkflow is entered. The manager
-// hands out a reserved run id before this write lands, so a Cancel arriving in
-// that window used to kill the insert: the caller got "create run: context
-// canceled" and no record existed to mark canceled, which left an A2A task
-// answering Internal with nothing in the store.
+// context canceled before entry. The manager hands out a reserved run id before
+// this write lands, so a Cancel arriving then used to kill the insert: the
+// caller got "create run: context canceled" and no record existed to mark
+// canceled, leaving an A2A task answering Internal with nothing in the store.
 func TestCanceledStartStillPersistsRunRecord(t *testing.T) {
 	t.Parallel()
 
@@ -887,8 +886,8 @@ func TestMissingSecretFailsAction(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
 		secrets engine.SecretSource
+		name    string
 	}{
 		{name: "nil secret source", secrets: nil},
 		{name: "secret missing from source", secrets: &fakeSecrets{values: map[string]string{}}},

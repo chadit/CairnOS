@@ -46,17 +46,15 @@ type BindPolicy struct {
 	ServeWithoutAuthOnNetwork bool
 }
 
-// normalizeBind enforces the network guard on one bind address and returns
-// the network and address to listen on, plus a warning to log when the
-// bind is allowed but deliberately unprotected. Loopback IPs, the literal
-// localhost, and unix sockets always pass; an empty host (":7777" binds
-// every interface) rewrites to 127.0.0.1 so the shipped defaults stay
-// safe. Anything else runs the policy matrix:
+// normalizeBind applies the bind-address network guard, returning network,
+// address, and a warning when an allowed bind is unprotected. Loopback,
+// localhost, and unix sockets pass; an empty host rewrites to 127.0.0.1.
+// Otherwise:
 //
-//	auth on  + tls_terminated            -> allowed
-//	auth on  + no TLS claim              -> refused (plaintext /login)
-//	auth off + serve_without_auth_on_network -> allowed, loud warning
-//	auth off otherwise                   -> refused
+//	auth on,  tls_terminated -> allowed
+//	auth on,  no TLS claim   -> refused (plaintext /login)
+//	auth off, serve_without_auth_on_network -> allowed, loud warning
+//	auth off, otherwise      -> refused
 func normalizeBind(addr string, policy BindPolicy) (string, string, string, error) {
 	if path, isUnix := strings.CutPrefix(addr, unixPrefix); isUnix {
 		return networkUnix, path, "", nil

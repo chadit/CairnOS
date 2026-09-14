@@ -27,8 +27,8 @@ func TestReflectionListsServices(t *testing.T) {
 		MessageRequest: &reflectionpb.ServerReflectionRequest_ListServices{ListServices: ""},
 	}
 
-	if err := stream.Send(req); err != nil {
-		t.Fatalf("send list services: %v", err)
+	if sendErr := stream.Send(req); sendErr != nil {
+		t.Fatalf("send list services: %v", sendErr)
 	}
 
 	resp, err := stream.Recv()

@@ -21,21 +21,18 @@ const defaultEmbeddingModel = "text-embedding-3-small"
 // distinctly from the chat runner's in logs and evidence.
 const embeddingsCodePrefix = OpenAIName + ".embeddings"
 
-// OpenAIEmbedder calls the OpenAI embeddings API to vectorize text for the
-// tuning engine's embedding-similarity comparator (R1,
-// .agents/spec/14-open-decisions.md). It satisfies tuning.Embedder
-// structurally, so the CLI wires it into the comparator without the tuning
-// package importing this one. It reuses the openai runner's base URL and API
-// key, so an operator who already configured the openai runner only names an
-// embedding model to turn similarity comparison on.
+// OpenAIEmbedder vectorizes text for the tuning engine's embedding-similarity
+// comparator (R1, .agents/spec/14-open-decisions.md). It satisfies
+// tuning.Embedder structurally, so the CLI wires it in without the tuning
+// package importing this one, and reuses the openai runner's base URL and API
+// key.
 //
-// Like the openai chat runner, it talks to an operator-configured base URL
-// (not an attacker-influenced one), so it uses a plain client without the SSRF
-// egress guard the http/webhook/github runners carry.
+// The base URL is operator-configured, so a plain client suffices without the
+// SSRF egress guard.
 type OpenAIEmbedder struct {
+	client  *http.Client
 	model   string
 	baseURL string
-	client  *http.Client
 }
 
 // NewOpenAIEmbedder builds an embedder over an injected HTTP client so tests

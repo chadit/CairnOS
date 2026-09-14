@@ -92,65 +92,65 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"SatisfiesInterface", testSatisfiesInterface},
-		{"RunActionRoundTrip", testRunActionRoundTrip},
-		{"ParentRunIDRoundTrip", testParentRunIDRoundTrip},
-		{"UpdateRunStatusStampsTimestamps", testUpdateRunStatusStampsTimestamps},
-		{"RunNotFound", testRunNotFound},
-		{"ListRunsFiltersAndOrdersNewestFirst", testListRunsFiltersAndOrdersNewestFirst},
-		{"WorkspaceIsolatesRunsAndActions", testWorkspaceIsolatesRunsAndActions},
-		{"AgentStepsIsolateByWorkspace", testAgentStepsIsolateByWorkspace},
-		{"SpendSinceIsolatesByWorkspace", testSpendSinceIsolatesByWorkspace},
-		{"ReconcileInterruptedFailsRunningWork", testReconcileInterruptedFailsRunningWork},
-		{"PruneDeletesOldRunsAndTruncatesOldOutputs", testPruneRunsAndOutputs},
-		{"AgentStepsRoundTripInOrder", testAgentStepsRoundTripInOrder},
-		{"ConcurrentUpsertActionResult", testConcurrentUpsertActionResult},
-		{"SuggestionRoundTrip", testSuggestionRoundTrip},
-		{"SaveSuggestionDefaults", testSaveSuggestionDefaults},
-		{"ListSuggestionsFilters", testListSuggestionsFilters},
-		{"UpdateSuggestionStatus", testUpdateSuggestionStatus},
-		{"SuggestionNotFound", testSuggestionNotFound},
-		{"SuggestionIsolatesByWorkspace", testSuggestionIsolatesByWorkspace},
-		{"PruneDeletesStaleSuggestions", testPruneDeletesStaleSuggestions},
-		{"PruneWithoutRunWindowKeepsSuggestions", testPruneKeepsSuggestionsWithoutRunWindow},
-		{"AuditAppendListNewestFirst", testAuditAppendListNewestFirst},
-		{"AuditDefaultsStampIDAndTime", testAuditDefaultsStampIDAndTime},
-		{"WorkflowPauseSetGetClear", testWorkflowPauseSetGetClear},
-		{"WorkflowPauseListNewestFirst", testWorkflowPauseListNewestFirst},
-		{"WorkflowPauseIsolatesByWorkspace", testWorkflowPauseIsolatesByWorkspace},
-		{"AuditIsolatesByWorkspace", testAuditIsolatesByWorkspace},
-		{"SpendSinceSumsCostInWindow", testSpendSinceSumsCostInWindow},
-		{"PruneLeavesAuditAndPauseRows", testPruneLeavesAuditAndPauseRows},
-		{"WorkflowVersionRoundTrip", testWorkflowVersionRoundTrip},
-		{"WorkflowVersionSaveStampsTime", testWorkflowVersionSaveStampsTime},
-		{"WorkflowVersionReSaveKeepsOriginal", testWorkflowVersionReSaveKeepsOriginal},
-		{"WorkflowVersionNotFound", testWorkflowVersionNotFound},
-		{"WorkflowVersionListNewestFirst", testWorkflowVersionListNewestFirst},
-		{"PruneLeavesWorkflowVersions", testPruneLeavesWorkflowVersions},
-		{"ChatSessionRoundTrip", testChatSessionRoundTrip},
-		{"ChatSessionSeedsSystemRole", testChatSessionSeedsSystemRole},
-		{"ChatSessionNotFound", testChatSessionNotFound},
-		{"ChatSessionListNewestFirst", testChatSessionListNewestFirst},
-		{"ChatSessionIsolatesByWorkspace", testChatSessionIsolatesByWorkspace},
-		{"ChatSearchRanksBestMatchFirst", testChatSearchRanksBestMatchFirst},
-		{"ChatSearchFiltersBySession", testChatSearchFiltersBySession},
-		{"ChatSearchLimitsResults", testChatSearchLimitsResults},
-		{"ChatSearchIsolatesByWorkspace", testChatSearchIsolatesByWorkspace},
-		{"ChatSearchTreatsQuerySyntaxLiterally", testChatSearchTreatsQuerySyntaxLiterally},
-		{"ChatSearchEmptyTextReturnsNothing", testChatSearchEmptyTextReturnsNothing},
-		{"ApprovalRoundTrip", testApprovalRoundTrip},
-		{"ApprovalNotFound", testApprovalNotFound},
-		{"ApprovalDecideOnce", testApprovalDecideOnce},
-		{"ApprovalListPending", testApprovalListPending},
-		{"ApprovalIsolatesByWorkspace", testApprovalIsolatesByWorkspace},
-		{"ApprovalHeldSurvivesReconcile", testApprovalHeldSurvivesReconcile},
-		{"BridgeSessionRoundTrip", testBridgeSessionRoundTrip},
-		{"BridgeSessionRebindUpserts", testBridgeSessionRebindUpserts},
-		{"BridgeSessionNotFound", testBridgeSessionNotFound},
-		{"BridgeSessionIsolatesByWorkspace", testBridgeSessionIsolatesByWorkspace},
+		{name: "SatisfiesInterface", run: testSatisfiesInterface},
+		{name: "RunActionRoundTrip", run: testRunActionRoundTrip},
+		{name: "ParentRunIDRoundTrip", run: testParentRunIDRoundTrip},
+		{name: "UpdateRunStatusStampsTimestamps", run: testUpdateRunStatusStampsTimestamps},
+		{name: "RunNotFound", run: testRunNotFound},
+		{name: "ListRunsFiltersAndOrdersNewestFirst", run: testListRunsFiltersAndOrdersNewestFirst},
+		{name: "WorkspaceIsolatesRunsAndActions", run: testWorkspaceIsolatesRunsAndActions},
+		{name: "AgentStepsIsolateByWorkspace", run: testAgentStepsIsolateByWorkspace},
+		{name: "SpendSinceIsolatesByWorkspace", run: testSpendSinceIsolatesByWorkspace},
+		{name: "ReconcileInterruptedFailsRunningWork", run: testReconcileInterruptedFailsRunningWork},
+		{name: "PruneDeletesOldRunsAndTruncatesOldOutputs", run: testPruneRunsAndOutputs},
+		{name: "AgentStepsRoundTripInOrder", run: testAgentStepsRoundTripInOrder},
+		{name: "ConcurrentUpsertActionResult", run: testConcurrentUpsertActionResult},
+		{name: "SuggestionRoundTrip", run: testSuggestionRoundTrip},
+		{name: "SaveSuggestionDefaults", run: testSaveSuggestionDefaults},
+		{name: "ListSuggestionsFilters", run: testListSuggestionsFilters},
+		{name: "UpdateSuggestionStatus", run: testUpdateSuggestionStatus},
+		{name: "SuggestionNotFound", run: testSuggestionNotFound},
+		{name: "SuggestionIsolatesByWorkspace", run: testSuggestionIsolatesByWorkspace},
+		{name: "PruneDeletesStaleSuggestions", run: testPruneDeletesStaleSuggestions},
+		{name: "PruneWithoutRunWindowKeepsSuggestions", run: testPruneKeepsSuggestionsWithoutRunWindow},
+		{name: "AuditAppendListNewestFirst", run: testAuditAppendListNewestFirst},
+		{name: "AuditDefaultsStampIDAndTime", run: testAuditDefaultsStampIDAndTime},
+		{name: "WorkflowPauseSetGetClear", run: testWorkflowPauseSetGetClear},
+		{name: "WorkflowPauseListNewestFirst", run: testWorkflowPauseListNewestFirst},
+		{name: "WorkflowPauseIsolatesByWorkspace", run: testWorkflowPauseIsolatesByWorkspace},
+		{name: "AuditIsolatesByWorkspace", run: testAuditIsolatesByWorkspace},
+		{name: "SpendSinceSumsCostInWindow", run: testSpendSinceSumsCostInWindow},
+		{name: "PruneLeavesAuditAndPauseRows", run: testPruneLeavesAuditAndPauseRows},
+		{name: "WorkflowVersionRoundTrip", run: testWorkflowVersionRoundTrip},
+		{name: "WorkflowVersionSaveStampsTime", run: testWorkflowVersionSaveStampsTime},
+		{name: "WorkflowVersionReSaveKeepsOriginal", run: testWorkflowVersionReSaveKeepsOriginal},
+		{name: "WorkflowVersionNotFound", run: testWorkflowVersionNotFound},
+		{name: "WorkflowVersionListNewestFirst", run: testWorkflowVersionListNewestFirst},
+		{name: "PruneLeavesWorkflowVersions", run: testPruneLeavesWorkflowVersions},
+		{name: "ChatSessionRoundTrip", run: testChatSessionRoundTrip},
+		{name: "ChatSessionSeedsSystemRole", run: testChatSessionSeedsSystemRole},
+		{name: "ChatSessionNotFound", run: testChatSessionNotFound},
+		{name: "ChatSessionListNewestFirst", run: testChatSessionListNewestFirst},
+		{name: "ChatSessionIsolatesByWorkspace", run: testChatSessionIsolatesByWorkspace},
+		{name: "ChatSearchRanksBestMatchFirst", run: testChatSearchRanksBestMatchFirst},
+		{name: "ChatSearchFiltersBySession", run: testChatSearchFiltersBySession},
+		{name: "ChatSearchLimitsResults", run: testChatSearchLimitsResults},
+		{name: "ChatSearchIsolatesByWorkspace", run: testChatSearchIsolatesByWorkspace},
+		{name: "ChatSearchTreatsQuerySyntaxLiterally", run: testChatSearchTreatsQuerySyntaxLiterally},
+		{name: "ChatSearchEmptyTextReturnsNothing", run: testChatSearchEmptyTextReturnsNothing},
+		{name: "ApprovalRoundTrip", run: testApprovalRoundTrip},
+		{name: "ApprovalNotFound", run: testApprovalNotFound},
+		{name: "ApprovalDecideOnce", run: testApprovalDecideOnce},
+		{name: "ApprovalListPending", run: testApprovalListPending},
+		{name: "ApprovalIsolatesByWorkspace", run: testApprovalIsolatesByWorkspace},
+		{name: "ApprovalHeldSurvivesReconcile", run: testApprovalHeldSurvivesReconcile},
+		{name: "BridgeSessionRoundTrip", run: testBridgeSessionRoundTrip},
+		{name: "BridgeSessionRebindUpserts", run: testBridgeSessionRebindUpserts},
+		{name: "BridgeSessionNotFound", run: testBridgeSessionNotFound},
+		{name: "BridgeSessionIsolatesByWorkspace", run: testBridgeSessionIsolatesByWorkspace},
 	}
 
 	for _, tt := range cases {
@@ -255,8 +255,8 @@ func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
 		FinishedAt: created.Add(twoUnits * time.Second),
 	}
 
-	if err := db.UpsertActionResult(ctx, want); err != nil {
-		t.Fatalf("upsert action result: %v", err)
+	if upsertActionResultErr := db.UpsertActionResult(ctx, want); upsertActionResultErr != nil {
+		t.Fatalf("upsert action result: %v", upsertActionResultErr)
 	}
 
 	run, err := db.GetRun(ctx, runID)
@@ -371,8 +371,8 @@ func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("pending run has stamps: started=%v finished=%v", run.StartedAt, run.FinishedAt)
 	}
 
-	if err := db.UpdateRunStatus(ctx, runID, store.RunRunning, nil); err != nil {
-		t.Fatalf("transition to running: %v", err)
+	if updateRunStatusErr := db.UpdateRunStatus(ctx, runID, store.RunRunning, nil); updateRunStatusErr != nil {
+		t.Fatalf("transition to running: %v", updateRunStatusErr)
 	}
 
 	run, err = db.GetRun(ctx, runID)
@@ -390,8 +390,8 @@ func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
 
 	firstStart := run.StartedAt
 
-	if err := db.UpdateRunStatus(ctx, runID, store.RunRunning, nil); err != nil {
-		t.Fatalf("repeat transition to running: %v", err)
+	if updateRunStatusErr := db.UpdateRunStatus(ctx, runID, store.RunRunning, nil); updateRunStatusErr != nil {
+		t.Fatalf("repeat transition to running: %v", updateRunStatusErr)
 	}
 
 	run, err = db.GetRun(ctx, runID)
@@ -404,8 +404,8 @@ func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
 	}
 
 	failure := cairnerr.New("runner.boom", "exploded")
-	if err := db.UpdateRunStatus(ctx, runID, store.RunFailed, failure); err != nil {
-		t.Fatalf("transition to failed: %v", err)
+	if updateRunStatusErr := db.UpdateRunStatus(ctx, runID, store.RunFailed, failure); updateRunStatusErr != nil {
+		t.Fatalf("transition to failed: %v", updateRunStatusErr)
 	}
 
 	run, err = db.GetRun(ctx, runID)
@@ -536,8 +536,8 @@ func testWorkspaceIsolatesRunsAndActions(t *testing.T, openFn OpenFunc) {
 
 	// Acme cannot GetRun the globex run; it reads as not found across the
 	// tenant boundary.
-	if _, err := db.GetRun(acmeCtx, globexRun); !errors.Is(err, store.ErrRunNotFound) {
-		t.Fatalf("acme GetRun(globex run) error = %v, want ErrRunNotFound", err)
+	if _, getRunErr := db.GetRun(acmeCtx, globexRun); !errors.Is(getRunErr, store.ErrRunNotFound) {
+		t.Fatalf("acme GetRun(globex run) error = %v, want ErrRunNotFound", getRunErr)
 	}
 
 	// Acme cannot list the globex run's actions.
@@ -601,11 +601,10 @@ func testSpendSinceIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-// createRunIn stages a pending run of workflowAlpha in the workspace ctx
-// carries, the workflow every isolation case shares. It stamps WorkspaceID
-// from the context the way the engine does (engine.RunWorkflow reads
-// store.WorkspaceFromContext), so the row lands in the right tenant for the
-// workspace-scoped reads the isolation cases make afterward.
+// createRunIn stages a pending run of workflowAlpha, the workflow every
+// isolation case shares, in the workspace ctx carries. It stamps WorkspaceID
+// the way engine.RunWorkflow does, so the row lands in the tenant the
+// isolation cases read back.
 //
 //nolint:revive // t leads every helper here for the t.Fatalf calls; ctx follows to carry the workspace
 func createRunIn(t *testing.T, db store.Store, ctx context.Context, id string, created time.Time) {

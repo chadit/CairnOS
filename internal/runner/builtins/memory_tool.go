@@ -60,10 +60,8 @@ const (
 )
 
 // Memory is the built-in agent-loop tool over the memory store
-// (.agents/spec/15-agent-loop.md, "Tools"): search finds notes, load pulls
-// the most important ones under a token budget, and add writes one back,
-// which is how an agent remembers across runs. Wiring registers it only
-// when a memory store is configured.
+// (.agents/spec/15-agent-loop.md, "Tools"), which is how an agent remembers
+// across runs. Wiring registers it only when a memory store is configured.
 //
 // Params: op ("search", "add", or "load"), query plus optional limit for
 // search, content plus optional importance and tags for add, optional

@@ -50,22 +50,22 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"KeyCRUD", testKeyCRUD},
-		{"KeyWorkspaceRoundTrip", testKeyWorkspaceRoundTrip},
-		{"GetKeyNotFound", testGetKeyNotFound},
-		{"CreateKeyRejectsDuplicateID", testCreateKeyRejectsDuplicateID},
-		{"SetKeyEnabled", testSetKeyEnabled},
-		{"IsDeniedWindow", testIsDeniedWindow},
-		{"DenyExtendsButNeverShortens", testDenyExtendsButNeverShortens},
-		{"RemoveKeyDenialsLiftsOnlySubRows", testRemoveKeyDenialsLiftsOnlySubRows},
-		{"PruneDenylistDropsExpiredRows", testPruneDenylistDropsExpiredRows},
-		{"IssuedExpRoundTrip", testIssuedExpRoundTrip},
-		{"MaxIssuedExp", testMaxIssuedExp},
-		{"DenyKeySinceSparesFreshTokens", testDenyKeySinceSparesFreshTokens},
-		{"PruneDropsExpiredIssuedRows", testPruneDropsExpiredIssuedRows},
+		{name: "KeyCRUD", run: testKeyCRUD},
+		{name: "KeyWorkspaceRoundTrip", run: testKeyWorkspaceRoundTrip},
+		{name: "GetKeyNotFound", run: testGetKeyNotFound},
+		{name: "CreateKeyRejectsDuplicateID", run: testCreateKeyRejectsDuplicateID},
+		{name: "SetKeyEnabled", run: testSetKeyEnabled},
+		{name: "IsDeniedWindow", run: testIsDeniedWindow},
+		{name: "DenyExtendsButNeverShortens", run: testDenyExtendsButNeverShortens},
+		{name: "RemoveKeyDenialsLiftsOnlySubRows", run: testRemoveKeyDenialsLiftsOnlySubRows},
+		{name: "PruneDenylistDropsExpiredRows", run: testPruneDenylistDropsExpiredRows},
+		{name: "IssuedExpRoundTrip", run: testIssuedExpRoundTrip},
+		{name: "MaxIssuedExp", run: testMaxIssuedExp},
+		{name: "DenyKeySinceSparesFreshTokens", run: testDenyKeySinceSparesFreshTokens},
+		{name: "PruneDropsExpiredIssuedRows", run: testPruneDropsExpiredIssuedRows},
 	}
 
 	for _, tt := range cases {
@@ -139,8 +139,8 @@ func testKeyWorkspaceRoundTrip(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("NewKey scoped: %v", err)
 	}
 
-	if err := store.CreateKey(t.Context(), scoped); err != nil {
-		t.Fatalf("CreateKey scoped: %v", err)
+	if createKeyErr := store.CreateKey(t.Context(), scoped); createKeyErr != nil {
+		t.Fatalf("CreateKey scoped: %v", createKeyErr)
 	}
 
 	got, err := store.GetKey(t.Context(), scoped.ID)
@@ -157,8 +157,8 @@ func testKeyWorkspaceRoundTrip(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("NewKey default: %v", err)
 	}
 
-	if err := store.CreateKey(t.Context(), defaulted); err != nil {
-		t.Fatalf("CreateKey default: %v", err)
+	if createKeyErr := store.CreateKey(t.Context(), defaulted); createKeyErr != nil {
+		t.Fatalf("CreateKey default: %v", createKeyErr)
 	}
 
 	gotDefault, err := store.GetKey(t.Context(), defaulted.ID)
@@ -237,11 +237,11 @@ func testIsDeniedWindow(t *testing.T, openFn OpenFunc) {
 	postRevoke := revokedAt.Add(time.Second)
 
 	cases := []struct {
+		iat  time.Time
+		now  time.Time
 		name string
 		jti  string
 		sub  string
-		iat  time.Time
-		now  time.Time
 		want bool
 	}{
 		{name: "live jti row denies", jti: deniedJTI, sub: unrelated, iat: postRevoke, now: baseTime, want: true},

@@ -52,17 +52,13 @@ func NewService(
 	return &Service{manager: manager, resolver: resolver, store: runStore, bridge: chatBridge}
 }
 
-// CreateTask starts a run from an A2A task request and returns the created
-// task without waiting for completion; a consumer streams progress with
-// TaskUpdates. The run lifetime detaches from the request context the same way
-// RunWorkflow's does: a dropped client does not kill the run.
+// CreateTask starts a run and returns without waiting; TaskUpdates streams
+// progress. The run detaches from the request context, so a dropped client
+// does not kill it.
 //
-// The returned task is composed from the request and the new run id rather
-// than read back from the store. StartWatched returns the moment the engine
-// accepts the run id, which is a hair before CreateRun finishes persisting the
-// record, so a GetRun here would race that write. The task is freshly running
-// and its detail is already known: id, skill, and params. A consumer reads the
-// authoritative state through GetTask or TaskUpdates.
+// The task is composed from the request and new run id, not read back:
+// StartWatched returns before CreateRun finishes persisting, so a GetRun
+// would race that write.
 func (s *Service) CreateTask(ctx context.Context, req *a2av1.CreateTaskRequest) (*a2av1.CreateTaskResponse, error) {
 	flow, err := s.resolver.Resolve(req.GetSkill())
 	if err != nil {

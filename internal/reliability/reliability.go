@@ -29,23 +29,20 @@ const (
 // MaxAttempts counts total tries including the first; values below one are
 // treated as one, so a zero policy still runs the call once.
 type Policy struct {
-	MaxAttempts int
 	Backoff     string // BackoffExponential or BackoffConstant
+	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
 	Jitter      bool
 }
 
-// Retry runs call until it succeeds, the policy is exhausted, or the failure
-// is not retryable. It returns the last result, the attempts used, and the
-// final error (nil on success).
+// Retry runs call until it succeeds, the policy is exhausted, or the failure is
+// not retryable.
 //
-// Retrying happens only when the action is idempotent and the failure is a
-// *runner.Error of class Transient or RateLimited. A plain error or a
-// Permanent class stops immediately: the engine must never repeat a side
-// effect a runner did not declare safe. RateLimited failures wait at least
-// their RetryAfter hint. Canceling ctx during a wait stops the loop with
-// the ctx error.
+// It retries only an idempotent action failing with a Transient or RateLimited
+// *runner.Error. A plain or Permanent failure stops at once:
+// the engine must never repeat a side effect a runner did not declare safe.
+// RateLimited waits at least its RetryAfter hint.
 func Retry(ctx context.Context, policy Policy, idempotent bool, call func(context.Context) (runner.Result, error)) (runner.Result, int, error) {
 	maxAttempts := max(policy.MaxAttempts, 1)
 

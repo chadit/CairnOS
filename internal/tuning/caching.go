@@ -27,19 +27,18 @@ type cacheGroup struct {
 	action        string
 	runnerName    string
 	signature     string
+	firstOutput   string
 	count         int
 	totalCost     float64
 	totalLatency  time.Duration
-	firstOutput   string
 	outputsDiffer bool
 }
 
-// detectCaching finds actions that ran with the same effective parameters
-// and produced the same output at least CacheMinRepeats times. Action
-// params are not persisted, so "identical params" is read as identical
-// (runner, workflow hash, action name, run inputs): the same definition fed
-// the same inputs. The identical-output requirement then proves the call
-// was repeat work, which is exactly what a result cache removes.
+// detectCaching finds actions that ran with the same effective params and
+// produced the same output at least CacheMinRepeats times. Params are not
+// persisted, so "identical params" means identical (runner, workflow hash,
+// action name, run inputs). The identical-output requirement then proves the
+// call was repeat work a result cache would remove.
 func (e *Engine) detectCaching(corpus []*runRecord) []*store.Suggestion {
 	groups := make(map[string]*cacheGroup, len(corpus))
 

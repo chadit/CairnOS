@@ -63,8 +63,8 @@ const (
 // authClock is an advanceable clock injected into the fixture's
 // authenticator.
 type authClock struct {
-	mu  sync.Mutex
 	now time.Time
+	mu  sync.Mutex
 }
 
 // Now implements the auth.Config.Now contract.
@@ -199,16 +199,16 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 		Logger:       logger,
 	})
 
-	if err := server.Start(t.Context()); err != nil {
-		t.Fatalf("start server: %v", err)
+	if startErr := server.Start(t.Context()); startErr != nil {
+		t.Fatalf("start server: %v", startErr)
 	}
 
 	t.Cleanup(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), shutdownTimeout)
 		defer cancel()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			t.Errorf("shutdown server: %v", err)
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			t.Errorf("shutdown server: %v", shutdownErr)
 		}
 	})
 
@@ -511,9 +511,9 @@ func TestScopeEnforcementPerMethod(t *testing.T) {
 	admin := fix.token(t, auth.ScopeAdmin)
 
 	cases := []struct {
+		call     func(ctx context.Context) error
 		name     string
 		token    string
-		call     func(ctx context.Context) error
 		wantCode codes.Code
 	}{
 		{
@@ -707,12 +707,12 @@ func TestRevokeByKeyKillsLiveTokens(t *testing.T) {
 
 	victim := loginResp.GetToken()
 
-	if _, err := fix.workflow.ListRuns(authedCtx(t, victim), &cairnosv1.ListRunsRequest{}); err != nil {
-		t.Fatalf("ListRuns before revocation: %v", err)
+	if _, listRunsErr := fix.workflow.ListRuns(authedCtx(t, victim), &cairnosv1.ListRunsRequest{}); listRunsErr != nil {
+		t.Fatalf("ListRuns before revocation: %v", listRunsErr)
 	}
 
-	if _, err := fix.login.Revoke(authedCtx(t, adminToken), &cairnosv1.RevokeRequest{KeyId: key.ID}); err != nil {
-		t.Fatalf("Revoke by key: %v", err)
+	if _, revokeErr := fix.login.Revoke(authedCtx(t, adminToken), &cairnosv1.RevokeRequest{KeyId: key.ID}); revokeErr != nil {
+		t.Fatalf("Revoke by key: %v", revokeErr)
 	}
 
 	_, err = fix.workflow.ListRuns(authedCtx(t, victim), &cairnosv1.ListRunsRequest{})
@@ -728,8 +728,8 @@ func TestRevokeValidatesItsTarget(t *testing.T) {
 	adminToken := fix.token(t, auth.ScopeAdmin)
 
 	cases := []struct {
-		name string
 		req  *cairnosv1.RevokeRequest
+		name string
 	}{
 		{name: "neither target", req: &cairnosv1.RevokeRequest{}},
 		{name: "both targets", req: &cairnosv1.RevokeRequest{Jti: "a", KeyId: "b"}},
@@ -881,9 +881,9 @@ func TestNetworkBindPolicy(t *testing.T) {
 	const allInterfaces = "0.0.0.0:0"
 
 	cases := []struct {
+		wantErr  error
 		name     string
 		policy   api.BindPolicy
-		wantErr  error
 		wantWarn bool
 	}{
 		{

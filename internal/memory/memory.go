@@ -10,12 +10,11 @@ import (
 	"time"
 )
 
-// Store is the memory contract every backend satisfies; swapping backends is
-// a config choice, never a workflow or runner change. Two deliberate
-// deviations from the spec sketch: Add and Replace take *Entry because the
-// struct is large enough that house style passes it by pointer, and Search
-// returns a SearchResult so the semantic fallback is visible to callers (the
-// spec's "sets a flag in the result so callers know").
+// Store is the memory contract every backend satisfies, so swapping backends
+// is a config choice, never a workflow or runner change. Two deviations from
+// the spec sketch: Add and Replace take *Entry because house style passes a
+// struct this large by pointer, and Search returns a SearchResult so the
+// semantic fallback is visible to callers.
 type Store interface {
 	// Add persists a new entry and returns its id, generating a ULID when
 	// the entry does not bring one.
@@ -48,14 +47,14 @@ type Store interface {
 
 // Entry is one curated note.
 type Entry struct {
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	ID         string
 	Scope      string // e.g. "global", "project:finance-app", an agent name
 	Content    string
-	Importance int // 0..100; drives ordering and eviction
 	Tags       []string
+	Importance int // 0..100; drives ordering and eviction
 	TokenCost  int // measured token length of Content
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
 }
 
 // Query narrows a Search.

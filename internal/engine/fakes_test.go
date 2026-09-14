@@ -27,15 +27,15 @@ var (
 // fake proves the interface seam: nothing in the engine may depend on the
 // SQLite implementation (.agents/spec/05-memory-and-knowledge.md).
 type fakeStore struct {
-	mu          sync.Mutex
 	runs        map[string]*store.Run
 	results     map[string]map[string]*store.ActionResult
 	transitions map[string][]store.ActionStatus
 	agentSteps  map[string][]*store.AgentStep
 	suggestions map[string]*store.Suggestion
-	audit       []*store.AuditEntry
 	pauses      map[string]*store.WorkflowPause
 	approvals   map[string]*store.Approval
+	audit       []*store.AuditEntry
+	mu          sync.Mutex
 }
 
 var _ store.Store = (*fakeStore)(nil)
@@ -578,8 +578,8 @@ func (f *fakeStore) transitionsFor(runID, name string) []store.ActionStatus {
 // eventSink collects every emitted engine event. The mutex matters: the
 // engine fires the hook from scheduling and worker goroutines.
 type eventSink struct {
-	mu   sync.Mutex
 	seen []engine.Event
+	mu   sync.Mutex
 }
 
 //nolint:gocritic // hugeParam: the signature is fixed by the Config.OnEvent hook contract
@@ -617,12 +617,12 @@ func (s *eventSink) statusesFor(action string) []string {
 // a canned error and Execute returns a canned result or error while
 // capturing the resolved action and task it received.
 type fakeAgentExecutor struct {
-	mu          sync.Mutex
 	validateErr error
-	result      runner.Result
 	execErr     error
 	gotAction   *workflow.Action
 	gotTask     *runner.Task
+	result      runner.Result
+	mu          sync.Mutex
 }
 
 var _ engine.AgentExecutor = (*fakeAgentExecutor)(nil)
@@ -687,8 +687,8 @@ func (f *fakeSecrets) Get(_ context.Context, name string) (string, error) {
 // recorder collects action names in completion order through a local_fn, so
 // ordering tests observe real execution rather than store timestamps.
 type recorder struct {
-	mu    sync.Mutex
 	names []string
+	mu    sync.Mutex
 }
 
 func (r *recorder) record(_ context.Context, task *runner.Task) (any, error) {
@@ -709,8 +709,8 @@ func (r *recorder) order() []string {
 
 // paramSink captures the fully resolved params one action received.
 type paramSink struct {
-	mu     sync.Mutex
 	params map[string]any
+	mu     sync.Mutex
 }
 
 func (p *paramSink) capture(_ context.Context, task *runner.Task) (any, error) {

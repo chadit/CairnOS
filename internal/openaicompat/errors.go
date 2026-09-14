@@ -47,10 +47,10 @@ const (
 // class so a handler returns a typed value instead of assembling the shape at
 // each call site, the way internal/chat keeps its codes typed per package.
 type httpError struct {
-	Status  int
 	Type    string
 	Code    string
 	Message string
+	Status  int
 }
 
 // Error renders "code: message" so a caller that only logs the error string

@@ -425,8 +425,8 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 	defer cancel()
 
 	type result struct {
-		token string
 		err   error
+		token string
 	}
 
 	done := make(chan result, 1)

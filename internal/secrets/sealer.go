@@ -23,18 +23,18 @@ const keySize = 32
 // Open match a row to the right key during a rotation without trying each.
 const keyIDLen = 16
 
-// Sealer seals a secret value into an AES-256-GCM envelope and opens an envelope
-// back into the value. It seals under one primary key and opens under the
-// primary or any previous key, so a rotation window has both generations loaded.
-// Modeled on internal/hive/sealer.go: the two share the key-id and rotation
-// scheme, but this one binds workspace, name, and a recency stamp as the GCM
-// additional authenticated data so a row cannot be re-pointed at another secret,
-// workspace, or an older value without the open failing.
+// Sealer seals a value into an AES-256-GCM envelope and back. It seals under
+// the primary key and opens under any loaded key, so a rotation window has both
+// generations available.
+//
+// Unlike internal/hive/sealer.go, it binds workspace, name, and a recency stamp
+// as the GCM additional authenticated data, so a row cannot be re-pointed at
+// another secret, workspace, or older value.
 type Sealer struct {
-	primaryID  string
 	primary    cipher.AEAD
-	openers    map[string]cipher.AEAD
 	randReader io.Reader
+	openers    map[string]cipher.AEAD
+	primaryID  string
 }
 
 // deriveKeyID is the row id of a key: the hex prefix of its SHA-256. One-way, so
@@ -102,11 +102,11 @@ func (s *Sealer) PrimaryID() string {
 	return s.primaryID
 }
 
-// Seal encrypts value under the primary key with a fresh per-seal nonce and
-// returns the envelope fields the store persists: the key id, the nonce, and the
-// ciphertext (GCM appends its auth tag). version is the row's recency stamp
-// (the store binds updated_at as UnixNano) and is folded into the AAD so a
-// rolled-back ciphertext for the same workspace and name fails Open.
+// Seal encrypts value under the primary key with a fresh nonce and returns the
+// envelope fields the store persists: key id, nonce, and ciphertext (GCM appends
+// its auth tag). version is the row's recency stamp, which the store binds as
+// updated_at in UnixNano. Folding it into the AAD makes a rolled-back ciphertext
+// for the same workspace and name fail Open.
 func (s *Sealer) Seal(workspace, name string, version int64, value string) (string, []byte, []byte, error) {
 	nonce := make([]byte, s.primary.NonceSize())
 	if _, err := io.ReadFull(s.randReader, nonce); err != nil {
@@ -142,10 +142,9 @@ func (s *Sealer) Open(workspace, name string, version int64, keyID string, nonce
 
 // aad builds the GCM additional authenticated data. Workspace and name are
 // NUL-joined so "a"/"bc" cannot collide with "ab"/"c", and the name is
-// normalized so the AAD matches whether the caller passed a raw or canonical
-// name. The version stamp is appended as a decimal tail after the final NUL so a
-// DB-write attacker cannot restore an older ciphertext row without the recency
-// mismatch failing the open (security council amendment 6).
+// normalized so a raw and a canonical name build the same AAD. The version tail
+// means restoring an older ciphertext row fails the open on the recency
+// mismatch (security council amendment 6).
 func aad(workspace, name string, version int64) []byte {
 	return []byte(workspace + "\x00" + NormalizeName(name) + "\x00" + strconv.FormatInt(version, 10))
 }

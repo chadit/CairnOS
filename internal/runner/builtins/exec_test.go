@@ -255,15 +255,13 @@ func TestExecFactoryRejectsBadConfig(t *testing.T) {
 			t.Parallel()
 
 			_, err := builtins.ExecFactory(tt.cfg)
-			if err == nil {
-				t.Fatal("factory accepted an invalid config block")
-			}
-
 			if !errors.Is(err, builtins.ErrConfigValue) {
 				t.Fatalf("error %v does not wrap ErrConfigValue", err)
 			}
 
-			if !strings.Contains(err.Error(), tt.wantText) {
+			// ErrConfigValue is the only sentinel the factory exposes, so the
+			// message is what tells the operator which key was wrong.
+			if message := err.Error(); !strings.Contains(message, tt.wantText) {
 				t.Fatalf("error %v does not mention %q", err, tt.wantText)
 			}
 		})

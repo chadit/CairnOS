@@ -25,11 +25,11 @@ const (
 // so a test can assert both the enqueue result and that a paused cycle never
 // polled.
 type fakeSource struct {
-	events     []poll.Event
-	next       string
 	err        error
-	polls      int
+	next       string
 	lastCursor string
+	events     []poll.Event
+	polls      int
 }
 
 func (s *fakeSource) Poll(_ context.Context, _ map[string]any, cursor string) ([]poll.Event, string, error) {

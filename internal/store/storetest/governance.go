@@ -168,8 +168,8 @@ func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
 	}
 
 	// Re-pausing overwrites rather than failing.
-	if err := db.SetWorkflowPause(ctx, &store.WorkflowPause{WorkflowName: workflowAlpha, Actor: triggerCLI, Reason: "again"}); err != nil {
-		t.Fatalf("re-pause: %v", err)
+	if setWorkflowPauseErr := db.SetWorkflowPause(ctx, &store.WorkflowPause{WorkflowName: workflowAlpha, Actor: triggerCLI, Reason: "again"}); setWorkflowPauseErr != nil {
+		t.Fatalf("re-pause: %v", setWorkflowPauseErr)
 	}
 
 	pause, _, err = db.GetWorkflowPause(ctx, workflowAlpha)
@@ -190,8 +190,8 @@ func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
 		t.Error("ClearWorkflowPause reported nothing cleared for a paused workflow")
 	}
 
-	if _, paused, err := db.GetWorkflowPause(ctx, workflowAlpha); err != nil || paused {
-		t.Fatalf("workflow still paused after clear: paused = %v err = %v", paused, err)
+	if _, paused, getWorkflowPauseErr := db.GetWorkflowPause(ctx, workflowAlpha); getWorkflowPauseErr != nil || paused {
+		t.Fatalf("workflow still paused after clear: paused = %v err = %v", paused, getWorkflowPauseErr)
 	}
 
 	// Clearing an unpaused workflow is a reported no-op, not an error.

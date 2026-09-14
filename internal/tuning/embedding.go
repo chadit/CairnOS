@@ -23,13 +23,12 @@ type Embedder interface {
 // is a starting point to calibrate from, not a validated constant (R1).
 const defaultEquivalenceThreshold = 0.95
 
-// EmbeddingComparator judges equivalence by the cosine similarity of the two
-// outputs' embeddings: at or above Threshold is equivalent. It is the R1
-// answer for free-text outputs that exact match flags as divergent on harmless
-// rephrasing (.agents/spec/14-open-decisions.md, R1). The threshold is a config
-// knob, not a constant, because the right value depends on the embedding model
-// and the workflow's domain; the calibration scores recorded in the suggestion
-// evidence are there to set it against a real corpus.
+// EmbeddingComparator judges equivalence by cosine similarity of the two
+// outputs' embeddings: at or above the threshold is equivalent. It answers R1
+// for free-text outputs that exact match calls divergent on harmless
+// rephrasing (.agents/spec/14-open-decisions.md). The threshold is a knob
+// because the right value depends on the embedding model and the workflow's
+// domain.
 type EmbeddingComparator struct {
 	// embedder produces the vectors.
 	embedder Embedder

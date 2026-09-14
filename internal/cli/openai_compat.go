@@ -48,16 +48,13 @@ type openaiCompatDeps struct {
 // personality set, the store, and the authenticator the rest of serve runs over
 // (.agents/spec/parity/openai-compat.md). It returns whether it mounted, so the
 // caller prints the banner, and an error only when the wiring is wrong.
-//
-// openai_compat with chat disabled is a configuration error: the adapter has no
-// agent to drive, so serve fails fast rather than mounting a broken endpoint. A
-// typed-nil authn is normalized to a true nil interface, the same care attachMCP
-// takes, so "auth disabled" reads correctly inside the service.
 func attachOpenAICompat(cfg *config.Config, deps *openaiCompatDeps, apiCfg *api.Config) (bool, error) {
 	if !cfg.Chat.OpenAICompat {
 		return false, nil
 	}
 
+	// openai_compat with chat disabled leaves the adapter no agent to drive, so
+	// serve fails fast rather than mounting a broken endpoint.
 	if deps.agent == nil {
 		return false, fmt.Errorf("%w: chat.openai_compat requires chat.enabled", config.ErrInvalidConfig)
 	}
@@ -70,6 +67,8 @@ func attachOpenAICompat(cfg *config.Config, deps *openaiCompatDeps, apiCfg *api.
 		Logger:        deps.logger,
 	}
 
+	// Normalizing a typed-nil authn to a true nil interface, the same care
+	// attachMCP takes, keeps "auth disabled" reading correctly in the service.
 	if deps.authn != nil {
 		compatCfg.Auth = deps.authn
 	}

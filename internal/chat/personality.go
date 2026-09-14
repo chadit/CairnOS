@@ -48,11 +48,11 @@ type Personalities struct {
 }
 
 // NewPersonalities builds the personality set from the built-ins overlaid with
-// the config's [chat] personalities, and the configured default name. A config
-// entry with the same name as a built-in overrides it, so an operator can
-// reshape "assistant" without losing the name. An empty defaultName falls back
-// to DefaultPersonality; a default naming an unknown personality still resolves
-// because the assistant built-in is always present.
+// the config's [chat] personalities. A config entry reusing a built-in name
+// overrides it, so an operator can reshape "assistant" without losing the name.
+// An empty defaultName falls back to DefaultPersonality; a default naming an
+// unknown personality still resolves because the assistant built-in is always
+// present.
 func NewPersonalities(configured map[string]string, defaultName string) *Personalities {
 	prompts := make(map[string]string, len(builtinPrompts)+len(configured))
 

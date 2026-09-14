@@ -40,8 +40,8 @@ const openaiStreamDone = "[DONE]"
 // prompt (required), system, and model (overrides config). The API key comes
 // from CAIRNOS_RUNNER_OPENAI_API_KEY at call time.
 type OpenAI struct {
-	cfg    llmConfig
 	client *http.Client
+	cfg    llmConfig
 }
 
 // NewOpenAI builds the runner over an injected HTTP client so tests can
@@ -387,15 +387,15 @@ func classifyStreamErr(ctx context.Context, name string, err error) error {
 
 // openaiRequest is the chat-completions request body.
 type openaiRequest struct {
-	Model          string                `json:"model"`
-	Messages       []openaiMessage       `json:"messages"`
-	MaxTokens      int64                 `json:"max_tokens,omitempty"`
 	Temperature    *float64              `json:"temperature,omitempty"`
-	Stream         bool                  `json:"stream,omitempty"`
 	StreamOptions  *openaiStreamOptions  `json:"stream_options,omitempty"`
-	Tools          []openaiTool          `json:"tools,omitempty"`
-	ToolChoice     string                `json:"tool_choice,omitempty"`
 	ResponseFormat *openaiResponseFormat `json:"response_format,omitempty"`
+	Model          string                `json:"model"`
+	ToolChoice     string                `json:"tool_choice,omitempty"`
+	Messages       []openaiMessage       `json:"messages"`
+	Tools          []openaiTool          `json:"tools,omitempty"`
+	MaxTokens      int64                 `json:"max_tokens,omitempty"`
+	Stream         bool                  `json:"stream,omitempty"`
 }
 
 // openaiResponseJSONObject is the response_format type that flips the API into
@@ -453,9 +453,9 @@ type openaiResponse struct {
 // openaiChoice is one completion candidate; Message is set on plain
 // responses, Delta on stream chunks.
 type openaiChoice struct {
+	FinishReason string        `json:"finish_reason"`
 	Message      openaiMessage `json:"message"`
 	Delta        openaiMessage `json:"delta"`
-	FinishReason string        `json:"finish_reason"`
 }
 
 // openaiUsage is the provider's token accounting.
@@ -474,7 +474,7 @@ type openaiPromptDetails struct {
 // openaiStreamChunk is one SSE data payload in streaming mode. Usage is a
 // pointer because only the final chunk carries it.
 type openaiStreamChunk struct {
+	Usage   *openaiUsage   `json:"usage"`
 	Model   string         `json:"model"`
 	Choices []openaiChoice `json:"choices"`
-	Usage   *openaiUsage   `json:"usage"`
 }

@@ -10,13 +10,12 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// cmdSuggestionsApply applies one approved, output-neutral suggestion to its
+// cmdSuggestionsApply applies an approved, output-neutral suggestion to its
 // workflow file, recording a rollback point and an audit row first. It is the
-// manual entry to the gated auto-apply path: it still refuses every kind but
-// caching and batching, still requires the suggestion to be approved, and
-// still requires [autonomic] auto_apply_enabled to be set. Param tuning and
-// prompt refactor never apply, because verifying they kept output quality is
-// the open R1 problem (.agents/spec/14-open-decisions.md).
+// manual entry to the gated auto-apply path: it still refuses all kinds but
+// caching and batching, requires approval, and requires [autonomic]
+// auto_apply_enabled. Param tuning and prompt refactor never apply: verifying
+// they kept output quality is open R1 (.agents/spec/14-open-decisions.md).
 func (a *App) cmdSuggestionsApply(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("suggestions apply", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)

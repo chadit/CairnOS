@@ -149,10 +149,10 @@ func TestSQLiteRolledBackCiphertextFailsOpen(t *testing.T) {
 
 	t.Cleanup(func() { _ = raw.Close() })
 
-	if _, err := raw.ExecContext(ctx,
+	if _, execContextErr := raw.ExecContext(ctx,
 		"UPDATE secrets SET updated_at = ? WHERE workspace = ? AND name = ?",
-		rolledBackStamp, store.DefaultWorkspace, testName); err != nil {
-		t.Fatalf("tamper updated_at: %v", err)
+		rolledBackStamp, store.DefaultWorkspace, testName); execContextErr != nil {
+		t.Fatalf("tamper updated_at: %v", execContextErr)
 	}
 
 	_, err = secretStore.Get(ctx, testName)

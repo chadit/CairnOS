@@ -19,10 +19,10 @@ var errScripted = errors.New("scripted runner failure")
 // and records every task it received, so replay tests can assert the
 // proposed params actually reached the runner.
 type scriptedRunner struct {
-	mu      sync.Mutex
 	output  any
 	execErr error
 	tasks   []*runner.Task
+	mu      sync.Mutex
 }
 
 // Name implements runner.Runner.
@@ -55,8 +55,8 @@ func (r *scriptedRunner) seenTasks() []*runner.Task {
 
 // soloSource is a RunnerSource holding exactly one runner.
 type soloSource struct {
-	name   string
 	target runner.Runner
+	name   string
 }
 
 // Get implements tuning.RunnerSource.
@@ -251,10 +251,10 @@ func TestReplayRefusals(t *testing.T) {
 	scripted := &scriptedRunner{output: sameOutput}
 
 	tests := []struct {
-		name       string
+		wantErr    error
 		engine     *tuning.Engine
 		suggestion *store.Suggestion
-		wantErr    error
+		name       string
 	}{
 		{
 			name:   "output-neutral kinds are not replayable",

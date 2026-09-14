@@ -26,12 +26,12 @@ func TestSQLiteCursorSurvivesReopen(t *testing.T) {
 		t.Fatalf("open first queue: %v", err)
 	}
 
-	if err := first.SetCursor(t.Context(), scheduleID, cursor); err != nil {
-		t.Fatalf("set cursor: %v", err)
+	if setCursorErr := first.SetCursor(t.Context(), scheduleID, cursor); setCursorErr != nil {
+		t.Fatalf("set cursor: %v", setCursorErr)
 	}
 
-	if err := first.Close(); err != nil {
-		t.Fatalf("close first queue: %v", err)
+	if closeErr := first.Close(); closeErr != nil {
+		t.Fatalf("close first queue: %v", closeErr)
 	}
 
 	second, err := scheduler.OpenSQLiteQueue(path)

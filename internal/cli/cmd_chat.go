@@ -27,11 +27,11 @@ const defaultChatAddr = "127.0.0.1:7777"
 const defaultChatSearchLimit = 20
 
 // cmdChat is the interactive chat REPL (.agents/spec/13-roadmap.md, Phase 9):
-// it dials a running serve API, opens or continues a session, and hands the
+// it dials a serve API, opens or continues a session, and hands the
 // conversation to chatREPL, which owns the line loop, slash commands, and
 // streaming. It is a thin client over ChatService, so the agent, gate, and
-// budget all live server-side. --search skips the REPL entirely: one query,
-// hits printed, exit.
+// budget all live server-side. --search skips the REPL: one query, hits
+// printed, exit.
 func (a *App) cmdChat(ctx context.Context, args []string) int {
 	opts, code, proceed := a.parseChatFlags(args)
 	if !proceed {

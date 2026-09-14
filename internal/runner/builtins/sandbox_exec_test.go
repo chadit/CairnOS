@@ -215,10 +215,10 @@ func TestSandboxDetectionPrecedence(t *testing.T) {
 	cases := []struct {
 		name        string
 		configRT    string
-		onPath      []string
 		dockerHost  string
-		socket      bool
 		wantRuntime string
+		onPath      []string
+		socket      bool
 		wantErr     bool
 	}{
 		{name: "config podman wins over everything", configRT: rtPodman, onPath: []string{rtPodman, rtDocker}, dockerHost: testDockerHost, socket: true, wantRuntime: rtPodman},
@@ -722,8 +722,8 @@ func TestSandboxConfigDecodeErrors(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
 		cfg  map[string]any
+		name string
 	}{
 		{name: "image wrong type", cfg: map[string]any{cfgImageKey: int64(7)}},
 		{name: "runtime bad value", cfg: map[string]any{cfgRuntime: "containerd"}},

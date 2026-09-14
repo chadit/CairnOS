@@ -8,14 +8,12 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// Canonical auth error codes, the same strings the gRPC interceptor answers
-// with (.agents/spec/08-auth-and-access.md): a missing scope is auth.forbidden,
+// Canonical auth error codes, matching what the gRPC interceptor answers with
+// (.agents/spec/08-auth-and-access.md): a missing scope is auth.forbidden,
 // every token failure collapses to auth.unauthenticated so an attacker learns
 // nothing about which check tripped, and an expired token gets its own code so
-// a client knows to re-login. These are protocol-shared code strings, defined
-// here rather than imported from internal/api because that package would cycle
-// (api has no dependency on this one, and keeping it that way leaves the import
-// graph clean).
+// a client knows to re-login. Defined here rather than imported from
+// internal/api to keep the import graph acyclic.
 const (
 	codeAuthUnauthenticated = "auth.unauthenticated"
 	codeAuthForbidden       = "auth.forbidden"

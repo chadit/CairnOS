@@ -98,10 +98,10 @@ func TestCredentialBuildRejectsUnknownAndUnwired(t *testing.T) {
 	known := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
 
 	cases := []struct {
-		name    string
-		runner  string
 		factory runner.Factory
 		cfg     map[string]any
+		name    string
+		runner  string
 	}{
 		{
 			name:    "http unknown credential",

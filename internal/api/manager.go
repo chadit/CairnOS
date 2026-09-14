@@ -45,8 +45,8 @@ type RunHandle struct {
 // run's events before the engine emits any. taken closes when the engine
 // consumes the ID, which is the signal that the next start may proceed.
 type reservation struct {
-	id    string
 	taken chan struct{}
+	id    string
 }
 
 // runState is the per-run routing the manager owns: the cancel func plus the
@@ -59,32 +59,27 @@ type runState struct {
 }
 
 // Manager owns every run the serve process starts: it pre-mints run IDs
-// (wired into engine.Config.NewID), fans engine events out to per-run
-// watchers (wired into engine.Config.OnEvent), and keeps the runID-to-cancel
-// map that CancelRun and shutdown act on.
+// (engine.Config.NewID), fans engine events to per-run watchers
+// (engine.Config.OnEvent), and keeps the runID-to-cancel map CancelRun and
+// shutdown act on.
 //
-// Correlation works because StartRun serializes on startMu from "reservation
-// placed" to "engine consumed the ID": with every run on this engine started
-// through the manager, no other run can claim a reservation that is not its
-// own.
+// Correlation holds because StartRun serializes on startMu from reservation
+// to engine consumption, so no run can claim another's reservation.
 type Manager struct {
-	logger *slog.Logger
-
-	startMu sync.Mutex
-
-	mu      sync.Mutex
+	logger  *slog.Logger
 	eng     *engine.Engine
 	pending *reservation
 	cancels map[string]*runState
 	subs    map[string]chan engine.Event
 
-	// handles retains watched run handles started through StartWatched so a
-	// later Watch can attach to a run's live event stream. The A2A adapter
-	// needs this because CreateTask and TaskUpdates are two calls: the run
-	// starts on the first and a consumer streams it on the second. release
-	// drops a handle once its run can produce no more events, so a Watch that
-	// arrives after completion misses and falls back to the stored record.
+	// handles retains watched run handles so a later Watch can attach to a
+	// live event stream. A2A needs this because CreateTask and TaskUpdates are
+	// two calls. release drops a handle once its run can emit no more events,
+	// so a late Watch misses and falls back to the stored record.
 	handles map[string]*RunHandle
+
+	startMu sync.Mutex
+	mu      sync.Mutex
 }
 
 // NewManager builds an unbound manager; call Bind once the engine exists.
@@ -104,10 +99,9 @@ func NewManager(logger *slog.Logger) *Manager {
 }
 
 // StartWatched starts a watched run and retains its handle by run id so a
-// later Watch can stream its events, returning the run id once the engine
-// accepts the run. It is the A2A CreateTask path: the run begins here and a
-// consumer attaches with TaskUpdates afterward. Like StartRun, the run's
-// lifetime detaches from ctx, so a dropped client does not end the run.
+// later Watch can stream its events. This is the A2A CreateTask path: a
+// consumer attaches with TaskUpdates afterward. The run's lifetime detaches
+// from ctx, so a dropped client does not end it.
 func (m *Manager) StartWatched(ctx context.Context, flow *workflow.Workflow, inputs map[string]any, trigger string) (string, error) {
 	handle, err := m.StartRun(ctx, flow, inputs, true, trigger)
 	if err != nil {
@@ -121,15 +115,11 @@ func (m *Manager) StartWatched(ctx context.Context, flow *workflow.Workflow, inp
 	return handle.ID, nil
 }
 
-// Watch hands off the retained handle for one watched run to a single
-// consumer, reporting whether a live handle was found for the caller's
-// workspace. A handle started in another workspace reads as a miss, the same
-// answer a finished or unknown run gives, so a tenant cannot attach to another
-// tenant's live event stream by id (.agents/spec/08-auth-and-access.md, "Run
-// manager workspace scoping"). A miss means the run already finished (release
-// dropped its handle), was never started here, or belongs to another tenant, so
-// the caller falls back to the stored terminal record, which the store filters
-// by workspace anyway.
+// Watch hands off one watched run's retained handle to a single consumer,
+// reporting whether a live handle exists for the caller's workspace. A handle
+// from another workspace reads as a miss, so a tenant cannot attach to another
+// tenant's stream by id (.agents/spec/08-auth-and-access.md, "Run manager
+// workspace scoping"). A miss falls back to the stored record.
 func (m *Manager) Watch(ctx context.Context, runID string) (*RunHandle, bool) {
 	workspace := store.WorkspaceFromContext(ctx)
 
@@ -194,11 +184,10 @@ func (m *Manager) Dispatch(evt engine.Event) {
 }
 
 // Cancel signals one active run to stop, reporting whether the run was active
-// here for the caller's workspace. A run started in another workspace reads as
-// not active, the same answer an unknown id gives, so a tenant cannot cancel
-// another tenant's run by id before the store's own workspace filter would
-// catch it (.agents/spec/08-auth-and-access.md, "Run manager workspace
-// scoping"). The run finalizes asynchronously as canceled.
+// here for the caller's workspace. A run from another workspace reads as not
+// active, so a tenant cannot cancel another tenant's run by id
+// (.agents/spec/08-auth-and-access.md, "Run manager workspace scoping"). The
+// run finalizes asynchronously as canceled.
 func (m *Manager) Cancel(ctx context.Context, runID string) bool {
 	workspace := store.WorkspaceFromContext(ctx)
 
@@ -260,12 +249,10 @@ func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResult
 }
 
 // StartResume drives a held run forward after its approval was decided,
-// detached from ctx like every managed run: the caller gets an ack while the
-// loop settles in the background, cancelable through the manager like any
-// active run. The run keeps its existing ID, so the reservation handshake
-// launchRun performs for engine-minted IDs does not apply; routing registers
-// under held.ID before the engine goroutine starts. A run already active
-// here is refused with ErrRunActive so two loops can never drive one run
+// detached from ctx like every managed run. The run keeps its existing ID, so
+// the reservation handshake does not apply; routing registers under held.ID
+// before the engine goroutine starts. A run already active is refused with
+// ErrRunActive so two loops never drive one run
 // (.agents/spec/parity/workflow-language.md, "Human approval").
 func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
 	eng := m.engine()
@@ -298,9 +285,8 @@ func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*s
 
 // launchRun runs the reservation handshake shared by StartRun and StartReplay:
 // it reserves the next run ID, wires the watcher before the engine emits, and
-// returns once the engine accepts the run (the record exists) or rejects it
-// (the error returns here). The run's lifetime detaches from ctx: a dropped
-// client does not kill a run, only Cancel, Shutdown, or completion ends it.
+// returns once the engine accepts or rejects the run. The run's lifetime
+// detaches from ctx: only Cancel, Shutdown, or completion ends it.
 func (m *Manager) launchRun(ctx context.Context, watch bool, launch launcher) (*RunHandle, error) {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()

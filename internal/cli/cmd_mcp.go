@@ -61,11 +61,10 @@ func (a *App) cmdMCP(ctx context.Context, args []string) int {
 }
 
 // cmdMCPServe runs the stdio MCP server until the client disconnects or the
-// process is interrupted. It wires the same store, memory, registry, and engine
-// the API serves over, then drives the MCP server over stdio. The authenticator
-// is deliberately nil: a stdio MCP server is spawned by the client as a local
-// subprocess, so the process boundary is the access control, and there is no
-// HTTP header to carry a token on anyway.
+// process is interrupted, wiring the same store, memory, registry, and engine
+// the API serves over. The authenticator is deliberately nil: the client spawns
+// this server as a local subprocess, so the process boundary is the access
+// control, and there is no HTTP header to carry a token.
 func (a *App) cmdMCPServe(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("mcp serve", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)

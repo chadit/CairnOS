@@ -52,10 +52,9 @@ func (e *Engine) resolveForeachItems(ctx context.Context, action *workflow.Actio
 
 // runForeachItems runs every element under a max_parallel bound, collecting
 // ordered outputs and stopping at the first failure. The launch loop takes a
-// semaphore slot in index order before spawning each element, so elements
-// start in order and at most max_parallel call a runner at once. The first
-// failure cancels itemCtx, which unblocks the launch loop and skips whatever
-// has not started.
+// semaphore slot in index order before spawning, so elements start in order and
+// at most max_parallel run at once. The first failure cancels itemCtx, which
+// unblocks the launch loop and skips whatever has not started.
 func (e *Engine) runForeachItems(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any, items []any) attemptOutcome {
 	itemCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -108,12 +107,12 @@ func (e *Engine) attemptItem(ctx context.Context, runID string, action *workflow
 // the fan-out goroutines. The mutex guards every field because elements run
 // concurrently.
 type foreachState struct {
-	mu       sync.Mutex
+	firstErr *cairnerr.Error
 	outputs  []any
 	usage    runner.Usage
-	firstErr *cairnerr.Error
 	failAt   int
 	attempts int
+	mu       sync.Mutex
 }
 
 // record folds one element's outcome into the shared state. The first failure

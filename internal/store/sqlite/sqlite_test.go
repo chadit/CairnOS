@@ -76,9 +76,8 @@ const (
 
 // TestOpenBackfillsChatSearchOnce proves the one-time FTS backfill guard from
 // both sides: a database created before transcript search gains searchable
-// history on its first Open (the 'rebuild' runs), and a reopen never
-// reindexes again. The second half works by deleting a canary row from the
-// FTS index directly, so only messages, and then reopening: if Open rebuilt
+// history on its first Open, and a reopen never reindexes. The second half
+// deletes a canary row from the FTS index only, then reopens: if Open rebuilt
 // every time, the canary would come back.
 func TestOpenBackfillsChatSearchOnce(t *testing.T) {
 	t.Parallel()
@@ -100,8 +99,8 @@ func TestOpenBackfillsChatSearchOnce(t *testing.T) {
 		t.Fatalf("backfill hits = %#v, want the one pre-upgrade message", hits)
 	}
 
-	if err := upgraded.Close(); err != nil {
-		t.Fatalf("close upgraded store: %v", err)
+	if innerErr := upgraded.Close(); innerErr != nil {
+		t.Fatalf("close upgraded store: %v", innerErr)
 	}
 
 	dropSearchCanary(t, path)
@@ -256,8 +255,8 @@ func TestOpenAddsParentRunIDColumn(t *testing.T) {
 		ParentRunID:  preParentRunID,
 		CreatedAt:    time.Now(),
 	}
-	if err := db.CreateRun(t.Context(), child); err != nil {
-		t.Fatalf("create child run after upgrade: %v", err)
+	if createRunErr := db.CreateRun(t.Context(), child); createRunErr != nil {
+		t.Fatalf("create child run after upgrade: %v", createRunErr)
 	}
 
 	got, err := db.GetRun(t.Context(), "run-child")

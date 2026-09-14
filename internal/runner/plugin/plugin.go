@@ -63,13 +63,13 @@ type Config struct {
 // may call Execute from multiple goroutines at once and gRPC multiplexes the
 // calls over the one connection.
 type Plugin struct {
-	name      string
-	socketDir string
+	toolSpec  runner.ToolSpec
+	client    pluginv1.RunnerPluginClient
 	cmd       *exec.Cmd
 	conn      *grpc.ClientConn
-	client    pluginv1.RunnerPluginClient
-	toolSpec  runner.ToolSpec
 	exited    chan struct{}
+	name      string
+	socketDir string
 }
 
 // New spawns the plugin process, connects over its private unix socket, and
@@ -133,12 +133,10 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 	return plug, nil
 }
 
-// pluginEnv builds the child process environment from a minimal base, never
-// the host's full os.Environ (spec L2). The base is PATH (so the child can find
-// its own interpreter and tools) plus the socket variable; the passthrough
-// allowlist forwards only the named host variables, each by exact name. A
-// plugin therefore receives a host secret only when the operator listed its
-// variable in env_passthrough.
+// pluginEnv builds the child process environment from a minimal base, never the
+// host's full os.Environ (spec L2). The base is the socket variable plus PATH,
+// so the child can find its own interpreter. Everything else arrives only when
+// the operator named it, by exact name, in env_passthrough.
 func pluginEnv(socketPath string, passthrough []string) []string {
 	// Cap holds the passthrough names plus the two fixed base entries (the
 	// socket variable and PATH), so the slice never reallocates.
@@ -314,18 +312,13 @@ type recvResult struct {
 	err   error
 }
 
-// run is the shared Execute/ExecuteStream body: one Execute RPC, chunk
-// events forwarded while a consumer is attached, and the terminal event
-// translated back into the runner contract.
+// run is the shared Execute/ExecuteStream body: one Execute RPC, chunks
+// forwarded to any consumer, the terminal event translated back.
 //
-// Crash isolation lives here. Only a decoded result or classified-error event
-// ends the call as the plugin meant it to; the run loop reaches that point
-// only by receiving the event in order. Every other way out of the loop is a
-// plugin_down: a broken or EOF'd stream, or the process-exit watcher firing,
-// whether at the top-level receive or while a chunk forward is parked on a
-// consumer that stopped reading. A plugin that exits mid-call can never look
-// like success to the engine, because the loop returns plugin_down before it
-// ever reaches a terminal event that the dead process queued behind chunks.
+// Crash isolation: only a received result or classified-error event ends the
+// call cleanly. Every other exit is a plugin_down: a broken stream, or the
+// process-exit watcher firing, even while a chunk forward is parked on a
+// consumer that stopped reading.
 func (p *Plugin) run(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
 	protoTask, err := taskToProto(task)
 	if err != nil {
@@ -387,19 +380,17 @@ func receiveLoop(stream grpc.ServerStreamingClient[pluginv1.ExecuteEvent], recv 
 // classified-error events that end the call; the non-terminal chunk and
 // unknown events carry forward the possibly-cleared chunk consumer in out.
 type eventOutcome struct {
-	value    runner.Result
-	out      chan<- runner.Chunk
 	err      error
+	out      chan<- runner.Chunk
+	value    runner.Result
 	terminal bool
 }
 
-// handleEvent translates one ExecuteEvent. It marks the result and
-// classified-error events terminal and the chunk and unknown events not, so
-// the run loop keeps receiving. A chunk is forwarded inside an exit-aware
-// select so a plugin that dies while the consumer is not reading surfaces as
-// plugin_down instead of wedging the loop. An unknown oneof is skipped rather
-// than trusted: a forward-compatible plugin that adds event kinds must not
-// wedge an older host, and an empty event must never be read as success.
+// handleEvent translates one ExecuteEvent, marking result and classified-error
+// events terminal so the run loop stops. A chunk forwards inside an exit-aware
+// select, so a plugin that dies while the consumer stalls surfaces as
+// plugin_down. An unknown oneof is skipped: a newer plugin's event kinds must
+// not wedge an older host, and an empty event must never read as success.
 func (p *Plugin) handleEvent(ctx context.Context, event *pluginv1.ExecuteEvent, out chan<- runner.Chunk) eventOutcome {
 	switch payload := event.GetEvent().(type) {
 	case *pluginv1.ExecuteEvent_Chunk:
@@ -415,12 +406,10 @@ func (p *Plugin) handleEvent(ctx context.Context, event *pluginv1.ExecuteEvent, 
 	}
 }
 
-// forwardChunk delivers one chunk to the consumer while watching for the
-// plugin process dying. A terminal outcome means the process exited before the
-// chunk could land, so the call is a plugin_down. A canceled call context
+// forwardChunk delivers one chunk to the consumer while watching for the plugin
+// process dying, which makes the call a plugin_down. A canceled call context
 // drops the consumer (out cleared to nil) without ending the call, so the rest
-// of the stream still drains. A nil consumer is a plain Execute, which
-// discards chunks.
+// of the stream still drains. A nil consumer is a plain Execute.
 func (p *Plugin) forwardChunk(ctx context.Context, out chan<- runner.Chunk, chunk *pluginv1.Chunk) eventOutcome {
 	if out == nil {
 		return eventOutcome{}

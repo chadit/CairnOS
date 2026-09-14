@@ -12,8 +12,8 @@ import (
 // transitionLog records breaker transitions race-safely: the engine fires
 // the callback from worker goroutines.
 type transitionLog struct {
-	mu      sync.Mutex
 	entries []string
+	mu      sync.Mutex
 }
 
 func (l *transitionLog) add(name string, to reliability.State) {

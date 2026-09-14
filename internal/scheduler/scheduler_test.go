@@ -30,8 +30,8 @@ var errFireBoom = errors.New("fire boom")
 // memStore is an in-memory Schedules fake so daemon tests run inside a
 // synctest bubble without SQLite's background machinery.
 type memStore struct {
-	mu     sync.Mutex
 	scheds map[string]scheduler.Schedule
+	mu     sync.Mutex
 }
 
 func newMemStore() *memStore {
@@ -104,9 +104,9 @@ func (m *memStore) get(t *testing.T, id string) scheduler.Schedule {
 
 // recordRunner records every Fire call and optionally fails them all.
 type recordRunner struct {
-	mu      sync.Mutex
 	fireErr error
 	fired   []string
+	mu      sync.Mutex
 }
 
 func (r *recordRunner) Fire(_ context.Context, sched *scheduler.Schedule) error {
@@ -152,9 +152,9 @@ func TestNextFireMath(t *testing.T) {
 	from := time.Date(2026, 3, 10, 10, 30, 0, 0, time.UTC) // a Tuesday
 
 	cases := []struct {
+		want time.Time
 		name string
 		expr string
-		want time.Time
 	}{
 		{
 			name: "hourly shorthand fires at the next top of hour",
@@ -317,13 +317,13 @@ func TestSQLiteMarkFiredSurvivesReopen(t *testing.T) {
 	fired := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	next := fired.Add(hourInterval)
 
-	if err := first.MarkFired(t.Context(), id, fired, next); err != nil {
-		t.Fatalf("mark fired: %v", err)
+	if markFiredErr := first.MarkFired(t.Context(), id, fired, next); markFiredErr != nil {
+		t.Fatalf("mark fired: %v", markFiredErr)
 	}
 
 	// Reopen the same file: restart-safe means the stamped row survives.
-	if err := first.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	if closeErr := first.Close(); closeErr != nil {
+		t.Fatalf("close: %v", closeErr)
 	}
 
 	reopened := openSchedules(t, path)
@@ -347,19 +347,19 @@ func TestSQLiteRemoveByWorkflowName(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("close: %v", err)
+		if closeErr := store.Close(); closeErr != nil {
+			t.Errorf("close: %v", closeErr)
 		}
 	})
 
-	if _, err := store.Add(t.Context(), &scheduler.Schedule{
+	if _, addErr := store.Add(t.Context(), &scheduler.Schedule{
 		WorkflowPath: flowPath, WorkflowName: flowName, Cron: hourlyCron,
-	}); err != nil {
-		t.Fatalf("add: %v", err)
+	}); addErr != nil {
+		t.Fatalf("add: %v", addErr)
 	}
 
-	if err := store.Remove(t.Context(), flowName); err != nil {
-		t.Fatalf("remove by name: %v", err)
+	if removeErr := store.Remove(t.Context(), flowName); removeErr != nil {
+		t.Fatalf("remove by name: %v", removeErr)
 	}
 
 	scheds, err := store.List(t.Context())
@@ -377,8 +377,8 @@ func TestSQLiteAddRejectsBadCron(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
-			t.Errorf("close: %v", err)
+		if closeErr := store.Close(); closeErr != nil {
+			t.Errorf("close: %v", closeErr)
 		}
 	})
 
@@ -412,8 +412,7 @@ func TestDaemonFiresDueScheduleExactlyOnce(t *testing.T) {
 		stop := startDaemon(t, scheduler.New(scheduler.Config{Store: store, Runner: runner}))
 		defer stop()
 
-		time.Sleep(settleSleep)
-		synctest.Wait()
+		synctest.Sleep(settleSleep)
 
 		if got := runner.count(); got != 1 {
 			t.Fatalf("fired %d times, want exactly 1", got)
@@ -436,15 +435,13 @@ func TestDaemonFiresDueScheduleExactlyOnce(t *testing.T) {
 		// Just before the next boundary nothing new fires; crossing it fires
 		// exactly one more time. The settle sleep above already elapsed, so
 		// subtract it twice to stop short of the boundary.
-		time.Sleep(wantNext.Sub(now) - 2*settleSleep)
-		synctest.Wait()
+		synctest.Sleep(wantNext.Sub(now) - 2*settleSleep)
 
 		if got := runner.count(); got != 1 {
 			t.Fatalf("fired %d times before the boundary, want still 1", got)
 		}
 
-		time.Sleep(2 * settleSleep)
-		synctest.Wait()
+		synctest.Sleep(2 * settleSleep)
 
 		if got := runner.count(); got != 2 {
 			t.Fatalf("fired %d times after the boundary, want 2", got)
@@ -472,8 +469,7 @@ func TestDaemonFiresMissedScheduleOnceWithoutBacklog(t *testing.T) {
 		stop := startDaemon(t, scheduler.New(scheduler.Config{Store: store, Runner: runner}))
 		defer stop()
 
-		time.Sleep(settleSleep)
-		synctest.Wait()
+		synctest.Sleep(settleSleep)
 
 		if got := runner.count(); got != 1 {
 			t.Fatalf("missed schedule fired %d times, want exactly 1", got)
@@ -509,8 +505,7 @@ func TestDaemonSurvivesFailingRuns(t *testing.T) {
 		stop := startDaemon(t, scheduler.New(scheduler.Config{Store: store, Runner: runner}))
 		defer stop()
 
-		time.Sleep(settleSleep)
-		synctest.Wait()
+		synctest.Sleep(settleSleep)
 
 		if got := runner.count(); got != 1 {
 			t.Fatalf("fired %d times, want 1", got)
@@ -518,8 +513,7 @@ func TestDaemonSurvivesFailingRuns(t *testing.T) {
 
 		// A failed run still stamps next_fire, so the loop neither dies nor
 		// re-fires every poll; the next boundary fires again.
-		time.Sleep(hourInterval)
-		synctest.Wait()
+		synctest.Sleep(hourInterval)
 
 		if got := runner.count(); got != 2 {
 			t.Fatalf("daemon fired %d times across the next boundary, want 2 (loop alive)", got)
@@ -546,8 +540,7 @@ func TestDaemonStopsPromptlyOnCancel(t *testing.T) {
 		// completing at all proves promptness.
 		stop := startDaemon(t, scheduler.New(scheduler.Config{Store: store, Runner: runner}))
 
-		time.Sleep(settleSleep)
-		synctest.Wait()
+		synctest.Sleep(settleSleep)
 		stop()
 
 		if got := runner.count(); got != 0 {
@@ -560,9 +553,9 @@ func TestRunRejectsMissingWiring(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
 		cfg  scheduler.Config
 		want error
+		name string
 	}{
 		{
 			name: "missing store",

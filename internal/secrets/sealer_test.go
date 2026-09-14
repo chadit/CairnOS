@@ -160,8 +160,8 @@ func TestOpenRejectsRolledBackVersion(t *testing.T) {
 
 	// The row has since been re-sealed at version 200. Restoring the version-100
 	// ciphertext but presenting the current version 200 must fail.
-	if _, err := sealer.Open(testWorkspace, testName, 200, oldKeyID, oldNonce, oldCiphertext); !errors.Is(err, secrets.ErrOpenSealed) {
-		t.Errorf("open rolled-back ciphertext = %v, want ErrOpenSealed", err)
+	if _, openErr := sealer.Open(testWorkspace, testName, 200, oldKeyID, oldNonce, oldCiphertext); !errors.Is(openErr, secrets.ErrOpenSealed) {
+		t.Errorf("open rolled-back ciphertext = %v, want ErrOpenSealed", openErr)
 	}
 
 	got, err := sealer.Open(testWorkspace, testName, 100, oldKeyID, oldNonce, oldCiphertext)
@@ -287,15 +287,15 @@ func TestOpenErrorsCarryNoPlaintext(t *testing.T) {
 		label      string
 		workspace  string
 		secret     string
-		version    int64
 		keyID      string
 		nonce      []byte
 		ciphertext []byte
+		version    int64
 	}{
-		{"tampered ciphertext", testWorkspace, testName, 1, keyID, nonce, tamperedCiphertext},
-		{"swapped workspace", "other_workspace", testName, 1, keyID, nonce, ciphertext},
-		{"rolled-back version", testWorkspace, testName, 999, keyID, nonce, ciphertext},
-		{"unknown key id", testWorkspace, testName, 1, "0000000000000000", nonce, ciphertext},
+		{label: "tampered ciphertext", workspace: testWorkspace, secret: testName, version: 1, keyID: keyID, nonce: nonce, ciphertext: tamperedCiphertext},
+		{label: "swapped workspace", workspace: "other_workspace", secret: testName, version: 1, keyID: keyID, nonce: nonce, ciphertext: ciphertext},
+		{label: "rolled-back version", workspace: testWorkspace, secret: testName, version: 999, keyID: keyID, nonce: nonce, ciphertext: ciphertext},
+		{label: "unknown key id", workspace: testWorkspace, secret: testName, version: 1, keyID: "0000000000000000", nonce: nonce, ciphertext: ciphertext},
 	}
 
 	for _, probe := range cases {

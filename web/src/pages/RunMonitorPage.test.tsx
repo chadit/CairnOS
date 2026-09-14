@@ -1,52 +1,24 @@
-import { HttpResponse, http } from 'msw';
+import { http } from 'msw';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { errorLine, ndjsonResponse, resultLine, runEventLines } from '@/test/ndjson';
 import { server } from '@/test/server';
 import { renderWithProviders } from '@/test/render';
 import { RunMonitorPage } from './RunMonitorPage';
-
-function ndjson(lines: string[]): Response {
-  const body = lines.join('\n') + '\n';
-  return new HttpResponse(body, { headers: { 'Content-Type': 'application/x-ndjson' } });
-}
 
 describe('run monitor', () => {
   it('renders streamed action transitions in order', async () => {
     server.use(
       http.post('/v1/workflows/hello/runs', () =>
-        ndjson([
-          JSON.stringify({ result: { runId: 'r1', type: 'RUN_EVENT_TYPE_RUN_STARTED' } }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_ACTION_TRANSITION',
-              action: { name: 'greet', status: 'running' },
-            },
-          }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_ACTION_TRANSITION',
-              action: { name: 'echo', status: 'running' },
-            },
-          }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_ACTION_TRANSITION',
-              action: { name: 'greet', status: 'succeeded' },
-            },
-          }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_RUN_FINISHED',
-              run: { runId: 'r1', workflowName: 'hello', status: 'succeeded' },
-            },
-          }),
-        ]),
+        ndjsonResponse(
+          runEventLines('r1', [
+            ['greet', 'running'],
+            ['echo', 'running'],
+            ['greet', 'succeeded'],
+          ]),
+        ),
       ),
     );
 
@@ -75,11 +47,9 @@ describe('run monitor', () => {
   it('shows the error code when the stream carries a failure', async () => {
     server.use(
       http.post('/v1/workflows/broken/runs', () =>
-        ndjson([
-          JSON.stringify({ result: { runId: 'r2', type: 'RUN_EVENT_TYPE_RUN_STARTED' } }),
-          JSON.stringify({
-            error: { code: 'workflow.cycle_detected', message: 'cycle: a -> b -> a' },
-          }),
+        ndjsonResponse([
+          resultLine({ runId: 'r2', type: 'RUN_EVENT_TYPE_RUN_STARTED' }),
+          errorLine('workflow.cycle_detected', 'cycle: a -> b -> a'),
         ]),
       ),
     );

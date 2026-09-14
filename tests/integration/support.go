@@ -47,10 +47,10 @@ const (
 var pgShared sharedPostgres
 
 type sharedPostgres struct {
-	once      sync.Once
+	err       error
 	container *tcpostgres.PostgresContainer
 	dsn       string
-	err       error
+	once      sync.Once
 }
 
 // DSN returns the shared container's connection string, starting it on first

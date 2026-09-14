@@ -49,13 +49,12 @@ type StepWriter interface {
 	AppendAgentStep(ctx context.Context, step *store.AgentStep) error
 }
 
-// Instrumentation observes loop iterations and tool calls so the telemetry
-// layer can hang per-iteration child spans under the action's span and
-// feed the two agent metrics (.agents/spec/15-agent-loop.md, "Transcript
-// persistence") without the loop importing any telemetry SDK. The action
-// scope arrives through ctx, threaded in by the engine. Implementations
-// must be safe for concurrent use and come back promptly; each finish func
-// is called exactly once.
+// Instrumentation observes loop iterations and tool calls so the telemetry layer
+// can hang per-iteration child spans under the action's span and feed the two
+// agent metrics (.agents/spec/15-agent-loop.md, "Transcript persistence") without
+// the loop importing a telemetry SDK. The engine threads the action scope through
+// ctx. Implementations must be concurrency-safe and return promptly; each finish
+// func is called exactly once.
 type Instrumentation interface {
 	// DriverCall opens one driver turn's scope under the action scope in
 	// ctx; iteration is 1-based. The finish func receives the turn's usage
@@ -131,19 +130,18 @@ func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runne
 	return execution.run(ctx)
 }
 
-// ValidateAction applies the run-start checks from the spec's termination
-// table: the driver must be a registered runner.ToolCaller
-// (agent.driver_incapable otherwise) and every tools entry a registered
-// runner.Describer (workflow.invalid otherwise). Tools resolve only through
-// the runner registry, with one loop-owned exception: "delegate" is admitted
-// without a registry lookup because describerFor supplies its descriptor. That
-// is the no-recursion boundary. An action name is not a runner name, and no
-// registry runner starts a workflow or another loop; delegation is instead
-// bounded by its own walls (opt-in via tools, depth capped at 1, one
-// delegation per action run, iteration and budget clamps to the parent's
-// remaining), so it adds exactly one child level and never a third
-// (.agents/spec/15-agent-loop.md, "No recursion in v1"; D9 and D15 in
-// .agents/spec/14-open-decisions.md).
+// Delegation is the no-recursion boundary. An action name is not a runner name,
+// and no registry runner starts a workflow or another loop. Delegation is bounded
+// by its own walls (opt-in via tools, depth capped at 1, one delegation per action
+// run, iteration and budget clamped to the parent's remaining), so it adds exactly
+// one child level and never a third (.agents/spec/15-agent-loop.md, "No recursion
+// in v1"; D9 and D15 in .agents/spec/14-open-decisions.md).
+
+// ValidateAction applies the run-start checks from the spec's termination table:
+// the driver must be a registered runner.ToolCaller (agent.driver_incapable
+// otherwise) and every tools entry a registered runner.Describer
+// (workflow.invalid otherwise). Tools resolve through the runner registry, except
+// "delegate", which describerFor supplies a descriptor for.
 func (l *Loop) ValidateAction(action *workflow.Action) error {
 	var errs cairnerr.Errors
 

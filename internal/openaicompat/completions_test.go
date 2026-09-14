@@ -159,10 +159,10 @@ func TestAuthorization(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
 		token      func(t *testing.T, fix *fixture) string
-		wantStatus int
+		name       string
 		wantCode   string
+		wantStatus int
 	}{
 		{
 			name:       "missing_token",
@@ -330,14 +330,14 @@ func TestValidationRejections(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       string
-		wantStatus int
 		wantCode   string
+		wantStatus int
 	}{
-		{"empty_messages", `{"model":"assistant","messages":[]}`, http.StatusBadRequest, "missing_messages"},
-		{"trailing_assistant", `{"model":"assistant","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]}`, http.StatusBadRequest, "trailing_message_not_user"},
-		{"non_text_part", `{"model":"assistant","messages":[{"role":"user","content":[{"type":"image_url","image_url":"x"}]}]}`, http.StatusBadRequest, "unsupported_content_part"},
-		{"malformed_json", `{"model":`, http.StatusBadRequest, "invalid_body"},
-		{"unknown_model", `{"model":"banana","messages":[{"role":"user","content":"hi"}]}`, http.StatusNotFound, "model_not_found"},
+		{name: "empty_messages", body: `{"model":"assistant","messages":[]}`, wantStatus: http.StatusBadRequest, wantCode: "missing_messages"},
+		{name: "trailing_assistant", body: `{"model":"assistant","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]}`, wantStatus: http.StatusBadRequest, wantCode: "trailing_message_not_user"},
+		{name: "non_text_part", body: `{"model":"assistant","messages":[{"role":"user","content":[{"type":"image_url","image_url":"x"}]}]}`, wantStatus: http.StatusBadRequest, wantCode: "unsupported_content_part"},
+		{name: "malformed_json", body: `{"model":`, wantStatus: http.StatusBadRequest, wantCode: "invalid_body"},
+		{name: "unknown_model", body: `{"model":"banana","messages":[{"role":"user","content":"hi"}]}`, wantStatus: http.StatusNotFound, wantCode: "model_not_found"},
 	}
 
 	for _, tt := range tests {
@@ -481,10 +481,10 @@ func TestRealAgentSeedsPromptAndGatesWorkflow(t *testing.T) {
 // answers with one run_workflow tool call, the D9 gate the chat agent
 // intercepts.
 type gateDriver struct {
-	mu       sync.Mutex
-	workflow string
 	inputs   map[string]any
+	workflow string
 	prompts  []string
+	mu       sync.Mutex
 }
 
 var _ runner.ToolCaller = (*gateDriver)(nil)

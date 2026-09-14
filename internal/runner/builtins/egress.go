@@ -26,19 +26,12 @@ const cfgKeyAllowPrivateTargets = "allow_private_targets"
 // resolves to the same blocked address on every retry.
 const codeSuffixBlockedTarget = ".blocked_target"
 
-// safeHTTPClient builds an http.Client whose transport refuses connections to
-// loopback, link-local, private, unspecified, and multicast addresses, and
-// whose redirect policy re-checks each hop's scheme. When allowPrivate is true
-// the IP guard is skipped (the scheme guard stays on), for operators that call
-// internal endpoints on purpose. The IP check runs in the dialer's Control
-// callback, after DNS resolution against the address the connection will
-// actually use, so a DNS-rebind that resolves a public name to an internal IP
-// is still blocked. The timeout backstops a hung endpoint when ctx and the
-// task deadline leave the client unbounded.
-//
-// This is the one shared egress guard the http, webhook, and github runners'
-// factory clients are built from (.agents/spec/08-auth-and-access.md, "Runner
-// egress guard").
+// safeHTTPClient builds an http.Client that refuses connections to loopback,
+// link-local, private, unspecified, and multicast addresses. The check sits in
+// the dialer's Control callback, after DNS, so a rebind to an internal IP is
+// still blocked. allowPrivate drops the IP guard for operators who call
+// internal endpoints deliberately, and keeps the redirect scheme guard
+// (.agents/spec/08-auth-and-access.md, "Runner egress guard").
 func safeHTTPClient(name string, timeout time.Duration, allowPrivate bool) *http.Client {
 	dialer := &net.Dialer{}
 
@@ -57,24 +50,20 @@ func safeHTTPClient(name string, timeout time.Duration, allowPrivate bool) *http
 // credentials token client, so a refused hop reads the same as the runners'.
 const credentialsClientName = "credentials"
 
-// GuardedHTTPClient exposes the shared egress guard for callers outside the
+// GuardedHTTPClient exposes the shared egress guard to callers outside the
 // runner factories, namely the credentials token client that POSTs client
 // secrets to OAuth2 token endpoints. It is the same dial-time IP guard and
-// redirect scheme guard as safeHTTPClient: loopback, link-local, private,
-// unspecified, and multicast targets are refused at dial after DNS resolution,
-// unless allowPrivate is true (which keeps the scheme guard and drops the IP
-// guard, matching the runner opt-out). timeout bounds one token mint or refresh,
-// since x/oauth2 TokenSources take no per-call context.
+// redirect scheme guard as safeHTTPClient. timeout bounds one token mint or
+// refresh, since x/oauth2 TokenSources take no per-call context.
 func GuardedHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
 	return safeHTTPClient(credentialsClientName, timeout, allowPrivate)
 }
 
-// guardedControl is the net.Dialer Control callback that rejects a dial to a
-// blocked address. address is the resolved "host:port" the connection will use,
-// so parsing the host yields the IP the socket connects to, not a name that
-// could resolve elsewhere later. A dial to a blocked IP fails the connection,
-// which surfaces to the runner as a transport error the caller maps to a
-// blocked_target.
+// guardedControl is the net.Dialer Control callback that rejects a blocked
+// address. address is the resolved "host:port" the connection will use, so
+// parsing the host yields the IP the socket connects to, not a name that could
+// resolve elsewhere later. A blocked IP fails the dial, surfacing to the runner
+// as a transport error the caller maps to a blocked_target.
 func guardedControl(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -111,16 +100,11 @@ func isBlockedIP(addr net.IP) bool {
 }
 
 // isLocalNetworkIP reports whether addr sits on a network only this machine or
-// the people who run it can reach: loopback, RFC 1918 private space, and the
-// 100.64.0.0/10 carrier-grade NAT block a tailnet hands its nodes.
+// its operators reach: loopback, RFC 1918 space, and the 100.64.0.0/10
+// carrier-grade NAT block a tailnet hands its nodes.
 //
-// It is deliberately not isBlockedIP inverted. That predicate answers a
-// security question, "may a workflow dial this", and so also refuses
-// link-local, multicast, and the unspecified address. This one answers a
-// narrower question, "is this a server on our own side of the network", which
-// is what decides whether a hosted provider's credential is required. The
-// carrier-grade range is the difference that matters in practice: a Mac
-// reaching llama-server on a tailnet box dials 100.x and needs no API key.
+// It is not isBlockedIP inverted: that predicate answers a security question,
+// this one decides whether a hosted provider's credential is required.
 func isLocalNetworkIP(addr net.IP) bool {
 	addr = ipUnmap(addr)
 
@@ -150,13 +134,11 @@ func ipUnmap(addr net.IP) net.IP {
 }
 
 // redirectSchemeGuard re-validates every redirect hop's scheme. The dialer's
-// Control already covers each hop's IP because every dial routes through it, so
-// the redirect policy only needs the scheme allowlist, which a dial never sees.
-// A refused hop wraps errBlockedTarget so the runner's transport classifier
-// reports it as a blocked_target, the same shape a refused dial produces;
-// http.Client wraps a CheckRedirect error in a *url.Error, and errors.Is sees
-// through that wrapper. http.ErrUseLastResponse is never returned: a refused
-// redirect must surface as an error, not silently hand back the 3xx.
+// Control already covers each hop's IP, so only the scheme, which a dial never
+// sees, needs checking here. A refused hop wraps errBlockedTarget so the
+// classifier reports a blocked_target; errors.Is sees through the *url.Error
+// http.Client puts around it. http.ErrUseLastResponse would hand back the 3xx
+// silently, so it is never returned.
 func redirectSchemeGuard(_ string) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, _ []*http.Request) error {
 		switch req.URL.Scheme {
@@ -183,11 +165,10 @@ func validateScheme(name string, target *url.URL) error {
 }
 
 // guardTarget runs the request-build-time half of the egress guard on a raw
-// target string: it parses the URL and enforces the scheme allowlist. The IP
-// guard lives in the dialer, so this covers only the parse and the scheme. A
-// runner calls it before building a request so an unparseable or
-// wrong-scheme target fails as a permanent blocked_target rather than reaching
-// the transport.
+// target string: the IP guard lives in the dialer, so this covers only the URL
+// parse and the scheme allowlist. A runner calls it before building a request
+// so an unparseable or wrong-scheme target fails as a permanent blocked_target
+// rather than reaching the transport.
 func guardTarget(name, target string) error {
 	parsed, err := url.Parse(target)
 	if err != nil {

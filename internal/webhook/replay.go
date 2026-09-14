@@ -10,19 +10,18 @@ import (
 // two fields without a collision even when a nonce contains arbitrary bytes.
 const keySep = "\x00"
 
-// replayCache rejects repeated native nonces and repeated GitHub delivery ids
-// per registration, the freshness half of HMAC verification (security amendment
-// 1). HMAC over the body proves origin but not freshness: a captured signed
-// request replays forever unless the receiver remembers what it has already
-// accepted. Entries expire after the retention window, so both maps stay bounded
-// by in-window traffic rather than growing forever. Safe for concurrent use.
+// replayCache rejects repeated native nonces and GitHub delivery ids per
+// registration, the freshness half of HMAC verification (security amendment 1).
+// HMAC over the body proves origin but not freshness: a captured signed request
+// replays forever unless the receiver remembers what it accepted. Entries
+// expire after the retention window so both maps stay bounded. Safe for
+// concurrent use.
 type replayCache struct {
-	ttl time.Duration
-	now func() time.Time
-
-	mu         sync.Mutex
+	now        func() time.Time
 	nonces     map[string]time.Time
 	deliveries map[string]time.Time
+	ttl        time.Duration
+	mu         sync.Mutex
 }
 
 // newReplayCache builds a cache whose entries live for ttl, defaulting the clock

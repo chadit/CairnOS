@@ -212,14 +212,12 @@ func (s *Store) ListMessages(ctx context.Context, sessionID string) ([]*store.Ch
 	return messages, nil
 }
 
-// SearchMessages runs tsvector full-text search over the request workspace's
-// transcripts, best match first (ts_rank DESC) with (session_id, seq) as the
-// stable tie-break, matching the sqlite backend's FTS5 semantics.
-// plainto_tsquery treats the input as plain words, the same injection-safety
-// property ftsPhrase gives the sqlite backend, and the 'simple' config
-// matches internal/memory's Postgres search. The doubled session parameter
-// makes that filter optional without assembling SQL at runtime, and a NULL
-// limit means "all".
+// SearchMessages runs tsvector search over the workspace's transcripts, best
+// match first with (session_id, seq) as the tie-break, matching the sqlite
+// backend's FTS5 semantics. plainto_tsquery treats input as plain words, the
+// injection safety ftsPhrase gives sqlite, and 'simple' matches
+// internal/memory. The doubled session parameter keeps that filter optional
+// without runtime SQL assembly; a NULL limit means "all".
 func (s *Store) SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error) {
 	// The sqlite backend returns nothing on empty text before touching SQL;
 	// short-circuiting here keeps the backends behaviorally identical.

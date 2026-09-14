@@ -267,8 +267,8 @@ func TestParseAcceptsBudget(t *testing.T) {
 		name       string
 		toml       string
 		wantPeriod string
-		wantLimit  float64
 		wantExceed string
+		wantLimit  float64
 	}{
 		{
 			name:       "pause on month",
@@ -368,6 +368,88 @@ func TestParseLeavesPollNilWhenAbsent(t *testing.T) {
 
 	if flow.Poll != nil {
 		t.Fatalf("poll = %+v, want nil when no [workflow.poll] table", flow.Poll)
+	}
+}
+
+func TestParseAcceptsRequires(t *testing.T) {
+	t.Parallel()
+
+	const src = `
+[workflow]
+name     = "prflow_app"
+schedule = "* * * * *"
+
+[workflow.requires]
+urls = ["https://git.example.com/operator/Imagetool-Work"]
+vpn  = "tun0"
+
+[action.reconcile]
+runner = "mock"
+`
+
+	flow, err := workflow.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.Requires == nil {
+		t.Fatal("requires was not parsed")
+	}
+
+	if len(flow.Requires.URLs) != 1 || flow.Requires.URLs[0] != "https://git.example.com/operator/Imagetool-Work" {
+		t.Errorf("urls = %q, want the one repository URL", flow.Requires.URLs)
+	}
+
+	if flow.Requires.VPN != "tun0" {
+		t.Errorf("vpn = %q, want tun0", flow.Requires.VPN)
+	}
+}
+
+func TestParseLeavesRequiresNilWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	flow, err := workflow.Parse([]byte("[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\""))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.Requires != nil {
+		t.Fatalf("requires = %+v, want nil when no [workflow.requires] table", flow.Requires)
+	}
+}
+
+func TestParseRejectsBadRequires(t *testing.T) {
+	t.Parallel()
+
+	// A wrong TOML type is caught by the shared scalar decoder, so it reports
+	// workflow.invalid; every rule the requires validator owns reports
+	// workflow.bad_requires.
+	cases := map[string]struct {
+		table    string
+		wantCode string
+	}{
+		"no urls":          {"[workflow.requires]\nvpn = \"tun0\"\n", workflow.CodeBadRequires},
+		"relative url":     {"[workflow.requires]\nurls = [\"git.example.com/repo\"]\n", workflow.CodeBadRequires},
+		"unsupported":      {"[workflow.requires]\nurls = [\"ssh://git.example.com/repo\"]\n", workflow.CodeBadRequires},
+		"unknown key":      {"[workflow.requires]\nurls = [\"https://git.example.com\"]\nping = true\n", workflow.CodeBadRequires},
+		"vpn not a string": {"[workflow.requires]\nurls = [\"https://git.example.com\"]\nvpn = 1\n", workflow.CodeInvalid},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			src := "[workflow]\nname = \"w\"\n" + tt.table + "[action.a]\nrunner = \"mock\"\n"
+
+			_, err := workflow.Parse([]byte(src))
+			if err == nil {
+				t.Fatalf("parse succeeded, want a %s error", tt.wantCode)
+			}
+
+			if codes := codesOf(t, err); !slices.Contains(codes, tt.wantCode) {
+				t.Fatalf("codes = %v, want %s", codes, tt.wantCode)
+			}
+		})
 	}
 }
 

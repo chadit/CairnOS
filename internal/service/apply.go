@@ -51,8 +51,8 @@ func Apply(ctx context.Context, plan *Plan, run Execer) ([]string, error) {
 		return nil, err
 	}
 
-	if err := applyRemovals(plan.Removals); err != nil {
-		return nil, err
+	if innerErr := applyRemovals(plan.Removals); innerErr != nil {
+		return nil, innerErr
 	}
 
 	afterNotices, err := runCommands(ctx, plan.After, run)

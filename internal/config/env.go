@@ -33,8 +33,8 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 }
 
 type envBinding struct {
-	suffix string
 	set    func(raw string) error
+	suffix string
 }
 
 func envBindings(cfg *Config) []envBinding {

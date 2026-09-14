@@ -60,17 +60,17 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"SetGetRoundTrip", testSetGetRoundTrip},
-		{"OverwriteKeepsCreatedAt", testOverwriteKeepsCreatedAt},
-		{"MissingIsNotFound", testMissingIsNotFound},
-		{"ListIsMetadataOnly", testListIsMetadataOnly},
-		{"WorkspaceIsolation", testWorkspaceIsolation},
-		{"NameNormalization", testNameNormalization},
-		{"RotateReSealsAndCounts", testRotateReSealsAndCounts},
-		{"OpenUnderPreviousKey", testOpenUnderPreviousKey},
+		{name: "SetGetRoundTrip", run: testSetGetRoundTrip},
+		{name: "OverwriteKeepsCreatedAt", run: testOverwriteKeepsCreatedAt},
+		{name: "MissingIsNotFound", run: testMissingIsNotFound},
+		{name: "ListIsMetadataOnly", run: testListIsMetadataOnly},
+		{name: "WorkspaceIsolation", run: testWorkspaceIsolation},
+		{name: "NameNormalization", run: testNameNormalization},
+		{name: "RotateReSealsAndCounts", run: testRotateReSealsAndCounts},
+		{name: "OpenUnderPreviousKey", run: testOpenUnderPreviousKey},
 	}
 
 	for _, tt := range cases {

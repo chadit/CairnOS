@@ -7,12 +7,11 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// EvidenceSource marks a suggestion's origin in its evidence; SourceHive
-// distinguishes a tip that arrived from the network from one local analysis
-// produced (.agents/spec/09-a2a-and-hive.md: "A received tip is just a
-// Suggestion that arrived from the network"). The marker is for the reviewer,
-// not a bypass: a hive suggestion goes through the same review queue and the
-// same replay guardrail as a local one.
+// EvidenceSource marks a suggestion's origin in its evidence, and SourceHive
+// flags one that arrived from the network rather than from local analysis
+// (.agents/spec/09-a2a-and-hive.md). The marker is for the reviewer, not a
+// bypass: a hive suggestion still goes through the same review queue and
+// replay guardrail as a local one.
 const (
 	EvidenceSource = "source"
 	SourceHive     = "hive"
@@ -49,12 +48,10 @@ func NewIngester(suggestions store.SuggestionStore, newID func() string) (*Inges
 }
 
 // Ingest converts each tip to an open local suggestion and saves it, so a
-// received tip flows through the same human review queue and replay guardrail
-// as a local suggestion (.agents/spec/09-a2a-and-hive.md, acceptance: "A
-// received tip flows through the standard review queue and replay guardrail").
-// It never marks a suggestion applied or approved: a tip from the network is
-// open and waits for a human, exactly like a local one. It returns the count
-// saved.
+// received tip flows through the same review queue and replay guardrail as a
+// local one (.agents/spec/09-a2a-and-hive.md, acceptance). Nothing is ever
+// marked applied or approved here: a tip from the network waits for a human.
+// It returns the count saved.
 func (i *Ingester) Ingest(ctx context.Context, tips []Tip) (int, error) {
 	var saved int
 
@@ -72,11 +69,9 @@ func (i *Ingester) Ingest(ctx context.Context, tips []Tip) (int, error) {
 }
 
 // tipToSuggestion builds an open local suggestion from one content-free tip.
-// The suggestion carries only what the tip carried plus the hive source marker:
-// no raw params (the tip had none), no concrete value, and a low confidence
-// regardless of the tip's claimed savings, because a tip's bucketed saving was
-// measured on another node's data, not this one's. The target is the runner
-// type, not a local workflow.action, since a tip names no local target.
+// Savings stay at low confidence regardless of what the tip claimed, because
+// the bucket was measured on another node's data. The target is the runner
+// type rather than a local workflow.action, since a tip names no local target.
 func tipToSuggestion(tip *Tip, id string) *store.Suggestion {
 	evidence := map[string]any{
 		EvidenceSource:        SourceHive,

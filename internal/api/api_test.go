@@ -202,16 +202,16 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 		MaxRecvMsgBytes: testMaxRecvMsgBytes,
 	})
 
-	if err := server.Start(t.Context()); err != nil {
-		t.Fatalf("start server: %v", err)
+	if startErr := server.Start(t.Context()); startErr != nil {
+		t.Fatalf("start server: %v", startErr)
 	}
 
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), shutdownTimeout)
 		defer cancel()
 
-		if err := server.Shutdown(ctx); err != nil {
-			t.Errorf("shutdown server: %v", err)
+		if shutdownErr := server.Shutdown(ctx); shutdownErr != nil {
+			t.Errorf("shutdown server: %v", shutdownErr)
 		}
 	})
 
@@ -559,8 +559,8 @@ func TestReplayRunRefusesHashMismatch(t *testing.T) {
 		t.Fatalf("ReplayRun: %v", err)
 	}
 
-	if _, err := stream.Recv(); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("replay of a changed workflow code = %v (%v), want FailedPrecondition", status.Code(err), err)
+	if _, recvErr := stream.Recv(); status.Code(recvErr) != codes.FailedPrecondition {
+		t.Fatalf("replay of a changed workflow code = %v (%v), want FailedPrecondition", status.Code(recvErr), recvErr)
 	}
 
 	forced, err := fix.workflow.ReplayRun(t.Context(), &cairnosv1.ReplayRunRequest{RunId: runID, Force: true})
@@ -587,8 +587,8 @@ func TestRunWorkflowRejectsBadRequests(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
 		req      *cairnosv1.RunWorkflowRequest
+		name     string
 		wantCode codes.Code
 	}{
 		{
@@ -771,8 +771,8 @@ func TestMemoryCRUDOverGRPC(t *testing.T) {
 		t.Fatalf("search found %d entries, want 1", len(found.GetEntries()))
 	}
 
-	if _, err := fix.memory.DeleteMemory(t.Context(), &cairnosv1.DeleteMemoryRequest{Id: added.GetId()}); err != nil {
-		t.Fatalf("DeleteMemory: %v", err)
+	if _, deleteMemoryErr := fix.memory.DeleteMemory(t.Context(), &cairnosv1.DeleteMemoryRequest{Id: added.GetId()}); deleteMemoryErr != nil {
+		t.Fatalf("DeleteMemory: %v", deleteMemoryErr)
 	}
 
 	_, err = fix.memory.GetMemory(t.Context(), &cairnosv1.GetMemoryRequest{Id: added.GetId()})

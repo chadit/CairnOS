@@ -25,9 +25,9 @@ func TestCodeMapsValuesBothDirections(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
 		in   any
 		want any
+		name string
 	}{
 		{name: "none", in: nil, want: nil},
 		{name: "bool", in: true, want: true},

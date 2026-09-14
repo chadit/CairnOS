@@ -28,34 +28,31 @@ const bucketIdleTTL = 10 * time.Minute
 // Login RPC; a refused call answers ErrTooManyLogins rather than queuing
 // behind the argon2id work (spec M1). Safe for concurrent use.
 type LoginLimiter struct {
-	sem *semaphore.Weighted
-
+	sem           *semaphore.Weighted
+	now           func() time.Time
+	buckets       map[string]*tokenBucket
 	ratePerMinute int
-
-	now func() time.Time
-
-	mu      sync.Mutex
-	buckets map[string]*tokenBucket
+	mu            sync.Mutex
 }
 
 // tokenBucket is one peer's refill state: tokens accrue at ratePerMinute up to
 // a full-minute burst, and a login spends one.
 type tokenBucket struct {
-	tokens   float64
 	lastSeen time.Time
+	tokens   float64
 }
 
 // LoginLimitConfig tunes the limiter; zero or negative values fall back to the
 // M1 defaults so a partially filled config still protects the login path.
 type LoginLimitConfig struct {
+	// Now injects the clock for tests; nil means time.Now.
+	Now func() time.Time
+
 	// MaxConcurrent bounds simultaneous credential derivations.
 	MaxConcurrent int
 
 	// RatePerMinute bounds one peer's logins per minute (also its burst).
 	RatePerMinute int
-
-	// Now injects the clock for tests; nil means time.Now.
-	Now func() time.Time
 }
 
 // NewLoginLimiter builds a limiter from the config, applying the M1 defaults

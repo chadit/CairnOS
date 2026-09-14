@@ -161,8 +161,8 @@ func TestRunWorkflowStampsCallerWorkspace(t *testing.T) {
 	}
 
 	// Workspace A cannot see the run: it reads as not-found across the boundary.
-	if _, err := fix.store.GetRun(aCtx, out.RunID); !errors.Is(err, store.ErrRunNotFound) {
-		t.Errorf("workspace-A GetRun(%q) error = %v, want ErrRunNotFound", out.RunID, err)
+	if _, getRunErr := fix.store.GetRun(aCtx, out.RunID); !errors.Is(getRunErr, store.ErrRunNotFound) {
+		t.Errorf("workspace-A GetRun(%q) error = %v, want ErrRunNotFound", out.RunID, getRunErr)
 	}
 
 	// The budget check sums against workspace B, not the default workspace.
@@ -260,8 +260,8 @@ func TestGetLanguageRulesReturnsMergedSet(t *testing.T) {
 	}
 
 	var out struct {
-		Language string            `json:"language"`
 		Rules    map[string]string `json:"rules"`
+		Language string            `json:"language"`
 	}
 
 	decodeStructured(t, result.StructuredContent, &out)
@@ -353,12 +353,12 @@ func TestScopeEnforcement(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		scopes      []string
-		toolName    string
 		args        map[string]any
-		wantErr     bool
+		name        string
+		toolName    string
 		wantCodeSub string
+		scopes      []string
+		wantErr     bool
 	}{
 		{
 			name:        "read_memory_token_cannot_run_workflow",

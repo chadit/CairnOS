@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { type Workflow, emptyAction, emptyWorkflow } from '@/workflow/model';
+import { ndjsonResponse, runEventLines, runFinishedLine } from '@/test/ndjson';
 import { renderWithProviders } from '@/test/render';
 import { server } from '@/test/server';
 import { RunPanel } from './RunPanel';
@@ -23,17 +24,32 @@ function seed(): void {
   useBuilderStore.getState().loadWorkflow(flow);
 }
 
-function ndjson(lines: string[]): Response {
-  return new HttpResponse(lines.join('\n') + '\n', {
-    headers: { 'Content-Type': 'application/x-ndjson' },
-  });
+/** mockSaveRoute answers the workflow PUT with `hash` and records the body it
+ * received. A null body means the route was never reached, which is what the
+ * validation-failure case asserts. */
+function mockSaveRoute(hash: string): () => { toml?: string } | null {
+  let body: { toml?: string } | null = null;
+  server.use(
+    http.put('/v1/workflows/hello', async ({ request }) => {
+      body = (await request.json()) as { toml?: string };
+      return HttpResponse.json({ workflowName: 'hello', hash, created: true });
+    }),
+  );
+  return () => body;
+}
+
+/** clickSave mounts the panel and presses Save, the entry point both
+ * validate-then-save cases share. */
+async function clickSave(): Promise<void> {
+  const user = userEvent.setup();
+  renderWithProviders(<RunPanel />, { withAuth: false });
+  await user.click(screen.getByRole('button', { name: 'Save' }));
 }
 
 describe('builder run panel', () => {
   beforeEach(seed);
 
   it('maps validation codes onto nodes and does not save when validation fails', async () => {
-    let putCalled = false;
     server.use(
       http.post('/v1/workflows/validate', () =>
         HttpResponse.json({
@@ -47,71 +63,40 @@ describe('builder run panel', () => {
           ],
         }),
       ),
-      http.put('/v1/workflows/hello', () => {
-        putCalled = true;
-        return HttpResponse.json({ workflowName: 'hello', hash: 'x' });
-      }),
     );
+    const savedBody = mockSaveRoute('x');
 
-    const user = userEvent.setup();
-    renderWithProviders(<RunPanel />, { withAuth: false });
-
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await clickSave();
 
     await waitFor(() => {
       const node = useBuilderStore.getState().nodes.find((item) => item.id === 'greet');
       expect(node?.data.errorCodes).toEqual(['workflow.bad_reference']);
     });
-    expect(putCalled).toBe(false);
+    expect(savedBody()).toBeNull();
   });
 
   it('saves through the PUT route when validation passes', async () => {
-    let putBody: { toml?: string } | null = null;
     server.use(
       http.post('/v1/workflows/validate', () => HttpResponse.json({ valid: true, errors: [] })),
-      http.put('/v1/workflows/hello', async ({ request }) => {
-        putBody = (await request.json()) as { toml?: string };
-        return HttpResponse.json({ workflowName: 'hello', hash: 'deadbeef', created: true });
-      }),
     );
+    const savedBody = mockSaveRoute('deadbeef');
 
-    const user = userEvent.setup();
-    renderWithProviders(<RunPanel />, { withAuth: false });
-
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await clickSave();
 
     await screen.findByText(/deadbeef/);
-    expect(putBody).not.toBeNull();
-    expect(putBody?.toml).toBeTypeOf('string');
+    expect(savedBody()).not.toBeNull();
+    expect(savedBody()?.toml).toBeTypeOf('string');
   });
 
   it('folds run stream events into the live action table', async () => {
     server.use(
       http.post('/v1/workflows/hello/runs', () =>
-        ndjson([
-          JSON.stringify({ result: { runId: 'r1', type: 'RUN_EVENT_TYPE_RUN_STARTED' } }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_ACTION_TRANSITION',
-              action: { name: 'greet', status: 'running' },
-            },
-          }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_ACTION_TRANSITION',
-              action: { name: 'greet', status: 'succeeded' },
-            },
-          }),
-          JSON.stringify({
-            result: {
-              runId: 'r1',
-              type: 'RUN_EVENT_TYPE_RUN_FINISHED',
-              run: { runId: 'r1', workflowName: 'hello', status: 'succeeded' },
-            },
-          }),
-        ]),
+        ndjsonResponse(
+          runEventLines('r1', [
+            ['greet', 'running'],
+            ['greet', 'succeeded'],
+          ]),
+        ),
       ),
     );
 
@@ -130,15 +115,7 @@ describe('builder run panel', () => {
     server.use(
       http.post('/v1/workflows/hello/runs', async ({ request }) => {
         runBody = (await request.json()) as { inputs: Record<string, string>; toml?: string };
-        return ndjson([
-          JSON.stringify({
-            result: {
-              runId: 'r2',
-              type: 'RUN_EVENT_TYPE_RUN_FINISHED',
-              run: { runId: 'r2', workflowName: 'hello', status: 'succeeded' },
-            },
-          }),
-        ]);
+        return ndjsonResponse([runFinishedLine('r2')]);
       }),
     );
 

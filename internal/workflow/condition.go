@@ -84,9 +84,9 @@ const (
 )
 
 type token struct {
-	kind    tokenKind
 	text    string
 	ref     Ref
+	kind    tokenKind
 	num     float64
 	boolVal bool
 }
@@ -416,9 +416,9 @@ func (e *notExpr) Eval(resolver Resolver) (any, error) {
 }
 
 type binExpr struct {
-	operator string
 	left     Expr
 	right    Expr
+	operator string
 }
 
 func (e *binExpr) Eval(resolver Resolver) (any, error) {

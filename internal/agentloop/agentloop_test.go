@@ -289,8 +289,8 @@ func TestLoopBadDriverTurnsStrikeOutOrRecover(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		turns    []runner.Result
 		wantCode string
+		turns    []runner.Result
 	}{
 		{
 			name: "two disallowed tool calls",

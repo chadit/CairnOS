@@ -32,10 +32,10 @@ const (
 // The worker persists its own terminal row; the loop only updates scheduling
 // state from the event.
 type actionEvent struct {
-	name   string
-	status store.ActionStatus
 	output any
 	cerr   *cairnerr.Error
+	name   string
+	status store.ActionStatus
 }
 
 // seedEntry primes one action's already-known output into a new run's
@@ -50,32 +50,34 @@ type seedEntry struct {
 // owns every mutable field; workers communicate only through the events
 // channel, so no lock guards the maps.
 type runExec struct {
-	eng          *Engine
-	flow         *workflow.Workflow
-	run          *store.Run
-	inputs       map[string]any
-	order        []string
-	statuses     map[string]store.ActionStatus
-	outputs      map[string]any
-	seeds        map[string]seedEntry
-	persistSeeds bool
-	firstErr     *cairnerr.Error
+	outputs   map[string]any
+	cancelRun context.CancelFunc
+	run       *store.Run
+	inputs    map[string]any
+	sem       chan struct{}
+	statuses  map[string]store.ActionStatus
+	flow      *workflow.Workflow
+	events    chan actionEvent
+	eng       *Engine
+	firstErr  *cairnerr.Error
+	seeds     map[string]seedEntry
+
 	// firstErrAction names the action behind firstErr, so an error-workflow
 	// fire can report which stage failed. It stays empty when the run fails
 	// without an action failure, such as a run timeout.
 	firstErrAction string
-	cancelRun      context.CancelFunc
-	events         chan actionEvent
-	sem            chan struct{}
-	wg             sync.WaitGroup
+
+	order        []string
+	wg           sync.WaitGroup
+	persistSeeds bool
 }
 
 // newRunExec builds the scheduling state for one run, with every action
 // pending and a semaphore sized to the engine's concurrency cap. seeds
-// pre-populates actions whose output is already known (replay, resume); with
-// persistSeeds true those actions get a persisted succeeded row (a replay's
-// new run), with it false they only prime in-memory state so the original
-// run's rows stay byte-identical (a resume of the same run).
+// pre-populates actions whose output is already known (replay, resume).
+// persistSeeds true gives those actions a persisted succeeded row (a replay's
+// new run); false primes only in-memory state so the original run's rows stay
+// byte-identical (a resume).
 func newRunExec(eng *Engine, flow *workflow.Workflow, run *store.Run, inputs map[string]any, cancelRun context.CancelFunc, seeds map[string]seedEntry, persistSeeds bool) *runExec {
 	statuses := make(map[string]store.ActionStatus, len(flow.Actions))
 	for name := range flow.Actions {
@@ -154,12 +156,11 @@ func (x *runExec) seedAction(ctx context.Context, name string, entry seedEntry) 
 func (x *runExec) loop(ctx context.Context) {
 	x.scheduleReady(ctx)
 
-	// The loop runs until every action is terminal, with one deliberate
-	// exception: when nothing is in flight but an action is parked waiting on a
-	// human decision, the run quiesces and the loop breaks so finalize can settle
-	// it as held. Every in-flight branch still reports before the break, since
-	// inFlight stays true until the last worker's event lands
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// The loop runs until every action is terminal, with one exception: nothing
+	// in flight but an action parked on a human decision quiesces the run, and
+	// the break lets finalize settle it as held. Every in-flight branch still
+	// reports first, since inFlight stays true until the last worker's event
+	// lands (.agents/spec/parity/workflow-language.md, "Human approval").
 	for !x.allTerminal() {
 		if !x.inFlight() {
 			break
@@ -504,10 +505,9 @@ const triggerError = "error"
 
 // fireErrorWorkflow runs a failed run's declared error_workflow to completion,
 // synchronously, before executeSeededDAG returns. Only a failed run fires, and
-// only when it was not itself an error run; a succeeded or canceled run fires
-// nothing. The fire never alters the original run's terminal state: a missing
-// source, an unresolvable name, a rejection, or a failing error run each log at
-// error level and return.
+// only when it was not itself an error run. The fire never alters the original
+// run's terminal state: a missing source, an unresolvable name, a rejection, or
+// a failing error run each log at error level and return.
 func (e *Engine) fireErrorWorkflow(ctx context.Context, flow *workflow.Workflow, run *store.Run, failedAction string) {
 	if run.Status != store.RunFailed || run.Trigger == triggerError || flow.ErrorWorkflow == "" {
 		return

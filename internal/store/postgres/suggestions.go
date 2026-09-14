@@ -14,11 +14,11 @@ const suggestionColumns = "id, kind, target, status, rationale, evidence_json, p
 
 // SaveSuggestion persists one tuning suggestion
 // (.agents/spec/06-observability-and-tuning.md, "Review flow"). A zero
-// CreatedAt is stamped with the current time and an empty Status becomes
-// open, matching the sqlite backend so the tuning engine only fills what it
-// computed. The row is stamped with the request workspace so a suggestion is
-// owned by the tenant that generated it; cross-tenant reads then return
-// not-found (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// CreatedAt is stamped with the current time and an empty Status becomes open,
+// matching the sqlite backend, so the tuning engine fills only what it
+// computed. The workspace stamp makes the suggestion the generating tenant's;
+// cross-tenant reads then return not-found
+// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
 func (s *Store) SaveSuggestion(ctx context.Context, suggestion *store.Suggestion) error {
 	status := suggestion.Status
 	if status == "" {
@@ -146,9 +146,9 @@ func (s *Store) UpdateSuggestionStatus(ctx context.Context, id string, status st
 // is a stable contract independent of that package's field names, matching
 // the sqlite backend byte for byte.
 type savingsRecord struct {
+	Confidence    string  `json:"confidence"`
 	CostUSDPerRun float64 `json:"cost_usd_per_run"`
 	LatencyNS     int64   `json:"latency_ns"`
-	Confidence    string  `json:"confidence"`
 }
 
 // marshalSavings renders estimated savings for the savings_json column.
@@ -198,12 +198,12 @@ func scanSuggestion(row rowScanner) (*store.Suggestion, error) {
 	suggestion.Kind = store.SuggestionKind(kind)
 	suggestion.Status = store.SuggestionStatus(status)
 
-	if err := unmarshalJSON(evidence, &suggestion.Evidence); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(evidence, &suggestion.Evidence); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
-	if err := unmarshalJSON(proposed, &suggestion.Proposed); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(proposed, &suggestion.Proposed); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
 	suggestion.EstSavings, err = unmarshalSavings(savings)

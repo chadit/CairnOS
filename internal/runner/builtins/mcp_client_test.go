@@ -245,8 +245,8 @@ func TestMCPClientValidate(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
 		cfg     map[string]any
+		name    string
 		wantErr bool
 	}{
 		{name: "empty config", cfg: nil, wantErr: true},

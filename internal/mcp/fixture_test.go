@@ -64,8 +64,8 @@ type fixture struct {
 // get_language_rules tool registers and answers; it returns a fixed merged map
 // for one language and reports unknown otherwise.
 type fakeRules struct {
-	language string
 	merged   map[string]string
+	language string
 }
 
 // GetRules implements mcp.RulesLookup.
@@ -237,8 +237,8 @@ func (f *fixture) workspaceToken(t *testing.T, workspace string, scopes ...strin
 		t.Fatalf("NewKey: %v", err)
 	}
 
-	if err := f.authStore.CreateKey(t.Context(), key); err != nil {
-		t.Fatalf("CreateKey: %v", err)
+	if createKeyErr := f.authStore.CreateKey(t.Context(), key); createKeyErr != nil {
+		t.Fatalf("CreateKey: %v", createKeyErr)
 	}
 
 	tokenStr, _, err := f.authn.Login(t.Context(), plaintext)

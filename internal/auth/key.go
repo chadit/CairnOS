@@ -51,19 +51,19 @@ const decoySecret = "decoy"
 const defaultWorkspace = "default"
 
 // Key is one admin-managed access key (.agents/spec/08-auth-and-access.md,
-// "Access keys"): an id, a label, a scope set, an enabled flag, the workspace
-// the key acts in (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"),
-// and the argon2id hash of its secret. The plaintext exists only in the one
-// `cairnos keys add` printout. An empty Workspace means the default workspace,
-// so a key created before tenancy keeps behaving as a default-workspace key.
+// "Access keys"): id, label, scope set, enabled flag, the workspace the key
+// acts in (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"), and the
+// argon2id hash of its secret. The plaintext exists only in the one
+// `cairnos keys add` printout. An empty Workspace means the default
+// workspace, so a key created before tenancy still behaves as one.
 type Key struct {
+	CreatedAt time.Time
 	ID        string
 	Label     string
-	Scopes    []string
 	Workspace string
 	Hash      string
+	Scopes    []string
 	Enabled   bool
-	CreatedAt time.Time
 }
 
 // keyWorkspace resolves the tenant a token minted from key acts in, mapping an
@@ -207,14 +207,12 @@ func redactHash(encoded string) string {
 	return encoded[:head] + "..."
 }
 
-// verifyDecoy burns one argon2id derivation against a fixed salt so the
-// unknown-key login path costs the same as a real comparison; the result
-// is discarded on purpose. It derives with the exact parameters hashSecret
-// bakes into a new key (argonTime/argonMemory/argonThreads/argonKeyLen), so
-// the decoy cost tracks a fresh key's cost automatically: raising the
-// defaults raises both together, keeping the timing oracle closed (spec L6).
-// TestDecoyParamsMatchStoredHash pins this equality so a future param bump on
-// only one path fails the build.
+// verifyDecoy burns an argon2id derivation against a fixed salt so the
+// unknown-key login path costs the same as a real comparison. It reuses the
+// parameters hashSecret bakes into a new key, so raising the defaults raises
+// both costs and keeps the timing oracle closed (spec L6).
+// TestDecoyParamsMatchStoredHash pins that equality so a param bump on one
+// path fails the build.
 func verifyDecoy(secret string) {
 	salt := make([]byte, argonSaltLen)
 

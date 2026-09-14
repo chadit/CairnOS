@@ -14,17 +14,13 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// vaultSchema mirrors the run store's sqlite conventions: IF NOT EXISTS so
-// opening an existing database is idempotent, a workspace_id column for
-// multi-tenancy, and external-content FTS5 kept in sync by triggers. Links
-// live in their own table so backlink derivation is a reverse lookup, not a
-// JSON scan; an index on target_id makes that reverse lookup cheap.
+// vaultSchema mirrors the run store's sqlite conventions: a workspace_id
+// column for multi-tenancy and external-content FTS5 kept in sync by triggers.
+// Links live in their own table so backlink derivation is a reverse lookup
+// over an indexed target_id rather than a JSON scan.
 //
-// The pgvector / sqlite-vec path stays a stub for Phase 7+ (D2): when semantic
-// search ships, the schema gains a documents_vec virtual table over an
-// embedding column, populated by embedding title+body through a configured
-// embedding runner. No vector backend ships now, so a semantic Query falls
-// back to keyword and flags it, exactly like the memory store.
+// The sqlite-vec path stays a stub (D2): a semantic Query falls back to
+// keyword and flags it.
 const vaultSchema = `
 CREATE TABLE IF NOT EXISTS documents (
     id           TEXT PRIMARY KEY,

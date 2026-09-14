@@ -91,12 +91,12 @@ const millionTokens = 1_000_000
 type llmConfig struct {
 	model        string
 	baseURL      string
+	outputFormat string
 	maxTokens    int64
 	temperature  float64
-	hasTemp      bool
 	priceIn      float64
 	priceOut     float64
-	outputFormat string
+	hasTemp      bool
 }
 
 // decodeLLMConfig reads the shared LLM config keys with per-provider
@@ -240,15 +240,13 @@ func (c *llmConfig) validateTask(task *runner.Task, name, keyEnv string) error {
 	return nil
 }
 
-// requireAPIKey enforces the provider key everywhere except a server on our
-// own side of the network, where the common case is a llama-server that wants
-// no credential at all and demanding one would fail a workflow over a secret
-// nothing reads.
+// requireAPIKey enforces the provider key except on our own side of the
+// network, where a llama-server wants no credential and demanding one fails
+// over a secret nothing reads.
 //
-// The exemption is keyed on the address rather than on "differs from the
-// vendor default" because those are not the same set. A typo in a hosted
-// base_url differs from the default too, and exempting it would trade a clear
-// validate-time complaint for a 401 mid-run.
+// The exemption keys on the address, not on differing from the vendor default:
+// a typo differs too, and exempting it would trade a validate-time complaint
+// for a 401 mid-run.
 func (c *llmConfig) requireAPIKey(name, keyEnv string) error {
 	if localEndpoint(c.baseURL) {
 		return nil
@@ -263,11 +261,9 @@ func (c *llmConfig) requireAPIKey(name, keyEnv string) error {
 }
 
 // localEndpoint reports whether a base_url names a server this machine or its
-// operators run. A bare "localhost" counts because it is the spelling people
-// reach for and it resolves to loopback everywhere; any other name that is not
-// already an address keeps the credential requirement, since what it resolves
-// to is not knowable at validate time and a hosted endpoint is the likelier
-// answer.
+// operators run. A bare "localhost" counts because it resolves to loopback
+// everywhere. Any other name keeps the credential requirement: what it resolves
+// to is unknowable at validate time, and a hosted endpoint is likelier.
 func localEndpoint(baseURL string) bool {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {

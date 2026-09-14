@@ -25,6 +25,7 @@ const (
 	CodeBadBudget         = "workflow.bad_budget"
 	CodeBadForeach        = "workflow.bad_foreach"
 	CodeBadPoll           = "workflow.bad_poll"
+	CodeBadRequires       = "workflow.bad_requires"
 	// CodeSecretNotAllowed marks a ${{ secrets.* }} reference in a place the
 	// value would be persisted: a workflow-call action's inputs (which become
 	// the child run's stored inputs) or, from parity slice 5, an approval
@@ -73,49 +74,76 @@ const (
 // Workflow is one parsed and validated workflow file: a named DAG of actions
 // (.agents/spec/02-workflow-schema.md).
 type Workflow struct {
-	Name        string
-	Version     string
-	Description string
-	// Hash is the hex SHA-256 of the file bytes, stamped by Load so run
-	// records can prove which definition they executed. Parse leaves it
-	// empty because raw bytes from other sources carry no file identity.
-	Hash     string
-	Schedule string
-	OnError  string
-	// ErrorWorkflow names a workflow fired once, synchronously, when a run of
-	// this workflow fails. Empty means no error handler. It must match the
-	// workflow-name pattern and cannot point back at this workflow
-	// (.agents/spec/parity/workflow-language.md, "Error workflow").
-	ErrorWorkflow string
-	Notify        []string
-	Timeout       time.Duration
-	Inputs        map[string]InputDecl
-	Actions       map[string]*Action
-	// Budget is the optional per-workflow cost ceiling
-	// (.agents/spec/12-ui-and-governance.md, "Budgets"). Nil means no budget,
-	// so the engine never accumulates spend or refuses a run for this workflow.
-	Budget *BudgetSpec
+	Inputs map[string]InputDecl
+
+	// Requires is the optional [workflow.requires] table naming what must be
+	// reachable before a scheduled fire is worth running. Nil means the
+	// workflow fires regardless.
+	Requires *RequiresSpec
+
 	// Poll is the optional [workflow.poll] table that turns this scheduled
 	// workflow into a poll trigger: each cron fire polls an app event source
 	// and enqueues one run per new event. Nil means an ordinary schedule
 	// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers").
 	Poll *PollSpec
+
+	// Budget is the optional per-workflow cost ceiling
+	// (.agents/spec/12-ui-and-governance.md, "Budgets"). Nil means no budget,
+	// so the engine never accumulates spend or refuses a run for this workflow.
+	Budget *BudgetSpec
+
+	Actions map[string]*Action
+
+	// Hash is the hex SHA-256 of the file bytes, stamped by Load so run
+	// records can prove which definition they executed. Parse leaves it
+	// empty because raw bytes from other sources carry no file identity.
+	Hash string
+
+	// ErrorWorkflow names a workflow fired once, synchronously, when a run of
+	// this workflow fails. Empty means no error handler. It must match the
+	// workflow-name pattern and cannot point back at this workflow
+	// (.agents/spec/parity/workflow-language.md, "Error workflow").
+	ErrorWorkflow string
+
+	OnError     string
+	Schedule    string
+	Name        string
+	Description string
+	Version     string
+	Notify      []string
+	Timeout     time.Duration
+}
+
+// RequiresSpec is one workflow's [workflow.requires] table. The fire path in
+// internal/cli probes it every minute: while a URL cannot be reached or the VPN
+// is down, fires are skipped and an in-flight run is held rather than
+// dead-lettered. The probe answers once what every run would otherwise answer
+// with a traceback.
+type RequiresSpec struct {
+	// VPN names a network interface (tun0, wg0) the URLs are reached through.
+	// Empty means none. When it is down, the notification says so instead of
+	// reporting the dial failure it causes.
+	VPN string
+	// URLs are probed by a TCP dial to each host and port, defaulting to 443
+	// on https and 80 on http. The full URL is kept so a notification names
+	// the repository page the operator recognizes rather than a bare hostname.
+	URLs []string
 }
 
 // PollSpec is one workflow's [workflow.poll] table: which app event source to
-// poll on the workflow's schedule and the source-specific params that scope the
-// poll. A poll workflow is an ordinary scheduled workflow, so it needs a
-// non-empty top-level schedule; the fire path in internal/cli wraps the
-// scheduler runner and turns one cron fire into zero or more enqueued events
-// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers").
+// poll and the source-specific params that scope the poll. A poll workflow is
+// an ordinary scheduled workflow, so it needs a non-empty top-level schedule;
+// the fire path in internal/cli turns one cron fire into zero or more enqueued
+// events (.agents/spec/parity/triggers-webhooks.md).
 type PollSpec struct {
+	// Params are the source-specific arguments (repo, state, ...) passed
+	// through to the source untouched.
+	Params map[string]any
+
 	// Source names the registered poll source (github_issues is the first).
 	// An unknown source fails at fire time with poll.ErrUnknownSource, not at
 	// load, because the source registry is runtime state, not file state.
 	Source string
-	// Params are the source-specific arguments (repo, state, ...) passed
-	// through to the source untouched.
-	Params map[string]any
 }
 
 // BudgetSpec is one workflow's [workflow.budget] table: a cost ceiling over a
@@ -125,46 +153,57 @@ type PollSpec struct {
 type BudgetSpec struct {
 	// Period is the accumulation window: day, week, or month.
 	Period string
-	// LimitUSD is the spend ceiling for one period, in US dollars; must be > 0.
-	LimitUSD float64
+
 	// OnExceed is pause (block new runs until the period resets or an admin
 	// lifts it) or warn (let runs continue but fire a notification and metric).
 	OnExceed string
+
+	// LimitUSD is the spend ceiling for one period, in US dollars; must be > 0.
+	LimitUSD float64
 }
 
 // Action is one unit of work. Kind selects between a task action (one runner
 // with fixed params) and an agent action (a bounded agent loop).
 type Action struct {
-	Name       string
-	Kind       string
-	DependsOn  []string
-	Idempotent bool
-	Timeout    time.Duration
-	Condition  string
-	CondExpr   Expr
-	Retry      *RetryPolicy
+	CondExpr Expr
+
+	// Inputs is the interpolatable table a workflow-call action passes as the
+	// child run's inputs. Secret refs are banned here at validate time because
+	// the resolved values become the child run's persisted inputs
+	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	Inputs map[string]any
+
+	Params map[string]any
 
 	// Foreach fans a task action over a list, running one attempt per element
 	// with ${{ item }} and ${{ index }} bound. Nil means the action runs once.
 	// Only legal on a task action (.agents/spec/parity/workflow-language.md).
 	Foreach *ForeachSpec
 
-	// Task-action fields.
-	Runner string
-	Params map[string]any
-	// Fallback is the per-action provider override (D12 mixed-model). When set,
-	// it replaces the engine's [engine.fallback] default for this action's
-	// runner: the action's own runner runs first, then these providers in order
-	// only when it fails terminally. Empty means "use the engine default".
-	Fallback []string
+	Retry     *RetryPolicy
+	Condition string
 
-	// Workflow-call fields (kind = "workflow"). Workflow names the child
-	// workflow to run; Inputs is the interpolatable table passed as the child
-	// run's inputs. Secret refs are banned in Inputs at validate time because
-	// the resolved values become the child run's persisted inputs
+	// Driver, MemoryScope, and SystemPrompt configure an agent action, as do
+	// Goal, Tools, HasTools, MaxIterations, and BudgetUSD further down
+	// (.agents/spec/15-agent-loop.md).
+	Driver       string
+	MemoryScope  string
+	SystemPrompt string
+
+	// Runner is the task action's runner name; Params carries its arguments.
+	Runner string
+
+	Name string
+
+	// Goal is the objective an agent action works toward.
+	Goal string
+
+	// Workflow names the child workflow a workflow-call action (kind =
+	// "workflow") runs, with Inputs above as that child run's inputs
 	// (.agents/spec/parity/workflow-language.md, "Workflow call").
 	Workflow string
-	Inputs   map[string]any
+
+	Kind string
 
 	// Message is the optional, interpolated prompt an approval action
 	// (kind = "approval") shows the operator. It can reference upstream outputs
@@ -173,15 +212,25 @@ type Action struct {
 	// (.agents/spec/parity/workflow-language.md, "Human approval").
 	Message string
 
-	// Agent-action fields (.agents/spec/15-agent-loop.md).
-	Driver        string
-	Goal          string
+	DependsOn []string
+
+	// Fallback is the per-action provider override (D12 mixed-model). When set,
+	// it replaces the engine's [engine.fallback] default for this action's
+	// runner: the action's own runner runs first, then these providers in order
+	// only when it fails terminally. Empty means "use the engine default".
+	Fallback []string
+
+	// Tools, MaxIterations, BudgetUSD, and HasTools bound an agent action's
+	// tool use, loop count, and spend.
 	Tools         []string
-	HasTools      bool
 	MaxIterations int
 	BudgetUSD     float64
-	SystemPrompt  string
-	MemoryScope   string
+
+	Timeout time.Duration
+
+	HasTools bool
+
+	Idempotent bool
 }
 
 // ForeachSpec is one action's [action.<name>.foreach] table: the list to fan
@@ -199,8 +248,8 @@ type ForeachSpec struct {
 // RetryPolicy mirrors the per-action retry table; zero value means "use the
 // engine default" (.agents/spec/04-execution-engine.md).
 type RetryPolicy struct {
-	MaxAttempts int
 	Backoff     string
+	MaxAttempts int
 	BaseDelay   time.Duration
 	MaxDelay    time.Duration
 	Jitter      bool
@@ -208,11 +257,11 @@ type RetryPolicy struct {
 
 // InputDecl is one declared run input.
 type InputDecl struct {
-	Type        string
-	Required    bool
 	Default     any
-	HasDefault  bool
+	Type        string
 	Description string
+	Required    bool
+	HasDefault  bool
 }
 
 // Load reads and parses a workflow file, stamping Hash with the file's

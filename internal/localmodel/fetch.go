@@ -44,16 +44,19 @@ type Artifact struct {
 
 // FetchOptions controls how Fetch acquires an artifact.
 type FetchOptions struct {
-	// Force re-downloads even when a verified file is already present.
-	Force bool
-	// Offline forbids the network: a missing or corrupt cached file is an
-	// error rather than a download.
-	Offline bool
+	// Progress, when non-nil, receives human-readable percent lines.
+	Progress io.Writer
+
 	// Client overrides the HTTP client; nil uses one bounded by
 	// downloadTimeout.
 	Client *http.Client
-	// Progress, when non-nil, receives human-readable percent lines.
-	Progress io.Writer
+
+	// Force re-downloads even when a verified file is already present.
+	Force bool
+
+	// Offline forbids the network: a missing or corrupt cached file is an
+	// error rather than a download.
+	Offline bool
 }
 
 // FetchResult reports one artifact's outcome.
@@ -231,7 +234,7 @@ func streamHashed(dst io.Writer, src io.Reader, art *Artifact, progress io.Write
 	writers := []io.Writer{dst, hasher}
 
 	if progress != nil && art.Bytes > 0 {
-		writers = append(writers, &progressWriter{out: progress, name: art.Name, total: art.Bytes})
+		writers = append(writers, NewProgressWriter(progress, art.Name, art.Bytes))
 	}
 
 	if _, err := io.Copy(io.MultiWriter(writers...), src); err != nil {
@@ -241,10 +244,10 @@ func streamHashed(dst io.Writer, src io.Reader, art *Artifact, progress io.Write
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// progressWriter prints download percent to out, throttled to one line every
+// ProgressWriter prints download percent to out, throttled to one line every
 // progressStepPercent percent. It sits in the download's MultiWriter, so it
 // sees every byte without a second pass over the data.
-type progressWriter struct {
+type ProgressWriter struct {
 	out     io.Writer
 	name    string
 	total   int64
@@ -256,10 +259,16 @@ type progressWriter struct {
 	done bool
 }
 
+// NewProgressWriter builds a ProgressWriter that reports name's progress
+// against total bytes to out.
+func NewProgressWriter(out io.Writer, name string, total int64) *ProgressWriter {
+	return &ProgressWriter{out: out, name: name, total: total}
+}
+
 // Write counts bytes and prints percent at the throttle boundary. It never
 // fails the download: a failed progress print is dropped, since the bytes
 // still landed.
-func (p *progressWriter) Write(chunk []byte) (int, error) {
+func (p *ProgressWriter) Write(chunk []byte) (int, error) {
 	count := len(chunk)
 	p.written += int64(count)
 

@@ -1,8 +1,10 @@
-package localmodel
+package localmodel_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // TestCheckReportsPinsAsCurrentWhenUpstreamMatches proves a check against an
@@ -10,16 +12,16 @@ import (
 func TestCheckReportsPinsAsCurrentWhenUpstreamMatches(t *testing.T) {
 	t.Parallel()
 
-	current := catalog()[0]
+	current := localmodel.Catalog()[0]
 	upstream := fakeUpstream(t, &upstreamFixture{
-		tag:      PinnedVersion,
-		buildTag: PinnedBuild,
+		tag:      localmodel.PinnedVersion,
+		buildTag: localmodel.PinnedBuild,
 		repoSHA:  current.Revision,
 		fileName: current.File,
 		fileSHA:  current.SHA256,
 	})
 
-	report, err := Check(t.Context(), upstream)
+	report, err := localmodel.Check(t.Context(), upstream)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -28,7 +30,7 @@ func TestCheckReportsPinsAsCurrentWhenUpstreamMatches(t *testing.T) {
 		t.Errorf("report says outdated against an unchanged upstream: %+v", report)
 	}
 
-	if report.Runtime.Latest != PinnedVersion || report.Runtime.LatestBuild != PinnedBuild {
+	if report.Runtime.Latest != localmodel.PinnedVersion || report.Runtime.LatestBuild != localmodel.PinnedBuild {
 		t.Errorf("runtime = %+v", report.Runtime)
 	}
 }
@@ -39,16 +41,16 @@ func TestCheckReportsPinsAsCurrentWhenUpstreamMatches(t *testing.T) {
 func TestCheckFlagsMovedBuildUnderSameStableTag(t *testing.T) {
 	t.Parallel()
 
-	current := catalog()[0]
+	current := localmodel.Catalog()[0]
 	upstream := fakeUpstream(t, &upstreamFixture{
-		tag:      PinnedVersion,
+		tag:      localmodel.PinnedVersion,
 		buildTag: "b99999",
 		repoSHA:  current.Revision,
 		fileName: current.File,
 		fileSHA:  current.SHA256,
 	})
 
-	report, err := Check(t.Context(), upstream)
+	report, err := localmodel.Check(t.Context(), upstream)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -64,16 +66,16 @@ func TestCheckFlagsMovedBuildUnderSameStableTag(t *testing.T) {
 func TestCheckIgnoresRevisionMoveWithUnchangedWeights(t *testing.T) {
 	t.Parallel()
 
-	current := catalog()[0]
+	current := localmodel.Catalog()[0]
 	upstream := fakeUpstream(t, &upstreamFixture{
-		tag:      PinnedVersion,
-		buildTag: PinnedBuild,
+		tag:      localmodel.PinnedVersion,
+		buildTag: localmodel.PinnedBuild,
 		repoSHA:  "1111111111111111111111111111111111111111",
 		fileName: current.File,
 		fileSHA:  current.SHA256,
 	})
 
-	report, err := Check(t.Context(), upstream)
+	report, err := localmodel.Check(t.Context(), upstream)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -92,16 +94,16 @@ func TestCheckIgnoresRevisionMoveWithUnchangedWeights(t *testing.T) {
 func TestCheckFlagsNewWeights(t *testing.T) {
 	t.Parallel()
 
-	current := catalog()[0]
+	current := localmodel.Catalog()[0]
 	upstream := fakeUpstream(t, &upstreamFixture{
-		tag:      PinnedVersion,
-		buildTag: PinnedBuild,
+		tag:      localmodel.PinnedVersion,
+		buildTag: localmodel.PinnedBuild,
 		repoSHA:  "2222222222222222222222222222222222222222",
 		fileName: current.File,
 		fileSHA:  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 	})
 
-	report, err := Check(t.Context(), upstream)
+	report, err := localmodel.Check(t.Context(), upstream)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -120,9 +122,9 @@ func TestCheckFlagsNewWeights(t *testing.T) {
 func TestCheckFailsWhenUpstreamIsUnreachable(t *testing.T) {
 	t.Parallel()
 
-	upstream := NewUpstream(UpstreamOptions{GitHubAPI: "http://127.0.0.1:1", GitHubDownload: "http://127.0.0.1:1"})
+	upstream := localmodel.NewUpstream(localmodel.UpstreamOptions{GitHubAPI: "http://127.0.0.1:1", GitHubDownload: "http://127.0.0.1:1"})
 
-	if _, err := Check(t.Context(), upstream); err == nil {
+	if _, err := localmodel.Check(t.Context(), upstream); err == nil {
 		t.Fatal("check against an unreachable upstream returned no error")
 	}
 }
@@ -132,16 +134,16 @@ func TestCheckFailsWhenUpstreamIsUnreachable(t *testing.T) {
 func TestReportJSONCarriesTheContractFields(t *testing.T) {
 	t.Parallel()
 
-	current := catalog()[0]
+	current := localmodel.Catalog()[0]
 	upstream := fakeUpstream(t, &upstreamFixture{
-		tag:      PinnedVersion,
-		buildTag: PinnedBuild,
+		tag:      localmodel.PinnedVersion,
+		buildTag: localmodel.PinnedBuild,
 		repoSHA:  current.Revision,
 		fileName: current.File,
 		fileSHA:  current.SHA256,
 	})
 
-	report, err := Check(t.Context(), upstream)
+	report, err := localmodel.Check(t.Context(), upstream)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}

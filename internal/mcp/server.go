@@ -51,14 +51,6 @@ const triggerMCP = "api"
 // Config wires one MCP Service. The seams are the same ones the gRPC API and
 // the A2A adapter reuse; the MCP server owns none of them.
 type Config struct {
-	// Manager owns run starts and event fan-out; run_workflow starts runs
-	// through it, the same path the API and A2A use.
-	Manager *api.Manager
-
-	// Resolver turns a workflow name into a loaded flow for run_workflow,
-	// freshly on every call so edits apply without a restart.
-	Resolver *api.WorkflowResolver
-
 	// Store is the durable run store the runs resource lists and run_workflow
 	// reads a created run back from.
 	Store store.Store
@@ -72,15 +64,23 @@ type Config struct {
 	// service existed) (.agents/spec/10-mcp-integration.md, get_language_rules).
 	Rules RulesLookup
 
-	// WorkflowsDir holds the workflow files the workflows resource lists.
-	WorkflowsDir string
-
 	// Auth turns on token enforcement. Nil disables auth: every call passes on
 	// the default workspace, matching the rest of the API.
 	Auth Authenticator
 
+	// Manager owns run starts and event fan-out; run_workflow starts runs
+	// through it, the same path the API and A2A use.
+	Manager *api.Manager
+
+	// Resolver turns a workflow name into a loaded flow for run_workflow,
+	// freshly on every call so edits apply without a restart.
+	Resolver *api.WorkflowResolver
+
 	// Logger receives the server's operational events; nil means slog.Default.
 	Logger *slog.Logger
+
+	// WorkflowsDir holds the workflow files the workflows resource lists.
+	WorkflowsDir string
 }
 
 // Service is the MCP protocol surface over the shared CairnOS seams. One
@@ -89,14 +89,14 @@ type Config struct {
 // tool and resource handlers enforce scopes without threading a request context
 // through the SDK's typed handler signatures.
 type Service struct {
-	manager       *api.Manager
-	resolver      *api.WorkflowResolver
 	store         store.Store
 	memory        memory.Store
 	rules         RulesLookup
-	workflowsDir  string
 	authenticator Authenticator
+	manager       *api.Manager
+	resolver      *api.WorkflowResolver
 	logger        *slog.Logger
+	workflowsDir  string
 }
 
 // NewService validates the wiring and returns the Service, failing fast when a
@@ -151,16 +151,14 @@ func (s *Service) Catalog() []ToolEntry {
 	return ServerRecord("", s.rules != nil).Tools
 }
 
-// build assembles a fresh *mcp.Server bound to one connection's token. Every
-// tool and resource handler closes over token so it can authorize without the
-// SDK carrying a request context: the HTTP transport extracts the token per
-// request and hands it here, and the stdio transport passes the empty string
-// because there auth is the process boundary.
+// build assembles an *mcp.Server bound to one connection's token. Every
+// handler closes over token because the SDK carries no request context: HTTP
+// extracts it per request, and stdio passes the empty string since auth there
+// is the process boundary.
 //
-// get_language_rules registers only when a rules store is wired (Phase 7b).
-// Without one, the tool stays absent rather than erroring on every call, the
-// same stance 7a took before the rules service existed
-// (.agents/spec/10-mcp-integration.md, get_language_rules).
+// get_language_rules registers only with a rules store wired. Without one the
+// tool stays absent rather than erroring on every call
+// (.agents/spec/10-mcp-integration.md).
 func (s *Service) build(token string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: serverVersion}, nil)
 

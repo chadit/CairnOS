@@ -9,29 +9,25 @@ import (
 )
 
 // advisoryLockKey is the fixed 64-bit key every CairnOS node uses for the
-// single-scheduler advisory lock (.agents/spec/14-open-decisions.md, S2). It
-// is an arbitrary constant; what matters is that every node agrees on it, so
-// at most one node holds the lock at a time. Postgres session advisory locks
-// share one key space across the whole database, so this value just has to
-// not collide with another application's advisory lock on the same database.
-// "CRNS" in ASCII as the high bytes keeps it recognizable in pg_locks.
+// single-scheduler advisory lock (.agents/spec/14-open-decisions.md, S2). The
+// value is arbitrary; what matters is that every node agrees on it. Postgres
+// advisory locks share one key space per database, so it also has to miss
+// another application's key. "CRNS" in ASCII keeps it recognizable in pg_locks.
 const advisoryLockKey int64 = 0x43524e53_00000001
 
-// PostgresCoordinator gates scheduling so exactly one node fires schedules at
-// a time, the multi-node leader election from
-// .agents/spec/11-deployment-and-config.md ("Scaling") and
-// .agents/spec/14-open-decisions.md (S2). It takes a Postgres session-scoped
-// advisory lock (pg_try_advisory_lock) on advisoryLockKey: whichever node
-// holds the lock is the leader, the rest are followers that fire nothing.
+// PostgresCoordinator gates scheduling so exactly one node fires schedules at a
+// time (.agents/spec/14-open-decisions.md, S2). The node holding the
+// pg_try_advisory_lock on advisoryLockKey leads; the rest fire nothing.
 //
-// The lock is connection-scoped, not transaction-scoped, so the coordinator
-// holds one dedicated pooled connection for the lock's whole lifetime.
-// Releasing that connection (or losing it to a network partition or a node
-// crash) drops the lock, and another node's next Leader call acquires it.
-// That is the failover path: no heartbeat, no lease timer, just Postgres
-// releasing a dead session's locks.
+// The lock is connection-scoped, so the coordinator holds a dedicated
+// connection while it leads. Losing it drops the lock: no heartbeat, no lease
+// timer, just Postgres releasing a dead session's locks.
 type PostgresCoordinator struct {
 	pool *pgxpool.Pool
+
+	// conn is the dedicated connection that owns the advisory lock while this
+	// node is the leader; nil when this node does not hold the lock.
+	conn *pgxpool.Conn
 
 	// lockKey is the 64-bit advisory-lock key this coordinator elects on.
 	// Different roles (the scheduler leader, the hive primary) pass different
@@ -42,9 +38,7 @@ type PostgresCoordinator struct {
 	// mu guards conn and held so concurrent Leader and Close calls do not
 	// race on the dedicated connection.
 	mu sync.Mutex
-	// conn is the dedicated connection that owns the advisory lock while this
-	// node is the leader; nil when this node does not hold the lock.
-	conn *pgxpool.Conn
+
 	// held mirrors conn != nil for readability at the call sites.
 	held bool
 }
@@ -65,13 +59,11 @@ func NewPostgresCoordinatorWithKey(pool *pgxpool.Pool, lockKey int64) *PostgresC
 	return &PostgresCoordinator{pool: pool, lockKey: lockKey}
 }
 
-// Leader reports whether this node may fire schedules right now. It is the
+// Leader reports whether this node may fire schedules right now, the
 // Coordinator contract the daemon calls before every fire. When this node
-// already holds the lock, Leader confirms the connection is still alive and
-// returns true. Otherwise it borrows a connection and tries the lock: a
-// successful pg_try_advisory_lock makes this node the leader, a failed one
-// leaves it a follower. pg_try_advisory_lock never blocks, so a follower's
-// Leader call returns at once.
+// already holds the lock, Leader confirms the connection is still alive.
+// Otherwise it borrows a connection and tries the lock. pg_try_advisory_lock
+// never blocks, so a follower's Leader call returns at once.
 func (c *PostgresCoordinator) Leader(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("postgres coordinator: %w", err)
@@ -109,14 +101,11 @@ func (c *PostgresCoordinator) Close(ctx context.Context) error {
 	return nil
 }
 
-// confirmStillLeader checks the held lock connection is still usable. A
-// dropped connection (partition, server restart) means the lock is gone, so
-// it releases the dead handle and reports follower; the next Leader call
-// retries the acquire. Holding the connection across calls is what keeps the
-// session-scoped lock alive between fires.
 // confirmStillLeader reports whether the held lock is still good. A dead
-// connection is a lost lock, not a hard failure: it returns false so the
-// daemon simply skips this pass, and a later Leader call re-acquires.
+// connection (partition, server restart) means the lock is gone, not a hard
+// failure: it drops the dead handle and returns false so the daemon skips this
+// pass, and a later Leader call re-acquires. Holding the connection across
+// calls is what keeps the session-scoped lock alive between fires.
 func (c *PostgresCoordinator) confirmStillLeader(ctx context.Context) bool {
 	if _, err := c.conn.Exec(ctx, "SELECT 1"); err != nil {
 		c.dropConn()

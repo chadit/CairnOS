@@ -198,11 +198,10 @@ func (m *Manager) Names() []string {
 }
 
 // mapTokenError converts a TokenSource failure into a safe error. A token
-// endpoint refusal surfaces as ErrTokenEndpoint carrying only the HTTP status
-// and the RFC 6749 error code; the raw response body is dropped so a hostile
-// endpoint that echoes the client secret or refresh token cannot leak it into an
-// error string or log. Any other failure (a blocked dial, a transport error)
-// carries no request body, so wrapping it is safe.
+// endpoint refusal surfaces as ErrTokenEndpoint with only the HTTP status and
+// RFC 6749 code; the raw body is dropped so a hostile endpoint cannot leak an
+// echoed client secret into a log. Any other failure carries no request body,
+// so wrapping it is safe.
 func mapTokenError(name string, err error) error {
 	if retrieve, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
 		var status int

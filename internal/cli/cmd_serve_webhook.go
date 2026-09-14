@@ -30,13 +30,13 @@ type webhookDeps struct {
 	logger  *slog.Logger
 }
 
-// attachWebhookServe mounts the webhook ingress extension when [webhook] enabled
-// is true, appending it to apiCfg and returning the store closer to defer at
-// shutdown. A disabled config logs one line and returns a no-op closer, so the
-// default posture mounts nothing. The bool is false only on a build failure,
-// carrying the failure exit code (telemetry flushed); it stays true for the
-// disabled case so serve keeps starting. Kept out of runServe so that function
-// stays under the complexity ceiling.
+// Kept out of runServe so that function stays under the complexity ceiling.
+
+// attachWebhookServe mounts the webhook ingress extension when [webhook]
+// enabled is true, appending it to apiCfg and returning the store closer for
+// shutdown. A disabled config logs one line and returns a no-op closer. The
+// bool is false only on a build failure, carrying the exit code with telemetry
+// flushed; it stays true when disabled so serve keeps starting.
 func (a *App) attachWebhookServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, dir string, apiCfg *api.Config, deps *webhookDeps) (func() error, int, bool) {
 	noop := func() error { return nil }
 
@@ -58,13 +58,15 @@ func (a *App) attachWebhookServe(ctx context.Context, cfg *config.Config, tel *t
 	return closeHooks, ExitOK, true
 }
 
-// buildWebhookExtension opens the registration store, builds the ingress handler
-// over the run manager and pause store, and returns an api.Extension mounting the
-// two POST routes on the root mux outside the gRPC interceptor. The path token is
-// a write:workflow-equivalent capability for exactly one workflow and every
-// webhook run executes under store.DefaultWorkspace (the handler stamps it); the
-// interceptor's scope table is untouched, so no gRPC route loses its scoped
-// bearer requirement. The returned closer releases the store's handle.
+// The path token is a write:workflow-equivalent capability for exactly one
+// workflow, and every webhook run executes under store.DefaultWorkspace, which
+// the handler stamps. The interceptor's scope table is untouched, so no gRPC
+// route loses its scoped bearer requirement.
+
+// buildWebhookExtension opens the registration store, builds the ingress
+// handler over the run manager and pause store, and returns an api.Extension
+// mounting the two POST routes on the root mux outside the gRPC interceptor.
+// The returned closer releases the store's handle.
 func buildWebhookExtension(ctx context.Context, cfg *config.Config, dir string, deps *webhookDeps) (*api.Extension, func() error, error) {
 	hooks, closeHooks, err := openWebhooksForServe(ctx, dir, cfg, deps.scheds)
 	if err != nil {

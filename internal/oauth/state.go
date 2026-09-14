@@ -16,8 +16,8 @@ const stateBytes = 32
 // the IdP, and the expiry past which the state is rejected. A pending login
 // that never returns is swept when its entry expires.
 type stateEntry struct {
-	verifier  string
 	expiresAt time.Time
+	verifier  string
 }
 
 // stateStore holds pending login states server-side, keyed by the random state
@@ -26,11 +26,10 @@ type stateEntry struct {
 // verifier the exchange needs. Single-use: a matched state is consumed so a
 // replayed callback fails. Safe for concurrent use.
 type stateStore struct {
-	now func() time.Time
-	ttl time.Duration
-
-	mu      sync.Mutex
+	now     func() time.Time
 	pending map[string]stateEntry
+	ttl     time.Duration
+	mu      sync.Mutex
 }
 
 // newStateStore builds a store with the given TTL and clock. A nil clock uses

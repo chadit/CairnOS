@@ -57,14 +57,13 @@ type sample struct {
 // Breaker guards a single runner so one failing service does not drag down
 // every workflow using it. Safe for concurrent use.
 type Breaker struct {
-	key      string
-	config   BreakerConfig
-	callback func(key string, to State)
-
-	mu       sync.Mutex
-	state    State
-	samples  []sample
 	openedAt time.Time
+	callback func(key string, to State)
+	key      string
+	samples  []sample
+	config   BreakerConfig
+	state    State
+	mu       sync.Mutex
 	probing  bool
 }
 
@@ -267,11 +266,10 @@ func (b *Breaker) notify(to State) {
 // BreakerSet keys one Breaker per runner name, creating breakers lazily with
 // a shared config. Safe for concurrent use.
 type BreakerSet struct {
-	config   BreakerConfig
 	callback func(key string, to State)
-
-	mu       sync.Mutex
 	breakers map[string]*Breaker
+	config   BreakerConfig
+	mu       sync.Mutex
 }
 
 // NewBreakerSet builds an empty set sharing config across every key.

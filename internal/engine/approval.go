@@ -22,11 +22,10 @@ const CodeApprovalDenied = "action.approval_denied"
 const detailComment = "comment"
 
 // approvalAttempt runs a human-approval action against its decision record. No
-// row yet means the gate is fresh: it persists a pending row and reports
-// waiting, which parks the run as held. A decided row resolves the action, an
-// approval succeeding with the decider's identity and a denial failing with
-// action.approval_denied. A still-pending row (a resume before the decision)
-// re-parks without writing a second gate
+// row yet means the gate is fresh: it persists a pending row and parks the run
+// as held. A decided row resolves the action: approval succeeds with the
+// decider's identity, denial fails with action.approval_denied. A still-pending
+// row (a resume before deciding) re-parks without writing a second gate
 // (.agents/spec/parity/workflow-language.md, "Human approval").
 func (e *Engine) approvalAttempt(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any) attemptOutcome {
 	// The read detaches from cancellation so a run being torn down still sees the
@@ -143,15 +142,17 @@ func deniedError(action *workflow.Action, decision *store.Approval) *cairnerr.Er
 	return cerr
 }
 
-// ResumeRun drives a held run forward after its approval was decided: it seeds
-// the run's already-succeeded actions in memory (no re-write, so those rows stay
-// byte-identical) and re-runs the parked approval plus anything downstream
-// through the normal loop, where the approval now reads its decision and
-// succeeds or fails. The returned run is terminal, or held again when a second
-// branch still awaits its own approval; a nil error means the resume drove the
-// existing run. A run that is not held (a terminal run whose gate a failure or
-// cancel orphaned by beating the park) is rejected with ErrRunNotHeld so it
-// stays terminal (.agents/spec/parity/workflow-language.md, "Human approval").
+// Seeding does not re-write the succeeded rows, so they stay byte-identical. A
+// nil error means the resume drove the existing run. A run that is not held (a
+// terminal run whose gate a failure or cancel orphaned by beating the park) is
+// rejected with ErrRunNotHeld so it stays terminal
+// (.agents/spec/parity/workflow-language.md, "Human approval").
+
+// ResumeRun drives a held run forward after its approval was decided. It seeds
+// the run's already-succeeded actions in memory, then re-runs the parked
+// approval and anything downstream through the normal loop, where the approval
+// reads its decision and succeeds or fails. The returned run is terminal, or
+// held again when a second branch still awaits its own approval.
 func (e *Engine) ResumeRun(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) (*store.Run, error) {
 	if flow == nil {
 		return nil, ErrNilWorkflow

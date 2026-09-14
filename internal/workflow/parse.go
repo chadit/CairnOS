@@ -102,6 +102,8 @@ func (b *builder) buildMeta(flow *Workflow, metaRaw map[string]any) {
 			b.buildBudget(flow, value)
 		case "poll":
 			b.buildPoll(flow, value)
+		case "requires":
+			b.buildRequires(flow, value)
 		case "imports":
 			b.addf(CodeReserved, "workflow key %q is reserved for a future phase", key)
 		default:
@@ -251,6 +253,33 @@ func (b *builder) buildPoll(flow *Workflow, value any) {
 	}
 
 	flow.Poll = poll
+}
+
+// buildRequires maps the [workflow.requires] table. URL shape is checked in
+// validate so it joins the one-pass error list; unknown keys are rejected
+// here, the house parser style.
+func (b *builder) buildRequires(flow *Workflow, value any) {
+	table, ok := value.(map[string]any)
+	if !ok {
+		b.addf(CodeBadRequires, "workflow.requires must be a table")
+
+		return
+	}
+
+	requires := &RequiresSpec{}
+
+	for key, fieldValue := range table {
+		switch key {
+		case "urls":
+			requires.URLs = b.strSlice("workflow.requires.urls", fieldValue)
+		case "vpn":
+			requires.VPN = b.str("workflow.requires.vpn", fieldValue)
+		default:
+			b.addf(CodeBadRequires, "workflow.requires has unknown key %q", key)
+		}
+	}
+
+	flow.Requires = requires
 }
 
 func (b *builder) buildActions(flow *Workflow, actionsRaw any) {

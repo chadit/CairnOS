@@ -12,18 +12,21 @@ import (
 // only rotation diagnostic), which the store can answer without ever opening a
 // row.
 type Metadata struct {
+	// CreatedAt is when the secret was first set; preserved across overwrites.
+	CreatedAt time.Time
+
+	// UpdatedAt is the last write. It doubles as the recency stamp the sealer
+	// binds into the AAD, so a rolled-back ciphertext row fails to open.
+	UpdatedAt time.Time
+
 	// Name is the canonical secret name (NormalizeName applied), the same
 	// identity the env source resolves.
 	Name string
+
 	// KeyID is the row's key generation. During a rotation window ls shows which
 	// rows still belong to a previous key so an operator can see what rotate has
 	// left to re-seal.
 	KeyID string
-	// CreatedAt is when the secret was first set; preserved across overwrites.
-	CreatedAt time.Time
-	// UpdatedAt is the last write. It doubles as the recency stamp the sealer
-	// binds into the AAD, so a rolled-back ciphertext row fails to open.
-	UpdatedAt time.Time
 }
 
 // Store is the encrypted-at-rest secret store every backend satisfies; swapping
@@ -60,11 +63,11 @@ type Store interface {
 }
 
 // storeVersion is the recency stamp bound into the sealer AAD: the row's
-// updated_at as Unix nanoseconds. The instant is truncated to microseconds
-// first because postgres TIMESTAMPTZ keeps only microsecond resolution; without
-// the truncation the two backends would derive different versions from the same
-// stored instant and Open would fail on postgres. Truncation is idempotent, so
-// deriving the version on read matches the value used at seal time.
+// updated_at as Unix nanoseconds, truncated to microseconds because postgres
+// TIMESTAMPTZ keeps only that much resolution. Without the truncation the two
+// backends would derive different versions from one stored instant and Open
+// would fail on postgres. Truncation is idempotent, so the read-side version
+// matches seal time.
 func storeVersion(updatedAt time.Time) int64 {
 	return updatedAt.UTC().Truncate(time.Microsecond).UnixNano()
 }
@@ -103,10 +106,10 @@ func openFailed(name string, err error) error {
 type sealedRow struct {
 	workspace  string
 	name       string
-	version    int64
 	keyID      string
 	nonce      []byte
 	ciphertext []byte
+	version    int64
 }
 
 // resealRow opens one row under its current key and re-seals it under the

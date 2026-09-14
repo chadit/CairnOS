@@ -110,8 +110,8 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		status     int
 		retryAfter string
+		status     int
 		wantClass  runner.ErrorClass
 		wantRetry  time.Duration
 	}{
@@ -275,9 +275,9 @@ func TestHTTPValidate(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
 		cfg      map[string]any
 		params   map[string]any
+		name     string
 		resolved bool
 		wantErr  bool
 	}{
@@ -359,9 +359,9 @@ func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
 	const explicit = "Bearer explicit-operator-token"
 
 	cases := []struct {
-		name   string
 		cfg    map[string]any
 		params map[string]any
+		name   string
 	}{
 		{
 			name:   "default_headers authorization wins",

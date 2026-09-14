@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -20,6 +21,7 @@ func (b *builder) validate(flow *Workflow) {
 	b.checkInputs(flow)
 	b.checkBudget(flow)
 	b.checkPoll(flow)
+	b.checkRequires(flow)
 
 	for _, name := range slices.Sorted(maps.Keys(flow.Actions)) {
 		b.checkAction(flow, flow.Actions[name])
@@ -144,6 +146,28 @@ func (b *builder) checkPoll(flow *Workflow) {
 
 	if flow.Schedule == "" {
 		b.addf(CodeBadPoll, "workflow.poll needs a schedule; a poll with no cadence never fires")
+	}
+}
+
+// checkRequires enforces the [workflow.requires] rules: at least one URL, each
+// an absolute http or https URL with a host, since the probe dials the host
+// and the notification prints the URL. Whether the host answers is the fire
+// path's concern, checked every minute, so an unreachable host is not a load
+// error.
+func (b *builder) checkRequires(flow *Workflow) {
+	if flow.Requires == nil {
+		return
+	}
+
+	if len(flow.Requires.URLs) == 0 {
+		b.addf(CodeBadRequires, "workflow.requires.urls needs at least one URL")
+	}
+
+	for _, raw := range flow.Requires.URLs {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			b.addf(CodeBadRequires, "workflow.requires.urls entry %q must be an absolute http or https URL", raw)
+		}
 	}
 }
 

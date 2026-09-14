@@ -294,13 +294,23 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		defer closeCoord(context.WithoutCancel(ctx))
 	}
 
+	// The `schedule run` worker fans held and dead_lettered alerts the same way
+	// serve does, so an operator running the scheduler outside serve still gets
+	// Discord notifications. It holds no messaging identities, so the nil registry
+	// drops the Mattermost sink. The drainer rides a child context so it stops
+	// once the producer and worker return, even on an early error.
+	fanoutCtx, stopFanout := context.WithCancel(ctx)
+	fanout := BuildFanout(&cfg, nil, a.logger)
+	fanoutDone := StartFanout(fanoutCtx, fanout)
+
 	// The daemon enqueues each fire; the worker drains the queue and runs the
 	// workflow through the engine fire runner. A fire no worker can take right
 	// away waits in the queue instead of being skipped (S8). The poll-aware
-	// wrapper turns a [workflow.poll] fire into per-event enqueues and leaves a
-	// plain schedule untouched.
+	// wrapper turns a [workflow.poll] fire into per-event enqueues and skips a
+	// workflow whose required host the reach monitor reports down.
+	monitor := newReachMonitor(fanout, a.logger)
 	enqueue := &scheduleEnqueueRunner{queue: queue, logger: a.logger}
-	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, a.logger)
+	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, monitor, a.logger)
 
 	daemon := scheduler.New(scheduler.Config{
 		Store:       scheds,
@@ -309,19 +319,11 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		Logger:      a.logger,
 	})
 
-	// The standalone `schedule run` worker fans held and dead_lettered alerts out
-	// the same way serve does, so an operator running the scheduler outside serve
-	// still gets Discord notifications. It holds no messaging identities, so the
-	// nil registry leaves the Mattermost sink out. The drainer rides a child
-	// context so it always stops once the producer and worker return, even on an
-	// early error.
-	fanoutCtx, stopFanout := context.WithCancel(ctx)
-	fanout := BuildFanout(&cfg, nil, a.logger)
-	fanoutDone := StartFanout(fanoutCtx, fanout)
-
-	worker := newQueueWorker(queue, &queueRunnerAdapter{fire: fireRunner}, &cfg.Scheduler, nil, fanout, a.logger)
+	worker := newQueueWorker(queue, &QueueRunnerAdapter{fire: fireRunner, reach: monitor}, &cfg.Scheduler, nil, fanout, monitor, a.logger)
 
 	a.printOutf("scheduler running; interrupt to stop\n")
+
+	go monitor.Run(fanoutCtx)
 
 	runErr := runProducerAndWorker(ctx, daemon, worker)
 

@@ -40,20 +40,20 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"DefaultWorkspaceSeeded", testDefaultWorkspaceSeeded},
-		{"WorkspaceCRUD", testWorkspaceCRUD},
-		{"DuplicateNameRejected", testDuplicateNameRejected},
-		{"GetWorkspaceNotFound", testGetWorkspaceNotFound},
-		{"AddMemberAndGetRole", testAddMemberAndGetRole},
-		{"AddMemberOverwritesRole", testAddMemberOverwritesRole},
-		{"AddMemberRejectsUnknownRole", testAddMemberRejectsUnknownRole},
-		{"AddMemberRejectsMissingWorkspace", testAddMemberRejectsMissingWorkspace},
-		{"GetMemberRoleNotFound", testGetMemberRoleNotFound},
-		{"ListMembers", testListMembers},
-		{"MembersIsolatedByWorkspace", testMembersIsolatedByWorkspace},
+		{name: "DefaultWorkspaceSeeded", run: testDefaultWorkspaceSeeded},
+		{name: "WorkspaceCRUD", run: testWorkspaceCRUD},
+		{name: "DuplicateNameRejected", run: testDuplicateNameRejected},
+		{name: "GetWorkspaceNotFound", run: testGetWorkspaceNotFound},
+		{name: "AddMemberAndGetRole", run: testAddMemberAndGetRole},
+		{name: "AddMemberOverwritesRole", run: testAddMemberOverwritesRole},
+		{name: "AddMemberRejectsUnknownRole", run: testAddMemberRejectsUnknownRole},
+		{name: "AddMemberRejectsMissingWorkspace", run: testAddMemberRejectsMissingWorkspace},
+		{name: "GetMemberRoleNotFound", run: testGetMemberRoleNotFound},
+		{name: "ListMembers", run: testListMembers},
+		{name: "MembersIsolatedByWorkspace", run: testMembersIsolatedByWorkspace},
 	}
 
 	for _, tt := range cases {

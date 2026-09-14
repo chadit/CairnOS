@@ -54,17 +54,13 @@ const (
 // charset suffix.
 const contentTypeJSON = "application/json"
 
-// HTTP performs a single configurable HTTP request, the read-capable sibling
-// to the webhook notification sink (.agents/spec/03-runner-interface.md). It
-// covers GET feeds and JSON APIs the agents wanted but webhook (POST-only)
-// could not reach.
+// HTTP performs a single configurable HTTP request, the read-capable sibling to
+// the webhook notification sink. It reaches the GET feeds and JSON APIs that
+// POST-only webhook cannot (.agents/spec/03-runner-interface.md).
 //
-// Config: base_url (optional prefix for the path param), timeout (seconds,
-// backstop only), and default_headers (merged under per-call headers). Params:
-// method (default GET), url or path, headers, query, body (string or object),
-// and json (parse the response body as JSON). No token is required by default;
-// set one through default_headers or a per-call header when an endpoint needs
-// it.
+// Config: base_url (prefix for path), timeout (seconds), default_headers
+// (merged under per-call headers). Params: method (default GET), url or path,
+// headers, query, body, json. No token is required by default.
 type HTTP struct {
 	baseURL        string
 	defaultHeaders map[string]string
@@ -122,10 +118,9 @@ func HTTPFactory(cfg map[string]any) (runner.Runner, error) {
 
 // HTTPFactoryWithCredentials returns a registry factory that wires lookup into
 // each built HTTP runner, so a [runner.<name>] block with a credential key
-// sends Authorization: Bearer. The shared egress guard wraps the client: the
-// timeout comes from the config or the default, and allow_private_targets opts
-// out of the IP guard for operators that call internal endpoints on purpose. A
-// nil lookup keeps the runner exactly as the bare factory.
+// sends Authorization: Bearer. allow_private_targets opts out of the shared
+// egress IP guard for operators that call internal endpoints on purpose. A nil
+// lookup keeps the runner exactly as the bare factory.
 func HTTPFactoryWithCredentials(lookup TokenLookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		timeout, has, err := configInt(cfg, cfgKeyTimeout)
@@ -276,8 +271,8 @@ func (h *HTTP) buildRequest(ctx context.Context, task *runner.Task) (*http.Reque
 		return nil, err
 	}
 
-	if err := guardTarget(HTTPName, target); err != nil {
-		return nil, err
+	if guardTargetErr := guardTarget(HTTPName, target); guardTargetErr != nil {
+		return nil, guardTargetErr
 	}
 
 	request, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
@@ -307,12 +302,11 @@ func (h *HTTP) buildRequest(ctx context.Context, task *runner.Task) (*http.Reque
 	return request, nil
 }
 
-// applyCredential mints the bound credential's bearer token and sets it as the
-// Authorization header, after the config defaults and per-call headers so an
-// explicit Authorization from either wins. A mint failure is transient: a token
-// endpoint is usually briefly unavailable and the engine retries. The error
-// carries a credential name and status only, never the token or the secret that
-// minted it.
+// applyCredential sets the bound credential's bearer token as the Authorization
+// header, after config defaults and per-call headers so an explicit
+// Authorization from either wins. A mint failure is transient: token endpoints
+// are usually briefly unavailable and the engine retries. The error names the
+// credential and status only, never the token or the secret that minted it.
 func (h *HTTP) applyCredential(ctx context.Context, request *http.Request) error {
 	if h.credential == "" {
 		return nil

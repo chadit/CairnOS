@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"net/http"
@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // fixtureRuntimeLib is the shared library the fixture archive ships beside its
@@ -19,14 +21,14 @@ const fixtureRuntimeLib = "libggml-base.so"
 // release archive and a synthetic GGUF, both digest-pinned the way the real
 // registry pins the real ones.
 type installHarness struct {
-	layout Layout
-	opts   InstallOptions
-	hits   map[string]int
+	opts    localmodel.InstallOptions
+	hits    map[string]int
+	layout  localmodel.Layout
+	archive []byte
 
 	// mu guards archive, which a test swaps between passes to stand in for a
 	// moved pin while the fixture server is still able to serve it.
-	mu      sync.Mutex
-	archive []byte
+	mu sync.Mutex
 }
 
 // serveRuntime swaps in a new release archive and repoints the pin at it, the
@@ -35,7 +37,7 @@ func (h *installHarness) serveRuntime(t *testing.T, body string) {
 	t.Helper()
 
 	archive := tarGzFixture(t, []fixtureEntry{
-		{Name: hostServerBinary(), Content: body},
+		{Name: localmodel.HostServerBinary(), Content: body},
 		{Name: fixtureRuntimeLib, Content: "library"},
 	})
 
@@ -68,7 +70,7 @@ func TestInstallLaysOutRuntimeAndWeights(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -77,19 +79,19 @@ func TestInstallLaysOutRuntimeAndWeights(t *testing.T) {
 		t.Errorf("result = %+v, want both components installed", result)
 	}
 
-	if _, err := os.Stat(harness.layout.ServerPath()); err != nil {
-		t.Errorf("server missing: %v", err)
+	if _, statErr := os.Stat(harness.layout.ServerPath()); statErr != nil {
+		t.Errorf("server missing: %v", statErr)
 	}
 
-	if _, err := os.Stat(filepath.Join(harness.layout.RuntimeDir(), fixtureRuntimeLib)); err != nil {
-		t.Errorf("library missing: %v", err)
+	if _, statErr := os.Stat(filepath.Join(harness.layout.RuntimeDir(), fixtureRuntimeLib)); statErr != nil {
+		t.Errorf("library missing: %v", statErr)
 	}
 
-	if _, err := os.Stat(result.ModelPath); err != nil {
-		t.Errorf("weights missing: %v", err)
+	if _, statErr := os.Stat(result.ModelPath); statErr != nil {
+		t.Errorf("weights missing: %v", statErr)
 	}
 
-	manifest, found, err := LoadManifest(harness.layout.ManifestPath())
+	manifest, found, err := localmodel.LoadManifest(harness.layout.ManifestPath())
 	if err != nil || !found {
 		t.Fatalf("manifest: found=%t err=%v", found, err)
 	}
@@ -113,7 +115,7 @@ func TestInstallSecondPassDownloadsNothing(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
@@ -125,7 +127,7 @@ func TestInstallSecondPassDownloadsNothing(t *testing.T) {
 	clear(harness.hits)
 	harness.mu.Unlock()
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("second install: %v", err)
 	}
@@ -146,7 +148,7 @@ func TestInstallForceRefetchesBothComponents(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
@@ -156,7 +158,7 @@ func TestInstallForceRefetchesBothComponents(t *testing.T) {
 
 	harness.opts.Fetch.Force = true
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("forced install: %v", err)
 	}
@@ -178,7 +180,7 @@ func TestInstallKeepsPreviousRuntimeForRollback(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
@@ -189,7 +191,7 @@ func TestInstallKeepsPreviousRuntimeForRollback(t *testing.T) {
 
 	harness.opts.Fetch.Force = true
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("second install: %v", err)
 	}
@@ -202,7 +204,7 @@ func TestInstallKeepsPreviousRuntimeForRollback(t *testing.T) {
 		t.Errorf("the displaced runtime was not kept: %v", err)
 	}
 
-	if err := Rollback(harness.layout, &result); err != nil {
+	if err := localmodel.Rollback(harness.layout, &result); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 
@@ -218,13 +220,13 @@ func TestCommitRuntimeDiscardsThePreviousBuild(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
 	harness.opts.Fetch.Force = true
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("second install: %v", err)
 	}
 
@@ -244,7 +246,7 @@ func TestPurgeRemovesTheWholeManagedTree(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
@@ -259,28 +261,27 @@ func TestPurgeRemovesTheWholeManagedTree(t *testing.T) {
 
 // TestFailedUpgradeRestoresBothTheBinaryAndTheRecord walks the upgrade path the
 // way the command does: install, re-install against a moved pin, fail the
-// health probe, roll back. Both halves have to come back together. Restoring
-// the binary alone would leave status reporting the build that never started,
-// and would leave the next pass short-circuiting on a manifest entry that no
-// longer describes what is on disk.
+// health probe, roll back. Restoring the binary alone would leave status
+// reporting a build that never started, and the next pass short-circuiting on
+// a manifest entry that no longer describes what is on disk.
 func TestFailedUpgradeRestoresBothTheBinaryAndTheRecord(t *testing.T) {
 	t.Parallel()
 
 	harness := newInstallHarness(t)
 	harness.serveRuntime(t, "good build")
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
-	installed, _, err := LoadManifest(harness.layout.ManifestPath())
+	installed, _, err := localmodel.LoadManifest(harness.layout.ManifestPath())
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
 
 	harness.serveRuntime(t, "broken build")
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("upgrade install: %v", err)
 	}
@@ -294,19 +295,19 @@ func TestFailedUpgradeRestoresBothTheBinaryAndTheRecord(t *testing.T) {
 	}
 
 	// The probe the command runs, against a port nothing is listening on.
-	if probeErr := WaitHealthy(t.Context(), nil, "http://127.0.0.1:1/v1", 50*time.Millisecond); probeErr == nil {
+	if probeErr := localmodel.WaitHealthy(t.Context(), nil, "http://127.0.0.1:1/v1", 50*time.Millisecond); probeErr == nil {
 		t.Fatal("the health probe passed against a dead address")
 	}
 
-	if err := Rollback(harness.layout, &result); err != nil {
-		t.Fatalf("rollback: %v", err)
+	if rollbackErr := localmodel.Rollback(harness.layout, &result); rollbackErr != nil {
+		t.Fatalf("rollback: %v", rollbackErr)
 	}
 
 	if got := harness.serverBody(t); got != "good build" {
 		t.Errorf("installed server = %q, want the previous build back", got)
 	}
 
-	restored, found, err := LoadManifest(harness.layout.ManifestPath())
+	restored, found, err := localmodel.LoadManifest(harness.layout.ManifestPath())
 	if err != nil || !found {
 		t.Fatalf("read manifest after rollback: found=%t err=%v", found, err)
 	}
@@ -327,22 +328,22 @@ func TestPassAfterAFailedUpgradeStillReinstalls(t *testing.T) {
 	harness := newInstallHarness(t)
 	harness.serveRuntime(t, "good build")
 
-	if _, err := Install(t.Context(), &harness.opts); err != nil {
+	if _, err := localmodel.Install(t.Context(), &harness.opts); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
 
 	harness.serveRuntime(t, "broken build")
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("upgrade install: %v", err)
 	}
 
-	if err := Rollback(harness.layout, &result); err != nil {
-		t.Fatalf("rollback: %v", err)
+	if rollbackErr := localmodel.Rollback(harness.layout, &result); rollbackErr != nil {
+		t.Fatalf("rollback: %v", rollbackErr)
 	}
 
-	retry, err := Install(t.Context(), &harness.opts)
+	retry, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("retry install: %v", err)
 	}
@@ -363,16 +364,16 @@ func TestRollbackOfAFirstInstallLeavesNoRecord(t *testing.T) {
 
 	harness := newInstallHarness(t)
 
-	result, err := Install(t.Context(), &harness.opts)
+	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
-	if err := Rollback(harness.layout, &result); err != nil {
-		t.Fatalf("rollback: %v", err)
+	if rollbackErr := localmodel.Rollback(harness.layout, &result); rollbackErr != nil {
+		t.Fatalf("rollback: %v", rollbackErr)
 	}
 
-	_, found, err := LoadManifest(harness.layout.ManifestPath())
+	_, found, err := localmodel.LoadManifest(harness.layout.ManifestPath())
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
@@ -382,13 +383,13 @@ func TestRollbackOfAFirstInstallLeavesNoRecord(t *testing.T) {
 	}
 }
 
-// newInstallHarness stands up fixture download servers and an InstallOptions
+// newInstallHarness stands up fixture download servers and an localmodel.InstallOptions
 // pointed at them, rooted in a temp home.
 func newInstallHarness(t *testing.T) *installHarness {
 	t.Helper()
 
 	archive := tarGzFixture(t, []fixtureEntry{
-		{Name: hostServerBinary(), Content: "server binary"},
+		{Name: localmodel.HostServerBinary(), Content: "server binary"},
 		{Name: fixtureRuntimeLib, Content: "library"},
 		{Name: fixtureOtherTool, Content: "another tool"},
 	})
@@ -412,21 +413,21 @@ func newInstallHarness(t *testing.T) *installHarness {
 	}))
 	t.Cleanup(server.Close)
 
-	build := Build{
-		GOOS: osLinux, GOARCH: archAMD64,
+	build := localmodel.Build{
+		GOOS: localmodel.OSLinux, GOARCH: localmodel.ArchAMD64,
 		Asset:  "llama-fixture-bin.tar.gz",
 		SHA256: digestOf(archive),
-		Format: formatTarGz, Prefix: archivePrefix, Binary: hostServerBinary(),
+		Format: localmodel.FormatTarGz, Prefix: localmodel.ArchivePrefix, Binary: localmodel.HostServerBinary(),
 	}
 
-	harness.layout = NewLayout(t.TempDir())
-	harness.opts = InstallOptions{
+	harness.layout = localmodel.NewLayout(t.TempDir())
+	harness.opts = localmodel.InstallOptions{
 		Layout: harness.layout,
-		Model: Model{
+		Model: localmodel.Model{
 			Name: "fixture-model", Repo: "org/repo", File: "fixture.gguf",
 			SHA256: digestOf(weights), Revision: "abc", Bytes: int64(len(weights)),
 		},
-		Fetch:        FetchOptions{Client: server.Client()},
+		Fetch:        localmodel.FetchOptions{Client: server.Client()},
 		DownloadBase: server.URL,
 		ResolveBase:  server.URL,
 		Build:        &build,

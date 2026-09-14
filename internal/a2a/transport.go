@@ -10,12 +10,11 @@ import (
 )
 
 // TLSConfig is the [a2a] mTLS block (.agents/spec/09-a2a-and-hive.md,
-// "Transport security"). mTLS proves the connection, the bearer token proves
-// the caller's scopes: the two are orthogonal layers, so a connection that
-// passes mTLS still presents a token, and a token alone over plaintext still
-// works on a loopback bind. All three files are required together or omitted
-// together; a partial trio is a configuration error rather than a silent
-// downgrade to one-way TLS.
+// "Transport security"). mTLS proves the connection, the token proves scopes:
+// orthogonal layers, so an mTLS connection still presents a token and a token
+// alone still works on a loopback bind. All three files are required or
+// omitted together; a partial trio is a config error, not a silent downgrade
+// to one-way TLS.
 type TLSConfig struct {
 	CertFile     string
 	KeyFile      string
@@ -61,11 +60,11 @@ func (c TLSConfig) ServerCredentials() (credentials.TransportCredentials, error)
 }
 
 // ClientCredentials builds the credentials the local HTTP gateway dials the
-// mTLS gRPC listener with. The node presents its own certificate as the client
-// identity and trusts the same CA bundle, so the loopback gateway hop passes
-// the listener's RequireAndVerifyClientCert. ServerName is left to the dial
-// target; the gateway dials by loopback address, so cert hostname verification
-// against the connection IP is what the node's own cert must satisfy.
+// mTLS listener with. The node presents its own certificate and trusts the
+// same CA bundle, so the loopback hop passes the listener's
+// RequireAndVerifyClientCert. ServerName is left to the dial target: the
+// gateway dials by loopback address, so the node's own cert must satisfy
+// hostname verification against the connection IP.
 func (c TLSConfig) ClientCredentials() (credentials.TransportCredentials, error) {
 	if c.CertFile == "" || c.KeyFile == "" || c.ClientCAFile == "" {
 		return nil, fmt.Errorf("%w: cert=%q key=%q client_ca=%q",

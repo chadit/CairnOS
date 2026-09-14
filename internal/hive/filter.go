@@ -19,12 +19,10 @@ const bucketWidth = 10
 const percentScale = 100
 
 // Transformer reduces a local suggestion to a content-free Tip by the
-// allowlist (.agents/spec/09-a2a-and-hive.md, "Privacy mechanisms": "A tip is
-// built from allowlisted fields only; free text is dropped, not scrubbed").
-// It maps a node-local runner name onto a coarse RunnerType and tags the tip
-// with a category, both supplied by the node since neither lives on a
-// suggestion. The transformer holds no per-suggestion state, so one value
-// serves the whole node.
+// allowlist (.agents/spec/09-a2a-and-hive.md, "Privacy mechanisms": free text
+// is dropped, not scrubbed). It maps a node-local runner name onto a coarse
+// RunnerType and tags the tip with a category, both supplied by the node. It
+// holds no per-suggestion state, so one value serves the node.
 type Transformer struct {
 	// runnerTypes maps a local runner name to its coarse type. A name absent
 	// here maps to RunnerTypeOther, so a node-specific runner name never rides
@@ -62,16 +60,13 @@ func defaultRunnerTypes() map[string]RunnerType {
 }
 
 // Transform reduces suggestion to a Tip built only from allowlisted fields,
-// reporting ok=false when the suggestion cannot be reduced to a safe tip
-// (.agents/spec/09-a2a-and-hive.md, acceptance: "a published tip contains only
-// allowlisted, content-free fields, proven by a test that tries to find raw
-// input in an outbound tip and fails"). It strips, never scrubs: the
-// suggestion's Rationale, Evidence, Proposed, Target, and ID are read only to
-// derive enum and bucket values, and none of their content is copied onto the
-// tip. A prompt_refactor suggestion always returns ok=false because its
-// content cannot be reduced to a safe shape.
+// reporting ok=false otherwise: a published tip carries only allowlisted,
+// content-free fields (.agents/spec/09-a2a-and-hive.md, acceptance). It
+// strips, never scrubs: Rationale, Evidence, Proposed, Target, and ID only
+// derive enum and bucket values. A prompt_refactor suggestion always returns
+// ok=false.
 //
-//nolint:gocritic // hugeParam: Suggestion is read by value so Transform cannot mutate the caller's suggestion while deriving the tip
+//nolint:gocritic // hugeParam: Suggestion is read by value so Transform cannot mutate it
 func (t *Transformer) Transform(suggestion store.Suggestion) (Tip, bool) {
 	if !shareableKind(suggestion.Kind) {
 		return Tip{}, false

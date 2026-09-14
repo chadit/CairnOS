@@ -47,13 +47,12 @@ func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry
 	return agent, personalities, ExitOK, true
 }
 
-// buildChatAgent wires the Phase 9 chat agent for serve when [chat] is enabled
-// (.agents/spec/13-roadmap.md, Phase 9). It resolves the configured driver to
-// a runner.ToolCaller (the same capability an agent action's driver needs),
-// builds the memory and vault read tools plus the gated run_workflow
-// descriptor, and hands the chat agent a workflow trigger over the run manager
-// so a confirmed proposal fires a real run. A disabled [chat] returns a nil
-// agent, which keeps ChatService unmounted.
+// buildChatAgent wires the chat agent when [chat] is enabled
+// (.agents/spec/13-roadmap.md, Phase 9). It resolves the configured driver to a
+// runner.ToolCaller, builds the memory and vault read tools plus the gated
+// run_workflow descriptor, and hands it a workflow trigger over the run manager
+// so a confirmed proposal fires a run. A disabled [chat] returns a nil agent,
+// keeping ChatService unmounted.
 func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, *chat.Personalities, error) {
 	if !cfg.Chat.Enabled {
 		// A nil agent is the documented "chat disabled" state, not an error.
@@ -138,10 +137,10 @@ type chatDeps struct {
 	vault        vault.Store
 	registry     *runner.Registry
 	manager      *api.Manager
+	logger       *slog.Logger
 	workflowsDir string
 	skillsDir    string
 	contextDir   string
-	logger       *slog.Logger
 }
 
 // chatDriver resolves the configured driver name to a runner.ToolCaller, the
@@ -169,8 +168,7 @@ func chatDriver(registry *runner.Registry, name string) (runner.ToolCaller, erro
 // chatReadTools builds the read tools the chat agent runs inline: the memory
 // tool when a memory store is configured, the vault query tool when a vault
 // store is configured, and the skill read tool when a skill source is wired. A
-// nil dependency leaves its tool out, so a node without a vault still runs chat
-// with memory and the gate.
+// nil dependency leaves its tool out, so a node without a vault still runs chat.
 func chatReadTools(mem memory.Store, vaultStore vault.Store, skillSource chat.SkillSource) map[string]runner.Runner {
 	tools := map[string]runner.Runner{}
 

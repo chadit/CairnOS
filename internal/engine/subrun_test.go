@@ -182,8 +182,8 @@ func TestWorkflowCallDepthCapRefusesWithAncestry(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		maxDepth  int
 		wantChain string
+		maxDepth  int
 	}{
 		{name: "overridden depth of one", maxDepth: 1, wantChain: "a -> b -> a"},
 		{name: "engine default depth of three", maxDepth: 0, wantChain: "a -> b -> a -> b -> a"},

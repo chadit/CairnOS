@@ -65,14 +65,12 @@ func (s *Store) ReconcileInterrupted(ctx context.Context) (int, error) {
 }
 
 // Prune enforces retention (.agents/spec/04-execution-engine.md, "Retention
-// and pruning"): runs with their action results and agent steps past
-// RunsOlderThan are deleted, and output_json past OutputsOlderThan is nulled
-// out while the row stays for reporting. Agent transcripts age under the
-// same outputs policy because they are the fastest-growing data in the
-// system (.agents/spec/15-agent-loop.md); truncated step rows count toward
-// OutputsTruncated alongside action rows. Age is measured from the run's
-// created_at so a run's rows age together. A zero duration disables that
-// part of the sweep, and a zero Now means the current time.
+// and pruning"): runs older than RunsOlderThan are deleted, and output_json
+// older than OutputsOlderThan is nulled while the row stays. Agent transcripts
+// age under the outputs policy because they are the fastest-growing data
+// (.agents/spec/15-agent-loop.md), and their truncated rows count toward
+// OutputsTruncated. Age comes from the run's created_at so a run's rows age
+// together.
 func (s *Store) Prune(ctx context.Context, opts store.PruneOptions) (store.PruneStats, error) {
 	now := opts.Now
 	if now.IsZero() {

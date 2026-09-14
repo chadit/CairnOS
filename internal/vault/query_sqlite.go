@@ -13,22 +13,10 @@ import (
 // since a clamp degrades gracefully where a rejection would surprise a caller.
 const maxHops = 5
 
-// Query runs the typed graph query against sqlite (.agents/spec/14-open-decisions.md,
-// S1). It composes three independent filters, each optional and AND-combined:
-//
-//   - tag and project filtering (project is the "project:<name>" tag),
-//   - bounded link traversal from LinkedFrom out to Hops (BFS over the links
-//     table),
-//   - keyword text match over title and body via FTS5.
-//
-// The link traversal, when present, produces the candidate id set; the tag and
-// text filters then narrow it. With no LinkedFrom, every workspace document is
-// the candidate set. Semantic falls back to keyword with QueryResult.Fallback
-// set, since no vector backend ships in this phase (D2). The Query argument is
-// by value because the Store interface fixes that signature; the method
-// immediately threads &query into the helpers so the wide struct moves by
-// pointer everywhere it matters (the gocritic hugeParam nolint covers the one
-// unavoidable copy at the interface boundary).
+// Query runs the typed graph query against sqlite (S1): tag and project
+// filtering, bounded link traversal from LinkedFrom out to Hops, and FTS5
+// keyword match. A traversal, when present, produces the candidate id set the
+// other filters narrow. Semantic falls back to keyword (D2).
 //
 //nolint:gocritic // Store.Query fixes the by-value signature; helpers take *Query
 func (s *SQLite) Query(ctx context.Context, query Query) (QueryResult, error) {
@@ -75,9 +63,8 @@ func (s *SQLite) candidateIDs(ctx context.Context, query *Query, workspace strin
 // traverseLinks runs a bounded breadth-first walk over the links table from
 // the source document, returning the ids reachable within hops. The source
 // itself is excluded: "documents linked from this" means the neighbors, not
-// the origin. visited guards against cycles so a graph with a back-edge
-// terminates, and the frontier shrinks to only newly-seen ids each level so a
-// diamond is not re-expanded.
+// the origin. visited guards against cycles, and the frontier keeps only
+// newly-seen ids so a diamond is not re-expanded.
 func (s *SQLite) traverseLinks(ctx context.Context, source string, hops int, workspace string) ([]string, error) {
 	visited := map[string]struct{}{source: {}}
 	frontier := []string{source}

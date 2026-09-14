@@ -7,18 +7,15 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// ConfirmAction resolves a pending workflow proposal the chat agent raised
-// (.agents/spec/14-open-decisions.md, D9). approve true fires the proposed
-// workflow through the engine under normal governance and streams its run
-// events; approve false denies it and nothing runs. Either way the gate
-// clears, so a second ConfirmAction on the same session reports no pending
-// action. out is closed exactly once on return; the caller ranges it until
-// close and reads the returned error for the outcome.
-//
-// The scope check is the caller's job and happens before this method: a
-// workflow trigger requires write:workflow on the token (the API enforces it at
-// confirm time). By the time ConfirmAction runs, the token is already proven to
-// carry the scope, so this method does the firing, not the authorizing.
+// Scope checks happen before this method: a workflow trigger requires
+// write:workflow on the token, and the API enforces that at confirm time. So
+// ConfirmAction fires rather than authorizes.
+
+// ConfirmAction resolves a pending workflow proposal from the chat agent
+// (.agents/spec/14-open-decisions.md, D9). approve true fires it through the
+// engine under normal governance and streams run events; approve false denies
+// it. Either way the gate clears, so a second call reports no pending action.
+// out is closed exactly once on return; the caller ranges it until close.
 func (a *Agent) ConfirmAction(ctx context.Context, sessionID string, approve bool, out chan<- Event) error {
 	defer close(out)
 

@@ -120,9 +120,9 @@ func TestGatewayErrorEnvelope(t *testing.T) {
 	var envelope struct {
 		Status string `json:"status"`
 		Error  struct {
+			Details map[string]any `json:"details"`
 			Code    string         `json:"code"`
 			Message string         `json:"message"`
-			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 

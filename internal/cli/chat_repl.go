@@ -45,18 +45,18 @@ type chatClient interface {
 
 // chatREPL holds one interactive conversation's state.
 type chatREPL struct {
-	app         *App // output and errors go through the App printers
-	client      chatClient
-	sessionID   string
-	personality string
+	client chatClient
+	app    *App // output and errors go through the App printers
 
 	// scanner is the one scanner over the App's stdin; message reads and y/n
 	// approvals share it, because a second scanner over the same reader
 	// cannot see whatever the first one buffered past the current line.
 	scanner *bufio.Scanner
 
-	mu         sync.Mutex
-	cancelTurn context.CancelFunc // non-nil only while a turn is in flight
+	cancelTurn  context.CancelFunc // non-nil only while a turn is in flight
+	sessionID   string
+	personality string
+	mu          sync.Mutex
 }
 
 // newChatREPL wires one conversation over a single shared scanner, so the

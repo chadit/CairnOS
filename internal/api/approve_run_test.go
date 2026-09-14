@@ -259,20 +259,19 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 		t.Fatalf("ambiguous refusal does not list the pending gates: %s", msg)
 	}
 
-	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+	if _, approveRunErr := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
 		RunId:      runID,
 		ActionName: "sign_a",
 		Approve:    true,
-	}); err != nil {
-		t.Fatalf("approve sign_a: %v", err)
+	}); approveRunErr != nil {
+		t.Fatalf("approve sign_a: %v", approveRunErr)
 	}
 
-	// Both parks read held, so the status alone cannot separate them: the run
-	// still reads held from the first park while the resume is in flight, and
-	// approving sign_b against that stale read is refused. sign_a only reaches
-	// succeeded during the resume, so a held observed after that is the second
-	// park. GetRun reads the run row before the action rows and can pair a
-	// stale held with a settled sign_a, so these stay two ordered reads.
+	// Both parks read held, so approving sign_b against the stale first-park read
+	// is refused. sign_a reaches succeeded only during the resume, so a held seen
+	// after that is the second park. GetRun reads the run row before the action
+	// rows and can pair a stale held with a settled sign_a, so these stay two
+	// ordered reads.
 	waitApproveFor(t, "run re-parking on sign_b", func() bool {
 		if actionStatus(getRun(t, fix, runID), "sign_a") != statusSucceeded {
 			return false

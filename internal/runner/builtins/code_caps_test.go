@@ -152,8 +152,8 @@ func TestCodeFactoryBuildsAndRejectsBadConfig(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
 		cfg  map[string]any
+		name string
 	}{
 		{name: "max_steps wrong type", cfg: map[string]any{keyMaxSteps: "lots"}},
 		{name: "timeout wrong type", cfg: map[string]any{keyTimeout: "soon"}},

@@ -29,8 +29,8 @@ type ReauthAlert struct {
 // URL grants posting rights, so it is sourced from the environment, never a
 // config file (.agents/spec/14-open-decisions.md, D12).
 type DiscordNotifier struct {
-	webhookURL string
 	http       *http.Client
+	webhookURL string
 }
 
 // NewDiscordNotifier builds a notifier that posts to webhookURL with a bounded

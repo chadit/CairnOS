@@ -27,11 +27,10 @@ const (
 	paramSystem = "system"
 )
 
-// WorkflowTrigger fires a confirmed workflow under the normal engine
-// governance and streams its terminal status back. The chat agent depends on
-// this narrow surface rather than the API manager directly, so internal/chat
-// stays free of an import cycle with internal/api. The serve wiring satisfies
-// it with an adapter over the run manager and the workflow resolver
+// WorkflowTrigger fires a confirmed workflow under normal engine governance
+// and streams its terminal status back. The narrow surface keeps internal/chat
+// free of an import cycle with internal/api. The serve wiring satisfies it
+// with an adapter over the run manager and resolver
 // (.agents/spec/14-open-decisions.md, D9: the spawned run obeys Phase 5b
 // budgets and pause, at depth exactly one).
 type WorkflowTrigger interface {
@@ -44,8 +43,8 @@ type WorkflowTrigger interface {
 
 // RunResult is one fired workflow's terminal outcome.
 type RunResult struct {
-	Status string
 	Err    error
+	Status string
 }
 
 // Config wires one Agent.
@@ -57,29 +56,37 @@ type Config struct {
 	// agent action uses as its driver.
 	Driver runner.ToolCaller
 
-	// Tools are the read tools the agent may call inline (memory, vault_query),
-	// keyed by name. run_workflow is not here: its call is intercepted into the
-	// confirmation gate, never executed.
-	Tools map[string]runner.Runner
-
-	// Specs are the tool descriptors handed to the driver each turn, including
-	// run_workflow's, in a stable order.
-	Specs []runner.ToolSpec
-
-	// Personalities resolves a session's personality to its system prompt.
-	Personalities *Personalities
-
 	// Skills lists and loads operator-authored skills a turn can invoke. Nil
 	// disables skill invocation, so a node without a skills directory runs chat
 	// unchanged. A loaded skill influences the driver prompt only: it adds no
 	// tool, raises no budget, and cannot move the D9 confirmation gate.
 	Skills SkillSource
 
+	// Trigger fires a confirmed workflow. Nil disables the gate: a run_workflow
+	// proposal still raises the confirmation event, but an approval reports that
+	// triggering is unavailable instead of starting a run.
+	Trigger WorkflowTrigger
+
+	// Tools are the read tools the agent may call inline (memory, vault_query),
+	// keyed by name. run_workflow is not here: its call is intercepted into the
+	// confirmation gate, never executed.
+	Tools map[string]runner.Runner
+
+	// Personalities resolves a session's personality to its system prompt.
+	Personalities *Personalities
+
+	// NewID mints session and proposal ids.
+	NewID func() string
+
 	// ContextDir is the directory holding per-workspace context docs
 	// (<ContextDir>/<workspace>.md). Empty disables workspace context, so a node
 	// without one runs chat unchanged. A loaded doc influences the driver prompt
 	// only, the same additive posture as a skill.
 	ContextDir string
+
+	// Specs are the tool descriptors handed to the driver each turn, including
+	// run_workflow's, in a stable order.
+	Specs []runner.ToolSpec
 
 	// FileAllowlist is the set of absolute directory roots an @-file reference in
 	// a user message may read from. Empty (the default) leaves every @-token
@@ -92,29 +99,20 @@ type Config struct {
 	// record. Zero leaves an inlined file untruncated.
 	MaxFileBytes int
 
-	// Trigger fires a confirmed workflow. Nil disables the gate: a run_workflow
-	// proposal still raises the confirmation event, but an approval reports that
-	// triggering is unavailable instead of starting a run.
-	Trigger WorkflowTrigger
-
 	// TurnBudgetUSD caps one chat turn's driver-and-tool spend. A turn whose
 	// estimated cost reaches the cap ends with a budget error, so a runaway
 	// conversation cannot bill without bound (.agents/spec/13-roadmap.md,
 	// Phase 9 guardrail). Zero leaves the turn uncapped.
 	TurnBudgetUSD float64
-
-	// NewID mints session and proposal ids.
-	NewID func() string
 }
 
 // Agent runs conversation turns over the agent-loop driver contract
 // (.agents/spec/13-roadmap.md, Phase 9). It is safe for concurrent use across
 // sessions; per-session pending-proposal state is guarded by a mutex.
 type Agent struct {
-	cfg Config
-
-	mu      sync.Mutex
 	pending map[string]*pendingProposal // sessionID -> the gate awaiting confirmation
+	cfg     Config
+	mu      sync.Mutex
 }
 
 // New builds an Agent. NewID falls back to store.NewID when unset. The config

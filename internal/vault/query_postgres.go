@@ -9,11 +9,9 @@ import (
 )
 
 // Query runs the typed graph query against Postgres, behaviorally identical to
-// the sqlite backend: tag and project filtering, bounded link traversal (BFS
-// over the links table), and keyword text match via to_tsvector /
-// plainto_tsquery. Semantic falls back to keyword with QueryResult.Fallback
-// set (D2). The shared conformance suite runs both backends through one spec
-// so a divergence fails a test.
+// the sqlite backend; the shared conformance suite runs both through one spec
+// so a divergence fails a test. Semantic falls back to keyword with
+// QueryResult.Fallback set (D2).
 //
 //nolint:gocritic // Store.Query fixes the by-value signature; helpers take *Query
 func (s *Postgres) Query(ctx context.Context, query Query) (QueryResult, error) {

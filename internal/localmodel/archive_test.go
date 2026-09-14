@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"errors"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // Fixture member names and bodies. Naming them keeps an assertion and the
@@ -32,8 +34,8 @@ const (
 const fixtureCeiling int64 = 8
 
 // posixBuild describes the tarball shape the POSIX fixtures use.
-func posixBuild() *Build {
-	return &Build{Format: formatTarGz, Prefix: archivePrefix, Binary: serverBinary}
+func posixBuild() *localmodel.Build {
+	return &localmodel.Build{Format: localmodel.FormatTarGz, Prefix: localmodel.ArchivePrefix, Binary: localmodel.ServerBinary}
 }
 
 // TestExtractServerKeepsServerAndLibrariesOnly proves the install carries what
@@ -44,7 +46,7 @@ func TestExtractServerKeepsServerAndLibrariesOnly(t *testing.T) {
 	t.Parallel()
 
 	payload := tarGzFixture(t, []fixtureEntry{
-		{Name: serverBinary, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
 		{Name: fixtureVersionedLib, Content: fixtureLibBody},
 		{Name: fixtureSoname, Link: fixtureVersionedLib},
 		{Name: "libggml-cpu-haswell.so", Content: "backend"},
@@ -54,7 +56,7 @@ func TestExtractServerKeepsServerAndLibrariesOnly(t *testing.T) {
 
 	dest := extractFixture(t, payload, posixBuild())
 
-	for _, name := range []string{serverBinary, fixtureVersionedLib, fixtureSoname, "libggml-cpu-haswell.so"} {
+	for _, name := range []string{localmodel.ServerBinary, fixtureVersionedLib, fixtureSoname, "libggml-cpu-haswell.so"} {
 		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
 			t.Errorf("missing %s: %v", name, err)
 		}
@@ -81,10 +83,10 @@ func TestExtractServerKeepsServerAndLibrariesOnly(t *testing.T) {
 func TestExtractServerMakesServerExecutable(t *testing.T) {
 	t.Parallel()
 
-	payload := tarGzFixture(t, []fixtureEntry{{Name: serverBinary, Content: fixtureServerBody}})
+	payload := tarGzFixture(t, []fixtureEntry{{Name: localmodel.ServerBinary, Content: fixtureServerBody}})
 	dest := extractFixture(t, payload, posixBuild())
 
-	info, err := os.Stat(filepath.Join(dest, serverBinary))
+	info, err := os.Stat(filepath.Join(dest, localmodel.ServerBinary))
 	if err != nil {
 		t.Fatalf("stat server: %v", err)
 	}
@@ -105,9 +107,9 @@ func TestExtractServerRejectsArchiveWithoutServer(t *testing.T) {
 	build := posixBuild()
 	build.Asset = "llama-fixture.tar.gz"
 
-	err := extractServer(writeFixture(t, payload), t.TempDir(), build, maxMemberBytes)
-	if !errors.Is(err, ErrNoServerInArchive) {
-		t.Fatalf("err = %v, want ErrNoServerInArchive", err)
+	err := localmodel.ExtractServer(writeFixture(t, payload), t.TempDir(), build, localmodel.MaxMemberBytes)
+	if !errors.Is(err, localmodel.ErrNoServerInArchive) {
+		t.Fatalf("err = %v, want localmodel.ErrNoServerInArchive", err)
 	}
 }
 
@@ -119,7 +121,7 @@ func TestExtractServerRefusesMembersOutsideThePrefix(t *testing.T) {
 	t.Parallel()
 
 	payload := tarGzFixture(t, []fixtureEntry{
-		{Name: serverBinary, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
 		{Name: "../../evil.so", Content: fixtureRogueBody, Raw: true},
 		{Name: "nested/deeper.so", Content: fixtureRogueBody},
 		{Name: "elsewhere/rogue.so", Content: fixtureRogueBody, Raw: true},
@@ -137,7 +139,7 @@ func TestExtractServerRefusesMembersOutsideThePrefix(t *testing.T) {
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(dest, serverBinary)); err != nil {
+	if _, err := os.Stat(filepath.Join(dest, localmodel.ServerBinary)); err != nil {
 		t.Errorf("the legitimate member was dropped too: %v", err)
 	}
 }
@@ -150,19 +152,24 @@ func TestExtractServerRefusesAnOversizedMember(t *testing.T) {
 	t.Parallel()
 
 	payload := tarGzFixture(t, []fixtureEntry{
-		{Name: serverBinary, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
 		{Name: "libbig.so", Content: strings.Repeat("x", int(fixtureCeiling)+1)},
 	})
 
 	dest := filepath.Join(t.TempDir(), "runtime")
 
-	err := extractServer(writeFixture(t, payload), dest, posixBuild(), fixtureCeiling)
-	if !errors.Is(err, ErrArchiveMember) {
-		t.Fatalf("err = %v, want ErrArchiveMember", err)
+	err := localmodel.ExtractServer(writeFixture(t, payload), dest, posixBuild(), fixtureCeiling)
+	if !errors.Is(err, localmodel.ErrArchiveMember) {
+		t.Fatalf("err = %v, want localmodel.ErrArchiveMember", err)
 	}
 
-	if !strings.Contains(err.Error(), "libbig.so") {
-		t.Errorf("err = %q, want the oversized member named", err)
+	tooLarge, isTooLarge := errors.AsType[*localmodel.MemberTooLargeError](err)
+	if !isTooLarge {
+		t.Fatalf("err = %v, want a *localmodel.MemberTooLargeError naming the member", err)
+	}
+
+	if filepath.Base(tooLarge.Path) != "libbig.so" {
+		t.Errorf("path = %q, want the oversized member named", tooLarge.Path)
 	}
 }
 
@@ -172,16 +179,16 @@ func TestExtractServerAcceptsAMemberExactlyAtTheCeiling(t *testing.T) {
 	t.Parallel()
 
 	payload := tarGzFixture(t, []fixtureEntry{
-		{Name: serverBinary, Content: strings.Repeat("x", int(fixtureCeiling))},
+		{Name: localmodel.ServerBinary, Content: strings.Repeat("x", int(fixtureCeiling))},
 	})
 
 	dest := filepath.Join(t.TempDir(), "runtime")
 
-	if err := extractServer(writeFixture(t, payload), dest, posixBuild(), fixtureCeiling); err != nil {
+	if err := localmodel.ExtractServer(writeFixture(t, payload), dest, posixBuild(), fixtureCeiling); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 
-	info, err := os.Stat(filepath.Join(dest, serverBinary))
+	info, err := os.Stat(filepath.Join(dest, localmodel.ServerBinary))
 	if err != nil {
 		t.Fatalf("stat server: %v", err)
 	}
@@ -197,12 +204,12 @@ func TestExtractServerSkipsZipSymlinkEntries(t *testing.T) {
 	t.Parallel()
 
 	payload := zipFixture(t, []fixtureEntry{
-		{Name: serverBinaryWin, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinaryWin, Content: fixtureServerBody},
 		{Name: fixtureWindowsLib, Content: fixtureLibBody},
 		{Name: "ggml.dll", Link: fixtureWindowsLib},
 	})
 
-	dest := extractFixture(t, payload, &Build{Format: formatZip, Binary: serverBinaryWin})
+	dest := extractFixture(t, payload, &localmodel.Build{Format: localmodel.FormatZip, Binary: localmodel.ServerBinaryWin})
 
 	if _, err := os.Lstat(filepath.Join(dest, "ggml.dll")); err == nil {
 		t.Error("a zip symlink entry was installed as a file of link text")
@@ -220,13 +227,13 @@ func TestExtractServerRejectsSymlinkWithPathTarget(t *testing.T) {
 	t.Parallel()
 
 	payload := tarGzFixture(t, []fixtureEntry{
-		{Name: serverBinary, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
 		{Name: "libllama.so", Link: "/etc/passwd"},
 	})
 
-	err := extractServer(writeFixture(t, payload), t.TempDir(), posixBuild(), maxMemberBytes)
-	if !errors.Is(err, ErrArchiveMember) {
-		t.Fatalf("err = %v, want ErrArchiveMember", err)
+	err := localmodel.ExtractServer(writeFixture(t, payload), t.TempDir(), posixBuild(), localmodel.MaxMemberBytes)
+	if !errors.Is(err, localmodel.ErrArchiveMember) {
+		t.Fatalf("err = %v, want localmodel.ErrArchiveMember", err)
 	}
 }
 
@@ -236,12 +243,12 @@ func TestExtractServerReadsFlatZip(t *testing.T) {
 	t.Parallel()
 
 	payload := zipFixture(t, []fixtureEntry{
-		{Name: serverBinaryWin, Content: fixtureServerBody},
+		{Name: localmodel.ServerBinaryWin, Content: fixtureServerBody},
 		{Name: fixtureWindowsLib, Content: fixtureLibBody},
 		{Name: "llama-cli.exe", Content: fixtureOtherBody},
 	})
 
-	dest := extractFixture(t, payload, &Build{Format: formatZip, Binary: serverBinaryWin})
+	dest := extractFixture(t, payload, &localmodel.Build{Format: localmodel.FormatZip, Binary: localmodel.ServerBinaryWin})
 
 	if _, err := os.Stat(filepath.Join(dest, "llama-server.exe")); err != nil {
 		t.Errorf("missing server: %v", err)
@@ -277,8 +284,8 @@ func TestIsSharedLibCoversVersionedSonames(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := isSharedLib(testCase.name); got != testCase.want {
-				t.Errorf("isSharedLib(%q) = %t, want %t", testCase.name, got, testCase.want)
+			if got := localmodel.IsSharedLib(testCase.name); got != testCase.want {
+				t.Errorf("localmodel.IsSharedLib(%q) = %t, want %t", testCase.name, got, testCase.want)
 			}
 		})
 	}
@@ -286,12 +293,12 @@ func TestIsSharedLibCoversVersionedSonames(t *testing.T) {
 
 // extractFixture writes an archive to disk and extracts it, returning the
 // destination directory.
-func extractFixture(t *testing.T, payload []byte, build *Build) string {
+func extractFixture(t *testing.T, payload []byte, build *localmodel.Build) string {
 	t.Helper()
 
 	dest := filepath.Join(t.TempDir(), "runtime")
 
-	if err := extractServer(writeFixture(t, payload), dest, build, maxMemberBytes); err != nil {
+	if err := localmodel.ExtractServer(writeFixture(t, payload), dest, build, localmodel.MaxMemberBytes); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 

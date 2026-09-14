@@ -49,7 +49,7 @@ the current release from
 `vX.Y.Z` tag, and change it in this README and your config together.
 
 This block needs the `mcp_client` named-instance registration delivered by slice
-1 of [parity/mcp-import-fix.md](../../../.agents/spec/parity/mcp-import-fix.md).
+1 of the `parity/mcp-import-fix` spec.
 Without it, a `[runner.browser_nav]` block registers no runner and the run fails
 to resolve `browser_nav`.
 
@@ -67,7 +67,7 @@ pooling, already tracked as future work in the runner.
 The Playwright container has network access because that is its whole job: it
 fetches pages. That is the opposite of the `sandbox_exec` runner, whose default
 is `--network=none` precisely so an agent-callable shell can't reach the network
-([parity/sandbox-exec.md](../../../.agents/spec/parity/sandbox-exec.md)). Keep
+(see the `parity/sandbox-exec` spec). Keep
 that difference in mind before you put `browser_nav` in an agent action's
 `tools`: you are handing the loop a tool that reaches the public web. The same
 agent posture the sandbox docs recommend applies here. Grant it deliberately,

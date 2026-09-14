@@ -15,13 +15,14 @@ import (
 // Event is one observed app event: a stable id for dedup plus the input values
 // it offers the workflow.
 type Event struct {
-	// ID is stable per source, so the queue dedups repeat observations of the
-	// same event down to one run.
-	ID string
 	// Inputs are the values the event offers. The fire path filters them to the
 	// workflow's declared inputs before enqueue; the engine has final say at run
 	// time.
 	Inputs map[string]any
+
+	// ID is stable per source, so the queue dedups repeat observations of the
+	// same event down to one run.
+	ID string
 }
 
 // Source polls an app for events newer than cursor and returns them with the

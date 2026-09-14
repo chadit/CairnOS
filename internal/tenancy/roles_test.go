@@ -17,9 +17,9 @@ func TestScopesForRole(t *testing.T) {
 	cases := []struct {
 		name     string
 		role     string
-		wantOK   bool
 		mustHave []string
 		mustLack []string
+		wantOK   bool
 	}{
 		{
 			name:     "admin holds admin scope",

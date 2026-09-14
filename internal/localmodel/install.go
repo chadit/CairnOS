@@ -11,19 +11,24 @@ import (
 // InstallOptions drives one install pass. Layout and Model are required; the
 // host overrides exist so tests point the whole flow at httptest servers.
 type InstallOptions struct {
-	Layout Layout
-	Model  Model
-	Fetch  FetchOptions
-	// DownloadBase overrides the GitHub release host.
-	DownloadBase string
-	// ResolveBase overrides the Hugging Face host.
-	ResolveBase string
 	// Now supplies the manifest timestamp; nil uses the wall clock.
 	Now func() time.Time
+
 	// Build overrides the pinned release asset. Nil uses the pin for the
 	// running platform, which is what every command does; tests substitute a
 	// fixture archive whose digest they control.
 	Build *Build
+
+	Fetch  FetchOptions
+	Layout Layout
+
+	// DownloadBase overrides the GitHub release host.
+	DownloadBase string
+
+	// ResolveBase overrides the Hugging Face host.
+	ResolveBase string
+
+	Model Model
 }
 
 // InstallResult says what an install pass actually did, so the command can
@@ -31,34 +36,37 @@ type InstallOptions struct {
 type InstallResult struct {
 	ServerPath string
 	ModelPath  string
+
+	// previousManifest is the install record as it stood before this pass.
+	// Rollback restores it alongside the displaced binary: putting the binary
+	// back without the record would leave status reporting the version that
+	// failed, and leave the next pass short-circuiting on a manifest entry
+	// that no longer matches what is on disk.
+	previousManifest Manifest
+
 	// RuntimeInstalled is true when the runtime was downloaded and extracted
 	// rather than left in place.
 	RuntimeInstalled bool
+
 	// ModelInstalled is true when the weights were downloaded rather than
 	// found already verified.
 	ModelInstalled bool
-	// RolledOver is true when a previous runtime was displaced and is waiting
-	// for CommitRuntime or Rollback.
+
+	// RolledOver is true when a previous runtime was displaced and now waits
+	// on CommitRuntime or Rollback.
 	RolledOver bool
 
-	// previousManifest is the install record as it stood before this pass, and
-	// hadPreviousManifest says whether there was one at all. Rollback needs
-	// both: restoring the displaced binary without restoring the record that
-	// describes it would leave status reporting the version that failed, and
-	// leave the next pass short-circuiting on a manifest entry that no longer
-	// matches what is on disk.
-	previousManifest    Manifest
+	// hadPreviousManifest says whether this pass found an install record at
+	// all, which is what tells Rollback to restore one rather than delete it.
 	hadPreviousManifest bool
 }
 
-// Install brings the runtime and the model up to the compiled-in pins. It is
-// the one path setup and upgrade share: setup runs it on an empty tree and
-// upgrade runs it after the pins moved, and in both cases anything already
-// matching its pin is left alone.
+// Install brings the runtime and the model up to the compiled-in pins.
+// Setup and upgrade share it, so anything already matching its pin is left
+// alone.
 //
-// When the runtime is replaced, the old one is kept at Layout.PreviousDir and
-// the result says so. The caller decides its fate: CommitRuntime after the new
-// server answers a health probe, Rollback when it does not.
+// A replaced runtime is kept at Layout.PreviousDir; the caller calls
+// CommitRuntime once the new server answers a health probe, Rollback if not.
 func Install(ctx context.Context, opts *InstallOptions) (InstallResult, error) {
 	if err := opts.Layout.EnsureDirs(); err != nil {
 		return InstallResult{}, err
@@ -89,8 +97,8 @@ func Install(ctx context.Context, opts *InstallOptions) (InstallResult, error) {
 		return InstallResult{}, err
 	}
 
-	manifest.Runtime = runtimeRecord(&build)
-	manifest.Model = modelRecord(&opts.Model)
+	manifest.Runtime = RuntimeRecord(&build)
+	manifest.Model = ModelRecord(&opts.Model)
 
 	if err := SaveManifest(opts.Layout.ManifestPath(), &manifest, timestamp(opts.Now)); err != nil {
 		return InstallResult{}, err
@@ -134,7 +142,7 @@ func installRuntime(
 		return fmt.Errorf("clear %s: %w", staging, err)
 	}
 
-	if err := extractServer(archive, staging, build, maxMemberBytes); err != nil {
+	if err := ExtractServer(archive, staging, build, MaxMemberBytes); err != nil {
 		return err
 	}
 
@@ -157,11 +165,10 @@ func installRuntime(
 
 // installModel downloads the pinned GGUF unless it is already installed.
 //
-// The manifest short-circuit matters here in a way it does not for the
-// runtime: without it every setup, upgrade, or re-run would read 4.6 GB off
-// disk to recompute a digest that has not changed. A manifest entry matching
-// the pin, next to a file of the recorded size, stands in for that read. Force
-// still hashes, which is what --force is for.
+// The manifest short-circuit matters more here than for the runtime: without
+// it, every setup or re-run would read 4.6 GB off disk to recompute a digest
+// that has not changed. A matching manifest entry next to a file of the
+// recorded size stands in for that read. Force still hashes.
 func installModel(ctx context.Context, opts *InstallOptions, manifest *Manifest, result *InstallResult) error {
 	dest := opts.Layout.ModelPath(&opts.Model)
 
@@ -284,7 +291,7 @@ func downloadHost(opts *InstallOptions) string {
 
 // resolveHost is the Hugging Face host this pass fetches weights from.
 func resolveHost(opts *InstallOptions) string {
-	return orDefault(opts.ResolveBase, huggingFaceBase)
+	return orDefault(opts.ResolveBase, HuggingFaceBase)
 }
 
 // timestamp reads the injected clock, falling back to the wall clock.

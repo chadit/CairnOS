@@ -29,11 +29,11 @@ var errDriverScriptEmpty = errors.New("scripted driver ran past its turns")
 // sequence, recording the prompts it saw. It drives the chat turn the same way
 // a real LLM ToolCaller would, but deterministically.
 type scriptedDriver struct {
-	mu      sync.Mutex
 	turns   []runner.Result
-	calls   int
 	prompts []string
 	systems []string
+	calls   int
+	mu      sync.Mutex
 }
 
 var (

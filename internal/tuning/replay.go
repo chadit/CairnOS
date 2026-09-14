@@ -10,12 +10,10 @@ import (
 )
 
 // Comparator decides whether a replayed output is equivalent to the recorded
-// one. This interface is the R1 seam (.agents/spec/14-open-decisions.md):
-// how to judge output equivalence is an open research question, so the
-// method is swappable. Exact match is the v1 default; the embedding-similarity
-// comparator (EmbeddingComparator) drops in here, and a model-as-judge
-// comparator would too. Compare takes a context and may fail because a
-// non-trivial comparator calls a model over the network.
+// one. It is the R1 seam (.agents/spec/14-open-decisions.md): how to judge
+// equivalence is still open, so the method is swappable. ExactMatch is the v1
+// default and EmbeddingComparator drops in here. Compare takes a context and
+// may fail because a non-trivial comparator calls a model over the network.
 type Comparator interface {
 	// Compare reports equivalence in a Comparison. A returned error means the
 	// comparison could not be run at all (an embedder was unreachable), which
@@ -31,19 +29,18 @@ type Comparator interface {
 // embedding comparator); Scored gates whether they mean anything, since
 // exact-match has no score to report.
 type Comparison struct {
-	Equivalent bool
 	Reason     string
 	Score      float64
 	Threshold  float64
+	Equivalent bool
 	Scored     bool
 }
 
-// ExactMatch is the v1 R1-placeholder comparator: outputs are equivalent
-// only when their canonical JSON encodings are byte-identical. It is
-// maximally strict, so it never lets a changed output through, at the cost
-// of flagging harmless rephrasing as divergence. That trade is deliberate
-// for Phase 3: output-changing suggestions stay low confidence and are
-// never auto-applied, so false divergence costs a downgrade, not quality.
+// ExactMatch is the v1 R1-placeholder comparator: outputs are equivalent only
+// when their canonical JSON encodings are byte-identical. It never lets a
+// changed output through, at the cost of calling harmless rephrasing a
+// divergence. That trade is deliberate: output-changing suggestions are never
+// auto-applied, so a false divergence costs a downgrade, not quality.
 type ExactMatch struct{}
 
 // reasonPreviewLen bounds how much of each output lands in a divergence
@@ -92,18 +89,13 @@ func OutputChanging(kind store.SuggestionKind) bool {
 	return kind == store.SuggestionParamTuning
 }
 
-// Replay re-executes the suggestion's runner with the proposed params
-// applied over each sample's recorded params and compares outputs through
-// the configured Comparator. Any mismatch (the exact-match threshold: one
-// divergent sample) downgrades the suggestion to low confidence with the
-// reason recorded in its evidence; matches are recorded too, so reviewers
-// see the guardrail ran.
+// Replay re-executes the suggestion's runner with the proposed params over
+// each sample and compares outputs through the Comparator. One divergent
+// sample downgrades the suggestion to low confidence; matches are recorded
+// too, so reviewers see the guardrail ran.
 //
-// Replay is not free: every sample re-invokes the real runner, spending
-// real tokens and money, and it needs retention.outputs to still cover the
-// replay window. It therefore never runs automatically; the CLI gates it
-// behind an explicit --replay flag, and an engine without a RunnerSource
-// refuses it outright.
+// It is not free: each sample re-invokes the real runner for real money, so
+// it runs only behind the CLI's --replay flag.
 func (e *Engine) Replay(ctx context.Context, suggestion *store.Suggestion, samples []Sample) error {
 	if !OutputChanging(suggestion.Kind) {
 		return fmt.Errorf("%w: %s is output-neutral", ErrReplayNotApplicable, suggestion.Kind)
@@ -164,13 +156,11 @@ func (e *Engine) Replay(ctx context.Context, suggestion *store.Suggestion, sampl
 }
 
 // replayOne executes one sample under the proposed params and compares. A
-// runner failure counts as divergence rather than an error: the guardrail
-// cannot prove equivalence, so the conservative answer is a not-equivalent
-// Comparison with the failure as the reason. A comparator failure is
-// different: it means the guardrail could not run at all (an embedder was
-// unreachable), so it propagates as an error and leaves the suggestion
-// unjudged. ctx cancellation propagates either way; a canceled replay proves
-// nothing about the suggestion.
+// runner failure counts as divergence, not an error: the guardrail cannot
+// prove equivalence, so the conservative answer is not-equivalent. A
+// comparator failure instead means the guardrail could not run at all, so it
+// propagates and leaves the suggestion unjudged. Cancellation propagates
+// either way.
 func (e *Engine) replayOne(ctx context.Context, target runner.Runner, suggestion *store.Suggestion, sample *Sample) (Comparison, error) {
 	merged := maps.Clone(sample.Params)
 	if merged == nil {
@@ -207,12 +197,11 @@ func (e *Engine) replayOne(ctx context.Context, target runner.Runner, suggestion
 	return cmp, nil
 }
 
-// recordSimilarity stamps the per-sample cosine scores and the threshold they
-// were judged against into the suggestion's evidence. This is the R1
-// calibration record: an operator reading the suggestion sees the actual
-// similarity numbers next to whether the guardrail passed, the data needed to
-// tune the threshold on a real corpus. Exact-match produces no scores, so the
-// call is a no-op there.
+// recordSimilarity stamps the per-sample cosine scores and their threshold
+// into the suggestion's evidence. That is the R1 calibration record: an
+// operator sees the similarity numbers next to the guardrail verdict, the data
+// needed to tune the threshold on a real corpus. Exact-match produces no
+// scores, so the call is a no-op there.
 func recordSimilarity(suggestion *store.Suggestion, scores []float64, threshold float64) {
 	if len(scores) == 0 {
 		return

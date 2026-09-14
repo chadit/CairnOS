@@ -38,24 +38,17 @@ type RulesLookup interface {
 	GetRules(ctx context.Context, language, project string) (map[string]string, error)
 }
 
-// LanguageRules serves coding rules either from the real Rules Service (Phase
-// 7b) or, when no service is wired, from static files (the Phase 1 stand-in)
-// (.agents/spec/03-runner-interface.md, built-ins table;
-// .agents/spec/05-memory-and-knowledge.md, "Language Rules Service").
+// LanguageRules serves coding rules from the Rules Service or, with none
+// wired, from static files (.agents/spec/03-runner-interface.md;
+// .agents/spec/05-memory-and-knowledge.md, "Language Rules Service"). With
+// neither a service nor a dir, Validate fails.
 //
-// Precedence: a wired service answers first. If no service is wired, or the
-// service reports the language is unknown and a dir is also configured, the
-// static-file reader answers. This keeps the existing examples (which ship a
-// rules dir) working unchanged while a serve process backed by the rules store
-// serves real rules. With neither a service nor a dir, Validate fails.
-//
-// Config: dir, the rules directory (optional once a service is wired). Params:
-// language (required) and project (optional). Rule files are flat
-// key = "value" TOML under dir: <language>.toml holds the base set and
-// <language>.<project>.toml overrides it key by key.
+// Config: dir (optional with a service). Params: language (required) and
+// project (optional). Rule files are flat key = "value" TOML under dir:
+// <language>.toml is the base set, <language>.<project>.toml overrides it.
 type LanguageRules struct {
-	dir     string
 	service RulesLookup
+	dir     string
 }
 
 // NewLanguageRules builds the static-file runner from its config block. An
@@ -161,11 +154,10 @@ func (l *LanguageRules) Execute(ctx context.Context, task *runner.Task) (runner.
 }
 
 // resolveRules applies the service-first precedence: a wired service answers,
-// and only when the service reports the language unknown does a configured dir
-// fall back to the static files. With no service, the dir reader answers
-// directly, the Phase 1 behavior. This is what lets the shipped examples
-// (which carry a rules dir) keep working while a serve process backed by the
-// rules store serves real rules.
+// and only when it reports the language unknown does a configured dir fall back
+// to the static files. That fallback is what lets the shipped examples, which
+// carry a rules dir, keep working alongside a serve process backed by the rules
+// store.
 func (l *LanguageRules) resolveRules(ctx context.Context, language, project string) (map[string]string, error) {
 	if l.service == nil {
 		return l.loadRules(language, project)

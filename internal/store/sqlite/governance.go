@@ -23,8 +23,7 @@ const pauseColumns = "workflow_name, actor, reason, paused_at"
 // AppendAudit persists one governance audit row. A zero ID gets a fresh ULID
 // and a zero CreatedAt the current time, so callers fill only what they care
 // about. Audit rows are append-only and survive the retention sweep. The row
-// is stamped with the request workspace so the audit trail is per tenant, the
-// same boundary every governance read honors
+// is stamped with the request workspace so the audit trail is per tenant
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
 func (s *Store) AppendAudit(ctx context.Context, entry *store.AuditEntry) error {
 	id := entry.ID

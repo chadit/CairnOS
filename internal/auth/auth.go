@@ -93,6 +93,10 @@ const revokeCeiling = 24 * time.Hour
 // Config tunes token issue and verification
 // (.agents/spec/08-auth-and-access.md, "Configuration").
 type Config struct {
+	// Now anchors issue and expiry math; nil means time.Now. Tests inject
+	// a fake clock here so expiry needs no sleeping.
+	Now func() time.Time
+
 	// Issuer and Audience fill and check the iss/aud claims.
 	Issuer   string
 	Audience string
@@ -110,10 +114,6 @@ type Config struct {
 	// default on and are overridden only deliberately.
 	RequireExp bool
 	RequireJTI bool
-
-	// Now anchors issue and expiry math; nil means time.Now. Tests inject
-	// a fake clock here so expiry needs no sleeping.
-	Now func() time.Time
 }
 
 // Authenticator owns the login exchange, token verification, and

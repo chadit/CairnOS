@@ -12,35 +12,46 @@ import (
 	"strings"
 )
 
-// maxMemberBytes bounds one extracted archive member. The largest thing in a
+// MaxMemberBytes bounds one extracted archive member. The largest thing in a
 // llama.cpp release is the server implementation library at roughly 9 MB, so
 // 256 MiB is far above anything legitimate while still refusing an archive
 // that would fill the disk. The shift form is a power-of-two byte count:
 // 256 << 20 is 256 multiplied by 2^20.
-const maxMemberBytes = 256 << 20
+const MaxMemberBytes = 256 << 20
 
-// extractServer installs llama-server and the shared libraries shipped beside
-// it from a release archive into destDir. Every other executable in the
-// archive is skipped: a release carries a dozen CLI tools CairnOS never runs,
-// and leaving them out keeps the install to what the sidecar actually starts.
-// limit is the per-member byte ceiling, maxMemberBytes in every command path
-// and a small figure in the test that proves an oversized member is refused.
-func extractServer(archivePath, destDir string, build *Build, limit int64) error {
+// MemberTooLargeError names the archive member that blew the per-member
+// ceiling. It carries the path as a field so a caller can report which file
+// was refused without reading it back out of the message.
+type MemberTooLargeError struct {
+	Path  string
+	Limit int64
+}
+
+// Error renders the refusal with the path and the ceiling it exceeded.
+func (e *MemberTooLargeError) Error() string {
+	return fmt.Sprintf("%s: %s is larger than the %d byte member ceiling", ErrArchiveMember, e.Path, e.Limit)
+}
+
+// Unwrap keeps errors.Is(err, ErrArchiveMember) true for callers that only
+// care that an archive member could not be installed.
+func (*MemberTooLargeError) Unwrap() error { return ErrArchiveMember }
+
+// ExtractServer installs llama-server and the shared libraries shipped beside
+// it into destDir. Every other executable is skipped: a release carries a
+// dozen CLI tools CairnOS never runs. limit is the per-member byte ceiling,
+// MaxMemberBytes in every command path and a small figure in the test that
+// proves an oversized member is refused.
+func ExtractServer(archivePath, destDir string, build *Build, limit int64) error {
 	if err := os.MkdirAll(destDir, dirPerm); err != nil {
 		return fmt.Errorf("create %s: %w", destDir, err)
 	}
 
-	var (
-		installed int
-		err       error
-	)
-
-	if build.Format == formatZip {
-		installed, err = extractZip(archivePath, destDir, build, limit)
-	} else {
-		installed, err = extractTarGz(archivePath, destDir, build, limit)
+	extract := extractTarGz
+	if build.Format == FormatZip {
+		extract = extractZip
 	}
 
+	installed, err := extract(archivePath, destDir, build, limit)
 	if err != nil {
 		return err
 	}
@@ -182,14 +193,12 @@ func copyZipMember(entry *zip.File, target string, limit int64) error {
 	return copyMember(source, target, limit)
 }
 
-// copyMember writes one archive member to target with the executable bit set.
-// Everything installed here is either the server or a library the loader opens,
-// and both need the bit.
+// copyMember writes one archive member to target with the executable bit set,
+// which both the server and the libraries the loader opens need.
 //
-// A member over the limit is an error, not a truncation. Copying the first
-// limit bytes and reporting success would install a cut-off shared library
-// with the execute bit on it, and the failure would surface later as the
-// loader refusing a corrupt object rather than here where the cause is plain.
+// A member over the limit is an error, not a truncation: installing a cut-off
+// library surfaces later as the loader refusing a corrupt object instead of
+// here, where the cause is plain.
 func copyMember(source io.Reader, target string, limit int64) error {
 	// #nosec G304 -- target is destDir joined with a separator-free name that
 	// memberName vetted, so an archive entry cannot steer it outside the runtime dir.
@@ -207,7 +216,7 @@ func copyMember(source io.Reader, target string, limit int64) error {
 	}
 
 	if written > limit {
-		return fmt.Errorf("%w: %s is larger than the %d byte member ceiling", ErrArchiveMember, target, limit)
+		return &MemberTooLargeError{Path: target, Limit: limit}
 	}
 
 	if err := file.Close(); err != nil {
@@ -217,32 +226,29 @@ func copyMember(source io.Reader, target string, limit int64) error {
 	return nil
 }
 
-// memberName decides whether one archive entry belongs in the install and
-// returns the name to write it under.
-//
-// An entry must sit directly under the archive's wrapper directory, which is
-// Build.Prefix for the POSIX tarballs and empty for the flat Windows zip.
-// Anything nested deeper, anywhere else, or reached through a parent traversal
-// is refused rather than flattened: a name that survives here carries no path
-// separator at all, so joining it with the destination cannot land outside.
+// memberName decides whether an archive entry belongs in the install and what
+// to write it under. Entries sit under Build.Prefix in the POSIX tarballs and
+// at the root of the flat Windows zip. Anything nested deeper or reached
+// through a parent traversal is refused, so a surviving name carries no path
+// separator and cannot land outside the destination.
 func memberName(entryName string, build *Build) (string, bool) {
 	name, inside := strings.CutPrefix(path.Clean(entryName), build.Prefix)
 	if !inside || name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
 		return "", false
 	}
 
-	if name == build.Binary || isSharedLib(name) {
+	if name == build.Binary || IsSharedLib(name) {
 		return name, true
 	}
 
 	return "", false
 }
 
-// isSharedLib reports whether a file name is a shared library. Versioned
+// IsSharedLib reports whether a file name is a shared library. Versioned
 // sonames put the version after the extension ("libllama.so.0.4.0") on Linux
 // and before it ("libggml.0.23.0.dylib") on macOS, so the check looks for the
 // extension anywhere rather than only at the end.
-func isSharedLib(name string) bool {
+func IsSharedLib(name string) bool {
 	// The extensions cover both the libraries llama-server links against and
 	// the CPU backends ggml opens at runtime, which no linker tool reports
 	// because nothing links them.

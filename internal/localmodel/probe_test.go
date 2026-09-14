@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"errors"
@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // TestProbeAcceptsAnsweringServer proves the liveness check is satisfied by
@@ -15,7 +17,7 @@ func TestProbeAcceptsAnsweringServer(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1"+modelsPath {
+		if r.URL.Path != "/v1"+localmodel.ModelsPath {
 			http.NotFound(w, r)
 
 			return
@@ -25,7 +27,7 @@ func TestProbeAcceptsAnsweringServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := Probe(t.Context(), server.Client(), server.URL+"/v1"); err != nil {
+	if err := localmodel.Probe(t.Context(), server.Client(), server.URL+"/v1"); err != nil {
 		t.Fatalf("probe: %v", err)
 	}
 }
@@ -40,9 +42,9 @@ func TestProbeRejectsErrorStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := Probe(t.Context(), server.Client(), server.URL+"/v1")
-	if !errors.Is(err, ErrUnexpectedStatus) {
-		t.Fatalf("err = %v, want ErrUnexpectedStatus", err)
+	err := localmodel.Probe(t.Context(), server.Client(), server.URL+"/v1")
+	if !errors.Is(err, localmodel.ErrUnexpectedStatus) {
+		t.Fatalf("err = %v, want localmodel.ErrUnexpectedStatus", err)
 	}
 }
 
@@ -64,7 +66,7 @@ func TestWaitHealthyRidesOutASlowStart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := WaitHealthy(t.Context(), server.Client(), server.URL+"/v1", 30*time.Second); err != nil {
+	if err := localmodel.WaitHealthy(t.Context(), server.Client(), server.URL+"/v1", 30*time.Second); err != nil {
 		t.Fatalf("wait: %v", err)
 	}
 }
@@ -74,9 +76,9 @@ func TestWaitHealthyRidesOutASlowStart(t *testing.T) {
 func TestWaitHealthyGivesUpOnADeadServer(t *testing.T) {
 	t.Parallel()
 
-	err := WaitHealthy(t.Context(), nil, "http://127.0.0.1:1/v1", 50*time.Millisecond)
-	if !errors.Is(err, ErrServerUnhealthy) {
-		t.Fatalf("err = %v, want ErrServerUnhealthy", err)
+	err := localmodel.WaitHealthy(t.Context(), nil, "http://127.0.0.1:1/v1", 50*time.Millisecond)
+	if !errors.Is(err, localmodel.ErrServerUnhealthy) {
+		t.Fatalf("err = %v, want localmodel.ErrServerUnhealthy", err)
 	}
 }
 
@@ -86,7 +88,7 @@ func TestWaitHealthyGivesUpOnADeadServer(t *testing.T) {
 func TestBaseURLBindsLoopback(t *testing.T) {
 	t.Parallel()
 
-	if got := BaseURL(DefaultPort); got != "http://127.0.0.1:8089/v1" {
-		t.Errorf("BaseURL = %q", got)
+	if got := localmodel.BaseURL(localmodel.DefaultPort); got != "http://127.0.0.1:8089/v1" {
+		t.Errorf("localmodel.BaseURL = %q", got)
 	}
 }

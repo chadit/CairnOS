@@ -122,10 +122,10 @@ func TestModelsAuthorization(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
 		token      func(t *testing.T, fix *fixture) string
-		wantStatus int
+		name       string
 		wantCode   string
+		wantStatus int
 	}{
 		{
 			name:       "missing_token",

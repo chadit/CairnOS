@@ -25,18 +25,18 @@ const sseDone = "data: [DONE]\n\n"
 type streamChunk struct {
 	ID      string         `json:"id"`
 	Object  string         `json:"object"`
-	Created int64          `json:"created"`
 	Model   string         `json:"model"`
 	Choices []streamChoice `json:"choices"`
+	Created int64          `json:"created"`
 }
 
 // streamChoice is the single choice each chunk carries. FinishReason is a
 // pointer so an intermediate chunk renders JSON null while the closing chunk
 // renders "stop", matching the OpenAI wire shape.
 type streamChoice struct {
-	Index        int         `json:"index"`
-	Delta        streamDelta `json:"delta"`
 	FinishReason *string     `json:"finish_reason"`
+	Delta        streamDelta `json:"delta"`
+	Index        int         `json:"index"`
 }
 
 // streamDelta is the incremental piece a chunk adds: the role on the opening
@@ -66,13 +66,12 @@ func (st streamState) chunk(delta streamDelta, finish *string) streamChunk {
 	}
 }
 
-// streamCompletion runs one turn and writes it as an OpenAI SSE stream: a role
-// chunk, one content chunk per assistant piece (a D9 gate renders as the
-// confirmation text, since this surface has no confirm route), a closing stop
-// chunk, then the terminating [DONE]. A turn error after the status line is
-// already written can't become an HTTP status, so it surfaces as an SSE error
-// payload before [DONE]. The request context drives the turn, so a dropped
-// client cancels it (.agents/spec/parity/openai-compat.md, "Streaming").
+// streamCompletion writes one turn as an OpenAI SSE stream; a D9 gate renders
+// as its confirmation text, since this surface has no confirm route. A turn
+// error after the status line surfaces as an SSE error payload before [DONE],
+// since it can no longer become an HTTP status. A dropped client cancels the
+// turn through the request context
+// (.agents/spec/parity/openai-compat.md, "Streaming").
 func (s *Service) streamCompletion(ctx context.Context, w http.ResponseWriter, session *store.ChatSession, prompt string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

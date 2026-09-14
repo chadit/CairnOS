@@ -21,20 +21,19 @@ type EnqueueEvent func(ctx context.Context, event Event) error
 // DispatchInput carries one poll cycle's dependencies. Paused is read once by the
 // caller so the pause store stays a caller concern; Dispatch only honors it.
 type DispatchInput struct {
-	ScheduleID string
 	Source     Source
-	Params     map[string]any
-	Paused     bool
 	Cursors    Cursors
+	Params     map[string]any
 	Enqueue    EnqueueEvent
+	ScheduleID string
+	Paused     bool
 }
 
-// Dispatch runs one poll cycle for a schedule. A paused schedule polls nothing
-// and holds its cursor, so events wait for resume instead of being dropped. A
-// live schedule reads the cursor, polls the source, enqueues one work item per
-// event, then advances the cursor. A source or enqueue error returns without
-// advancing the cursor, so the next poll re-reads the same window and the enqueue
-// dedup keeps already-queued events from double-firing
+// Dispatch runs one poll cycle. A paused schedule polls nothing and holds its
+// cursor, so events wait for resume. A live schedule reads the cursor, polls,
+// enqueues one item per event, then advances it. A source or enqueue error
+// returns without advancing, so the next poll re-reads the same window and
+// dedup keeps queued events from double-firing
 // (.agents/spec/parity/triggers-webhooks.md, "Firing path").
 func Dispatch(ctx context.Context, input DispatchInput) error {
 	if input.Paused {

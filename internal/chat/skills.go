@@ -118,11 +118,10 @@ func renderSkillSection(skill *loadedSkill) string {
 }
 
 // appendSkillListing appends the description-match section to the system prompt
-// when a source lists at least one skill, so the driver can pick a skill by its
+// when a source lists any skills, so the driver can pick a skill by its
 // description and load it through the skill tool. A nil source or an empty list
-// returns the prompt unchanged, so the section never shows when there is nothing
-// to offer. Rescanned every turn through source.List, so a dropped-in skill
-// appears on the next turn with no restart.
+// returns the prompt unchanged. source.List is rescanned every turn, so a
+// dropped-in skill appears next turn with no restart.
 func appendSkillListing(system string, source SkillSource) string {
 	if source == nil {
 		return system

@@ -59,18 +59,18 @@ type contentPart struct {
 type completionResponse struct {
 	ID      string             `json:"id"`
 	Object  string             `json:"object"`
-	Created int64              `json:"created"`
 	Model   string             `json:"model"`
 	Choices []completionChoice `json:"choices"`
 	Usage   usageBlock         `json:"usage"`
+	Created int64              `json:"created"`
 }
 
 // completionChoice is one answer in the choices array. The adapter always
 // returns a single choice.
 type completionChoice struct {
-	Index        int             `json:"index"`
 	Message      responseMessage `json:"message"`
 	FinishReason string          `json:"finish_reason"`
+	Index        int             `json:"index"`
 }
 
 // responseMessage is the assistant reply in a choice.
@@ -293,12 +293,12 @@ func (s *Service) seedHistory(ctx context.Context, sessionID string, seed []seed
 	return nil
 }
 
-// runTurn runs one conversation turn and collects its result. It mirrors the
+// runTurn runs one conversation turn and collects its result, mirroring the
 // streamTurn pattern in internal/api/chat_service.go: SendMessage runs on a
-// goroutine writing to a buffered channel the agent closes, the handler ranges
-// the channel, and the terminal error is read from a one-slot done channel after
-// the range ends. A D9 confirmation-required event renders as the assistant text
-// for the turn, since this surface has no confirm route.
+// goroutine, the handler ranges the event channel the agent closes, and the
+// terminal error arrives on a one-slot done channel afterward. A D9
+// confirmation-required event renders as the turn's assistant text, since this
+// surface has no confirm route.
 func (s *Service) runTurn(ctx context.Context, sessionID, prompt string) (string, runner.Usage, error) {
 	events := make(chan chat.Event, completionEventBuffer)
 	callDone := make(chan error, 1)

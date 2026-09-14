@@ -40,11 +40,11 @@ const (
 // Error is the classified failure a runner returns so the engine can decide
 // retry behavior and surface a stable code.
 type Error struct {
+	Cause      error  // wrapped underlying error
+	Code       string // stable machine code, e.g. "openai.rate_limited"
+	Message    string // human message, safe to log
 	Class      ErrorClass
-	Code       string        // stable machine code, e.g. "openai.rate_limited"
-	Message    string        // human message, safe to log
 	RetryAfter time.Duration // optional hint when Class is ClassRateLimited
-	Cause      error         // wrapped underlying error
 }
 
 // NewError builds a classified runner error.

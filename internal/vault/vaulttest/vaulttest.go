@@ -46,23 +46,23 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"SatisfiesInterface", testSatisfiesInterface},
-		{"PutGetRoundTrip", testPutGetRoundTrip},
-		{"PutOverwritesAndPreservesCreatedAt", testPutOverwrites},
-		{"BacklinksDerived", testBacklinksDerived},
-		{"DeleteRemovesDocumentAndLinks", testDeleteRemovesLinks},
-		{"ListNewestFirst", testListNewestFirst},
-		{"QueryByTag", testQueryByTag},
-		{"QueryByProject", testQueryByProject},
-		{"QueryOneHopTraversal", testQueryOneHop},
-		{"QueryTwoHopTraversal", testQueryTwoHop},
-		{"QueryHopBoundExcludesDistant", testQueryHopBound},
-		{"QueryCombinesTagAndTraversal", testQueryCombined},
-		{"QueryKeywordText", testQueryKeyword},
-		{"SemanticQueryFallsBackToKeyword", testSemanticFallsBack},
+		{name: "SatisfiesInterface", run: testSatisfiesInterface},
+		{name: "PutGetRoundTrip", run: testPutGetRoundTrip},
+		{name: "PutOverwritesAndPreservesCreatedAt", run: testPutOverwrites},
+		{name: "BacklinksDerived", run: testBacklinksDerived},
+		{name: "DeleteRemovesDocumentAndLinks", run: testDeleteRemovesLinks},
+		{name: "ListNewestFirst", run: testListNewestFirst},
+		{name: "QueryByTag", run: testQueryByTag},
+		{name: "QueryByProject", run: testQueryByProject},
+		{name: "QueryOneHopTraversal", run: testQueryOneHop},
+		{name: "QueryTwoHopTraversal", run: testQueryTwoHop},
+		{name: "QueryHopBoundExcludesDistant", run: testQueryHopBound},
+		{name: "QueryCombinesTagAndTraversal", run: testQueryCombined},
+		{name: "QueryKeywordText", run: testQueryKeyword},
+		{name: "SemanticQueryFallsBackToKeyword", run: testSemanticFallsBack},
 	}
 
 	for _, tt := range cases {
@@ -164,8 +164,8 @@ func testPutOverwrites(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("get before overwrite: %v", err)
 	}
 
-	if _, err := store.Put(ctx, &vault.Document{ID: id, Title: "renamed", Body: "second body"}); err != nil {
-		t.Fatalf("overwrite: %v", err)
+	if _, innerErr := store.Put(ctx, &vault.Document{ID: id, Title: "renamed", Body: "second body"}); innerErr != nil {
+		t.Fatalf("overwrite: %v", innerErr)
 	}
 
 	after, err := store.Get(ctx, id)

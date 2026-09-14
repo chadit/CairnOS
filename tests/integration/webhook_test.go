@@ -39,9 +39,9 @@ func newPostgresWebhooks(t *testing.T) webhook.Store {
 		t.Fatalf("open pool: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); err != nil {
+	if _, execErr := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); execErr != nil {
 		pool.Close()
-		t.Fatalf("create schema: %v", err)
+		t.Fatalf("create schema: %v", execErr)
 	}
 
 	store, err := webhook.NewPostgresWebhooks(ctx, pool)

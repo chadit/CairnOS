@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"archive/tar"
@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // fixtureEntry is one member of a synthetic release archive. Link, when set,
@@ -34,7 +36,7 @@ func tarGzFixture(t *testing.T, entries []fixtureEntry) []byte {
 	writer := tar.NewWriter(zipped)
 
 	for _, entry := range entries {
-		name := archivePrefix + entry.Name
+		name := localmodel.ArchivePrefix + entry.Name
 		if entry.Raw {
 			name = entry.Name
 		}
@@ -57,17 +59,7 @@ func tarGzFixture(t *testing.T, entries []fixtureEntry) []byte {
 func writeTarFixtureEntry(t *testing.T, writer *tar.Writer, name string, entry fixtureEntry) {
 	t.Helper()
 
-	header := &tar.Header{Name: name, Mode: 0o755}
-
-	if entry.Link != "" {
-		header.Typeflag = tar.TypeSymlink
-		header.Linkname = entry.Link
-	} else {
-		header.Typeflag = tar.TypeReg
-		header.Size = int64(len(entry.Content))
-	}
-
-	if err := writer.WriteHeader(header); err != nil {
+	if err := writer.WriteHeader(tarFixtureHeader(name, entry)); err != nil {
 		t.Fatalf("write header %s: %v", name, err)
 	}
 
@@ -78,6 +70,24 @@ func writeTarFixtureEntry(t *testing.T, writer *tar.Writer, name string, entry f
 	if _, err := writer.Write([]byte(entry.Content)); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+// tarFixtureHeader shapes one member header: a symlink carries its target in
+// Linkname and no body, while a regular file has to declare its size up front.
+func tarFixtureHeader(name string, entry fixtureEntry) *tar.Header {
+	header := &tar.Header{Name: name, Mode: 0o755}
+
+	if entry.Link != "" {
+		header.Typeflag = tar.TypeSymlink
+		header.Linkname = entry.Link
+
+		return header
+	}
+
+	header.Typeflag = tar.TypeReg
+	header.Size = int64(len(entry.Content))
+
+	return header
 }
 
 // zipFixture builds a flat zip shaped like the Windows release asset. An entry

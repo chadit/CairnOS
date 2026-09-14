@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // artifactName labels the fixture artifact in progress output and errors.
@@ -23,9 +25,9 @@ func TestFetchWritesVerifiedFile(t *testing.T) {
 	server := serveBytes(t, payload)
 	dest := filepath.Join(t.TempDir(), "weights.gguf")
 
-	art := Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload), Bytes: int64(len(payload))}
+	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload), Bytes: int64(len(payload))}
 
-	result, err := Fetch(t.Context(), &art, dest, FetchOptions{Client: server.Client()})
+	result, err := localmodel.Fetch(t.Context(), &art, dest, localmodel.FetchOptions{Client: server.Client()})
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -65,9 +67,9 @@ func TestFetchSkipsVerifiedFileWithoutDownloading(t *testing.T) {
 	}))
 	defer server.Close()
 
-	art := Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload)}
+	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload)}
 
-	result, err := Fetch(t.Context(), &art, dest, FetchOptions{Client: server.Client()})
+	result, err := localmodel.Fetch(t.Context(), &art, dest, localmodel.FetchOptions{Client: server.Client()})
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -89,11 +91,11 @@ func TestFetchRejectsWrongDigestAndLeavesNothing(t *testing.T) {
 	server := serveBytes(t, []byte("tampered"))
 	dest := filepath.Join(t.TempDir(), "weights.gguf")
 
-	art := Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf([]byte("expected"))}
+	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf([]byte("expected"))}
 
-	_, err := Fetch(t.Context(), &art, dest, FetchOptions{Client: server.Client()})
-	if !errors.Is(err, ErrHashMismatch) {
-		t.Fatalf("err = %v, want ErrHashMismatch", err)
+	_, err := localmodel.Fetch(t.Context(), &art, dest, localmodel.FetchOptions{Client: server.Client()})
+	if !errors.Is(err, localmodel.ErrHashMismatch) {
+		t.Fatalf("err = %v, want localmodel.ErrHashMismatch", err)
 	}
 
 	if _, statErr := os.Stat(dest); statErr == nil {
@@ -106,11 +108,11 @@ func TestFetchRejectsWrongDigestAndLeavesNothing(t *testing.T) {
 func TestFetchOfflineReportsMissingCache(t *testing.T) {
 	t.Parallel()
 
-	art := Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf(nil)}
+	art := localmodel.Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf(nil)}
 
-	_, err := Fetch(t.Context(), &art, filepath.Join(t.TempDir(), "weights.gguf"), FetchOptions{Offline: true})
-	if !errors.Is(err, ErrOffline) {
-		t.Fatalf("err = %v, want ErrOffline", err)
+	_, err := localmodel.Fetch(t.Context(), &art, filepath.Join(t.TempDir(), "weights.gguf"), localmodel.FetchOptions{Offline: true})
+	if !errors.Is(err, localmodel.ErrOffline) {
+		t.Fatalf("err = %v, want localmodel.ErrOffline", err)
 	}
 }
 
@@ -124,11 +126,11 @@ func TestFetchOfflineReportsCorruptCache(t *testing.T) {
 		t.Fatalf("seed dest: %v", err)
 	}
 
-	art := Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf([]byte("expected"))}
+	art := localmodel.Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf([]byte("expected"))}
 
-	_, err := Fetch(t.Context(), &art, dest, FetchOptions{Offline: true})
-	if !errors.Is(err, ErrHashMismatch) {
-		t.Fatalf("err = %v, want ErrHashMismatch", err)
+	_, err := localmodel.Fetch(t.Context(), &art, dest, localmodel.FetchOptions{Offline: true})
+	if !errors.Is(err, localmodel.ErrHashMismatch) {
+		t.Fatalf("err = %v, want localmodel.ErrHashMismatch", err)
 	}
 }
 
@@ -142,11 +144,11 @@ func TestFetchReportsBadStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	art := Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(nil)}
+	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(nil)}
 
-	_, err := Fetch(t.Context(), &art, filepath.Join(t.TempDir(), "w.gguf"), FetchOptions{Client: server.Client()})
-	if !errors.Is(err, ErrUnexpectedStatus) {
-		t.Fatalf("err = %v, want ErrUnexpectedStatus", err)
+	_, err := localmodel.Fetch(t.Context(), &art, filepath.Join(t.TempDir(), "w.gguf"), localmodel.FetchOptions{Client: server.Client()})
+	if !errors.Is(err, localmodel.ErrUnexpectedStatus) {
+		t.Fatalf("err = %v, want localmodel.ErrUnexpectedStatus", err)
 	}
 }
 
@@ -171,7 +173,7 @@ func TestProgressStopsAtCompletion(t *testing.T) {
 
 	var out bytes.Buffer
 
-	writer := &progressWriter{out: &out, name: artifactName, total: 10}
+	writer := localmodel.NewProgressWriter(&out, artifactName, 10)
 
 	for range 8 {
 		if _, err := writer.Write([]byte("xxxxx")); err != nil {
@@ -191,7 +193,7 @@ func TestProgressReportsIntermediateSteps(t *testing.T) {
 
 	var out bytes.Buffer
 
-	writer := &progressWriter{out: &out, name: artifactName, total: 100}
+	writer := localmodel.NewProgressWriter(&out, artifactName, 100)
 
 	for range 10 {
 		if _, err := writer.Write(make([]byte, 10)); err != nil {

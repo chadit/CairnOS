@@ -187,13 +187,11 @@ func (c cliExec) validate(task *runner.Task) error {
 	return c.guardDashedPrompt(task)
 }
 
-// guardDashedPrompt refuses a resolved prompt that begins with a dash when the
-// argv template would feed it as a bare positional, since the wrapped binary
-// would read it as a flag (spec M3). An unresolved reference defers to launch.
-// The guard is skipped when the operator opts in with allow_dashed_prompt or
-// when the template places {prompt} after a -- terminator, which already stops
-// flag parsing. A prompt sent on stdin is never argv, so the guard does not
-// apply there.
+// guardDashedPrompt refuses a resolved prompt starting with a dash when the
+// argv template feeds it as a bare positional, since the wrapped binary would
+// read it as a flag (spec M3). An unresolved reference defers to launch. The
+// guard steps aside for allow_dashed_prompt, a template placing {prompt} after
+// a -- terminator, or a stdin prompt, which never reaches argv.
 func (c cliExec) guardDashedPrompt(task *runner.Task) error {
 	if c.allowDashedPrompt || c.stdin || c.promptAfterTerminator() {
 		return nil
@@ -244,12 +242,11 @@ func (c cliExec) code(suffix string) string {
 	return c.name + "." + suffix
 }
 
-// classifyStart maps a launch failure. A missing binary is permanent because
-// no retry installs it; so is anything else at start (bad path, bad mode). A
-// deadline that expires while the process is still launching is the exception:
-// that is the same transient timeout classifyWait reports once the process is
-// running, and calling it permanent would deny a retry the fresh deadline could
-// clear.
+// classifyStart maps a launch failure. A missing binary is permanent because no
+// retry installs it, and so is anything else at start (bad path, bad mode). An
+// expired deadline is the exception: it is the transient timeout classifyWait
+// reports once the process runs, and calling it permanent would deny a retry a
+// fresh deadline could clear.
 func (c cliExec) classifyStart(runCtx context.Context, err error) error {
 	if runCtx.Err() != nil {
 		return &runner.Error{
@@ -305,10 +302,10 @@ func (c cliExec) classifyWait(runCtx context.Context, waitErr error, exitCode in
 
 // classifyExitOutput reads a non-zero exit's stderr to pick the error class.
 // Rate-limit signals win first, so a throttled call is not misread as expiry;
-// only then does a re-auth signal (a dead OAuth refresh token on a subscription
-// CLI tool) classify as NeedsReauth, which holds the job for a human instead of
-// failing it (D12, .agents/spec/14-open-decisions.md). Everything else is
-// permanent: a non-zero exit the tool did not explain is not safe to repeat.
+// only then does a re-auth signal classify as NeedsReauth, which holds the job
+// for a human rather than failing it (D12, .agents/spec/14-open-decisions.md).
+// Anything else is permanent: an unexplained non-zero exit is not safe to
+// repeat.
 func (c cliExec) classifyExitOutput(stderrTail, message string, cause error) error {
 	switch {
 	case looksRateLimited(stderrTail):
@@ -417,8 +414,8 @@ func substitutePrompt(args []string, prompt string) []string {
 // tailBuffer keeps the last limit bytes written to it. Failures usually end
 // with the useful line, so the tail beats the head for diagnostics.
 type tailBuffer struct {
-	limit int
 	data  []byte
+	limit int
 }
 
 // Write implements io.Writer; it never fails.

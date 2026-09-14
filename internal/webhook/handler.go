@@ -76,8 +76,8 @@ const (
 // StartedRun is one started run as the ingress handler sees it: the run id to
 // echo and a channel that delivers the terminal outcome exactly once.
 type StartedRun struct {
-	RunID   string
 	Outcome <-chan RunResult
+	RunID   string
 }
 
 // RunResult is a started run's terminal state, delivered on StartedRun.Outcome.
@@ -116,6 +116,12 @@ type HandlerConfig struct {
 	Pauses  PauseChecker
 	Secrets SecretResolver
 
+	// Now injects the clock the limiters and the replay cache read, so tests
+	// drive rate and freshness windows without sleeping. Nil means time.Now.
+	Now func() time.Time
+
+	Logger *slog.Logger
+
 	// MaxBodyBytes caps each request body (spec cfg.API.MaxBodyBytes). Extension
 	// routes bypass the gateway's limitBody wrapper, so the handler must cap its
 	// own body or it is an unbounded-body hole. Zero leaves the body uncapped.
@@ -136,32 +142,24 @@ type HandlerConfig struct {
 	// SignatureSkew is the native-signature timestamp window and the replay-cache
 	// retention (security amendment 1).
 	SignatureSkew time.Duration
-
-	// Now injects the clock the limiters and the replay cache read, so tests
-	// drive rate and freshness windows without sleeping. Nil means time.Now.
-	Now func() time.Time
-
-	Logger *slog.Logger
 }
 
 // Handler serves the two webhook ingress routes. It is safe for concurrent use:
 // the limiters and replay cache serialize their own writes and every other field
 // is immutable after construction.
 type Handler struct {
-	store   Store
-	runs    RunStarter
-	pauses  PauseChecker
-	secrets SecretResolver
-
-	limiter *registrationLimiter
-	unknown *globalLimiter
-	replays *replayCache
-
+	store    Store
+	runs     RunStarter
+	pauses   PauseChecker
+	secrets  SecretResolver
+	limiter  *registrationLimiter
+	unknown  *globalLimiter
+	replays  *replayCache
+	now      func() time.Time
+	logger   *slog.Logger
 	maxBody  int64
 	testWait time.Duration
 	skew     time.Duration
-	now      func() time.Time
-	logger   *slog.Logger
 }
 
 // NewHandler builds a handler over its config, defaulting the clock, logger,
@@ -203,12 +201,11 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 	}
 }
 
-// Routes returns the two ingress handlers keyed by their pattern, ready to mount
-// on the gateway's root mux outside the gRPC interceptor. A webhook POST starts
-// a run with no scope check and no tenant claim, so the path token is a
-// write:workflow-equivalent capability for exactly one workflow, and the run
-// executes under store.DefaultWorkspace (stamped in start); nobody should assume
-// tenant isolation the ingress path does not provide (security amendment 5).
+// Routes returns the two ingress handlers for the gateway's root mux, outside
+// the gRPC interceptor. A webhook POST starts a run with no scope check and no
+// tenant claim, so the path token is a write:workflow-equivalent capability for
+// one workflow and the run executes under store.DefaultWorkspace. The ingress
+// path provides no tenant isolation (security amendment 5).
 func (h *Handler) Routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		prodRoute: func(w http.ResponseWriter, r *http.Request) { h.serve(w, r, EndpointProd) },
@@ -444,13 +441,11 @@ func canonicalStartError(err error) (string, string, map[string]any, bool) {
 	return "", "", nil, false
 }
 
-// serveProd is folded into start; serveTest holds the bounded synchronous wait.
-// The shared http.Server carries no WriteTimeout and extension routes cannot add
-// one, so an unbounded block on Outcome would let one slow workflow pin a
-// connection for its whole run. The wait is capped in the handler: Outcome first
-// answers 200 with the terminal run; the timer first answers 202 like
-// production and a drain goroutine keeps reading Outcome so the run finishes in
-// the background and its buffered channel never blocks.
+// serveTest holds the bounded synchronous wait; serveProd is folded into start.
+// The shared http.Server has no WriteTimeout and extension routes cannot add
+// one, so an unbounded block on Outcome would pin a connection for a whole run.
+// Whichever lands first wins: Outcome answers 200, the timer answers 202 and a
+// drain goroutine lets the run finish in the background.
 func (h *Handler) serveTest(w http.ResponseWriter, r *http.Request, reg *Registration, started StartedRun) {
 	timer := time.NewTimer(h.testWait)
 	defer timer.Stop()
@@ -623,10 +618,10 @@ func absDuration(d time.Duration) time.Duration {
 }
 
 // rejectUnknown answers an unknown-token request. It charges the process-wide
-// unknown-token bucket first (security amendment 3): an empty bucket is a generic
-// 429, otherwise a 404 in the canonical envelope. No body is read and no run
-// starts. hash is "" when the token failed the shape gate, so the log carries an
-// 8-char hash prefix only when one exists, and never the token or path.
+// unknown-token bucket first (security amendment 3): an empty bucket is a
+// generic 429, otherwise a 404. No body is read and no run starts. hash is ""
+// when the token failed the shape gate, so the log never carries the token or
+// path, only an 8-char prefix when one exists.
 func (h *Handler) rejectUnknown(w http.ResponseWriter, r *http.Request, hash string) {
 	if !h.unknown.allow() {
 		h.logger.InfoContext(r.Context(), "webhook unknown-token rate limited", "hash_prefix", hashPrefix(hash))
@@ -697,13 +692,13 @@ type acceptedBody struct {
 
 // errorBody is the canonical HTTP error envelope.
 type errorBody struct {
-	Status string      `json:"status"`
 	Error  errorDetail `json:"error"`
+	Status string      `json:"status"`
 }
 
 // errorDetail mirrors cairnerr.Error on the wire.
 type errorDetail struct {
+	Details map[string]any `json:"details"`
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
-	Details map[string]any `json:"details"`
 }

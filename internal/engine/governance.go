@@ -172,8 +172,8 @@ func (e *Engine) notifyBudgetDenied(ctx context.Context, workflowName string, sp
 // containing now, in now's location: midnight for day, the most recent Monday
 // for week, the first of the month for month. The engine's injected clock
 // decides the location, so a fixed test clock makes the boundary repeatable.
-// Exported so the governance API reports spend over the same window the engine
-// enforces against.
+// Exported so the governance API reports spend over the window the engine
+// enforces.
 func PeriodStart(period string, now time.Time) time.Time {
 	year, month, day := now.Date()
 	loc := now.Location()

@@ -228,15 +228,15 @@ func TestPlanSetupModeGuards(t *testing.T) {
 	noSystemd.HasSystemd = false
 
 	cases := []struct {
-		name string
-		host *service.Host
-		opts service.Options
 		want error
+		host *service.Host
+		name string
+		opts service.Options
 	}{
-		{"system mode without root", linuxHost(), service.Options{System: true}, service.ErrNeedRoot},
-		{"user mode as root", rootLinux, service.Options{}, service.ErrRootUserMode},
-		{"system mode on macOS", darwinHost(), service.Options{System: true}, service.ErrDarwinSystem},
-		{"linux without systemd", noSystemd, service.Options{}, service.ErrUnsupported},
+		{name: "system mode without root", host: linuxHost(), opts: service.Options{System: true}, want: service.ErrNeedRoot},
+		{name: "user mode as root", host: rootLinux, opts: service.Options{}, want: service.ErrRootUserMode},
+		{name: "system mode on macOS", host: darwinHost(), opts: service.Options{System: true}, want: service.ErrDarwinSystem},
+		{name: "linux without systemd", host: noSystemd, opts: service.Options{}, want: service.ErrUnsupported},
 	}
 
 	for _, testCase := range cases {
@@ -448,18 +448,18 @@ func TestSummarizeStatusReadsSystemdAndLaunchdShapes(t *testing.T) {
 	launchd := service.Install{StatusArgv: []string{"launchctl", "print", "gui/501/dev.cairnos.serve"}}
 
 	cases := []struct {
-		name    string
-		install service.Install
-		output  string
 		err     error
+		name    string
+		output  string
 		want    string
+		install service.Install
 		healthy bool
 	}{
-		{"systemd active", systemd, "active\n", nil, "active", true},
-		{"systemd inactive exits non-zero", systemd, "inactive\n", errors.New("exit 3"), "inactive", false},
-		{"launchd running", launchd, "\tstate = running\n", nil, "running", true},
-		{"launchd loaded without state line", launchd, "no state here", nil, "loaded", false},
-		{"launchd not loaded", launchd, "", errors.New("exit 113"), "not loaded", false},
+		{name: "systemd active", install: systemd, output: "active\n", err: nil, want: "active", healthy: true},
+		{name: "systemd inactive exits non-zero", install: systemd, output: "inactive\n", err: errors.New("exit 3"), want: "inactive", healthy: false},
+		{name: "launchd running", install: launchd, output: "\tstate = running\n", err: nil, want: "running", healthy: true},
+		{name: "launchd loaded without state line", install: launchd, output: "no state here", err: nil, want: "loaded", healthy: false},
+		{name: "launchd not loaded", install: launchd, output: "", err: errors.New("exit 113"), want: "not loaded", healthy: false},
 	}
 
 	for _, testCase := range cases {

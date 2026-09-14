@@ -73,10 +73,10 @@ func (s *loginService) Login(ctx context.Context, req *cairnosv1.LoginRequest) (
 }
 
 // peerIP pulls the caller's IP from the gRPC peer for the per-peer login rate
-// limit (spec M1). The gateway dials the backend over loopback, so HTTP
-// callers share one bucket; that is acceptable because the gateway is the
-// trusted local front and the concurrency cap still bounds total cost. An
-// unknown peer falls back to a single shared key rather than failing the call.
+// limit (spec M1). The gateway dials the backend over loopback, so HTTP callers
+// share one bucket. That's fine: the gateway is the trusted local front and the
+// concurrency cap bounds cost. An unknown peer falls back to a shared key rather
+// than failing the call.
 func peerIP(ctx context.Context) string {
 	info, ok := peer.FromContext(ctx)
 	if !ok || info.Addr == nil {
@@ -121,11 +121,10 @@ func (s *loginService) Revoke(ctx context.Context, req *cairnosv1.RevokeRequest)
 	return &cairnosv1.RevokeResponse{Denied: deniedKeyPrefix + keyID}, nil
 }
 
-// loginStatus maps a login failure onto the wire: every credential problem,
-// including a malformed stored hash, collapses into one indistinguishable
-// UNAUTHENTICATED so a caller learns nothing about which check tripped (spec
-// L3). A login flood is RESOURCE_EXHAUSTED (M1). Anything else is INTERNAL.
-// The real error never reaches the wire; it is logged server-side instead, so
+// loginStatus maps a login failure onto the wire: every credential problem
+// collapses into one UNAUTHENTICATED so a caller learns nothing about which
+// check tripped (spec L3). A login flood is RESOURCE_EXHAUSTED (M1). Anything
+// else is INTERNAL. The real error is logged server-side, never on the wire, so
 // the opaque message cannot leak a stored-hash format problem.
 func (s *loginService) loginStatus(err error) error {
 	switch {

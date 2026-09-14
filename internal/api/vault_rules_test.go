@@ -58,8 +58,8 @@ func TestVaultCRUDAndQueryOverGRPC(t *testing.T) {
 		t.Fatalf("query returned %d docs, want the put document", len(queried.GetDocuments()))
 	}
 
-	if _, err := fix.vault.DeleteDocument(ctx, &cairnosv1.DeleteDocumentRequest{Id: put.GetId()}); err != nil {
-		t.Fatalf("DeleteDocument: %v", err)
+	if _, deleteDocumentErr := fix.vault.DeleteDocument(ctx, &cairnosv1.DeleteDocumentRequest{Id: put.GetId()}); deleteDocumentErr != nil {
+		t.Fatalf("DeleteDocument: %v", deleteDocumentErr)
 	}
 
 	_, err = fix.vault.GetDocument(ctx, &cairnosv1.GetDocumentRequest{Id: put.GetId()})

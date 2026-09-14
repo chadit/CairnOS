@@ -84,8 +84,8 @@ func TestCostFiltersByWorkflowAndWindow(t *testing.T) {
 
 	tests := []struct {
 		name string
-		args []string
 		want string
+		args []string
 	}{
 		{
 			name: "other workflow matches nothing",

@@ -146,8 +146,8 @@ func TestNewSealerRejectsWrongSizeKey(t *testing.T) {
 // fakeSecrets is a one-value SecretResolver: it returns the same secret (or
 // error) for any reference, so a test can hand the sealer a known key.
 type fakeSecrets struct {
-	value string
 	err   error
+	value string
 }
 
 func (f fakeSecrets) Get(_ context.Context, _ string) (string, error) {
@@ -220,8 +220,8 @@ func TestRotatingSealerOpensPreviousAndPrimaryKeys(t *testing.T) {
 		t.Fatalf("seal under old key: %v", err)
 	}
 
-	if _, err := ring.Open(oldEnvelope); err != nil {
-		t.Errorf("ring could not open a previous-key tip: %v", err)
+	if _, openErr := ring.Open(oldEnvelope); openErr != nil {
+		t.Errorf("ring could not open a previous-key tip: %v", openErr)
 	}
 
 	// A tip the rotating sealer seals itself (under the new primary) opens too.
@@ -230,8 +230,8 @@ func TestRotatingSealerOpensPreviousAndPrimaryKeys(t *testing.T) {
 		t.Fatalf("seal under new key: %v", err)
 	}
 
-	if _, err := ring.Open(newEnvelope); err != nil {
-		t.Errorf("ring could not open its own primary-key tip: %v", err)
+	if _, openErr := ring.Open(newEnvelope); openErr != nil {
+		t.Errorf("ring could not open its own primary-key tip: %v", openErr)
 	}
 
 	// A node that knows only the new key drops the old-key tip: the key id does

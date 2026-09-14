@@ -30,13 +30,16 @@ const (
 type Ref struct {
 	// Raw is the full reference text including the delimiters.
 	Raw string
-	// Kind says which namespace Target lives in.
-	Kind RefKind
+
 	// Target is the action, input, env, or secret name being read.
 	Target string
+
 	// Path is the field path into an action's output (the part after
 	// "output"), empty when the whole output is referenced.
 	Path []string
+
+	// Kind says which namespace Target lives in.
+	Kind RefKind
 }
 
 const (

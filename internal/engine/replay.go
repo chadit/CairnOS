@@ -19,19 +19,19 @@ const triggerReplay = "replay"
 // "Replay from failed action").
 const metaReplayedFrom = "replayed_from"
 
-// ReplayRun starts a fresh run seeded from a prior one: every action the prior
-// run finished successfully carries its output forward as a persisted seed row
-// stamped replayed_from, and the first failed action plus everything
-// downstream re-executes through the normal loop under the current runner and
-// governance checks (.agents/spec/parity/workflow-language.md, "Replay from
-// failed action"). No resolved params are persisted, so a replay never writes
-// a secret to the store: it reuses the prior run's inputs (already durable in
-// runs.inputs_json) and upstream outputs (already durable in
+// Seeding: every action the prior run finished successfully carries its output
+// forward as a persisted seed row stamped replayed_from, and the first failed
+// action plus everything downstream re-executes through the normal loop under
+// the current runner and governance checks. No resolved params are persisted, so
+// a replay never writes a secret to the store: it reuses the prior run's inputs
+// (already durable in runs.inputs_json) and upstream outputs (already durable in
 // action_results.output_json), which is exactly what re-resolution needs.
-//
-// The returned run is terminal; its Status and Error carry the outcome, so a
-// failed replay returns a nil error here. A non-nil error means the replay was
-// rejected before any record was created.
+
+// ReplayRun starts a fresh run seeded from a prior one
+// (.agents/spec/parity/workflow-language.md, "Replay from failed action"). The
+// returned run is terminal; its Status and Error carry the outcome, so a failed
+// replay returns a nil error here. A non-nil error means the replay was rejected
+// before any record was created.
 func (e *Engine) ReplayRun(ctx context.Context, prior *store.Run, priorResults []*store.ActionResult, flow *workflow.Workflow) (*store.Run, error) {
 	if flow == nil {
 		return nil, ErrNilWorkflow
@@ -80,10 +80,9 @@ func (e *Engine) ReplayRun(ctx context.Context, prior *store.Run, priorResults [
 
 // succeededSeeds selects the prior run's succeeded actions whose output carries
 // forward, the seed set both a replay (new run) and a resume (held run) reuse.
-// Only succeeded actions seed: failed, skipped, and never-started actions
-// re-execute through the loop. An action absent from the current workflow is
-// dropped, so a replay after an edit that removed a stage does not seed one the
-// new DAG has no place for.
+// Failed, skipped, and never-started actions re-execute through the loop. An
+// action absent from the current workflow is dropped, so a replay after an edit
+// that removed a stage doesn't seed a missing one.
 func succeededSeeds(flow *workflow.Workflow, priorResults []*store.ActionResult) map[string]seedEntry {
 	seeds := make(map[string]seedEntry, len(priorResults))
 

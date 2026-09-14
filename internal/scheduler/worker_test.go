@@ -16,10 +16,10 @@ import (
 // every one, so a test can assert delivery counts and the success or failure
 // path.
 type recordingQueueRunner struct {
-	mu       sync.Mutex
-	seen     []string
-	failAll  bool
 	failWith error
+	seen     []string
+	mu       sync.Mutex
+	failAll  bool
 }
 
 // Run records the item and fails per the configured mode: a specific error when

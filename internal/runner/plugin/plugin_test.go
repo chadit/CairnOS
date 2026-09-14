@@ -126,10 +126,10 @@ func TestPluginClassifiedFailuresSurviveTheWire(t *testing.T) {
 	plug := newEchoPlugin(t)
 
 	cases := []struct {
-		name           string
 		params         map[string]any
-		wantClass      runner.ErrorClass
+		name           string
 		wantCode       string
+		wantClass      runner.ErrorClass
 		wantRetryAfter time.Duration
 	}{
 		{
@@ -400,16 +400,16 @@ func TestPluginEngineEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	registry := runner.NewRegistry()
-	if err := registry.Register(echoName, plugin.Factory(t.Context(), echoName)); err != nil {
-		t.Fatalf("register plugin factory: %v", err)
+	if registerErr := registry.Register(echoName, plugin.Factory(t.Context(), echoName)); registerErr != nil {
+		t.Fatalf("register plugin factory: %v", registerErr)
 	}
 
 	cfgs := map[string]map[string]any{
 		echoName: {"type": "plugin", "command": []any{buildEchoPlugin(t)}},
 	}
 
-	if err := registry.BuildAll(cfgs); err != nil {
-		t.Fatalf("build runners: %v", err)
+	if buildAllErr := registry.BuildAll(cfgs); buildAllErr != nil {
+		t.Fatalf("build runners: %v", buildAllErr)
 	}
 
 	t.Cleanup(func() { _ = registry.Close() })

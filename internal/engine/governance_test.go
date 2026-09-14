@@ -57,9 +57,9 @@ params = { fn = "record" }
 // the nop default since this recorder is set only on Config.Instrumentation
 // when the test wants to observe budget metrics.
 type budgetRecorder struct {
-	mu       sync.Mutex
 	spends   []float64
 	exceeded []string
+	mu       sync.Mutex
 }
 
 func (*budgetRecorder) RunStarted(ctx context.Context, _ *store.Run) (context.Context, func(*store.Run)) {
@@ -111,9 +111,9 @@ func (r *budgetRecorder) lastSpend() (float64, bool) {
 // budgetNotifier records warn-mode and pause-mode budget notifications so a test
 // can prove which path fired.
 type budgetNotifier struct {
-	mu     sync.Mutex
 	warned []float64
 	denied []float64
+	mu     sync.Mutex
 }
 
 func (n *budgetNotifier) BudgetWarn(_ context.Context, _ string, spend, _ float64) {

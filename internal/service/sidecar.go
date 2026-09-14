@@ -260,9 +260,8 @@ func sidecarExecLine(opts SidecarOptions) string {
 
 // systemdQuote wraps one ExecStart argument in the double quotes systemd needs
 // to keep a path with spaces in one piece. Inside those quotes systemd treats a
-// backslash as an escape, so both it and the quote character are escaped first:
-// a Windows-style path or a directory with a quote in its name would otherwise
-// come back out as something else, or break the line in two.
+// backslash as an escape, so both it and the quote character are escaped first;
+// otherwise a path with either would come back out altered or split the line.
 func systemdQuote(arg string) string {
 	escaped := strings.ReplaceAll(arg, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)

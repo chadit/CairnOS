@@ -11,17 +11,16 @@ import (
 )
 
 // Claims is the CairnOS token payload (.agents/spec/08-auth-and-access.md,
-// "Tokens (JWT)"): the registered claims carry sub (the access key id),
-// jti, iat, exp, iss, and aud; scopes ride alongside. The workspace claim
-// names the tenant the token acts in (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy"); the interceptor lifts it onto the request context so
-// every store query filters by it. An empty workspace reads as the default
-// workspace, so a token minted before tenancy keeps its old behavior.
+// "Tokens (JWT)"): sub is the access key id, and scopes ride alongside the
+// registered claims. Workspace names the tenant the token acts in
+// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"); the interceptor
+// lifts it onto the request context so every store query filters by it. Empty
+// means the default workspace, so tokens minted before tenancy still work.
 type Claims struct {
 	jwt.RegisteredClaims
 
-	Scopes    []string `json:"scopes"`
 	Workspace string   `json:"workspace,omitempty"`
+	Scopes    []string `json:"scopes"`
 }
 
 // issue mints one token for a verified, enabled key: sub is the key id,
@@ -33,11 +32,11 @@ func (a *Authenticator) issue(ctx context.Context, key *Key) (string, time.Time,
 }
 
 // MintForSubject issues a CairnOS token for a subject the OAuth login resolved
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"): the human's IdP
-// subject becomes sub, the workspace and scopes come from the resolved
-// membership role. The token is identical in shape to an access-key token, so
-// the interceptor verifies it the same way and the denylist can revoke it. The
-// caller is responsible for resolving membership before minting.
+// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"): the IdP subject
+// becomes sub, and workspace and scopes come from the resolved membership role.
+// The token has the same shape as an access-key token, so the interceptor
+// verifies it the same way and the denylist can revoke it. Callers must resolve
+// membership first.
 func (a *Authenticator) MintForSubject(ctx context.Context, subject, workspace string, scopes []string) (string, time.Time, error) {
 	return a.mint(ctx, subject, workspace, scopes)
 }
@@ -54,14 +53,12 @@ func (a *Authenticator) mint(ctx context.Context, subject, workspace string, sco
 	claims := &Claims{
 		Scopes:    scopes,
 		Workspace: workspace,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   subject,
-			ID:        jti,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(expiresAt),
-			Issuer:    a.cfg.Issuer,
-			Audience:  jwt.ClaimStrings{a.cfg.Audience},
-		},
+		Subject:   subject,
+		ID:        jti,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
+		Issuer:    a.cfg.Issuer,
+		Audience:  jwt.ClaimStrings{a.cfg.Audience},
 	}
 
 	signed, err := jwt.NewWithClaims(a.material.signingMethod(), claims).SignedString(a.material.signingKey())

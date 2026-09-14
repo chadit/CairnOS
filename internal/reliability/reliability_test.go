@@ -38,9 +38,9 @@ func TestRetryNeverRetriesUnsafeFailures(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		failure    error
 		name       string
 		idempotent bool
-		failure    error
 	}{
 		{
 			name:       "permanent error on idempotent action",

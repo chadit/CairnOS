@@ -141,8 +141,8 @@ func TestSystemPromptOmitsSkills(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
 		source chat.SkillSource
+		name   string
 	}{
 		{name: "empty_list", source: &fakeSkillSource{}},
 		{name: "nil_source", source: nil},

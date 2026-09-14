@@ -73,9 +73,9 @@ type serversResponse struct {
 // list community records to import. The token is a bearer secret read from the
 // environment by the caller, never persisted in config.
 type RegistryClient struct {
+	http    *http.Client
 	baseURL string
 	token   string
-	http    *http.Client
 }
 
 // NewRegistryClient builds a client against a base URL. An empty URL is a
@@ -165,13 +165,16 @@ func (c *RegistryClient) authorize(req *http.Request) {
 type RegistryError struct {
 	// Op is the request that failed ("publish" or "list").
 	Op string
-	// StatusCode is the HTTP status the registry returned.
-	StatusCode int
+
 	// Status is the full HTTP status line.
 	Status string
+
 	// Body is the trimmed, bounded response body, empty when the registry sent
 	// none.
 	Body string
+
+	// StatusCode is the HTTP status the registry returned.
+	StatusCode int
 }
 
 // Error renders the operation, status, and any body the registry returned.
@@ -221,17 +224,18 @@ func ServerRecord(endpoint string, includeRules bool) ServerEntry {
 	}
 }
 
+// Each block points an mcp_client runner at the server's endpoint and tool; the
+// CLI wiring registers a per-block instance of the built-in client factory under
+// each block's name. The name mcp_client itself is never emitted: the wiring's
+// skip rule makes a block with that literal name plain configuration for the
+// built-in instance, so a generated block using it would silently reconfigure
+// the built-in instead of registering a new runner.
+
 // ImportConfig renders registry server records as mcp_client runner blocks, one
-// per tool, in the TOML an operator pastes into their config. Each block points
-// an mcp_client runner at the server's endpoint and tool; the CLI wiring
-// registers a per-block instance of the built-in client factory under each
-// block's name (.agents/spec/10-mcp-integration.md, "MCP Registry"). The name
-// mcp_client itself is never emitted: the wiring's skip rule makes a block with
-// that literal name plain configuration for the built-in instance, so a
-// generated block using it would silently reconfigure the built-in instead of
-// registering a new runner. A server whose endpoint matches selfEndpoint is
-// skipped, so a node does not import its own published tools. Returns the
-// rendered TOML and the runner names it defined.
+// per tool, in the TOML an operator pastes into their config
+// (.agents/spec/10-mcp-integration.md, "MCP Registry"). A server whose endpoint
+// matches selfEndpoint is skipped, so a node does not import its own published
+// tools. Returns the rendered TOML and the runner names it defined.
 func ImportConfig(servers []ServerEntry, selfEndpoint string) (string, []string) {
 	self := strings.TrimRight(strings.TrimSpace(selfEndpoint), "/")
 

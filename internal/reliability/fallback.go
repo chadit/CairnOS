@@ -8,20 +8,14 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Fallback tries providers in order and returns the first success. Each provider
-// runs through call, which the engine wires to that provider's own breaker,
-// retry, and execute, so a provider that fails terminally (a dead service, an
-// open breaker, a rejected request, or an expired credential) falls through to
-// the next while an alternative remains. This is the mixed-model layer: many
-// providers in one install, tried in order, so one provider's outage does not
-// fail an action another can serve (.agents/spec/14-open-decisions.md, D12).
+// Fallback tries providers in order and returns the first success, so one
+// provider's outage does not fail an action another can serve
+// (.agents/spec/14-open-decisions.md, D12). call wires each provider's own
+// breaker, retry, and execute.
 //
-// When every provider fails, it returns the last attempt's result and a joined
-// error of all of them. The engine classifies that joined error as usual: the
-// first classified failure in the chain wins, so a primary that needs re-auth
-// still holds the job once no fallback could serve it. An empty chain returns
-// ErrNoProviders. A ctx cancellation between providers stops the loop with the
-// ctx error rather than marching through the rest of the chain.
+// When every provider fails, the last result comes back with a joined error
+// whose first classified failure wins, so a primary needing re-auth still holds
+// the job.
 func Fallback(ctx context.Context, providers []string, call func(context.Context, string) (runner.Result, error)) (runner.Result, error) {
 	if len(providers) == 0 {
 		return runner.Result{}, ErrNoProviders

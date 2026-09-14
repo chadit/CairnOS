@@ -9,15 +9,11 @@ import (
 )
 
 // Instrumentation observes execution milestones so the telemetry layer can
-// build the run -> action -> runner.call span tree and the metric catalog
-// (.agents/spec/06-observability-and-tuning.md) without the engine importing
-// any telemetry SDK. Implementations must be safe for concurrent use
-// (actions run on worker goroutines) and must come back promptly: every
-// hook sits on the hot path of a call. The contexts returned by the Started
-// hooks carry whatever scope the implementation needs (span identity, run
-// labels); the engine threads each one into the work it covers, so a finish
-// func always observes the scope its Started opened. Each finish func is
-// called exactly once.
+// build the run -> action -> runner.call span tree
+// (.agents/spec/06-observability-and-tuning.md) without the engine importing a
+// telemetry SDK. Implementations must be concurrency-safe and return promptly:
+// every hook sits on the hot path. A Started hook's context carries its scope
+// into the work it covers, and each finish func is called exactly once.
 type Instrumentation interface {
 	// RunStarted opens the run scope as the run record turns running. The
 	// finish func runs once the run is terminal, with status and error
@@ -55,12 +51,12 @@ type Call struct {
 	Runner string
 	Action string
 
+	// BreakerState is the runner's circuit position when the call launched.
+	BreakerState string
+
 	// Attempt is zero-based, so retries show as attempt 1 and up, matching
 	// the spec's example trace.
 	Attempt int
-
-	// BreakerState is the runner's circuit position when the call launched.
-	BreakerState string
 }
 
 // nopInstrumentation is the default when Config.Instrumentation is nil: the

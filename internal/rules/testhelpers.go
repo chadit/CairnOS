@@ -7,15 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OpenPostgresSchema opens a rules store whose table lives in its own Postgres
-// schema, giving each integration subtest the isolation the sqlite backend
-// gets from a per-case temp file. The pool pins search_path to schema (plus
-// public), the schema is created if absent, and the rules DDL runs inside it.
-// It is exported package code (not a _test.go file) because the backend's
-// external suite package needs it and Go cannot share unexported helpers
-// across packages.
-//
-// DropPostgresSchema is the cleanup counterpart.
+// OpenPostgresSchema opens a rules store in its own Postgres schema, giving
+// each integration subtest the isolation the sqlite backend gets from a
+// per-case temp file. It lives in package code rather than a _test.go file
+// because the backend's external suite package needs it, and Go cannot share
+// unexported helpers across packages. DropPostgresSchema is the counterpart.
 func OpenPostgresSchema(ctx context.Context, dsn, schema string) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

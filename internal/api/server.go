@@ -29,13 +29,24 @@ const readHeaderTimeout = 10 * time.Second
 
 // Config wires one Server.
 type Config struct {
-	// GRPCAddr and HTTPAddr are the bind addresses. Both pass the Phase 1a
-	// localhost guard: loopback or unix only (see normalizeBind).
-	GRPCAddr string
-	HTTPAddr string
+	// Breakers exposes the engine's circuit breakers to AdminService;
+	// the serve wiring passes the engine itself. Nil keeps ResetBreaker
+	// answering UNIMPLEMENTED for embedders without an in-process engine.
+	Breakers BreakerAdmin
 
-	// WorkflowsDir holds the workflow files RunWorkflow resolves names in.
-	WorkflowsDir string
+	// GatewayDialCreds is the client credential the HTTP gateway uses to dial
+	// the gRPC backend over loopback. It pairs with Creds: when the gRPC
+	// listener requires client certs (mTLS), the local gateway needs a
+	// matching client identity to reach it. Nil dials insecure, which is
+	// correct when Creds is also nil (plaintext dev) and when the gRPC
+	// listener accepts plaintext loopback.
+	GatewayDialCreds credentials.TransportCredentials
+
+	// Creds is the gRPC transport credential. Non-nil turns on TLS (or mTLS)
+	// on the gRPC listener; the A2A mTLS option sets it
+	// (.agents/spec/09-a2a-and-hive.md, "Transport security"). Nil keeps the
+	// plaintext transport, which the localhost guard still protects.
+	Creds credentials.TransportCredentials
 
 	// Store is the durable run store.
 	Store store.Store
@@ -56,17 +67,6 @@ type Config struct {
 	// (.agents/spec/13-roadmap.md, Phase 9).
 	Chat ChatAgent
 
-	// Registry lists the built runners for AdminService.
-	Registry *runner.Registry
-
-	// Breakers exposes the engine's circuit breakers to AdminService;
-	// the serve wiring passes the engine itself. Nil keeps ResetBreaker
-	// answering UNIMPLEMENTED for embedders without an in-process engine.
-	Breakers BreakerAdmin
-
-	// Manager owns run starts, event fan-out, and cancellation.
-	Manager *Manager
-
 	// Auth turns on Phase 4a token enforcement
 	// (.agents/spec/08-auth-and-access.md): a unary and stream
 	// interceptor verify the bearer token and its scope on every method
@@ -74,34 +74,31 @@ type Config struct {
 	// passes unchecked.
 	Auth Authenticator
 
+	// Manager owns run starts, event fan-out, and cancellation.
+	Manager *Manager
+
+	// Registry lists the built runners for AdminService.
+	Registry *runner.Registry
+
 	// LoginLimiter caps unauthenticated login cost (spec M1): a bounded
 	// derivation pool plus a per-peer rate limit on the Login RPC. Nil leaves
 	// the login path unbounded, which is the auth-disabled case.
 	LoginLimiter *auth.LoginLimiter
 
-	// StreamRecheck is how often an open stream re-verifies its token's
-	// expiry and denylist state (spec M4); zero falls back to the default.
-	StreamRecheck time.Duration
+	// Logger receives operational events; nil means slog.Default.
+	Logger *slog.Logger
 
 	// StreamClock injects the clock the stream recheck reads, so tests drive
 	// the cadence deterministically without sleeping. Nil means time.Now.
 	StreamClock func() time.Time
 
-	// BindPolicy decides which non-loopback binds the guard accepts; the
-	// zero value keeps the loopback-only behavior.
-	BindPolicy BindPolicy
+	// GRPCAddr and HTTPAddr are the bind addresses. Both pass the Phase 1a
+	// localhost guard: loopback or unix only (see normalizeBind).
+	GRPCAddr string
+	HTTPAddr string
 
-	// CORSOrigins is the explicit CORS allowlist for the gateway (spec M1).
-	// Empty sends no CORS headers, so the browser enforces same-origin.
-	CORSOrigins []string
-
-	// MaxBodyBytes caps a gateway request body (spec M4); an over-limit POST is
-	// rejected with 413. Zero leaves the body uncapped.
-	MaxBodyBytes int64
-
-	// MaxRecvMsgBytes caps a single gRPC message (spec M4). Zero leaves the
-	// library default in place.
-	MaxRecvMsgBytes int
+	// WorkflowsDir holds the workflow files RunWorkflow resolves names in.
+	WorkflowsDir string
 
 	// Extensions register extra gRPC services, gateway handlers, and HTTP
 	// endpoints onto this one server (the A2A adapter, Phase 4b). They are
@@ -109,22 +106,25 @@ type Config struct {
 	// can depend on this one without a cycle. Nil entries are skipped.
 	Extensions []*Extension
 
-	// Creds is the gRPC transport credential. Non-nil turns on TLS (or mTLS)
-	// on the gRPC listener; the A2A mTLS option sets it
-	// (.agents/spec/09-a2a-and-hive.md, "Transport security"). Nil keeps the
-	// plaintext transport, which the localhost guard still protects.
-	Creds credentials.TransportCredentials
+	// CORSOrigins is the explicit CORS allowlist for the gateway (spec M1).
+	// Empty sends no CORS headers, so the browser enforces same-origin.
+	CORSOrigins []string
 
-	// GatewayDialCreds is the client credential the HTTP gateway uses to dial
-	// the gRPC backend over loopback. It pairs with Creds: when the gRPC
-	// listener requires client certs (mTLS), the local gateway needs a
-	// matching client identity to reach it. Nil dials insecure, which is
-	// correct when Creds is also nil (plaintext dev) and when the gRPC
-	// listener accepts plaintext loopback.
-	GatewayDialCreds credentials.TransportCredentials
+	// MaxRecvMsgBytes caps a single gRPC message (spec M4). Zero leaves the
+	// library default in place.
+	MaxRecvMsgBytes int
 
-	// Logger receives operational events; nil means slog.Default.
-	Logger *slog.Logger
+	// MaxBodyBytes caps a gateway request body (spec M4); an over-limit POST is
+	// rejected with 413. Zero leaves the body uncapped.
+	MaxBodyBytes int64
+
+	// StreamRecheck is how often an open stream re-verifies its token's
+	// expiry and denylist state (spec M4); zero falls back to the default.
+	StreamRecheck time.Duration
+
+	// BindPolicy decides which non-loopback binds the guard accepts; the
+	// zero value keeps the loopback-only behavior.
+	BindPolicy BindPolicy
 }
 
 // Extension bundles one optional service's registration hooks plus any extra
@@ -132,9 +132,6 @@ type Config struct {
 // is one). The serve wiring builds these where both the api and the service
 // package are in scope, so this package never imports the service.
 type Extension struct {
-	// Name labels the extension in logs.
-	Name string
-
 	// RegisterGRPC registers the extension's gRPC service on the server.
 	RegisterGRPC func(*grpc.Server)
 
@@ -145,6 +142,9 @@ type Extension struct {
 	// HTTPRoutes are extra handlers mounted on the root HTTP mux, outside the
 	// gateway and outside the auth interceptor (public discovery endpoints).
 	HTTPRoutes map[string]http.HandlerFunc
+
+	// Name labels the extension in logs.
+	Name string
 }
 
 // Server is the Phase 1a API process: one gRPC server (with reflection) and
@@ -407,8 +407,8 @@ func (s *Server) startGateway(ctx context.Context) error {
 	}
 
 	for _, register := range registrations {
-		if err := register(ctx, mux, conn); err != nil {
-			return fmt.Errorf("register gateway handler: %w", err)
+		if registerErr := register(ctx, mux, conn); registerErr != nil {
+			return fmt.Errorf("register gateway handler: %w", registerErr)
 		}
 	}
 
@@ -417,13 +417,11 @@ func (s *Server) startGateway(ctx context.Context) error {
 		return err
 	}
 
-	// Deliberate inconsistency (spec L4): /openapi.json and /routes stay
-	// public for tooling and discovery, while gRPC server reflection sits
-	// behind the auth interceptor's fail-closed default (admin-scoped). Both
-	// describe the same surface, so an operator who wants discovery fully
-	// gated could also move these two behind the interceptor; that is a
-	// future option, left open here rather than changed, since the HTTP
-	// discovery docs expose only method shapes, never data.
+	// Deliberate inconsistency (spec L4): /openapi.json and /routes stay public
+	// so tooling can discover them, while gRPC server reflection sits behind
+	// the auth interceptor's fail-closed default (admin-scoped). The HTTP
+	// discovery docs expose only method shapes, never data, so gating them is
+	// left as a future operator option rather than a change made here.
 	root := http.NewServeMux()
 	root.Handle("/", limitBody(s.cfg.MaxBodyBytes, mux))
 	root.HandleFunc("GET /openapi.json", openapiHandler())

@@ -182,10 +182,10 @@ func (s *Postgres) List(ctx context.Context) ([]Metadata, error) {
 }
 
 // Rotate re-seals every row whose key id is not the primary's, across all
-// workspaces, and returns the count. It reads the rows to re-seal into memory
-// first, then re-seals each in one transaction: the per-row writes are
-// unavoidable because each row gets a fresh nonce and ciphertext. A row that
-// opens under no loaded key fails the rotate naming the secret only.
+// workspaces, and returns the count. It reads the pending rows into memory
+// first, then re-seals them in one transaction; the per-row writes are
+// unavoidable because each row gets a fresh nonce. A row no loaded key opens
+// fails the rotate, naming the secret only.
 func (s *Postgres) Rotate(ctx context.Context) (int, error) {
 	pending, err := s.rowsToRotate(ctx)
 	if err != nil {

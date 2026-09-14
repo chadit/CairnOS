@@ -11,18 +11,20 @@ import (
 // conversation is distinguishable from a CLI, schedule, API, or A2A trigger.
 const triggerChat = "chat"
 
-// ChatWorkflowTrigger adapts the run manager and the workflow resolver to
-// chat.WorkflowTrigger, so a confirmed chat proposal fires a real run through
-// the same engine, breakers, and governance every other run uses
-// (.agents/spec/14-open-decisions.md, D9: the spawned run runs under Phase 5b
-// budgets and pause, at depth exactly one). Routing through the manager keeps
-// the run cancelable through CancelRun and correlates its run id.
+// Routing through the manager keeps the run cancelable through CancelRun and
+// correlates its run id.
 //
 // Depth-one holds structurally: the manager starts an ordinary workflow run,
 // whose own actions obey the existing one-level no-recursion rule
 // (.agents/spec/15-agent-loop.md), so nothing the spawned run does can start a
 // third loop. The chat exception is the one place a loop triggers a workflow,
 // and it is gated by the confirmation step before this adapter is ever called.
+
+// ChatWorkflowTrigger adapts the run manager and the workflow resolver to
+// chat.WorkflowTrigger, so a confirmed chat proposal fires a real run through
+// the same engine, breakers, and governance every other run uses
+// (.agents/spec/14-open-decisions.md, D9: the spawned run runs under Phase 5b
+// budgets and pause, at depth exactly one).
 type ChatWorkflowTrigger struct {
 	manager  *Manager
 	resolver *WorkflowResolver

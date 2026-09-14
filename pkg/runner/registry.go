@@ -16,9 +16,9 @@ type Factory func(cfg map[string]any) (Runner, error)
 // is constructed once per process from its config block and reused across
 // runs, which is why Execute must be safe for concurrent use.
 type Registry struct {
-	mu        sync.RWMutex
 	factories map[string]Factory
 	instances map[string]Runner
+	mu        sync.RWMutex
 }
 
 // NewRegistry returns an empty registry.

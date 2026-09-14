@@ -52,8 +52,8 @@ func TestTaskUpdatesRefusesCrossTenant(t *testing.T) {
 
 	// Tenant A stops its own run, then streams its own task to the terminal
 	// update, proving same-tenant attach still works.
-	if _, err := fix.a2a.CancelTask(authedCtx(t, tokenA), &a2av1.CancelTaskRequest{TaskId: taskID}); err != nil {
-		t.Fatalf("tenant A CancelTask(own task): %v", err)
+	if _, cancelTaskErr := fix.a2a.CancelTask(authedCtx(t, tokenA), &a2av1.CancelTaskRequest{TaskId: taskID}); cancelTaskErr != nil {
+		t.Fatalf("tenant A CancelTask(own task): %v", cancelTaskErr)
 	}
 
 	ownStream, err := fix.a2a.TaskUpdates(authedCtx(t, tokenA), &a2av1.TaskUpdatesRequest{TaskId: taskID})

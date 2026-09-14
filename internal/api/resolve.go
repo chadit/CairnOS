@@ -18,8 +18,8 @@ import (
 // resolve names identically (the A2A adapter lives in internal/a2a and reuses
 // this exported surface rather than reimplementing the scan).
 type WorkflowResolver struct {
-	dir    string
 	logger *slog.Logger
+	dir    string
 }
 
 // NewWorkflowResolver builds a resolver over one workflows directory.
@@ -44,8 +44,8 @@ func (r *WorkflowResolver) Resolve(name string) (*workflow.Workflow, error) {
 // name, plus the loaded workflow. The error contract matches Resolve: a
 // canonical NotFound when no file carries the name, and unloadable files
 // skipped with a log line. Save goes through this so internal/api holds one
-// name-to-file scan rather than a second copy for writes
-// (.agents/spec/parity/builder-ops.md, "One resolver, no third scan").
+// name-to-file scan (.agents/spec/parity/builder-ops.md, "One resolver, no
+// third scan").
 func (r *WorkflowResolver) ResolvePath(name string) (string, *workflow.Workflow, error) {
 	entries, err := os.ReadDir(r.dir)
 	if err != nil {

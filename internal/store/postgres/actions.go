@@ -118,8 +118,8 @@ func scanActionResult(row rowScanner) (*store.ActionResult, error) {
 
 	result.Status = store.ActionStatus(status)
 
-	if err := unmarshalJSON(output, &result.Output); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(output, &result.Output); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
 	result.Usage, err = unmarshalUsage(usage)

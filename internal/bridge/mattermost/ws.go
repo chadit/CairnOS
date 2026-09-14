@@ -149,7 +149,7 @@ func (k *keepalive) cause() error {
 // the header form fails the handshake outright on a bad token instead of
 // leaving a connected socket that never delivers.
 func (c *Client) dialSocket(ctx context.Context) (*websocket.Conn, error) {
-	endpoint := *c.base
+	endpoint := c.base.Clone()
 	endpoint.Scheme = socketScheme(endpoint.Scheme)
 	endpoint.Path += apiPrefix + "/websocket"
 

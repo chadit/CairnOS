@@ -48,20 +48,21 @@ const (
 // run the job, kept out of the queue's own concern so the queue does not couple
 // to the workflow shape.
 type WorkItem struct {
-	ID          string
-	DedupKey    string
-	Payload     []byte
-	State       WorkState
 	AvailableAt time.Time
 	LeaseUntil  time.Time
-	Deliveries  int
 	CreatedAt   time.Time
+	ID          string
+	DedupKey    string
+	State       WorkState
 
 	// HoldKey records what a held item is waiting on, set when the item is held
 	// and cleared on resume. The queue treats it as opaque; the scheduler stores
 	// the re-auth provider name here so a resume probe knows which credential to
 	// check (D12). It is empty for any item that is not held.
 	HoldKey string
+
+	Payload    []byte
+	Deliveries int
 }
 
 // QueueStats is the dashboard snapshot the Grafana panels read: how deep the

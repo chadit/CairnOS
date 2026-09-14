@@ -34,9 +34,9 @@ func TestEmailValidate(t *testing.T) {
 	configured := map[string]any{hostKey: "smtp.cairn.test", fromKey: testSender}
 
 	cases := []struct {
-		name    string
 		cfg     map[string]any
 		params  map[string]any
+		name    string
 		wantErr bool
 	}{
 		{name: "unconfigured runner", params: map[string]any{toKey: testRecipient, bodyKey: testBody}, wantErr: true},
@@ -81,8 +81,8 @@ func TestEmailDialFailureIsTransient(t *testing.T) {
 		t.Fatalf("listener address type %T", listener.Addr())
 	}
 
-	if err := listener.Close(); err != nil {
-		t.Fatalf("close listener: %v", err)
+	if closeErr := listener.Close(); closeErr != nil {
+		t.Fatalf("close listener: %v", closeErr)
 	}
 
 	cfg := map[string]any{

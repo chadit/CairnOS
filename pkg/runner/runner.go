@@ -54,25 +54,16 @@ type Describer interface {
 
 // ToolCaller marks an LLM runner that supports its provider's native tool-use
 // mode, making it eligible as an agent-loop driver
-// (.agents/spec/15-agent-loop.md). There is no JSON-in-text fallback for
-// drivers without native tool calling (D8 in .agents/spec/14-open-decisions.md):
-// a driver that does not implement ToolCaller fails agent validation with
-// agent.driver_incapable.
-//
-// ExecuteWithTools runs one driver turn with the given tools offered. The
-// returned Result follows the driver convention the agent loop parses:
-//
-//   - Tool call: Output is map[string]any{ToolCallName: <tool name>,
-//     ToolCallArguments: map[string]any{...}} and Meta[MetaStopReason] is
-//     StopReasonToolUse.
-//   - Final answer: Output is any other value (normally the response text)
-//     and Meta[MetaStopReason] is StopReasonEndTurn.
-//
-// Meta[MetaStopReason] settles the ambiguous case: a final answer that
-// happens to be a map with a "tool" key reads as a tool call by shape, so
-// the loop trusts the stop reason first. Implementations translate at most
-// one tool call per turn and drop extra parallel calls from the provider.
+// (.agents/spec/15-agent-loop.md). There is no JSON-in-text fallback (D8 in
+// .agents/spec/14-open-decisions.md): a driver that does not implement
+// ToolCaller fails agent validation with agent.driver_incapable.
 type ToolCaller interface {
+	// ExecuteWithTools runs one driver turn with tools offered. A tool call
+	// sets Output to map[string]any{ToolCallName: <name>, ToolCallArguments:
+	// {...}} and Meta[MetaStopReason] to StopReasonToolUse; a final answer
+	// sets Output to the response text and StopReasonEndTurn. The stop reason
+	// wins when a final answer happens to be a map with a "tool" key.
+	// Implementations translate at most one tool call per turn.
 	ExecuteWithTools(ctx context.Context, task *Task, tools []ToolSpec) (Result, error)
 }
 
@@ -94,9 +85,9 @@ const (
 
 // Task is one action's worth of work.
 type Task struct {
-	// RunID and ActionName identify where this task sits in a workflow run.
-	RunID      string
-	ActionName string
+	// Deadline is the absolute time this task must finish by, derived from the
+	// action and workflow timeouts. Zero means no deadline beyond ctx.
+	Deadline time.Time
 
 	// Params are the arguments from the workflow file. When Resolved is true
 	// all interpolation references are substituted and values are native Go
@@ -106,6 +97,10 @@ type Task struct {
 	// Inputs are the run-level inputs declared by the workflow.
 	Inputs map[string]any
 
+	// RunID and ActionName identify where this task sits in a workflow run.
+	RunID      string
+	ActionName string
+
 	// Idempotent mirrors the action's idempotent flag. A runner may read it
 	// but the engine, not the runner, decides retries.
 	Idempotent bool
@@ -114,10 +109,6 @@ type Task struct {
 	// substituted. False during load-time Validate, where unresolved
 	// references remain and only structural checks are possible.
 	Resolved bool
-
-	// Deadline is the absolute time this task must finish by, derived from the
-	// action and workflow timeouts. Zero means no deadline beyond ctx.
-	Deadline time.Time
 }
 
 // Result is what a runner returns on success.
@@ -127,13 +118,13 @@ type Result struct {
 	// passes it to other actions and to API clients.
 	Output any
 
-	// Usage reports resource consumption for telemetry and tuning. All fields
-	// are optional; a runner sets what it knows.
-	Usage Usage
-
 	// Meta carries runner-specific detail that is not the primary output
 	// (model name, CLI exit code, request ID). Surfaced in telemetry.
 	Meta map[string]string
+
+	// Usage reports resource consumption for telemetry and tuning. All fields
+	// are optional; a runner sets what it knows.
+	Usage Usage
 }
 
 // Usage is the per-action accounting the metric catalog reads.
@@ -148,17 +139,19 @@ type Usage struct {
 
 // Chunk is one piece of incremental output from a streaming runner.
 type Chunk struct {
-	// Data is the raw streamed text (a token batch, a log line).
-	Data string
 	// Time is when the runner produced the chunk.
 	Time time.Time
+
+	// Data is the raw streamed text (a token batch, a log line).
+	Data string
 }
 
 // ToolSpec describes a runner to an agent-loop driver. Write Description for a
 // model, not a human: when and why to call this tool.
 type ToolSpec struct {
-	Name        string
-	Description string
 	// InputSchema is a JSON Schema object for the tool's arguments.
 	InputSchema map[string]any
+
+	Name        string
+	Description string
 }

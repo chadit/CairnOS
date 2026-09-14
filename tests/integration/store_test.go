@@ -82,8 +82,8 @@ func TestOpenReAddsParentRunIDColumn(t *testing.T) {
 
 	// Simulate a database from before replay by dropping the column the ALTER
 	// added, then reopen so the guarded ALTER re-adds it.
-	if _, err := db.Pool().Exec(ctx, "ALTER TABLE runs DROP COLUMN parent_run_id"); err != nil {
-		t.Fatalf("drop parent_run_id: %v", err)
+	if _, execErr := db.Pool().Exec(ctx, "ALTER TABLE runs DROP COLUMN parent_run_id"); execErr != nil {
+		t.Fatalf("drop parent_run_id: %v", execErr)
 	}
 
 	reopened, err := postgres.OpenSchema(ctx, integration.DSN(t), schema)
@@ -106,8 +106,8 @@ func TestOpenReAddsParentRunIDColumn(t *testing.T) {
 		ParentRunID:  "run-parent",
 		CreatedAt:    time.Now(),
 	}
-	if err := reopened.CreateRun(ctx, child); err != nil {
-		t.Fatalf("create child run after reopen: %v", err)
+	if createRunErr := reopened.CreateRun(ctx, child); createRunErr != nil {
+		t.Fatalf("create child run after reopen: %v", createRunErr)
 	}
 
 	got, err := reopened.GetRun(ctx, "run-child")

@@ -29,8 +29,8 @@ const (
 // bucket is one token bucket's refill state: tokens accrue at a per-minute rate
 // up to a one-minute burst, and each admitted call spends one.
 type bucket struct {
-	tokens float64
 	last   time.Time
+	tokens float64
 }
 
 // refill accrues tokens for the time elapsed since last at ratePerMinute,
@@ -66,11 +66,10 @@ func (b *bucket) spend() bool {
 // its token no longer resolves, so nothing refills or reads it. Bounded,
 // accepted. Safe for concurrent use.
 type registrationLimiter struct {
-	defaultRate float64
 	now         func() time.Time
-
-	mu      sync.Mutex
-	buckets map[string]*bucket
+	buckets     map[string]*bucket
+	defaultRate float64
+	mu          sync.Mutex
 }
 
 // newRegistrationLimiter builds a limiter at the given default per-minute rate,
@@ -121,11 +120,10 @@ func (l *registrationLimiter) allow(registrationID string, override int) bool {
 // flood of unmatched tokens is throttled to a fixed rate without growing state.
 // Safe for concurrent use.
 type globalLimiter struct {
-	rate float64
 	now  func() time.Time
-
-	mu sync.Mutex
-	b  bucket
+	b    bucket
+	rate float64
+	mu   sync.Mutex
 }
 
 // newGlobalLimiter builds the shared unknown-token bucket at the given

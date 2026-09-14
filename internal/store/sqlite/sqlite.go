@@ -340,11 +340,11 @@ func parseTime(value sql.NullTime) time.Time {
 	return value.Time
 }
 
-// collectRows drains rows, scanning each into a *T with scan and wrapping any
-// failure under operation. It owns closing rows, so list queries that share the
-// same next-scan-append-Err shape call it instead of repeating that loop, which
-// also keeps two such lists from reading as a dupl false positive when their
-// only real difference is the column set and scan func.
+// collectRows drains rows into a *T slice with scan, wrapping any failure under
+// operation and closing rows itself. List queries sharing the
+// next-scan-append-Err shape call it rather than repeat that loop, which also
+// keeps two such lists from reading as a dupl false positive when only their
+// columns and scan func differ.
 func collectRows[T any](rows *sql.Rows, operation string, scan func(rowScanner) (*T, error)) ([]*T, error) {
 	defer closeQuietly(rows)
 

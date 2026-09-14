@@ -57,8 +57,8 @@ const anthropicBlockToolUse = "tool_use"
 // config). The API key comes from CAIRNOS_RUNNER_ANTHROPIC_API_KEY at call
 // time.
 type Anthropic struct {
-	cfg    llmConfig
 	client *http.Client
+	cfg    llmConfig
 }
 
 // NewAnthropic builds the runner over an injected HTTP client so tests can
@@ -436,21 +436,21 @@ func joinAnthropicText(blocks []anthropicContent) string {
 
 // anthropicRequest is the Messages request body.
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int64              `json:"max_tokens"`
-	Messages    []anthropicMessage `json:"messages"`
-	System      string             `json:"system,omitempty"`
 	Temperature *float64           `json:"temperature,omitempty"`
-	Stream      bool               `json:"stream,omitempty"`
+	Model       string             `json:"model"`
+	System      string             `json:"system,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
 	Tools       []anthropicTool    `json:"tools,omitempty"`
+	MaxTokens   int64              `json:"max_tokens"`
+	Stream      bool               `json:"stream,omitempty"`
 }
 
 // anthropicTool is one entry of the Messages tools array; it matches
 // runner.ToolSpec field for field.
 type anthropicTool struct {
+	InputSchema map[string]any `json:"input_schema"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
-	InputSchema map[string]any `json:"input_schema"`
 }
 
 // anthropicMessage is one chat turn.
@@ -462,18 +462,18 @@ type anthropicMessage struct {
 // anthropicResponse is the non-streaming Messages response body.
 type anthropicResponse struct {
 	Model      string             `json:"model"`
-	Content    []anthropicContent `json:"content"`
 	StopReason string             `json:"stop_reason"`
+	Content    []anthropicContent `json:"content"`
 	Usage      anthropicUsage     `json:"usage"`
 }
 
 // anthropicContent is one response content block: text blocks feed plain
 // output, tool_use blocks carry a tool call's name and input.
 type anthropicContent struct {
+	Input map[string]any `json:"input,omitempty"`
 	Type  string         `json:"type"`
 	Text  string         `json:"text"`
 	Name  string         `json:"name,omitempty"`
-	Input map[string]any `json:"input,omitempty"`
 }
 
 // anthropicUsage is the provider's token accounting.
@@ -486,11 +486,11 @@ type anthropicUsage struct {
 // anthropicStreamEvent is the union shape of the Messages SSE payloads; each
 // event type fills a different subset of the pointers.
 type anthropicStreamEvent struct {
-	Type    string                `json:"type"`
 	Message *anthropicStreamStart `json:"message"`
 	Delta   *anthropicStreamDelta `json:"delta"`
 	Usage   *anthropicUsage       `json:"usage"`
 	Error   *anthropicErrorDetail `json:"error"`
+	Type    string                `json:"type"`
 }
 
 // anthropicStreamStart is the message envelope inside message_start.

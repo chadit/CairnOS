@@ -366,9 +366,9 @@ func (c *callCounter) count() int32 {
 // flakyItems fails the first attempt for one target element, then succeeds, so
 // a check can prove retry applies per element rather than across the fan-out.
 type flakyItems struct {
-	mu       sync.Mutex
 	attempts map[string]int
 	failOn   string
+	mu       sync.Mutex
 }
 
 func (f *flakyItems) run(_ context.Context, task *runner.Task) (any, error) {
@@ -396,9 +396,9 @@ func (f *flakyItems) tries(value string) int {
 // itemCalls records every element a runner saw and fails on one target, so a
 // fail-fast check can prove later elements never ran.
 type itemCalls struct {
-	mu     sync.Mutex
-	calls  []string
 	failOn string
+	calls  []string
+	mu     sync.Mutex
 }
 
 func (c *itemCalls) run(_ context.Context, task *runner.Task) (any, error) {
@@ -427,12 +427,12 @@ func (c *itemCalls) recorded() []string {
 // in flight, which proves overlap without a sleep. Once the bound is reached
 // the gate opens for good, so no later element can strand and deadlock.
 type peakGauge struct {
+	ready   chan struct{}
 	limit   int
-	mu      sync.Mutex
 	running int
 	peak    int
+	mu      sync.Mutex
 	opened  bool
-	ready   chan struct{}
 }
 
 func newPeakGauge(limit int) *peakGauge {

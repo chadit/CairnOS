@@ -22,17 +22,16 @@ const (
 	keyCode  = "code"
 )
 
-// SendMessage runs one conversation turn for a new user message and streams
-// its events to out, closing out when the turn ends (.agents/spec/13-roadmap.md,
-// Phase 9). The whole conversation history replays into the turn's prompt, so
-// context persists across turns. The turn drives the configured ToolCaller the
-// same way an agent action does: each iteration the driver answers, calls a
-// read tool, or proposes a workflow. A read-tool call runs inline and feeds its
-// result back; a run_workflow call is intercepted into the D9 confirmation gate
-// and the turn pauses, waiting for ConfirmAction. The user message and the
-// assistant reply (or the proposal) persist so the next turn sees them.
-//
-// out is closed exactly once, on return. The caller ranges out until close and
+// The whole conversation history replays into the turn's prompt, so context
+// persists across turns. The turn drives the configured ToolCaller the same way
+// an agent action does: each iteration the driver answers, calls a read tool that
+// runs inline, or proposes a workflow. A run_workflow call is intercepted into
+// the D9 confirmation gate and the turn pauses for ConfirmAction. The user
+// message and the assistant reply or proposal persist for the next turn.
+
+// SendMessage runs one conversation turn for a new user message and streams its
+// events to out, closing out exactly once on return
+// (.agents/spec/13-roadmap.md, Phase 9). The caller ranges out until close and
 // reads the returned error for the turn's outcome.
 func (a *Agent) SendMessage(ctx context.Context, sessionID, userMessage string, out chan<- Event) error {
 	defer close(out)
@@ -82,17 +81,19 @@ type chatTurn struct {
 	agent   *Agent
 	out     chan<- Event
 	session *store.ChatSession
-	system  string
-	usage   runner.Usage
 
 	// skill is the turn-scoped skill a slash invocation loaded, rendered into
 	// every driver prompt of this turn; nil when none loaded.
 	skill *loadedSkill
 
+	system string
+
 	// contextDoc is the per-workspace context doc read once at the top of the
 	// turn, rendered into every driver prompt of this turn; empty when no doc
 	// loaded or the feature is off.
 	contextDoc string
+
+	usage runner.Usage
 }
 
 // run drives driver iterations until a final answer, a workflow proposal, or a
@@ -307,11 +308,11 @@ func (t *chatTurn) checkBudget(iteration int) error {
 	return nil
 }
 
-// loadSlashSkill resolves a leading /name invocation to a turn-scoped skill and
-// records an honest tool-role note. An inert message or a nil Skills source
-// loads nothing and writes no note. A load failure is additive: the note
-// records it and the turn proceeds as a plain message, so a skill problem never
-// fails a turn. The persisted user message keeps the raw /name text untouched.
+// loadSlashSkill resolves a leading /name to a turn-scoped skill and records a
+// tool-role note. An inert message or nil Skills source is a no-op. A load
+// failure goes in the note and the turn proceeds as a plain message, so a skill
+// problem never fails a turn. The persisted user message keeps the raw /name
+// text untouched.
 func (t *chatTurn) loadSlashSkill(ctx context.Context, userMessage string) error {
 	name, ok := slashSkill(userMessage)
 	if !ok || t.agent.cfg.Skills == nil {

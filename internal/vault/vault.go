@@ -14,10 +14,9 @@ import (
 
 // Store is the vault contract every backend satisfies; swapping backends is a
 // config choice, never a runner change, the same seam internal/memory.Store
-// has. Two deliberate shapes carry over from the memory store: Put takes
-// *Document because the struct is wide enough that house style passes it by
-// pointer, and Query returns a QueryResult so the semantic fallback is visible
-// to callers (the spec's "sets a flag in the result so callers know").
+// has. Two shapes carry over from that store: Put takes *Document because the
+// struct is wide, and Query returns a QueryResult so the semantic fallback
+// stays visible to callers.
 type Store interface {
 	// Put persists a new document or overwrites an existing one when the
 	// document carries an id, returning the id. It rewrites the document's
@@ -46,14 +45,14 @@ type Store interface {
 // document ids; Backlinks is the derived inbound set, populated on Get and
 // never stored, so the link graph has one source of truth (the links table).
 type Document struct {
+	CreatedAt time.Time
+	UpdatedAt time.Time
 	ID        string
 	Title     string
 	Body      string // markdown
 	Tags      []string
 	Links     []string // outbound document ids this one references
 	Backlinks []string // inbound document ids (derived, read-only)
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 // Query is the typed graph query DSL (.agents/spec/14-open-decisions.md, S1).
@@ -61,9 +60,6 @@ type Document struct {
 // returns documents that both carry the tags and sit within Hops of the
 // source. The zero Query lists the workspace.
 type Query struct {
-	// Tags narrows to documents carrying every listed tag.
-	Tags []string
-
 	// Project narrows to one project. Projects are a tag convention:
 	// "project:finance-app" is a tag, so a project filter is sugar over a tag
 	// filter with the projectTagPrefix prepended, which keeps the data model
@@ -75,13 +71,16 @@ type Query struct {
 	// links, the "documents linked from this, two hops out" intent.
 	LinkedFrom string
 
+	// Text is a keyword match over title and body (FTS5 / to_tsvector).
+	Text string
+
+	// Tags narrows to documents carrying every listed tag.
+	Tags []string
+
 	// Hops bounds the link traversal depth from LinkedFrom. One hop is the
 	// direct outbound links; two hops adds their links; and so on. Capped at
 	// maxHops so a dense graph cannot run the traversal unbounded.
 	Hops int
-
-	// Text is a keyword match over title and body (FTS5 / to_tsvector).
-	Text string
 
 	// Limit caps the result count; zero means no cap.
 	Limit int

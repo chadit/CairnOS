@@ -84,14 +84,12 @@ func codeFileOptions() *syntax.FileOptions {
 	return &syntax.FileOptions{}
 }
 
-// Code runs a Starlark script inline. The sandbox is the Starlark language
-// itself: no filesystem, network, or env authority exists to remove, Thread.Load
-// stays nil so load() fails, and nothing beyond the Starlark universe is
-// predeclared, so open, os, and http are undefined names.
+// Code runs a Starlark script inline. The sandbox is the language itself:
+// Thread.Load stays nil so load() fails, and nothing outside the Starlark
+// universe is predeclared, so open, os, and http are undefined names.
 //
-// The instance holds only its two caps, so every Execute builds a fresh thread
-// and fresh frozen globals. That is the whole concurrency story: the "safe for
-// concurrent use" contract holds by construction.
+// Every Execute builds a fresh thread and fresh frozen globals, so the type is
+// safe for concurrent use.
 type Code struct {
 	timeout  time.Duration
 	maxSteps uint64
@@ -143,12 +141,11 @@ func (*Code) Name() string {
 	return CodeName
 }
 
-// Validate implements runner.Runner in two phases. The structural check that
-// script is a present string runs in both. The syntax check runs when params
-// are resolved, or when the literal script carries no interpolation delimiter,
-// so an author hears about a typo'd script at workflow load; a script still
-// holding an unresolved reference defers the parse to launch, matching the
-// two-phase contract in pkg/runner.
+// Validate implements runner.Runner in two phases. The structural check runs in
+// both. The syntax check runs once params resolve, or when the literal script
+// carries no interpolation delimiter, so an author hears about a typo'd script
+// at workflow load; a script still holding an unresolved reference defers the
+// parse to launch (pkg/runner's two-phase contract).
 func (*Code) Validate(task *runner.Task) error {
 	if err := requireStringParam(task, paramScript, CodeName); err != nil {
 		return err

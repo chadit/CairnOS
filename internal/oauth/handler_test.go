@@ -111,11 +111,10 @@ func (m *fakeIDP) signIDTokenWithEmail(t *testing.T, subject, email string, emai
 // would see them; Exchange returns a token carrying a pre-signed ID token and
 // records the PKCE verifier the handler replayed.
 type fakeExchanger struct {
-	config     oauth2.Config
-	idToken    string
-	exchangeOK bool
-
+	config      oauth2.Config
+	idToken     string
 	gotVerifier string
+	exchangeOK  bool
 }
 
 // newFakeExchanger wires a real oauth2.Config with the test client id and

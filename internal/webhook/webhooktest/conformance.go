@@ -29,16 +29,16 @@ func RunConformance(t *testing.T, newStore func(*testing.T) webhook.Store) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(*testing.T, webhook.Store)
+		name string
 	}{
-		{"AddThenLookupByBothHashes", testAddThenLookupByBothHashes},
-		{"RotateInvalidatesOldHashKeepsSibling", testRotateInvalidatesOldHash},
-		{"RemoveDeletesRegistration", testRemoveDeletesRegistration},
-		{"AddDuplicateWorkflowIsErrDuplicate", testAddDuplicateWorkflow},
-		{"UnknownHashIsErrNotFound", testUnknownHash},
-		{"UnknownWorkflowIsErrNotFound", testUnknownWorkflow},
-		{"ListReturnsOldestFirst", testListOrdering},
+		{name: "AddThenLookupByBothHashes", run: testAddThenLookupByBothHashes},
+		{name: "RotateInvalidatesOldHashKeepsSibling", run: testRotateInvalidatesOldHash},
+		{name: "RemoveDeletesRegistration", run: testRemoveDeletesRegistration},
+		{name: "AddDuplicateWorkflowIsErrDuplicate", run: testAddDuplicateWorkflow},
+		{name: "UnknownHashIsErrNotFound", run: testUnknownHash},
+		{name: "UnknownWorkflowIsErrNotFound", run: testUnknownWorkflow},
+		{name: "ListReturnsOldestFirst", run: testListOrdering},
 	}
 
 	for _, testCase := range cases {

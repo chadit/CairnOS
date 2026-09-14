@@ -196,11 +196,10 @@ func (s *SQLite) List(ctx context.Context) ([]Metadata, error) {
 }
 
 // Rotate re-seals every row whose key id is not the primary's, across all
-// workspaces, and returns the count. It reads the rows to re-seal into memory
-// first, then re-seals each in one transaction: the per-row writes are
-// unavoidable because each row gets a fresh nonce and ciphertext, so no single
-// batched statement can express them. A row that opens under no loaded key fails
-// the rotate naming the secret only.
+// workspaces, and returns the count. Rows are read into memory first, then
+// re-sealed in one transaction; each needs a fresh nonce and ciphertext, so no
+// batched statement can express the writes. A row that opens under no loaded
+// key fails naming the secret only.
 func (s *SQLite) Rotate(ctx context.Context) (int, error) {
 	pending, err := s.rowsToRotate(ctx)
 	if err != nil {

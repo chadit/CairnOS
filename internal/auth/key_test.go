@@ -208,8 +208,8 @@ func TestHasScope(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		granted  []string
 		required string
+		granted  []string
 		want     bool
 	}{
 		{name: "exact match", granted: []string{auth.ScopeReadRun}, required: auth.ScopeReadRun, want: true},

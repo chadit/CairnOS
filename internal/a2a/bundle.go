@@ -30,57 +30,60 @@ func defaultSkills() []Skill {
 // fills it where both the api and a2a packages are in scope, so neither has to
 // import the other's construction details.
 type BundleConfig struct {
-	// NodeName and Version identify this node on its card.
-	NodeName string
-	Version  string
+	// Bridge is the chat core SendMessage runs a conversational turn through.
+	// Nil means chat is off on this node, and SendMessage answers
+	// FailedPrecondition rather than pretending a turn ran.
+	Bridge BridgeHandler
 
-	// Endpoint is the address the card advertises (e.g. "grpc://host:7777").
-	Endpoint string
+	// Store, Resolver, and Manager back the A2A service handlers.
+	Store store.Store
+
+	// Logger receives the well-known handler's write failures.
+	Logger *slog.Logger
+
+	// Resolver resolves workflow references for the service handlers.
+	Resolver *api.WorkflowResolver
+
+	// Manager runs the workflows the service handlers start.
+	Manager *api.Manager
+
+	// TLS is the mTLS transport config; the zero value means plaintext.
+	TLS TLSConfig
 
 	// LoginURL is the card's auth login endpoint, where a consumer exchanges
 	// an access key for a bearer token.
 	LoginURL string
 
-	// SigningKey signs the card. ResolveSigningKey produces it.
-	SigningKey ed25519.PrivateKey
+	// NodeName is the node's name on its card.
+	NodeName string
 
-	// Skills overrides the advertised capability list; nil uses the default.
-	Skills []Skill
+	// Endpoint is the address the card advertises (e.g. "grpc://host:7777").
+	Endpoint string
+
+	// Version is the build the card advertises for this node.
+	Version string
 
 	// Channels are the chat surfaces the card advertises, one per enabled chat
 	// identity (FR35). Nil leaves the card's channels key off entirely, which is
 	// what a node with chat disabled publishes.
 	Channels []Channel
 
-	// Bridge is the chat core SendMessage runs a conversational turn through.
-	// Nil means chat is off on this node, and SendMessage answers
-	// FailedPrecondition rather than pretending a turn ran.
-	Bridge BridgeHandler
+	// Skills overrides the advertised capability list; nil uses the default.
+	Skills []Skill
 
-	// Manager, Resolver, and Store back the A2A service handlers.
-	Manager  *api.Manager
-	Resolver *api.WorkflowResolver
-	Store    store.Store
-
-	// TLS is the mTLS transport config; the zero value means plaintext.
-	TLS TLSConfig
-
-	// Logger receives the well-known handler's write failures.
-	Logger *slog.Logger
+	// SigningKey signs the card. ResolveSigningKey produces it.
+	SigningKey ed25519.PrivateKey
 }
 
 // Bundle is the assembled A2A surface: the signed card, the server credentials
 // when mTLS is on, and the api.Extension that registers the service, its
 // gateway handler, and the well-known endpoint onto the shared API server.
 type Bundle struct {
-	// Card is the signed agent card, kept so the CLI can print it.
-	Card *Card
-
-	// CardJSON is the marshaled signed card the well-known handler serves.
-	CardJSON []byte
-
 	// Creds is the gRPC server credential when mTLS is configured, else nil.
 	Creds credentials.TransportCredentials
+
+	// Card is the signed agent card, kept so the CLI can print it.
+	Card *Card
 
 	// Extension plugs the service, gateway handler, and card route into the
 	// API server.
@@ -89,6 +92,9 @@ type Bundle struct {
 	// tlsCfg is retained so Attach can build the matching client credential
 	// the local gateway dials the mTLS listener with.
 	tlsCfg TLSConfig
+
+	// CardJSON is the marshaled signed card the well-known handler serves.
+	CardJSON []byte
 }
 
 // NewBundle assembles and signs the card, builds the mTLS credentials when

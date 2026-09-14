@@ -20,18 +20,12 @@ type chainSource struct {
 }
 
 // Chain composes sources into one Source that tries each in order. The wiring
-// builds Chain(Env, store), which keeps env first: a value set in
-// CAIRNOS_SECRET_<NAME> shadows the store for the same name. That precedence is
-// an invariant, not an accident, and it is a hazard worth stating: a stale env
-// var silently shadows a rotated store value, so a rotation can look done while
-// the old secret is still served. The wiring surfaces the collision (a startup
-// warning naming the shadowed store secrets) and the CLI marks it in ls; the
-// resolution itself stays env-first here.
+// builds Chain(Env, store), so CAIRNOS_SECRET_<NAME> shadows the store for the
+// same name and a stale env var can make a rotation look done, which startup
+// warns about.
 //
-// Only ErrNotFound falls through to the next source. Any other error (a store
-// outage, a bad key) returns immediately so a broken store never silently masks
-// a value by falling back to env. That hard stop is deliberate: silent masking
-// is the worse failure, so a store outage is an error, not a fallback.
+// Only ErrNotFound falls through; any other error returns, so a broken store
+// never masks a value with env.
 func Chain(sources ...Source) Source {
 	return chainSource{sources: sources}
 }

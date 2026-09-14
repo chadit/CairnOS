@@ -57,8 +57,8 @@ type Skill struct {
 
 // Library lists and loads skills out of one directory, freshly on every call.
 type Library struct {
-	dir    string
 	logger *slog.Logger
+	dir    string
 }
 
 // New builds a Library over one skills directory. A nil logger falls back to

@@ -54,9 +54,9 @@ func newPostgresQueue(t *testing.T) scheduler.WorkQueue {
 		t.Fatalf("open pool: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); err != nil {
+	if _, execErr := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); execErr != nil {
 		pool.Close()
-		t.Fatalf("create schema: %v", err)
+		t.Fatalf("create schema: %v", execErr)
 	}
 
 	queue, err := scheduler.NewPostgresQueue(ctx, pool)
@@ -114,9 +114,9 @@ func TestSchedulerPollCursorSurvivesReopen(t *testing.T) {
 		t.Fatalf("open setup pool: %v", err)
 	}
 
-	if _, err := setupPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); err != nil {
+	if _, innerErr := setupPool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema); innerErr != nil {
 		setupPool.Close()
-		t.Fatalf("create schema: %v", err)
+		t.Fatalf("create schema: %v", innerErr)
 	}
 
 	setupPool.Close()
@@ -148,9 +148,9 @@ func TestSchedulerPollCursorSurvivesReopen(t *testing.T) {
 		t.Fatalf("new first queue: %v", err)
 	}
 
-	if err := first.SetCursor(ctx, scheduleID, cursor); err != nil {
+	if setCursorErr := first.SetCursor(ctx, scheduleID, cursor); setCursorErr != nil {
 		firstPool.Close()
-		t.Fatalf("set cursor: %v", err)
+		t.Fatalf("set cursor: %v", setCursorErr)
 	}
 
 	firstPool.Close()
@@ -233,8 +233,8 @@ func TestSchedulerCoordinatorContendForLeadership(t *testing.T) {
 
 	// The winner releasing the lock is what lets the follower take over: the
 	// failover path with no lease timer.
-	if err := winner.Close(ctx); err != nil {
-		t.Fatalf("winner close: %v", err)
+	if closeErr := winner.Close(ctx); closeErr != nil {
+		t.Fatalf("winner close: %v", closeErr)
 	}
 
 	promoted, err := loser.Leader(ctx)

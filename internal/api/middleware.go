@@ -34,14 +34,11 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// corsAllowlist wraps a handler with an explicit-origin CORS policy (spec M1).
-// Only an origin in allowed echoes back in Access-Control-Allow-Origin, and the
-// response always varies on Origin so a cached response cannot leak one origin's
-// headers to another. A wildcard is never emitted, so credentialed cross-origin
-// requests stay same-origin unless the operator names the origin. An empty
+// corsAllowlist applies an explicit-origin CORS policy (spec M1). Only a
+// listed origin is echoed back, never a wildcard, and the response varies on
+// Origin so a cache cannot leak one origin's headers to another. An empty
 // allowlist adds no CORS headers, leaving the browser to enforce same-origin.
-// A preflight OPTIONS from an allowed origin is answered here so it never
-// reaches the gateway.
+// A preflight from an allowed origin is answered here.
 func corsAllowlist(allowed []string, next http.Handler) http.Handler {
 	if len(allowed) == 0 {
 		return next
@@ -75,12 +72,11 @@ func applyCORSHeaders(w http.ResponseWriter, origin string) {
 	header.Set("Access-Control-Allow-Credentials", "true")
 }
 
-// limitBody wraps a handler so each request body is capped (spec M4). A
-// declared Content-Length over the cap is rejected with 413 up front, before
-// the gateway reads a byte; a body with no declared length is still bounded by
-// an http.MaxBytesReader so a chunked upload cannot run away. A non-positive
-// limit leaves the body uncapped. The cap guards the gateway mux handlers, the
-// only place a tenant can stream an arbitrary body in.
+// limitBody caps each request body (spec M4). A declared Content-Length over
+// the cap is rejected with 413 before the gateway reads a byte; a body with no
+// declared length is bounded by http.MaxBytesReader so a chunked upload cannot
+// run away. A non-positive limit leaves the body uncapped. It guards the
+// gateway mux handlers, where tenants stream arbitrary bodies.
 func limitBody(maxBytes int64, next http.Handler) http.Handler {
 	if maxBytes <= 0 {
 		return next

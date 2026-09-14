@@ -41,6 +41,14 @@ type Config struct {
 	// Members resolves or provisions the user's workspace membership.
 	Members Tenancy
 
+	// Now injects the clock for the state store and the login limiter, so tests
+	// drive expiry and the rate window without sleeping. Nil means time.Now.
+	Now func() time.Time
+
+	// Logger records callback failures server-side; the browser sees a generic
+	// message. Nil means slog.Default.
+	Logger *slog.Logger
+
 	// DefaultWorkspace and DefaultRole place a first-time login. DefaultRole
 	// should be the lowest-privilege role so a fresh sign-in cannot change
 	// anything until an admin grants more.
@@ -60,14 +68,6 @@ type Config struct {
 	// DoS guard on the unauthenticated, state-minting endpoint (spec L1). Zero
 	// uses the default.
 	LoginRatePerMinute int
-
-	// Now injects the clock for the state store and the login limiter, so tests
-	// drive expiry and the rate window without sleeping. Nil means time.Now.
-	Now func() time.Time
-
-	// Logger records callback failures server-side; the browser sees a generic
-	// message. Nil means slog.Default.
-	Logger *slog.Logger
 }
 
 // Handler serves the two browser-facing OAuth routes. It is safe for
@@ -193,11 +193,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 // verifiedSubject exchanges the code and verifies the returned ID token,
-// returning the IdP subject and the email claim from the same verified token.
-// The PKCE verifier rides the exchange so the IdP binds the code to this
-// client. The ID token's signature is checked against the IdP JWKS by the
-// verifier, so the email used in the auto-provision allowlist comes from a
-// signed claim, not anything the caller could set (spec H1).
+// returning the subject and email claim it carries. PKCE binds the code to this
+// client, and the verifier checks the signature against the IdP JWKS, so the
+// email the auto-provision allowlist trusts is a signed claim, not anything the
+// caller could set (spec H1).
 func (h *Handler) verifiedSubject(ctx context.Context, code, verifier string) (identity, error) {
 	token, err := h.cfg.Exchanger.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {

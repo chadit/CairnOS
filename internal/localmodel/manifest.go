@@ -16,9 +16,9 @@ const jsonIndent = "  "
 // pinned" answerable without hashing 4.6 GB on every status call. An upgrade
 // compares it against the compiled-in pins to decide what to re-download.
 type Manifest struct {
+	UpdatedAt time.Time        `json:"updated_at"`
 	Runtime   InstalledRuntime `json:"runtime"`
 	Model     InstalledModel   `json:"model"`
-	UpdatedAt time.Time        `json:"updated_at"`
 }
 
 // InstalledRuntime is the llama.cpp build sitting in the runtime directory.
@@ -93,8 +93,8 @@ func (m *Manifest) ModelMatches(model *Model) bool {
 	return m.Model.Name == model.Name && m.Model.SHA256 == model.SHA256
 }
 
-// runtimeRecord builds the manifest entry for a freshly installed runtime.
-func runtimeRecord(build *Build) InstalledRuntime {
+// RuntimeRecord builds the manifest entry for a freshly installed runtime.
+func RuntimeRecord(build *Build) InstalledRuntime {
 	return InstalledRuntime{
 		Name:    RuntimeName,
 		Version: PinnedVersion,
@@ -104,8 +104,8 @@ func runtimeRecord(build *Build) InstalledRuntime {
 	}
 }
 
-// modelRecord builds the manifest entry for a freshly installed model.
-func modelRecord(model *Model) InstalledModel {
+// ModelRecord builds the manifest entry for a freshly installed model.
+func ModelRecord(model *Model) InstalledModel {
 	return InstalledModel{
 		Name:     model.Name,
 		Repo:     model.Repo,

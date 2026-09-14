@@ -130,12 +130,11 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 // honors budgets and pauses too: governance is an engine feature, not a
 // serve-only one (.agents/spec/12-ui-and-governance.md).
 func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *config.Config, db store.Store, mem memory.Store) (*engine.Engine, func(), int, bool) {
-	// A one-shot command has nothing to scrape, and binding the configured
-	// metrics port would collide with a serve process on the same machine, so
-	// it never serves /metrics. The instrumentation hooks still fire: with an
-	// OTLP endpoint configured, the trace and metrics push to the collector on
-	// the deferred shutdown flush; without one, the hooks cost nearly nothing
-	// and trace IDs still reach the logs.
+	// A one-shot command has nothing to scrape, and binding the metrics port
+	// would collide with a serve process on the same machine, so it never
+	// serves /metrics. The hooks still fire: with an OTLP endpoint they push on
+	// the deferred shutdown flush, and without one they cost nearly nothing
+	// while trace IDs reach the logs.
 	telCfg := cfg.Telemetry
 	telCfg.Prometheus = ""
 

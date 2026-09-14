@@ -7,15 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OpenSchema opens a store whose tables live in their own Postgres schema,
-// giving each integration subtest the isolation the sqlite backend gets from
-// a per-case temp file. Without it, parallel subtests against one shared
-// database would truncate each other's rows mid-test. The pool pins
-// search_path to schema (and falls back to public for anything shared), the
-// schema is created if absent, and the store DDL runs inside it. It is
-// exported package code (not a _test.go file) because the backend's
-// external suite package needs it and Go cannot share unexported helpers
-// across packages.
+// OpenSchema opens a store whose tables live in their own Postgres schema, so
+// parallel integration subtests get the isolation the sqlite backend gets from
+// a per-case temp file instead of truncating each other's rows. It is exported
+// because the backend's external suite package needs it and Go cannot share
+// unexported helpers across packages.
 //
 // DropSchema is the cleanup counterpart.
 func OpenSchema(ctx context.Context, dsn, schema string) (*Store, error) {

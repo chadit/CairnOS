@@ -1,6 +1,7 @@
-import { HttpResponse, http } from 'msw';
+import { http } from 'msw';
 import { describe, expect, it } from 'vitest';
 
+import { chunkedNdjsonResponse, errorLine, resultLine } from '@/test/ndjson';
 import { server } from '@/test/server';
 import { confirmAction, sendMessage } from './chat';
 import { isCairnApiError } from './client';
@@ -11,32 +12,15 @@ import { isCairnApiError } from './client';
 // between assistant chunks, and surfaces a mid-stream error envelope as a
 // CairnApiError.
 
-function ndjsonResponse(lines: string[]): Response {
-  // A real chunked stream, split mid-body, exercises the reader path rather
-  // than a single JSON parse, and proves a line spanning a chunk boundary is
-  // reassembled.
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const joined = lines.join('\n') + '\n';
-      const mid = Math.floor(joined.length / 2);
-      controller.enqueue(encoder.encode(joined.slice(0, mid)));
-      controller.enqueue(encoder.encode(joined.slice(mid)));
-      controller.close();
-    },
-  });
-  return new HttpResponse(body, { headers: { 'Content-Type': 'application/x-ndjson' } });
-}
-
 describe('sendMessage stream', () => {
   it('yields assistant_chunk and tool_call events in send order', async () => {
     server.use(
       http.post('/v1/chat/sessions/s1/messages', () =>
-        ndjsonResponse([
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'Let me ' } }),
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_TOOL_CALL', tool: 'memory' } }),
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'check.' } }),
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_TURN_DONE', text: 'Let me check.' } }),
+        chunkedNdjsonResponse([
+          resultLine({ type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'Let me ' }),
+          resultLine({ type: 'CHAT_EVENT_TYPE_TOOL_CALL', tool: 'memory' }),
+          resultLine({ type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'check.' }),
+          resultLine({ type: 'CHAT_EVENT_TYPE_TURN_DONE', text: 'Let me check.' }),
         ]),
       ),
     );
@@ -62,9 +46,9 @@ describe('sendMessage stream', () => {
   it('throws a CairnApiError when a stream line carries an error envelope', async () => {
     server.use(
       http.post('/v1/chat/sessions/s1/messages', () =>
-        ndjsonResponse([
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'hmm' } }),
-          JSON.stringify({ error: { code: 'chat.model_unavailable', message: 'model is down' } }),
+        chunkedNdjsonResponse([
+          resultLine({ type: 'CHAT_EVENT_TYPE_ASSISTANT_CHUNK', text: 'hmm' }),
+          errorLine('chat.model_unavailable', 'model is down'),
         ]),
       ),
     );
@@ -93,10 +77,12 @@ describe('confirmAction stream', () => {
     server.use(
       http.post('/v1/chat/sessions/s1/confirm', async ({ request }) => {
         posted = await request.json();
-        return ndjsonResponse([
-          JSON.stringify({ result: { type: 'CHAT_EVENT_TYPE_RUN_STARTED', runId: 'r9' } }),
-          JSON.stringify({
-            result: { type: 'CHAT_EVENT_TYPE_RUN_FINISHED', runId: 'r9', runStatus: 'succeeded' },
+        return chunkedNdjsonResponse([
+          resultLine({ type: 'CHAT_EVENT_TYPE_RUN_STARTED', runId: 'r9' }),
+          resultLine({
+            type: 'CHAT_EVENT_TYPE_RUN_FINISHED',
+            runId: 'r9',
+            runStatus: 'succeeded',
           }),
         ]);
       }),

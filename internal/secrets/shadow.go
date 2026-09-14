@@ -13,16 +13,12 @@ func (e *Env) EnvVarName(name string) string {
 	return e.prefix + normalized
 }
 
-// ShadowedByEnv returns the subset of names whose env variable is set, so a
-// Chain(env, store) would serve the env value and shadow the store row. lookup
-// is injected (os.LookupEnv in production) so the check needs no process
-// environment in tests. The result carries names only, never values, and is
-// safe to surface in a startup warning or the secrets ls marker.
+// ShadowedByEnv returns the names whose env variable is set, so Chain(env,
+// store) serves the env value, not the store row. lookup is injected
+// (os.LookupEnv in production) so tests need no process environment.
 //
-// The precedence is deliberate (env wins), but it is a hazard worth naming: a
-// stale env var silently masks a rotated store value, so a rotation can look
-// done while the old secret is still served. Callers surface the collision
-// rather than resolve it here.
+// Env winning is deliberate, but a stale env var silently masks a rotated
+// value, so callers surface the collision rather than resolve it here.
 func ShadowedByEnv(names []string, lookup func(string) (string, bool)) []string {
 	env := NewEnv()
 

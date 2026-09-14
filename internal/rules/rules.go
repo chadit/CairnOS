@@ -63,11 +63,10 @@ type RuleSet struct {
 }
 
 // Merge applies project overrides over language defaults and returns the
-// merged, sorted rule set, the shared merge logic both backends use after each
-// reads its two rule slices. A project rule with a Key already present among
-// the defaults replaces it; a new Key adds. Defaults and overrides each arrive
-// for one language, so the result carries that language and the project that
-// supplied the overrides.
+// merged, sorted rule set. Both backends share it after reading their two rule
+// slices. A project rule whose Key already appears among the defaults replaces
+// that default; a new Key adds. The result carries the language both slices
+// came from and the project that supplied the overrides.
 func Merge(language, project string, defaults, overrides []Rule) RuleSet {
 	merged := make(map[string]Rule, len(defaults)+len(overrides))
 

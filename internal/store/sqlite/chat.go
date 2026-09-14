@@ -107,14 +107,12 @@ func (s *Store) ListSessions(ctx context.Context, filter store.ChatSessionFilter
 	return sessions, nil
 }
 
-// AppendMessage records one message at the next sequence and stamps the
-// session's updated_at. The insert computes the next seq in one statement, a
-// SELECT over the workspace-scoped session row, so it never reads-then-writes
-// across a transaction boundary: the single write statement serializes against
-// the SQLite writer lock, which is what keeps two concurrent appends from
-// claiming the same seq without a deferred-to-immediate lock upgrade that races
-// under WAL. A zero rowsAffected means the session does not exist in the
-// request workspace, which is the cross-tenant or missing-session case.
+// AppendMessage records one message at the next sequence and stamps updated_at.
+// Computing that seq inside the insert avoids a read-then-write across a
+// transaction boundary: one write serializes against the SQLite writer lock,
+// stopping two concurrent appends from claiming the same seq without a
+// deferred-to-immediate lock upgrade that races under WAL. A zero rowsAffected
+// means no session in the workspace.
 func (s *Store) AppendMessage(ctx context.Context, message *store.ChatMessage) error {
 	createdAt := message.CreatedAt
 	if createdAt.IsZero() {

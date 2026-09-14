@@ -258,6 +258,29 @@ every action.
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.
 
+### Required hosts
+
+A scheduled workflow that talks to a host behind a VPN can say so, and serve
+will probe that host once a minute instead of letting every fire discover the
+outage on its own:
+
+```toml
+[workflow.requires]
+urls = ["https://git.example.com/operator/Imagetool-Work"]
+vpn  = "tun0"
+```
+
+`urls` is required and each entry is probed with one TCP connect to its host,
+on the port the URL names or else 443 for https and 80 for http. `vpn` is
+optional and names a network interface; when it is down, the message says the
+VPN is offline rather than repeating the dial error it causes. While
+anything is unreachable the schedule skips its fires, a run already in flight
+is held rather than retried and dead-lettered, and one line goes out under the
+`connectivity` notify event. It repeats hourly while the outage lasts and a
+final line reports the recovery and how long the host was gone. Add
+`"connectivity"` to `[notify.mattermost]` or `[notify.discord]` `events` to
+receive them.
+
 ## Chat in Mattermost
 
 Run your agents as bot users in a self-hosted Mattermost. Each identity is one

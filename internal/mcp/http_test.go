@@ -16,8 +16,8 @@ import (
 // transport has no header field of its own, so the token rides on the HTTP
 // client instead.
 type bearerRoundTripper struct {
-	token string
 	base  http.RoundTripper
+	token string
 }
 
 // RoundTrip stamps the Authorization header and delegates to the base

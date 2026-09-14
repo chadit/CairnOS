@@ -19,12 +19,12 @@ const (
 // they reference; the retention sweep leaves them alone
 // (.agents/spec/12-ui-and-governance.md, "Control actions").
 type AuditEntry struct {
+	CreatedAt time.Time
 	ID        string
 	Actor     string // the auth subject when present, else "cli"/"local"
 	Action    string // AuditActionPause, AuditActionResume, or AuditActionTerminate
 	Target    string // the workflow name or run id the action applied to
 	Detail    string // free-form context, e.g. the pause reason
-	CreatedAt time.Time
 }
 
 // AuditFilter narrows ListAudit.
@@ -37,10 +37,10 @@ type AuditFilter struct {
 // means paused; PausedAt, Actor, and Reason record who paused it and why
 // (.agents/spec/12-ui-and-governance.md, "Control actions").
 type WorkflowPause struct {
+	PausedAt     time.Time
 	WorkflowName string
 	Actor        string
 	Reason       string
-	PausedAt     time.Time
 }
 
 // GovernanceStore is the governance slice of the store

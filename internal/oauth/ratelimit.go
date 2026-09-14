@@ -24,8 +24,8 @@ const (
 // loginBucket is one source IP's refill state: tokens accrue at ratePerMinute
 // up to a full-minute burst, and a login spends one.
 type loginBucket struct {
-	tokens   float64
 	lastSeen time.Time
+	tokens   float64
 }
 
 // loginLimiter rate-limits the login route per source IP with a token bucket,
@@ -33,11 +33,10 @@ type loginBucket struct {
 // admits every call, the auth-style fail-open for an unconfigured guard. Safe
 // for concurrent use.
 type loginLimiter struct {
-	ratePerMinute float64
 	now           func() time.Time
-
-	mu      sync.Mutex
-	buckets map[string]*loginBucket
+	buckets       map[string]*loginBucket
+	ratePerMinute float64
+	mu            sync.Mutex
 }
 
 // newLoginLimiter builds a limiter at the given per-minute rate, defaulting the

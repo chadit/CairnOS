@@ -30,14 +30,6 @@ type Config struct {
 	// Store is pruned on every tick.
 	Store Pruner
 
-	// Interval is the wait between passes (retention.sweep); zero or
-	// negative disables the loop unless Ticks supplies its own source.
-	Interval time.Duration
-
-	// Runs and Outputs are the retention windows handed to Prune.
-	Runs    time.Duration
-	Outputs time.Duration
-
 	// Denylist, when set, also has its expired revocation rows deleted on
 	// every pass; nil (auth disabled) skips it.
 	Denylist DenylistPruner
@@ -49,6 +41,14 @@ type Config struct {
 	// clock; each received time anchors that pass's age math. Nil means a
 	// real time.Ticker at Interval.
 	Ticks <-chan time.Time
+
+	// Interval is the wait between passes (retention.sweep); zero or
+	// negative disables the loop unless Ticks supplies its own source.
+	Interval time.Duration
+
+	// Runs and Outputs are the retention windows handed to Prune.
+	Runs    time.Duration
+	Outputs time.Duration
 }
 
 // Run prunes on every tick until ctx cancels. It blocks, so callers start

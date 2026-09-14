@@ -43,17 +43,17 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"PutAndGetDefaults", testPutAndGetDefaults},
-		{"ProjectOverrideReplacesAndAdds", testProjectOverride},
-		{"MissingProjectFallsBackToDefaults", testMissingProjectFallsBack},
-		{"UnknownLanguage", testUnknownLanguage},
-		{"PutRejectsEmptyKey", testPutRejectsEmptyKey},
-		{"ListLanguages", testListLanguages},
-		{"ListRulesAcrossProjects", testListRules},
-		{"RuleSetAsMap", testRuleSetAsMap},
+		{name: "PutAndGetDefaults", run: testPutAndGetDefaults},
+		{name: "ProjectOverrideReplacesAndAdds", run: testProjectOverride},
+		{name: "MissingProjectFallsBackToDefaults", run: testMissingProjectFallsBack},
+		{name: "UnknownLanguage", run: testUnknownLanguage},
+		{name: "PutRejectsEmptyKey", run: testPutRejectsEmptyKey},
+		{name: "ListLanguages", run: testListLanguages},
+		{name: "ListRulesAcrossProjects", run: testListRules},
+		{name: "RuleSetAsMap", run: testRuleSetAsMap},
 	}
 
 	for _, tt := range cases {

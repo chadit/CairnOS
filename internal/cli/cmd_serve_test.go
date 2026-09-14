@@ -59,9 +59,9 @@ var metricsAddrPattern = regexp.MustCompile(`metrics listening on (\S+)`)
 // signalWriter buffers output and closes ready once the marker appears, so
 // the smoke test waits on the server's own readiness line.
 type signalWriter struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
 	ready  chan struct{}
+	buf    bytes.Buffer
+	mu     sync.Mutex
 	closed bool
 }
 

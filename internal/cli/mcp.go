@@ -36,26 +36,26 @@ func (a *App) attachMCPServe(ctx context.Context, cfg *config.Config, tel *telem
 // the serve process, so attachMCP takes one argument rather than a long
 // parameter list (gocritic paramTypeCombine, varnamelen on a wide signature).
 type mcpServeDeps struct {
-	manager      *api.Manager
 	store        store.Store
 	memory       memory.Store
 	rules        rules.Service
-	workflowsDir string
+	manager      *api.Manager
 	authn        *auth.Authenticator
 	logger       *slog.Logger
+	workflowsDir string
 }
 
-// attachMCP mounts the MCP http transport on the API server when [mcp] is
-// enabled with the http transport, reusing the same store, memory, manager, and
-// authenticator the rest of serve runs over. It returns the mounted path for
-// the serve banner, the empty string when MCP is disabled or set to the stdio
-// transport (which serve does not mount), and an error only when the service
-// cannot be built.
-//
-// The authenticator is threaded so MCP enforces the same scopes the gRPC
-// interceptor does. A typed-nil authn is normalized to a true nil interface, so
-// "auth disabled" reads correctly inside the service rather than as a non-nil
-// interface wrapping a nil pointer.
+// serve never mounts the stdio transport; the client spawns that itself. The
+// authenticator is threaded so MCP enforces the same scopes the gRPC
+// interceptor does, and a typed-nil authn is normalized to a true nil interface
+// so "auth disabled" reads correctly inside the service rather than as a
+// non-nil interface wrapping a nil pointer.
+
+// attachMCP mounts the MCP http transport on the API server when [mcp] enables
+// it, reusing the store, memory, manager, and authenticator the rest of serve
+// runs over. It returns the mounted path for the banner, the empty string when
+// MCP is disabled or set to stdio, and an error when the service cannot be
+// built.
 func attachMCP(cfg *config.Config, deps *mcpServeDeps, apiCfg *api.Config) (string, error) {
 	if !cfg.MCP.Enabled || transportIsStdio(cfg.MCP.Transport) {
 		return "", nil

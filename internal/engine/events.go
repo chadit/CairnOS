@@ -18,12 +18,12 @@ const (
 // Status carries the action status on transitions and the run status on
 // run_finished.
 type Event struct {
+	Err     *cairnerr.Error
 	RunID   string
 	Type    EventType
 	Action  string
 	Status  string
 	Attempt int
-	Err     *cairnerr.Error
 }
 
 // emit hands one event to the configured hook. Nil-safe: a missing hook

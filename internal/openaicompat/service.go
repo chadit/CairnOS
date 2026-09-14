@@ -50,28 +50,28 @@ type Config struct {
 	// satisfies MessageAppender.
 	Store MessageAppender
 
+	// Auth turns on token enforcement. Nil disables auth.
+	Auth Authenticator
+
 	// Personalities resolves the model name to a known personality; it also
 	// backs GET /v1/models (slice 3).
 	Personalities *chat.Personalities
 
-	// Auth turns on token enforcement. Nil disables auth.
-	Auth Authenticator
+	// Logger receives operational events; nil means slog.Default.
+	Logger *slog.Logger
 
 	// MaxBodyBytes caps the request body; zero falls back to defaultMaxBodyBytes.
 	MaxBodyBytes int64
-
-	// Logger receives operational events; nil means slog.Default.
-	Logger *slog.Logger
 }
 
 // Service is the OpenAI-compatible HTTP surface over the shared chat seams.
 type Service struct {
 	agent         ChatAgent
 	store         MessageAppender
-	personalities *chat.Personalities
 	authenticator Authenticator
-	maxBodyBytes  int64
+	personalities *chat.Personalities
 	logger        *slog.Logger
+	maxBodyBytes  int64
 }
 
 // NewService validates the wiring and returns the Service, erroring on a nil
@@ -113,9 +113,8 @@ func NewService(cfg *Config) (*Service, error) {
 // authorize runs the same verify-then-scope path the gRPC interceptor and
 // internal/mcp run (.agents/spec/08-auth-and-access.md, "Scopes"): with auth
 // disabled it passes on the default workspace, otherwise the token must verify
-// and carry chat:session. On success it returns a context stamped with the
-// caller's workspace, so the session and every seeded message land in the right
-// tenant, the same stamping the gRPC interceptor gives ChatService.
+// and carry chat:session. Success stamps the caller's workspace on the returned
+// context, so the session and every seeded message land in the right tenant.
 func (s *Service) authorize(ctx context.Context, token string) (context.Context, error) {
 	if s.authenticator == nil {
 		return store.ContextWithWorkspace(ctx, store.DefaultWorkspace), nil

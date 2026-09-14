@@ -50,11 +50,11 @@ var (
 // turns, repeating the last turn once the script runs out, and records
 // every prompt and system framing it received.
 type scriptedDriver struct {
-	mu      sync.Mutex
 	turns   []runner.Result
-	calls   int
 	prompts []string
 	systems []string
+	calls   int
+	mu      sync.Mutex
 }
 
 var (
@@ -178,9 +178,9 @@ func rawTurn(output any, stopReason string, cost float64) runner.Result {
 // child inherits by design. An action with no script ends immediately with the
 // canned final answer.
 type perActionDriver struct {
-	mu      sync.Mutex
 	scripts map[string][]runner.Result
 	calls   map[string]int
+	mu      sync.Mutex
 }
 
 var (
@@ -254,8 +254,8 @@ func (*plainRunner) Execute(_ context.Context, _ *runner.Task) (runner.Result, e
 
 // stepRecorder collects persisted transcript steps in order.
 type stepRecorder struct {
-	mu    sync.Mutex
 	steps []store.AgentStep
+	mu    sync.Mutex
 }
 
 // AppendAgentStep implements agentloop.StepWriter.
@@ -278,11 +278,11 @@ func (r *stepRecorder) recorded() []store.AgentStep {
 
 // fakeMemory is an in-test memory.Store recording scopes and queries.
 type fakeMemory struct {
-	mu       sync.Mutex
+	failWith error
 	entries  []memory.Entry
 	searches []memory.Query
 	loads    []string
-	failWith error
+	mu       sync.Mutex
 }
 
 var _ memory.Store = (*fakeMemory)(nil)
@@ -361,10 +361,10 @@ func (f *fakeMemory) searchScopes() []string {
 // capturingStore is a minimal store.Store for the engine-level test: runs,
 // the latest action rows, and agent steps in append order.
 type capturingStore struct {
-	mu      sync.Mutex
 	runs    map[string]*store.Run
 	actions map[string]*store.ActionResult
 	steps   []store.AgentStep
+	mu      sync.Mutex
 }
 
 var _ store.Store = (*capturingStore)(nil)

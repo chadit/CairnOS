@@ -500,8 +500,8 @@ func TestHiveNeedsPostgres(t *testing.T) {
 
 	cases := []struct {
 		name    string
-		enabled bool
 		backend string
+		enabled bool
 		want    bool
 	}{
 		{name: "enabled on sqlite is refused", enabled: true, backend: sqliteBackend, want: true},

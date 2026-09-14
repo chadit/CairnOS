@@ -99,40 +99,37 @@ const (
 	codeSandboxOutput        = SandboxExecName + ".output"
 )
 
-// SandboxExec runs one shell command inside a locked-down podman/docker
-// container by shelling out to the container CLI. It is denied by default and
-// enabled per action name, so a workflow or an agent driver can never widen the
-// sandbox: image, mounts, networking, and resource caps are config-only.
+// SandboxExec runs one shell command in a locked-down podman/docker container.
+// Denied by default and enabled per action name; image, mounts, networking, and
+// caps are operator config only.
 //
-// Isolation boundary (security amendment 6): container isolation +
-// --network=none + --cap-drop=ALL + --security-opt=no-new-privileges +
-// resource caps + no default mounts + the action gate. Every flag an operator
-// removes widens it. Any principal who can author workflow files is trusted at
-// operator level for this runner; it is not safe for untrusted workflow
-// authors (the action-name gate carries no workflow identity).
+// Isolation boundary (security amendment 6): container isolation,
+// --network=none, --cap-drop=ALL, --security-opt=no-new-privileges, resource
+// caps, no default mounts, and the action gate. Workflow authors are trusted at
+// operator level, since the gate carries no workflow identity.
 type SandboxExec struct {
-	allowActions map[string]struct{}
-	image        string
-	workdir      string
-	mounts       []string // normalized "host:ctr:mode", validated at construction
-	network      bool
-	timeout      time.Duration
-	runtimeCfg   string // "", "podman", or "docker": operator detection override
-	harden       bool
-	pidsLimit    int64
-	memory       string
-	cpus         float64
+	detectErr error
 
 	// Detection hooks, defaulted in the factory and replaced in tests. No
 	// package-level cache (security judge item 2): two instances detect
 	// independently.
 	lookPath   func(string) (string, error)
-	getenv     func(string) string
 	statSocket func(string) bool
 
-	detectOnce sync.Once
-	runtime    string
-	detectErr  error
+	allowActions map[string]struct{}
+	getenv       func(string) string
+	image        string
+	workdir      string
+	runtime      string
+	runtimeCfg   string // "", "podman", or "docker": operator detection override
+	memory       string
+	mounts       []string // normalized "host:ctr:mode", validated at construction
+	pidsLimit    int64
+	cpus         float64
+	timeout      time.Duration
+	detectOnce   sync.Once
+	harden       bool
+	network      bool
 }
 
 // SandboxProbe supplies the host-environment lookups runtime detection needs.
@@ -223,10 +220,10 @@ func SandboxExecFactory(cfg map[string]any) (runner.Runner, error) {
 
 // sandboxLimits is the decoded set of value-typed caps and the runtime override.
 type sandboxLimits struct {
-	timeout    time.Duration
 	runtimeCfg string
-	pidsLimit  int64
 	memory     string
+	timeout    time.Duration
+	pidsLimit  int64
 	cpus       float64
 }
 
@@ -357,12 +354,11 @@ func decodeCPUs(cfg map[string]any) (float64, error) {
 	return value, nil
 }
 
-// decodeMounts validates and normalizes the operator mount list. Mounts are
-// operator-only, but the operator is wiring a sandbox for agents to drive, so
-// the rules are strict (security amendment 4): absolute host and container
-// paths, refuse a source that resolves to the container runtime socket (a
-// one-line host escape), default a missing mode to read-only, and reject a
-// read-write mode unless allow_rw_mounts is set.
+// decodeMounts validates and normalizes the operator mount list. The operator
+// is wiring a sandbox for agents to drive, so the rules are strict (security
+// amendment 4): absolute paths on both sides, no source resolving to the
+// container runtime socket (a one-line host escape), read-only by default, and
+// read-write only when allow_rw_mounts is set.
 func decodeMounts(cfg map[string]any, allowRW bool) ([]string, error) {
 	raw, err := configStrings(cfg, cfgKeyMounts)
 	if err != nil {
@@ -653,9 +649,8 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 // killContainer best-effort stops a container the client-process SIGKILL left
 // running. It runs under its own short context, detached from the dead run
 // context, and ignores errors: --rm handles removal and an already-gone
-// container is not a failure to report. runtimeName is "podman" or "docker"
-// from detection and name is the sanitized, injection-safe container name, so
-// the kill argv cannot be steered by a hostile RunID.
+// container is not a failure. runtimeName comes from detection and name is
+// sanitized, so a hostile RunID cannot steer the kill argv.
 func (*SandboxExec) killContainer(parent context.Context, runtimeName, name string) {
 	killCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), sandboxKillTimeout)
 	defer cancel()
@@ -668,10 +663,9 @@ func (*SandboxExec) killContainer(parent context.Context, runtimeName, name stri
 
 // classifyStart maps a launch failure. A missing runtime binary is permanent
 // no_runtime (the class BuildAll must never hit); anything else at start is
-// permanent start. A deadline that expires while the runtime is still launching
-// is the exception: that is the same transient timeout classifyWait reports once
-// the container is running, and calling it permanent would deny a retry the
-// fresh deadline could clear.
+// permanent start. A deadline expiring mid-launch is the exception: it is the
+// transient timeout classifyWait reports once the container runs, and calling it
+// permanent would deny a retry a fresh deadline could clear.
 func (*SandboxExec) classifyStart(runCtx context.Context, err error) error {
 	if runCtx.Err() != nil {
 		return runner.NewError(runner.ClassTransient, codeSandboxTimeout,
@@ -773,12 +767,12 @@ type runArgs struct {
 	image         string
 	workdir       string
 	command       string
+	memory        string
 	mounts        []string
+	pidsLimit     int64
+	cpus          float64
 	network       bool
 	harden        bool
-	pidsLimit     int64
-	memory        string
-	cpus          float64
 }
 
 // buildRunArgv assembles the container run command. It is pure: no runtime, no

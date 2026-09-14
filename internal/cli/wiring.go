@@ -157,8 +157,8 @@ func openStore(ctx context.Context, dir string) (store.Store, config.Config, err
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, cfg, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, cfg, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // sqlite.Open carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -199,8 +199,8 @@ func openMemory(ctx context.Context, dir string) (memoryStore, error) {
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // memory.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -238,8 +238,8 @@ func openVault(ctx context.Context, dir string) (vaultStore, error) {
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // vault.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -251,13 +251,11 @@ func openVault(ctx context.Context, dir string) (vaultStore, error) {
 	return vaultDB, nil
 }
 
-// openSecretsStore opens the encrypted secret store on the configured [store]
-// backend, the openVault shape: it shares the run store's DSN (a disjoint
-// secrets table in the one sqlite file, or in the one Postgres database) and
-// wraps it in the sealer built from the environment key material. The master
-// key is required for the store backend, so a missing or malformed key
-// (secrets.LoadKeys) fails here rather than at first resolve; those errors name
-// env vars only, never key bytes.
+// openSecretsStore opens the encrypted secret store on the configured backend.
+// It shares the run store's DSN, a disjoint secrets table in one sqlite file or
+// Postgres database, and wraps it in the sealer built from environment key
+// material. A missing or malformed master key (secrets.LoadKeys) fails here,
+// not at first resolve; those errors name env vars only, never key bytes.
 func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secrets.Store, error) {
 	primary, previous, err := secrets.LoadKeys(os.Getenv)
 	if err != nil {
@@ -279,8 +277,8 @@ func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secr
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // secrets.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -293,12 +291,10 @@ func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secr
 }
 
 // buildSecretSource resolves the engine's secret source for the configured
-// [secrets] backend. The default "env" backend returns the env source alone
-// with a no-op closer, byte-for-byte today's behavior and no key material
-// needed. The "store" backend opens the encrypted store and composes it as
-// Chain(env, store) so env still wins, warns about any store secret an env var
-// shadows (env wins, so a stale variable can silently mask a rotated store
-// value), and returns the store's closer.
+// [secrets] backend. The default "env" backend returns the env source alone,
+// needing no key material. The "store" backend opens the encrypted store and
+// composes Chain(env, store), so env still wins; it warns about any store
+// secret an env var shadows, since a stale variable can mask a rotated value.
 func (a *App) buildSecretSource(ctx context.Context, dir string, cfg *config.Config) (secrets.Source, func() error, error) {
 	if cfg.Secrets.Backend != config.SecretsBackendStore {
 		return secrets.NewEnv(), func() error { return nil }, nil
@@ -341,13 +337,12 @@ func (a *App) warnSecretsShadowedByEnv(ctx context.Context, secretStore secrets.
 // is the only bound on a refresh (credentials context capture).
 const tokenClientTimeout = 30 * time.Second
 
-// buildCredentialManager constructs the outbound OAuth2 credential manager from
-// the [credential.<name>] blocks, resolving each secret ref through the shared
-// secret source and minting tokens over the egress-guarded client. Construction
-// does no network: it resolves refs and builds token sources, so a missing ref or
-// unreachable-config credential fails serve at startup rather than mid-run. With
-// no credentials configured it returns an empty manager, which is a no-op. The
-// http and mcp_client runners look credentials up by name (slice 5).
+// buildCredentialManager builds the OAuth2 credential manager from the
+// [credential.<name>] blocks, resolving each secret ref and minting tokens
+// over the egress-guarded client. Construction does no network, so a missing
+// ref fails serve at startup, not mid-run. With none configured it returns an
+// empty, no-op manager. The http and mcp_client runners look credentials up by
+// name (slice 5).
 func buildCredentialManager(ctx context.Context, cfg *config.Config, source secrets.Source) (*credentials.Manager, error) {
 	newClient := func(allowPrivate bool) *http.Client {
 		return builtins.GuardedHTTPClient(tokenClientTimeout, allowPrivate)
@@ -432,8 +427,8 @@ func openRules(ctx context.Context, dir string) (rulesStore, error) {
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // rules.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -497,8 +492,8 @@ func openSchedules(ctx context.Context, dir string) (scheduleStore, error) {
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // scheduler.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -510,13 +505,12 @@ func openSchedules(ctx context.Context, dir string) (scheduleStore, error) {
 	return scheds, nil
 }
 
-// openWebhooks opens the webhook registration store on the configured backend,
-// the schedule-store opener shape. On sqlite it shares the run store's database
-// file through a disjoint webhook_registrations table, and the returned closer
-// releases that handle. On postgres the table lives in the run store's database,
-// reached through a schedule store opened only for its pool: PostgresWebhooks
-// borrows that pool (its own Close is a no-op), so the closer closes the
-// schedule store to release the pool.
+// openWebhooks opens the webhook registration store. Sqlite shares the run
+// store's file through a disjoint webhook_registrations table, and the closer
+// releases that handle. Postgres puts the table in the run store's database,
+// through a schedule store opened only for its pool: PostgresWebhooks borrows
+// that pool and its own Close is a no-op, so the closer closes the schedule
+// store.
 func openWebhooks(ctx context.Context, dir string) (webhook.Store, func() error, error) {
 	cfg, err := config.Load(filepath.Join(dir, configFileName))
 	if err != nil {
@@ -587,13 +581,11 @@ func (a *App) openWebhooksAt(ctx context.Context, label, dirFlagValue string) (w
 }
 
 // newCoordinator picks the scheduler coordinator for the configured backend:
-// the single-node SoloCoordinator for sqlite, and the advisory-lock
-// PostgresCoordinator for postgres so exactly one node owns scheduling
-// across a shared database (.agents/spec/14-open-decisions.md, S2). The
-// postgres coordinator borrows the schedule store's pool, so the lock lives
-// on the same database; closer releases the lock on shutdown (nil for
-// sqlite). A schedule store that is not a *scheduler.Postgres (the sqlite
-// case) yields the solo coordinator.
+// SoloCoordinator for sqlite, and the advisory-lock PostgresCoordinator for
+// postgres so exactly one node owns scheduling across a shared database
+// (.agents/spec/14-open-decisions.md, S2). The postgres coordinator borrows the
+// schedule store's pool, so the lock lives on the same database, and closer
+// releases it on shutdown (nil for sqlite).
 func newCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.Context)) {
 	pgScheds, ok := scheds.(*scheduler.Postgres)
 	if !ok {
@@ -617,9 +609,9 @@ const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
 // newHiveCoordinator picks the hive primary-election coordinator: the advisory-
 // lock PostgresCoordinator on the hive key for postgres, so exactly one node in
 // the cluster runs the hive loop (R3 in .agents/spec/14-open-decisions.md). It
-// borrows the schedule store's pool, the same shared database the scheduler
-// leader elects on. A non-postgres schedule store yields no coordinator; serve
-// already refuses the hive off postgres, so that path stays unused.
+// borrows the schedule store's pool. A non-postgres schedule store yields no
+// coordinator; serve already refuses the hive off postgres, so that path stays
+// unused.
 func newHiveCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.Context)) {
 	pgScheds, ok := scheds.(*scheduler.Postgres)
 	if !ok {
@@ -735,8 +727,8 @@ func openAuth(ctx context.Context, dir string) (authStore, config.Config, error)
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, cfg, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, cfg, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // auth.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -776,8 +768,8 @@ func openTenancy(ctx context.Context, dir string) (tenancyStore, error) {
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, err
+	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
+		return nil, ensureDataDirErr
 	}
 
 	//nolint:contextcheck // tenancy.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
@@ -885,13 +877,11 @@ func (a *App) closeSecretSource(closeSource func() error) {
 
 // newRegistry wires every built-in runner, plus a plugin-backed runner per
 // type = "plugin" block and a per-name mcp_client per type = "mcp_client"
-// block (the shape `cairnos mcp import` emits). Each factory gets its
-// [runner.<name>] config block through BuildAll, where plugin factories spawn
-// their child process, so ctx bounds construction.
+// block. BuildAll hands each factory its [runner.<name>] block and spawns
+// plugin child processes, so ctx bounds construction.
 //
-// msgSender is the chat-send seam the message runner posts through; only serve
-// has one, and the one-shot callers pass nil so that runner registers and then
-// refuses at execute time, the same shape rulesSvc uses.
+// msgSender is the chat-send seam only serve has; with nil the message runner
+// refuses at execute time, like rulesSvc.
 func newRegistry(
 	ctx context.Context,
 	runnerCfgs map[string]map[string]any,
@@ -965,20 +955,14 @@ func newRegistry(
 	return registry, nil
 }
 
-// registerConfiguredRunners adds a runner for every [runner.<name>] block
-// whose type string selects a registration path, additional to the built-in
-// names: "plugin" wires an out-of-process runner (Phase 1b), "mcp_client"
-// wires a per-name instance of the built-in MCP client factory (the shape
-// `cairnos mcp import` emits), and "openai" wires a second chat-completions
-// runner under its own name, which is how a [runner.local] block pointed at a
-// local llama-server sits beside the hosted one. Blocks without a type key, or
-// with another value, stay plain config for the built-in of that name. A configured name
-// colliding with an already-registered one surfaces as the registry's
-// duplicate-registration error rather than silently shadowing it. The one
-// exception is a block literally named mcp_client: the built-in is already
-// registered under that name with the same factory and BuildAll hands it
-// that block, so a second Register would spuriously fail existing configs.
+// registerConfiguredRunners registers a runner for every [runner.<name>] block
+// whose type selects a registration path: "plugin" for an out-of-process runner
+// (Phase 1b), "mcp_client" for a per-name MCP client, "openai" for a second
+// chat-completions runner under its own name. Blocks with no type, or another
+// value, stay plain config for the built-in of that name.
 func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any, credLookup builtins.TokenLookup) error {
+	// A name colliding with an already-registered runner surfaces as the
+	// registry's duplicate-registration error rather than silently shadowing it.
 	for _, name := range slices.Sorted(maps.Keys(runnerCfgs)) {
 		kind, _ := runnerCfgs[name]["type"].(string)
 
@@ -988,6 +972,10 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 				return fmt.Errorf("register plugin runner %q: %w", name, err)
 			}
 		case builtins.MCPClientName:
+			// A block literally named mcp_client is the built-in's own config:
+			// already registered with this factory, and BuildAll hands it that
+			// block, so a second Register would fail existing configs. Other
+			// names get their own instance, the shape `cairnos mcp import` emits.
 			if name == builtins.MCPClientName {
 				continue
 			}

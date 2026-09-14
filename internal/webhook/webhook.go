@@ -45,6 +45,7 @@ const (
 // token hashes; the raw tokens exist just once, at mint time, and are never
 // recoverable from here.
 type Registration struct {
+	CreatedAt     time.Time // stamped at Add when the caller leaves it zero
 	ID            string    // stable id; the only registration identifier logs may carry
 	WorkflowName  string    // unique per store
 	WorkflowPath  string    // loaded fresh per hit (FireRunner precedent)
@@ -53,7 +54,6 @@ type Registration struct {
 	HMACSecretRef string    // secrets.Source name; empty disables HMAC
 	PayloadInput  string    // raw-body mode: deliver the whole body into this declared input
 	RatePerMinute int       // 0 means the [webhook] rate_per_minute default
-	CreatedAt     time.Time // stamped at Add when the caller leaves it zero
 }
 
 // Store persists webhook registrations. Lookup is by token hash, never by the

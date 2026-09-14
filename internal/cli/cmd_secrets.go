@@ -20,9 +20,9 @@ const envShadowMarker = "shadowed_by_env"
 // cmdSecrets dispatches the encrypted secret store subcommands
 // (.agents/spec/parity/secrets-credentials.md, "CLI"). The help states the two
 // rotation facts (a row under an unloaded key is lost outside the prev-key
-// window; the ls key id is the only diagnostic) and that keygen output must come
+// window, the ls key id is the only diagnostic) and that keygen output must come
 // from a CSPRNG, so the hazards are visible before anything runs (security
-// council amendment 3 and the rotation story).
+// council amendment 3).
 func (a *App) cmdSecrets(ctx context.Context, args []string) int {
 	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen> [flags]
 

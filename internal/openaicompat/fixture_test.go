@@ -58,19 +58,16 @@ const (
 // what CreateSession and SendMessage saw, so tests assert workspace stamping and
 // the seeded prompt without a real driver.
 type fakeAgent struct {
-	mu sync.Mutex
-
-	sessionID   string
-	personality string // resolved personality stamped on the returned session
-	createErr   error
-
-	events  []chat.Event
-	sendErr error
-
+	createErr       error
+	sendErr         error
+	sessionID       string
+	personality     string // resolved personality stamped on the returned session
 	seenWorkspace   string
 	seenPersonality string
 	seenMessage     string
+	events          []chat.Event
 	sendCalls       int
+	mu              sync.Mutex
 }
 
 // CreateSession records the workspace and personality it saw, then returns a
@@ -135,9 +132,9 @@ func (f *fakeAgent) message() string {
 
 // fakeStore records every seeded message so a test asserts the role sequence.
 type fakeStore struct {
-	mu        sync.Mutex
-	appended  []*store.ChatMessage
 	appendErr error
+	appended  []*store.ChatMessage
+	mu        sync.Mutex
 }
 
 // AppendMessage records one message or returns the scripted error.
@@ -178,8 +175,8 @@ func (f *fakeStore) count() int {
 // fakeClock is an advanceable clock injected as the authenticator's Now, so the
 // expiry test moves time past a token's exp without sleeping.
 type fakeClock struct {
-	mu  sync.Mutex
 	now time.Time
+	mu  sync.Mutex
 }
 
 // Now implements the auth.Config Now contract.
@@ -200,9 +197,9 @@ func (c *fakeClock) advance(step time.Duration) {
 
 // fixtureOptions tunes the service the fixture builds.
 type fixtureOptions struct {
-	authEnabled  bool
 	agent        *fakeAgent
 	maxBodyBytes int64
+	authEnabled  bool
 }
 
 // fixture is one adapter service over fakes plus the httptest server tests drive
@@ -381,8 +378,8 @@ func (f *fixture) workspaceToken(t *testing.T, workspace string, scopes ...strin
 		t.Fatalf("NewKey: %v", err)
 	}
 
-	if err := f.authStore.CreateKey(t.Context(), key); err != nil {
-		t.Fatalf("CreateKey: %v", err)
+	if innerErr := f.authStore.CreateKey(t.Context(), key); innerErr != nil {
+		t.Fatalf("CreateKey: %v", innerErr)
 	}
 
 	tokenStr, _, err := f.authn.Login(t.Context(), plaintext)
@@ -454,12 +451,12 @@ type completionBody struct {
 	Object  string `json:"object"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index   int `json:"index"`
 		Message struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
+		Index        int    `json:"index"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int64 `json:"prompt_tokens"`

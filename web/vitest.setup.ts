@@ -3,18 +3,11 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 
 import { server } from './src/test/server';
 
-// jsdom replaces AbortController/AbortSignal with its own, but Node's fetch
-// (which MSW intercepts) validates a passed signal against Node's AbortSignal
-// and rejects jsdom's. The two come from different module contexts, so any
-// component that passes an abort signal to fetch throws "Expected signal to be
-// an instance of AbortSignal" under the test environment only. A browser
-// never hits this; it is purely a jsdom-vs-Node primitive mismatch.
-//
-// The fix wraps fetch so the jsdom-built signal is dropped before the request
-// reaches Node's validation. The stream module's abort behavior is covered by
-// its own unit tests, which call it directly without jsdom, so dropping the
-// signal here costs no real coverage. The wrap happens after server.listen so
-// it sits in front of MSW's interceptor rather than behind it.
+// jsdom swaps in its own AbortSignal, but Node's fetch (which MSW intercepts)
+// rejects a signal that is not Node's, so a component passing one throws
+// "Expected signal to be an instance of AbortSignal" under jsdom only. The
+// wrapper drops it before that check; the stream module's abort behavior is
+// covered by unit tests that run outside jsdom.
 function dropSignal(): void {
   const innerFetch = globalThis.fetch;
   globalThis.fetch = function patchedFetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -30,6 +23,7 @@ function dropSignal(): void {
 // reset after each keeps cases isolated. No request ever leaves the process.
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
+  // After listen, so the wrapper sits in front of MSW's interceptor.
   dropSignal();
 });
 

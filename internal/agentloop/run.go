@@ -50,21 +50,22 @@ const defaultSystemPrompt = "You are an agent action inside a CairnOS workflow. 
 // loopRun is the per-execution state of one agent action. A single
 // goroutine owns it for the whole execution, so no lock guards the fields.
 type loopRun struct {
+	started    time.Time
+	driver     runner.ToolCaller
 	loop       *Loop
 	action     *workflow.Action
 	task       *runner.Task
-	driver     runner.ToolCaller
 	tools      map[string]runner.Runner
-	specs      []runner.ToolSpec
 	transcript []string
+	specs      []runner.ToolSpec
 	usage      runner.Usage
 	stepCount  int
 	strikes    int
-	started    time.Time
 
 	// depth is 0 for an engine-started action and r.depth+1 for a delegated
 	// child. maxDelegateDepth caps it, so a child never delegates again.
 	depth int
+
 	// delegations counts children spawned this execution, walled at
 	// maxDelegations.
 	delegations int
@@ -96,12 +97,11 @@ func (r *loopRun) run(ctx context.Context) (runner.Result, error) {
 	}
 }
 
-// callDriver runs one driver turn over the freshly assembled prompt.
-// Memory reloads every iteration per the spec's prompt-assembly order, so
-// notes the agent just wrote are visible on its next turn. Usage counts
-// toward the budget even when the turn errors, since the provider may have
-// billed it; a driver failure ends the action unretried, classified by the
-// engine like any runner failure.
+// callDriver runs one driver turn over the assembled prompt. Memory reloads
+// every iteration per the spec's prompt-assembly order, so notes the agent
+// wrote are visible next turn. Usage counts toward the budget even when the
+// turn errors, since the provider may have billed it. A driver failure ends the
+// action unretried, classified by the engine like any runner failure.
 func (r *loopRun) callDriver(ctx context.Context, iteration int) (runner.Result, error) {
 	memorySection, err := r.memorySection(ctx)
 	if err != nil {
@@ -367,11 +367,11 @@ const (
 
 // decision is one interpreted driver turn.
 type decision struct {
-	kind      decisionKind
-	tool      string
-	arguments map[string]any
 	output    any
+	arguments map[string]any
+	tool      string
 	usage     runner.Usage
+	kind      decisionKind
 }
 
 // interpret applies the driver convention to one turn: the stop reason

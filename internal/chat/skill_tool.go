@@ -9,10 +9,9 @@ import (
 
 // SkillToolName is the registry name of the skill read tool, the
 // description-match invocation path alongside the slash grammar. The driver
-// calls it to load one operator-authored skill by name when the skill's
-// description matches the task. A load influences prompt text only: like every
-// chat read tool it adds no capability, raises no budget, and cannot move the
-// D9 confirmation gate (.agents/spec/parity/skills-context.md, Part 1).
+// calls it to load one operator-authored skill by name. A load influences
+// prompt text only: it adds no capability, raises no budget, and cannot move
+// the D9 confirmation gate (.agents/spec/parity/skills-context.md, Part 1).
 const SkillToolName = "skill"
 
 // skill tool argument and output keys. name is both the required argument and
@@ -128,11 +127,11 @@ func toolExchangeRecord(tool string, arguments map[string]any, output any) strin
 }
 
 // skillToolRecord renders the persisted record for a successful skill-tool
-// result: the raw body with no second truncation, so the tool path and the
-// slash path carry byte-identical skill text (.agents/spec/parity/skills-context.md,
-// "Truncation parity"). The body was capped once at load (16 KiB), so the
-// record is bounded without another cut. It reports ok false for an error
-// result or any other shape, which take the normal truncating render.
+// result: the raw body, uncut, so the tool path and the slash path carry
+// byte-identical skill text (.agents/spec/parity/skills-context.md,
+// "Truncation parity"). Load already capped the body at 16 KiB, so the record
+// stays bounded. Any other shape, including an error result, reports ok false
+// and takes the normal truncating render.
 func skillToolRecord(output any) (string, bool) {
 	table, isTable := output.(map[string]any)
 	if !isTable {

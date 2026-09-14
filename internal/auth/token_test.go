@@ -44,8 +44,8 @@ const testTTL = time.Hour
 
 // fakeClock is an advanceable clock injected as Config.Now.
 type fakeClock struct {
-	mu  sync.Mutex
 	now time.Time
+	mu  sync.Mutex
 }
 
 func newFakeClock() *fakeClock {
@@ -212,9 +212,9 @@ func TestLoginRejectsBadCredentials(t *testing.T) {
 	}
 
 	cases := []struct {
+		wantErr   error
 		name      string
 		plaintext string
-		wantErr   error
 	}{
 		{name: "malformed", plaintext: "garbage", wantErr: auth.ErrKeyMalformed},
 		{name: "unknown key id", plaintext: "ck_01UNKNOWNID_c2VjcmV0", wantErr: auth.ErrKeyNotFound},
@@ -609,8 +609,8 @@ func TestRevokeKeyKeepsKeyMinting(t *testing.T) {
 		t.Fatalf("pre-revoke Login: %v", err)
 	}
 
-	if err := authn.RevokeKey(t.Context(), key.ID); err != nil {
-		t.Fatalf("RevokeKey: %v", err)
+	if revokeKeyErr := authn.RevokeKey(t.Context(), key.ID); revokeKeyErr != nil {
+		t.Fatalf("RevokeKey: %v", revokeKeyErr)
 	}
 
 	// A fresh token minted after the revoke instant must work; the key was
@@ -648,8 +648,8 @@ func TestDenylistPruneDropsExpiredRows(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 
-	if err := authn.RevokeToken(t.Context(), claims.ID); err != nil {
-		t.Fatalf("RevokeToken: %v", err)
+	if revokeTokenErr := authn.RevokeToken(t.Context(), claims.ID); revokeTokenErr != nil {
+		t.Fatalf("RevokeToken: %v", revokeTokenErr)
 	}
 
 	// Before the deny window passes, the row survives a prune.
@@ -686,10 +686,10 @@ func TestLoadMaterialFailures(t *testing.T) {
 	}
 
 	cases := []struct {
+		wantErr error
+		env     map[string]string
 		name    string
 		alg     string
-		env     map[string]string
-		wantErr error
 	}{
 		{name: "unknown algorithm", alg: "ES256", env: nil, wantErr: auth.ErrAlgorithmUnknown},
 		{name: "missing secret", alg: auth.AlgHS256, env: nil, wantErr: auth.ErrSecretMissing},

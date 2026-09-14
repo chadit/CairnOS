@@ -12,15 +12,14 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// runWorkflowInput is the run_workflow tool's argument shape. The SDK infers
-// the tool's JSON input schema from this struct (and the jsonschema tags), so
-// the schema has one source. Inputs is a free-form object: the per-workflow
-// input contract lives in each workflow file's declared inputs, and the engine
-// validates the supplied values against it on RunWorkflow, so duplicating that
-// schema here would be a second, drifting source.
+// runWorkflowInput is the run_workflow tool's argument shape. The SDK infers the
+// tool's JSON schema from this struct and its jsonschema tags, so the schema has
+// one source. Inputs is free-form: each workflow file declares its own input
+// contract and the engine validates supplied values against it on RunWorkflow,
+// so repeating that schema here would be a second, drifting source.
 type runWorkflowInput struct {
-	Workflow string         `json:"workflow"         jsonschema:"the name of the workflow to run"`
 	Inputs   map[string]any `json:"inputs,omitempty" jsonschema:"the workflow's declared inputs as a JSON object"`
+	Workflow string         `json:"workflow"         jsonschema:"the name of the workflow to run"`
 }
 
 // runWorkflowOutput is what run_workflow returns: the created run id and its
@@ -50,8 +49,8 @@ type memoryHit struct {
 	ID         string   `json:"id"`
 	Scope      string   `json:"scope"`
 	Content    string   `json:"content"`
-	Importance int      `json:"importance"`
 	Tags       []string `json:"tags,omitempty"`
+	Importance int      `json:"importance"`
 }
 
 // queryMemoryOutput carries the hits plus the fallback signal memory.Search
@@ -62,12 +61,6 @@ type queryMemoryOutput struct {
 	Fallback bool        `json:"fallback"`
 }
 
-// runWorkflowHandler returns the typed handler for the run_workflow tool, bound
-// to one connection's token. It enforces write:workflow, resolves the named
-// workflow, starts a run through the shared manager, and waits for the run to
-// finish before answering, so the returned id is a durable record a caller can
-// GetRun right away and the status is the real terminal one.
-//
 // Why wait rather than return "running" the instant the engine accepts the run:
 // StartRun unblocks the moment the engine consumes the reserved id, which is a
 // hair before CreateRun finishes persisting the record (the same race the A2A
@@ -75,6 +68,12 @@ type queryMemoryOutput struct {
 // GetRun could miss. v1 is non-streaming, so waiting for completion is the
 // honest answer; a consumer that wants live progress streams TaskUpdates over
 // A2A or the gRPC run stream instead (.agents/spec/10-mcp-integration.md).
+
+// runWorkflowHandler returns the typed handler for the run_workflow tool, bound
+// to one connection's token. It enforces write:workflow, resolves the named
+// workflow, starts a run through the shared manager, and waits for the run to
+// finish before answering, so the returned id is a durable record a caller can
+// GetRun right away and the status is the real terminal one.
 func (s *Service) runWorkflowHandler(token string) mcp.ToolHandlerFor[runWorkflowInput, runWorkflowOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input runWorkflowInput) (*mcp.CallToolResult, runWorkflowOutput, error) {
 		workspace, err := s.authorize(ctx, token, auth.ScopeWriteWorkflow)
@@ -102,8 +101,8 @@ func (s *Service) runWorkflowHandler(token string) mcp.ToolHandlerFor[runWorkflo
 // awaitRun blocks until the run finishes or the caller's context cancels,
 // returning the terminal run id and status. A canceled context detaches the
 // run, which keeps executing in the background (StartRun ran it under a context
-// that does not derive from ctx), so the run is not lost; the caller just stops
-// waiting and reads the id later through the runs resource.
+// that does not derive from ctx), so the run is not lost; the caller reads the
+// id later through the runs resource.
 func (*Service) awaitRun(ctx context.Context, handle *api.RunHandle) (*mcp.CallToolResult, runWorkflowOutput, error) {
 	select {
 	case <-ctx.Done():
@@ -164,9 +163,9 @@ type getLanguageRulesInput struct {
 // getLanguageRulesOutput carries the merged rule set as a flat key/value map,
 // the same shape the language_rules_service runner emits.
 type getLanguageRulesOutput struct {
+	Rules    map[string]string `json:"rules"`
 	Language string            `json:"language"`
 	Project  string            `json:"project,omitempty"`
-	Rules    map[string]string `json:"rules"`
 }
 
 // getLanguageRulesHandler returns the typed handler for the get_language_rules

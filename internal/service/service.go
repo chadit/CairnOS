@@ -61,32 +61,36 @@ const envFileTemplate = `# CairnOS service environment (read at service start; k
 
 // Options select what setup installs.
 type Options struct {
+	// Home is the CairnOS home the service runs against (config + data).
+	Home string
+
+	// Binary is the absolute path of the cairnos executable the unit starts.
+	Binary string
+
 	// System installs a machine-wide service under root. The default (false)
 	// is a per-user service, which covers every agent that does not need to
 	// control the machine itself.
 	System bool
-	// Home is the CairnOS home the service runs against (config + data).
-	Home string
-	// Binary is the absolute path of the cairnos executable the unit starts.
-	Binary string
 }
 
 // Host is a snapshot of the facts the planners branch on, gathered once by
 // DetectHost so the planners stay pure and tests build hosts directly.
 type Host struct {
-	GOOS      string
-	EUID      int
-	Username  string
-	UID       string
-	HomeDir   string
-	ConfigDir string
-	// HasSystemd reports /run/systemd/system, the documented way to detect a
-	// running systemd without talking to it.
-	HasSystemd bool
 	// HasUser answers whether a named system account exists, so the system
 	// planner knows whether to include the useradd step. Nil means unknown
 	// and the planner includes the step defensively.
 	HasUser func(name string) bool
+
+	GOOS      string
+	Username  string
+	UID       string
+	HomeDir   string
+	ConfigDir string
+	EUID      int
+
+	// HasSystemd reports /run/systemd/system, the documented way to detect a
+	// running systemd without talking to it.
+	HasSystemd bool
 }
 
 // File is one file a plan writes.
@@ -109,9 +113,9 @@ type Dir struct {
 // without failing the plan; the failure surfaces as a notice built from
 // Hint, for steps like linger that can want privileges setup does not have.
 type Command struct {
+	Hint     string
 	Argv     []string
 	Optional bool
-	Hint     string
 }
 
 // Plan is everything setup or uninstall would do, in apply order: Dirs,
@@ -131,9 +135,9 @@ type Plan struct {
 // Install identifies one discovered install for status and uninstall.
 type Install struct {
 	Label      string
-	System     bool
 	UnitPath   string
 	StatusArgv []string
+	System     bool
 }
 
 // PlanSetup picks the platform planner for the host and returns the full

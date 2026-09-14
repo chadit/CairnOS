@@ -1,4 +1,4 @@
-package localmodel
+package localmodel_test
 
 import (
 	"errors"
@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
 // fixtureTag is the stable release the fake GitHub reports.
@@ -53,8 +55,8 @@ func TestUpstreamRuntimeRejectsReleaseWithoutBuildTag(t *testing.T) {
 	upstream := fakeUpstream(t, &upstreamFixture{tag: fixtureTag, buildTag: ""})
 
 	_, err := upstream.Runtime(t.Context())
-	if !errors.Is(err, ErrNoBuildTag) {
-		t.Fatalf("err = %v, want ErrNoBuildTag", err)
+	if !errors.Is(err, localmodel.ErrNoBuildTag) {
+		t.Fatalf("err = %v, want localmodel.ErrNoBuildTag", err)
 	}
 }
 
@@ -93,21 +95,21 @@ func TestUpstreamModelReportsMissingFile(t *testing.T) {
 	upstream := fakeUpstream(t, &upstreamFixture{repoSHA: "deadbeef", fileName: "other.gguf", fileSHA: "zzz"})
 
 	_, err := upstream.Model(t.Context(), "org/repo", "wanted.gguf")
-	if !errors.Is(err, ErrFileNotInRepo) {
-		t.Fatalf("err = %v, want ErrFileNotInRepo", err)
+	if !errors.Is(err, localmodel.ErrFileNotInRepo) {
+		t.Fatalf("err = %v, want localmodel.ErrFileNotInRepo", err)
 	}
 }
 
 // fakeUpstream stands up GitHub and Hugging Face stand-ins answering with the
-// fixture's state, and points an Upstream at them.
-func fakeUpstream(t *testing.T, fixture *upstreamFixture) *Upstream {
+// fixture's state, and points an localmodel.Upstream at them.
+func fakeUpstream(t *testing.T, fixture *upstreamFixture) *localmodel.Upstream {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			_, _ = w.Write([]byte(`{"tag_name":"` + fixture.tag + `","html_url":"https://example.test/` + fixture.tag + `"}`))
-		case strings.HasSuffix(r.URL.Path, buildTagAsset):
+		case strings.HasSuffix(r.URL.Path, localmodel.BuildTagAsset):
 			_, _ = w.Write([]byte(fixture.buildTag + "\n"))
 		case strings.HasPrefix(r.URL.Path, "/api/models/"):
 			_, _ = w.Write([]byte(modelListingJSON(fixture)))
@@ -117,7 +119,7 @@ func fakeUpstream(t *testing.T, fixture *upstreamFixture) *Upstream {
 	}))
 	t.Cleanup(server.Close)
 
-	return NewUpstream(UpstreamOptions{
+	return localmodel.NewUpstream(localmodel.UpstreamOptions{
 		Client:         server.Client(),
 		GitHubAPI:      server.URL,
 		GitHubDownload: server.URL,

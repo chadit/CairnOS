@@ -32,38 +32,37 @@ const runsResourceLimit = 50
 // version, description, and its declared inputs, which is exactly what an MCP
 // client needs to call run_workflow correctly.
 type workflowSummary struct {
+	Inputs      map[string]inputSummary `json:"inputs,omitempty"`
 	Name        string                  `json:"name"`
 	Version     string                  `json:"version,omitempty"`
 	Description string                  `json:"description,omitempty"`
-	Inputs      map[string]inputSummary `json:"inputs,omitempty"`
 }
 
 // inputSummary describes one declared input so a caller can build a valid
 // inputs object for run_workflow.
 type inputSummary struct {
-	Type        string `json:"type"`
-	Required    bool   `json:"required"`
 	Default     any    `json:"default,omitempty"`
+	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required"`
 }
 
 // runSummary is one entry in the runs resource: the run state an external
 // client polls without needing the full action transcript.
 type runSummary struct {
+	CreatedAt    time.Time `json:"created_at"`
+	FinishedAt   time.Time `json:"finished_at,omitzero"`
 	ID           string    `json:"id"`
 	WorkflowName string    `json:"workflow_name"`
 	Status       string    `json:"status"`
 	Trigger      string    `json:"trigger"`
-	CreatedAt    time.Time `json:"created_at"`
-	FinishedAt   time.Time `json:"finished_at,omitzero"`
 }
 
-// workflowsResource returns the resource handler for the workflows list, bound
-// to one connection's token. It enforces read:workflow and reads each file in
-// the configured directory through workflow.Load, the same loader the resolver
-// uses, so the declared inputs an MCP client sees match what run_workflow
-// validates against. A file that fails to load is skipped rather than failing
-// the whole read, so one broken file cannot hide the rest.
+// workflowsResource returns the workflows-list handler bound to one
+// connection's token. It reads through workflow.Load, the same loader the
+// resolver uses, so the declared inputs a client sees match what run_workflow
+// validates against. A file that fails to load is skipped, so one broken file
+// cannot hide the rest.
 func (s *Service) workflowsResource(token string) mcp.ResourceHandler {
 	return func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		if _, err := s.authorize(ctx, token, auth.ScopeReadWorkflow); err != nil {

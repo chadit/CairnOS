@@ -11,7 +11,6 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
@@ -25,15 +24,15 @@ const envelopeStatus = "error"
 // errorEnvelope is the canonical HTTP error shape
 // (.agents/spec/07-api-protocols.md, "HTTP response (error)").
 type errorEnvelope struct {
-	Status string        `json:"status"`
 	Error  envelopeError `json:"error"`
+	Status string        `json:"status"`
 }
 
 // envelopeError mirrors cairnerr.Error on the wire.
 type envelopeError struct {
+	Details map[string]any `json:"details"`
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
-	Details map[string]any `json:"details"`
 }
 
 // newGatewayMux builds the HTTP mux that grpc-gateway routes through, with
@@ -47,8 +46,8 @@ func newGatewayMux() *runtime.ServeMux {
 		runtime.WithErrorHandler(gatewayError),
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &envelopeMarshaler{
 			JSONPb: &runtime.JSONPb{
-				MarshalOptions:   protojson.MarshalOptions{UseProtoNames: true},
-				UnmarshalOptions: protojson.UnmarshalOptions{DiscardUnknown: true},
+				UseProtoNames:  true,
+				DiscardUnknown: true,
 			},
 		}),
 	)

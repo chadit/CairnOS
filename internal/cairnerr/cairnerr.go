@@ -12,9 +12,9 @@ import (
 // to users; Details carries structured context (the cycle path, the missing
 // key) for programmatic consumers.
 type Error struct {
+	Details map[string]any `json:"details,omitempty"`
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
-	Details map[string]any `json:"details,omitempty"`
 }
 
 // New builds an Error with a canonical code and a plain message.

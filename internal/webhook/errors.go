@@ -3,10 +3,9 @@ package webhook
 import "errors"
 
 // Canonical envelope codes the ingress handler emits
-// (.agents/spec/07-api-protocols.md, "HTTP response (error)"). Each failure in
-// the request path answers with one of these in the canonical error body. The
-// two replay codes (CodeReplayed) cover the freshness rejections the security
-// council added on top of the original error table: a reused native nonce, a
+// (.agents/spec/07-api-protocols.md, "HTTP response (error)"). Every failure in
+// the request path answers with one of these. CodeReplayed covers the freshness
+// rejections added on top of the original error table: a reused native nonce, a
 // timestamp outside the skew window, or a duplicate GitHub delivery id.
 const (
 	CodeUnknownToken      = "webhook.unknown_token"

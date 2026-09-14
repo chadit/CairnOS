@@ -54,18 +54,18 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	cases := []struct {
-		name string
 		run  func(t *testing.T, openFn OpenFunc)
+		name string
 	}{
-		{"SatisfiesInterface", testSatisfiesInterface},
-		{"AddGetRoundTrip", testAddGetRoundTrip},
-		{"ReplaceAndDelete", testReplaceAndDelete},
-		{"LoadRespectsBudgetAndImportance", testLoadRespectsBudgetAndImportance},
-		{"LoadBreaksImportanceTiesByCreation", testLoadBreaksTiesByCreation},
-		{"ListFiltersScopeAndIsolatesWorkspaceInStableOrder", testListScopeWorkspaceAndOrder},
-		{"SearchFindsByContentAndTag", testSearchFindsByContentAndTag},
-		{"SemanticSearchFallsBackToKeyword", testSemanticFallsBack},
-		{"SearchIndexStaysInSyncAfterReplaceAndDelete", testSearchIndexStaysInSync},
+		{name: "SatisfiesInterface", run: testSatisfiesInterface},
+		{name: "AddGetRoundTrip", run: testAddGetRoundTrip},
+		{name: "ReplaceAndDelete", run: testReplaceAndDelete},
+		{name: "LoadRespectsBudgetAndImportance", run: testLoadRespectsBudgetAndImportance},
+		{name: "LoadBreaksImportanceTiesByCreation", run: testLoadBreaksTiesByCreation},
+		{name: "ListFiltersScopeAndIsolatesWorkspaceInStableOrder", run: testListScopeWorkspaceAndOrder},
+		{name: "SearchFindsByContentAndTag", run: testSearchFindsByContentAndTag},
+		{name: "SemanticSearchFallsBackToKeyword", run: testSemanticFallsBack},
+		{name: "SearchIndexStaysInSyncAfterReplaceAndDelete", run: testSearchIndexStaysInSync},
 	}
 
 	for _, tt := range cases {
@@ -199,8 +199,8 @@ func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
 		Tags:       []string{tagFinance},
 		TokenCost:  replaceCost,
 	}
-	if err := mem.Replace(ctx, id, replacement); err != nil {
-		t.Fatalf("replace entry: %v", err)
+	if innerErr := mem.Replace(ctx, id, replacement); innerErr != nil {
+		t.Fatalf("replace entry: %v", innerErr)
 	}
 
 	after, err := mem.Get(ctx, id)
@@ -348,8 +348,8 @@ func testSearchFindsByContentAndTag(t *testing.T, openFn OpenFunc) {
 
 	cases := []struct {
 		name  string
-		query memory.Query
 		want  []string
+		query memory.Query
 	}{
 		{
 			name:  "content word",

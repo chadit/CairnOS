@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -47,20 +46,12 @@ type Client interface {
 // node pseudonym is a rotating id, never a stable instance name, so a tip
 // cannot be traced back to one node across publishes.
 type Config struct {
-	// Enabled turns the hive client on. With it off, no client is built and
-	// neither subscribe nor publish runs.
-	Enabled bool
-
 	// Endpoint is the hive API base URL.
 	Endpoint string
 
 	// NodePseudonym is the rotating id the node presents to the hive. It is
 	// never the hostname or a stable instance name; the wiring rotates it.
 	NodePseudonym string
-
-	// PublishEnabled gates publishing. Default false: the node receives tips
-	// but sends none until the operator opts in, after the privacy review.
-	PublishEnabled bool
 
 	// Categories are the opted-in categories. Sharing is per-category, off
 	// until a category is listed here.
@@ -76,6 +67,14 @@ type Config struct {
 	// it has seen fewer than this many times, ahead of the server's k. Zero
 	// falls back to defaultMinObservations.
 	MinObservations int
+
+	// Enabled turns the hive client on. With it off, no client is built and
+	// neither subscribe nor publish runs.
+	Enabled bool
+
+	// PublishEnabled gates publishing. Default false: the node receives tips
+	// but sends none until the operator opts in, after the privacy review.
+	PublishEnabled bool
 }
 
 // HTTPClient is the slice of *http.Client the hive client uses, so a test can
@@ -87,14 +86,16 @@ type HTTPClient interface {
 // HTTPHiveClient talks to a hive API over HTTP. It carries the gate state, so
 // Publish refuses before any request leaves the node.
 type HTTPHiveClient struct {
-	cfg    Config
-	doer   HTTPClient
-	encode func(any) ([]byte, error)
+	doer HTTPClient
+
 	// sealer, when set, encrypts every outbound tip and decrypts every received
 	// one under the shared cluster key (R2/R3). Nil keeps the plaintext wire
 	// format, the no-key mode the composition root chooses on SQLite or when no
 	// key is configured.
 	sealer Sealer
+
+	encode func(any) ([]byte, error)
+	cfg    Config
 }
 
 // Option configures an HTTPHiveClient at construction.
@@ -118,9 +119,9 @@ type subscribeResponse struct {
 // tip. The pseudonym is rotating, so the server cannot link two publishes to one
 // node.
 type publishRequest struct {
+	Tip           Tip    `json:"tip"`
 	NodePseudonym string `json:"node_pseudonym"`
 	Observations  int    `json:"observations"`
-	Tip           Tip    `json:"tip"`
 }
 
 // sealedPublishRequest is the wire shape Publish encodes under a shared key: the
@@ -129,8 +130,8 @@ type publishRequest struct {
 // counts on them; the tip itself the host cannot read.
 type sealedPublishRequest struct {
 	NodePseudonym string    `json:"node_pseudonym"`
-	Observations  int       `json:"observations"`
 	SealedTip     sealedTip `json:"sealed_tip"`
+	Observations  int       `json:"observations"`
 }
 
 // sealedSubscribeResponse is the sealed counterpart of subscribeResponse: a
@@ -140,11 +141,10 @@ type sealedSubscribeResponse struct {
 }
 
 // NewHTTPClient builds an HTTP hive client from the config and an injected
-// HTTP doer. A disabled config or a missing endpoint is an error, so a
-// misconfigured node fails at construction rather than at first request. A nil
-// doer falls back to a bounded *http.Client.
+// HTTP doer. A disabled config or missing endpoint fails here rather than at
+// first request. A nil doer falls back to a bounded *http.Client.
 //
-//nolint:gocritic // hugeParam: NewHTTPClient runs once per process and keeps its own Config copy, so the value pass is deliberate
+//nolint:gocritic // hugeParam: Config is copied once per process, so the value pass is deliberate
 func NewHTTPClient(cfg Config, doer HTTPClient, opts ...Option) (*HTTPHiveClient, error) {
 	if !cfg.Enabled {
 		return nil, ErrHiveDisabled
@@ -201,11 +201,11 @@ func (c *HTTPHiveClient) Subscribe(ctx context.Context, categories []Category) (
 	return keepShareableTips(tips), nil
 }
 
-// Publish sends one tip after the gate checks. The order matters: the disabled
-// gate and the local observation floor both refuse before any bytes leave the
-// node, so a gated node never makes a request at all.
+// Publish sends one tip after the gate checks. The disabled gate and the local
+// observation floor both refuse before any bytes leave the node, so a gated
+// node never makes a request.
 //
-//nolint:gocritic // hugeParam: tip is a value to satisfy the Client interface contract, where passing by value keeps the content-free tip immutable across the gate checks
+//nolint:gocritic // hugeParam: tip is a value to satisfy the Client interface contract
 func (c *HTTPHiveClient) Publish(ctx context.Context, tip Tip, observations int) error {
 	if !c.cfg.PublishEnabled {
 		return ErrPublishDisabled
@@ -354,20 +354,15 @@ func keepShareableTips(tips []Tip) []Tip {
 }
 
 // do executes one request and, when out is non-nil, decodes the JSON body into
-// it. A non-2xx status is ErrHiveRequest. The body is always drained and
-// closed so the connection can be reused.
+// it. A non-2xx status is ErrHiveRequest. Close drains the unread remainder,
+// so the connection returns to the pool.
 func (c *HTTPHiveClient) do(req *http.Request, out any) error {
 	resp, err := c.doer.Do(req)
 	if err != nil {
 		return fmt.Errorf("hive request: %w", err)
 	}
 
-	defer func() {
-		// Drain then close so an HTTP/1.1 keep-alive connection returns to the
-		// pool instead of being dropped.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("%w: status %d", ErrHiveRequest, resp.StatusCode)

@@ -47,35 +47,35 @@ const (
 	mcpTransportCodeMax = -32001 // unknown error / header mismatch
 )
 
-// MCPClient calls one tool on a remote MCP server, the generic connector in
-// the built-ins table (.agents/spec/10-mcp-integration.md). One runner type
-// covers every remote MCP tool; instances are configured per server/tool.
+// MCPClient calls one tool on a remote MCP server
+// (.agents/spec/10-mcp-integration.md). One runner type covers every remote
+// MCP tool; instances are configured per server/tool.
 //
-// Config: server_url (streamable HTTP) or command (stdio argv array), plus
-// the required tool name. Params pass through verbatim as the tool's
-// arguments. Connections are opened and closed per Execute for Phase 1a
-// simplicity; session pooling across calls is future work for when
-// per-call handshakes show up in latency numbers.
+// Config: server_url (streamable HTTP) or command (stdio argv array), plus the
+// tool name. Params pass through verbatim as the tool's arguments. Connections
+// open and close per Execute; pooling waits until handshakes show up in
+// latency numbers.
 type MCPClient struct {
-	// name is the registered identifier this instance answers to: the
-	// built-in registers as MCPClientName, while imported blocks
-	// (MCPClientFactoryFor) register one instance per block name.
-	name string
-
-	serverURL string
-	command   []string
-	tool      string
-
 	// httpClient carries the shared egress guard for the streamable HTTP
 	// transport, so registry-supplied server_url values cannot reach
 	// loopback, link-local, or private addresses without an explicit
 	// opt-in. Nil on the stdio path: its boundary is the process, not HTTP.
 	httpClient *http.Client
 
+	spec *runner.ToolSpec
+
+	// name is the registered identifier this instance answers to: the
+	// built-in registers as MCPClientName, while imported blocks
+	// (MCPClientFactoryFor) register one instance per block name.
+	name string
+
+	serverURL string
+	tool      string
+	command   []string
+
 	// mu guards spec, the schema cached by Describe after its first
 	// successful fetch.
-	mu   sync.Mutex
-	spec *runner.ToolSpec
+	mu sync.Mutex
 }
 
 // NewMCPClient builds the runner from its config block with no credential

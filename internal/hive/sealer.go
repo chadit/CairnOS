@@ -15,11 +15,10 @@ import (
 )
 
 // keySize is the AES-256 key length in bytes. The shared hive key is the
-// private cluster's privacy mechanism (R2/R3 in 14-open-decisions.md): with the
-// hive scoped to one operator's own nodes there is no untrusted participant to
-// calibrate k-anonymity against, so a key the host and transport cannot read
-// carries the privacy instead. AES-256 because the key is long-lived and shared
-// across nodes, where the wider margin is worth the negligible cost.
+// private cluster's privacy mechanism (R2/R3 in 14-open-decisions.md): the hive
+// covers one operator's own nodes, so there is no untrusted participant to
+// calibrate k-anonymity against, and a key the host and transport cannot read
+// carries privacy instead. AES-256 because the key is long-lived and shared.
 const keySize = 32
 
 // keyIDLen is how many hex chars of a key's SHA-256 identify it on the wire. A
@@ -28,18 +27,17 @@ const keySize = 32
 // Open match an envelope to the right key during a rotation without trying each.
 const keyIDLen = 16
 
-// sealedTip is the encrypted envelope that crosses the wire when a shared key
-// is configured. Category stays cleartext so the hive can route a tip to its
-// category subscribers without holding the key; it is a content-free enum from
-// the fixed set, already on the allowlist. Everything else about the tip lives
-// inside Ciphertext, sealed under the shared key, so the host at rest and the
-// transport see only opaque bytes. Category is also bound into the ciphertext as
+// Category is safe in cleartext because it is a content-free enum from the fixed
+// set, already on the allowlist. It is also bound into the ciphertext as
 // authenticated data, so a host cannot re-file a tip under a different category
 // without the open failing.
-type sealedTip struct {
-	// Version is the envelope format version, 1 today.
-	Version int `json:"v"`
 
+// sealedTip is the encrypted envelope that crosses the wire when a shared key
+// is configured. Category stays cleartext so the hive can route a tip to its
+// category subscribers without holding the key. Everything else about the tip
+// lives inside Ciphertext, sealed under the shared key, so the host at rest and
+// the transport see only opaque bytes.
+type sealedTip struct {
 	// KeyID is the digest id of the key that sealed this envelope, so a node
 	// holding several keys during a rotation opens it under the right one.
 	KeyID string `json:"kid"`
@@ -53,6 +51,9 @@ type sealedTip struct {
 	// Ciphertext is the AES-256-GCM sealing of the tip JSON, base64 standard
 	// encoding (GCM appends its auth tag, so this carries both).
 	Ciphertext string `json:"ciphertext"`
+
+	// Version is the envelope format version, 1 today.
+	Version int `json:"v"`
 }
 
 // Sealer seals a content-free tip into an encrypted envelope and opens a
@@ -84,11 +85,11 @@ type SecretResolver interface {
 // accepted during a rotation). randReader is the nonce source, held as a field
 // so a test can make sealing reproducible; it defaults to crypto/rand.
 type aesSealer struct {
-	primaryID  string
 	primary    cipher.AEAD
-	openers    map[string]cipher.AEAD
 	randReader io.Reader
+	openers    map[string]cipher.AEAD
 	encode     func(any) ([]byte, error)
+	primaryID  string
 }
 
 // keyID is the wire id of a key: the hex prefix of its SHA-256. One-way, so the
@@ -126,11 +127,10 @@ func NewSealer(key []byte) (Sealer, error) {
 }
 
 // NewRotatingSealer builds a sealer that seals under primaryKey and opens under
-// the primary key or any previousKeys. During a key rotation the operator
-// promotes a new primary and keeps the old key in previousKeys, so a node can
-// still open tips other nodes sealed under the old key until the rotation window
-// closes. Each key carries a digest id on the wire, so Open matches an envelope
-// to its key directly rather than trying every key.
+// primaryKey or any previousKeys. Keeping the old key in previousKeys during a
+// rotation lets a node open tips other nodes sealed under it until the rotation
+// window closes. Each key carries a digest id on the wire, so Open matches an
+// envelope to its key without trying every key.
 func NewRotatingSealer(primaryKey []byte, previousKeys ...[]byte) (Sealer, error) {
 	primary, err := newAEAD(primaryKey)
 	if err != nil {

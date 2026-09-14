@@ -162,9 +162,9 @@ func (s *Store) UpdateSuggestionStatus(ctx context.Context, id string, status st
 // savingsRecord mirrors store.Savings with JSON tags so the persisted shape
 // is a stable contract independent of that package's field names.
 type savingsRecord struct {
+	Confidence    string  `json:"confidence"`
 	CostUSDPerRun float64 `json:"cost_usd_per_run"`
 	LatencyNS     int64   `json:"latency_ns"`
-	Confidence    string  `json:"confidence"`
 }
 
 // marshalSavings renders estimated savings for the savings_json column.
@@ -214,12 +214,12 @@ func scanSuggestion(row rowScanner) (*store.Suggestion, error) {
 	suggestion.Kind = store.SuggestionKind(kind)
 	suggestion.Status = store.SuggestionStatus(status)
 
-	if err := unmarshalJSON(evidence, &suggestion.Evidence); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(evidence, &suggestion.Evidence); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
-	if err := unmarshalJSON(proposed, &suggestion.Proposed); err != nil {
-		return nil, err
+	if unmarshalJSONErr := unmarshalJSON(proposed, &suggestion.Proposed); unmarshalJSONErr != nil {
+		return nil, unmarshalJSONErr
 	}
 
 	suggestion.EstSavings, err = unmarshalSavings(savings)

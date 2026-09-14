@@ -49,36 +49,17 @@ type QueueMetrics interface {
 // WorkerConfig wires one Worker. Queue and Runner are required; every duration
 // and count falls back to a default when left zero.
 type WorkerConfig struct {
-	Queue         WorkQueue
-	Runner        QueueRunner
-	Concurrency   int
-	Prefetch      int
-	AckWait       time.Duration
-	Backoff       time.Duration
-	MaxDeliveries int
-	SweepInterval time.Duration
-	MaxAge        time.Duration
-	PollInterval  time.Duration
-	Clock         func() time.Time
-	Logger        *slog.Logger
-	Metrics       QueueMetrics
+	Runner  QueueRunner
+	Queue   WorkQueue
+	Metrics QueueMetrics
+	Clock   func() time.Time
 
-	// Holdable reports whether a run error means the job should be held for a
-	// human (an expired credential) rather than redelivered or dead-lettered.
-	// The CLI wires it to runner.IsReauth; nil means no error ever holds, so the
-	// scheduler package stays free of the runner dependency (D12).
-	Holdable func(error) bool
-
-	// HoldKey derives what a held item is waiting on (the re-auth provider) from
-	// the run error, stored on the item so a resume probe knows which credential
-	// to check. nil or "" stores no key; the scheduler does not interpret it (D12).
-	HoldKey func(error) string
-
-	// OnHold runs after a job is parked for re-auth, so the CLI can alert an
-	// operator (a Discord webhook) with the tool and the remediation. nil
-	// disables notification; the scheduler package stays free of the notify and
-	// runner dependencies, the same seam as Holdable (D12).
-	OnHold func(ctx context.Context, item *WorkItem, runErr error)
+	// ResumeProbe reports whether a held item's credential (named by its hold
+	// key) is valid again at now, so the sweep can resume it without a human. The
+	// CLI wires it to the reauth credential probe; nil disables auto-resume, so
+	// held items wait for a manual resume, keeping the scheduler package free of
+	// the reauth dependency (D12).
+	ResumeProbe func(holdKey string, now time.Time) bool
 
 	// OnDeadLetter runs after an item exhausts its deliveries and settles
 	// WorkDead, so the CLI can fan a dead_lettered line out to Discord. It fires
@@ -87,12 +68,32 @@ type WorkerConfig struct {
 	// way (.agents/spec/parity/messaging-bridge.md, decision 7).
 	OnDeadLetter func(ctx context.Context, item *WorkItem, runErr error)
 
-	// ResumeProbe reports whether a held item's credential (named by its hold
-	// key) is valid again at now, so the sweep can resume it without a human. The
-	// CLI wires it to the reauth credential probe; nil disables auto-resume, so
-	// held items wait for a manual resume, keeping the scheduler package free of
-	// the reauth dependency (D12).
-	ResumeProbe func(holdKey string, now time.Time) bool
+	// OnHold runs after a job is parked for re-auth, so the CLI can alert an
+	// operator (a Discord webhook) with the tool and the remediation. nil
+	// disables notification; the scheduler package stays free of the notify and
+	// runner dependencies, the same seam as Holdable (D12).
+	OnHold func(ctx context.Context, item *WorkItem, runErr error)
+
+	// HoldKey derives what a held item is waiting on (the re-auth provider) from
+	// the run error, stored on the item so a resume probe knows which credential
+	// to check. nil or "" stores no key; the scheduler does not interpret it (D12).
+	HoldKey func(error) string
+
+	// Holdable reports whether a run error means the job should be held for a
+	// human (an expired credential) rather than redelivered or dead-lettered.
+	// The CLI wires it to runner.IsReauth; nil means no error ever holds, so the
+	// scheduler package stays free of the runner dependency (D12).
+	Holdable func(error) bool
+
+	Logger        *slog.Logger
+	AckWait       time.Duration
+	PollInterval  time.Duration
+	MaxAge        time.Duration
+	SweepInterval time.Duration
+	MaxDeliveries int
+	Backoff       time.Duration
+	Prefetch      int
+	Concurrency   int
 }
 
 // Worker drains the queue: it claims ready items up to its free capacity, runs
@@ -101,24 +102,24 @@ type WorkerConfig struct {
 // their delivery limit, so no fire is silently lost
 // (.agents/spec/14-open-decisions.md, S8).
 type Worker struct {
-	queue         WorkQueue
 	runner        QueueRunner
-	concurrency   int
-	prefetch      int
-	ackWait       time.Duration
-	backoff       time.Duration
-	maxDeliveries int
-	sweepInterval time.Duration
-	maxAge        time.Duration
-	pollInterval  time.Duration
-	clock         func() time.Time
-	logger        *slog.Logger
+	queue         WorkQueue
 	metrics       QueueMetrics
-	holdable      func(error) bool
-	holdKey       func(error) string
-	onHold        func(ctx context.Context, item *WorkItem, runErr error)
-	onDeadLetter  func(ctx context.Context, item *WorkItem, runErr error)
+	clock         func() time.Time
 	resumeProbe   func(holdKey string, now time.Time) bool
+	onDeadLetter  func(ctx context.Context, item *WorkItem, runErr error)
+	onHold        func(ctx context.Context, item *WorkItem, runErr error)
+	holdKey       func(error) string
+	holdable      func(error) bool
+	logger        *slog.Logger
+	ackWait       time.Duration
+	pollInterval  time.Duration
+	maxAge        time.Duration
+	sweepInterval time.Duration
+	maxDeliveries int
+	backoff       time.Duration
+	prefetch      int
+	concurrency   int
 }
 
 // NewWorker builds a Worker, filling WorkerConfig defaults.
@@ -284,8 +285,8 @@ func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 		return
 	}
 
-	w.logger.Warn("work item held for re-authentication",
-		"item", item.ID, "dedup", item.DedupKey, "error", runErr)
+	w.logger.Warn("work item held",
+		"item", item.ID, "dedup", item.DedupKey, "hold_key", holdKey, "error", runErr)
 
 	if w.metrics != nil {
 		w.metrics.ItemHeld()

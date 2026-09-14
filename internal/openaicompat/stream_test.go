@@ -33,12 +33,12 @@ type streamChunkBody struct {
 	Object  string `json:"object"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index int `json:"index"`
-		Delta struct {
+		FinishReason *string `json:"finish_reason"`
+		Delta        struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"delta"`
-		FinishReason *string `json:"finish_reason"`
+		Index int `json:"index"`
 	} `json:"choices"`
 }
 
@@ -215,21 +215,15 @@ func TestStreamClientDisconnectCancelsTurn(t *testing.T) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	clientDone := make(chan struct{})
+	// The handler flushes the role chunk before the turn runs, so Do returns
+	// with the stream still open and the body stays unread until cancel drops
+	// the connection under it.
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
 
-	go func() {
-		defer close(clientDone)
-
-		resp, doErr := (&http.Client{}).Do(req)
-		if doErr != nil {
-			return
-		}
-
-		// Hold the stream open until the cancel below drops it; the copy then
-		// returns and the connection tears down.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	select {
 	case <-agent.started:
@@ -238,7 +232,6 @@ func TestStreamClientDisconnectCancelsTurn(t *testing.T) {
 	}
 
 	cancel()
-	<-clientDone
 
 	select {
 	case <-agent.finished:
@@ -346,12 +339,11 @@ func joinContent(t *testing.T, frames []string) string {
 // then records the cancellation cause, so a disconnect test proves cancellation
 // reaches the turn through the request context.
 type blockingAgent struct {
-	sessionID string
+	ctxErr    error
 	started   chan struct{}
 	finished  chan struct{}
-
-	mu     sync.Mutex
-	ctxErr error
+	sessionID string
+	mu        sync.Mutex
 }
 
 // CreateSession returns a session stamped with the caller's workspace.

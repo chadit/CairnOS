@@ -92,14 +92,19 @@ const (
 	DirectionEnabled = "enabled"
 )
 
+// A tip says "for openai actions with stable outputs, lowering max_tokens cut
+// cost into the ~20% bucket", and nothing more.
+
 // Tip is a content-free recommendation built only from allowlisted fields
-// (.agents/spec/09-a2a-and-hive.md, "What may be shared"). Every field here is
-// an enum, a coarse bucket, or a structured shape with no value tied to
-// content. There is deliberately no free-text field, no params map, no id, and
-// no target: a tip says "for openai actions with stable outputs, lowering
-// max_tokens cut cost into the ~20% bucket", and nothing more. The JSON tags
-// are the wire contract with the hive API.
+// (.agents/spec/09-a2a-and-hive.md, "What may be shared"). Every field is an
+// enum, a coarse bucket, or a structured shape with no value tied to content.
+// There is deliberately no free-text field, no params map, no id, and no
+// target. The JSON tags are the wire contract with the hive API.
 type Tip struct {
+	// ParamShape carries the direction of a param change for param_tuning tips;
+	// nil for output-neutral kinds that change no parameter.
+	ParamShape *ParamShape `json:"param_shape,omitempty"`
+
 	// Kind is the suggestion kind enum (caching, batching, param_tuning). The
 	// hive never carries prompt_refactor: that kind stays node-local because
 	// its content cannot be reduced to a safe shape.
@@ -118,8 +123,4 @@ type Tip struct {
 
 	// LatencyBucket is the coarse latency-saving band, bucketed the same way.
 	LatencyBucket string `json:"latency_bucket"`
-
-	// ParamShape carries the direction of a param change for param_tuning tips;
-	// nil for output-neutral kinds that change no parameter.
-	ParamShape *ParamShape `json:"param_shape,omitempty"`
 }

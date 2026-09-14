@@ -3,17 +3,15 @@ import type {
   CreateSessionResponse,
   ListMessagesResponse,
   ListSessionsResponse,
-  StreamEnvelope,
 } from './types';
-import { CairnApiError, request } from './client';
-import { clearToken, getToken } from './token';
+import { request } from './client';
+import { openNdjsonStream, readNdjson } from './ndjson';
 
 // ChatService client. The unary calls reuse the shared `request` (auth attach,
 // error-envelope unwrap, 401 handling). The two streaming calls (SendMessage,
-// ConfirmAction) hold a long-lived response and parse NDJSON by hand, mirroring
-// stream.ts: each line is a {result|error} envelope and an `error` line aborts
-// the stream as a CairnApiError. Shapes track
-// internal/api/gen/openapi/cairnos.swagger.json by hand; see api/types.ts.
+// ConfirmAction) hold a long-lived response, which ndjson.ts reads for them.
+// Shapes track internal/api/gen/openapi/cairnos.swagger.json by hand; see
+// api/types.ts.
 
 /** createSession opens a conversation. An empty personality uses the server
  * default; we omit the field entirely rather than send an empty string. */
@@ -69,95 +67,12 @@ export function confirmAction(
 }
 
 /** streamChat POSTs a body and yields ChatEvents from the NDJSON response. It
- * holds the shared stream-consumer logic both chat streaming calls need. */
+ * holds the request shape both chat streaming calls need. */
 async function* streamChat(
   path: string,
   body: unknown,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent, void, void> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const init: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
-  if (signal) {
-    init.signal = signal;
-  }
-
-  const response = await fetch(path, init);
-
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearToken();
-    }
-    let message = `chat request failed with status ${response.status}`;
-    try {
-      const errBody = (await response.json()) as { error?: { message?: string } };
-      if (errBody.error?.message) {
-        message = errBody.error.message;
-      }
-    } catch {
-      // Non-JSON error body; the status-derived message stands.
-    }
-    throw new CairnApiError({ code: 'gateway.error', message }, response.status);
-  }
-
-  if (!response.body) {
-    throw new CairnApiError(
-      { code: 'gateway.no_stream', message: 'the gateway returned no response body' },
-      response.status,
-    );
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-
-      let newline = buffer.indexOf('\n');
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line.length > 0) {
-          yield parseLine(line);
-        }
-        newline = buffer.indexOf('\n');
-      }
-    }
-
-    // A final line without a trailing newline is still a complete event.
-    const tail = buffer.trim();
-    if (tail.length > 0) {
-      yield parseLine(tail);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function parseLine(line: string): ChatEvent {
-  const envelope = JSON.parse(line) as StreamEnvelope<ChatEvent>;
-
-  if (envelope.error) {
-    throw new CairnApiError(envelope.error, 200);
-  }
-
-  if (!envelope.result) {
-    throw new CairnApiError(
-      { code: 'gateway.bad_stream_line', message: 'stream line had neither result nor error' },
-      200,
-    );
-  }
-
-  return envelope.result;
+  const stream = await openNdjsonStream(path, body, 'chat request', signal);
+  yield* readNdjson<ChatEvent>(stream);
 }

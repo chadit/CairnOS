@@ -22,20 +22,21 @@ const triggerWorkflow = "workflow"
 // it (.agents/spec/parity/workflow-language.md, "Workflow call").
 const detailChildRunID = "child_run_id"
 
+// The depth caps recursion, and the ancestry both prints the offending chain
+// and, by growing without bound, catches an A->B->A cycle without separate cycle
+// tracking. callInfo is deliberately engine-internal: context.WithoutCancel
+// copies context values, so the error-workflow fire a later slice adds keeps it,
+// and any future context surgery must not strip it.
+
 // callInfo travels a package-private context key down a workflow-call tree. It
-// carries the run that owns the currently executing actions (the parent for any
-// child a workflow-call action spawns), the nesting depth of that run, and the
-// chain of workflow names from the root down to it. The depth caps recursion,
-// and the ancestry both prints the offending chain and, by growing without
-// bound, catches an A->B->A cycle without separate cycle tracking
-// (.agents/spec/parity/workflow-language.md, "Workflow call"). It is deliberately
-// engine-internal: context.WithoutCancel copies context values, so the
-// error-workflow fire a later slice adds keeps it, and any future context
-// surgery must not strip it.
+// carries the run that owns the executing actions (the parent for any child a
+// workflow-call action spawns), that run's nesting depth, and the chain of
+// workflow names from the root down to it
+// (.agents/spec/parity/workflow-language.md, "Workflow call").
 type callInfo struct {
 	parentRunID string
-	depth       int
 	ancestry    []string
+	depth       int
 }
 
 // callInfoKey is the unexported context key type, so no other package can set

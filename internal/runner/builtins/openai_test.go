@@ -289,10 +289,10 @@ func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
 func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 	cases := []struct {
 		name       string
-		status     int
 		retryAfter string
-		wantClass  runner.ErrorClass
 		wantCode   string
+		status     int
+		wantClass  runner.ErrorClass
 		wantRetry  time.Duration
 	}{
 		{name: case401, status: http.StatusUnauthorized, wantClass: runner.ClassPermanent, wantCode: "openai.auth"},

@@ -19,8 +19,7 @@ import (
 // appending it to apiCfg and printing the login banner. It returns the failure
 // exit code and false only when the extension cannot be built (telemetry
 // flushed); a disabled config mounts nothing and returns true. Kept out of
-// runServe so that function stays under the complexity ceiling, the same shape
-// as attachMCPServe and attachWebhookServe.
+// runServe so that function stays under the complexity ceiling.
 func (a *App) attachOAuthServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, authn *auth.Authenticator, members oauth.Tenancy, apiCfg *api.Config, logger *slog.Logger) (int, bool) {
 	if !cfg.OAuth.Enabled {
 		return ExitOK, true
@@ -42,13 +41,10 @@ func (a *App) attachOAuthServe(ctx context.Context, cfg *config.Config, tel *tel
 const oauthloginPath = oauth.LoginPath
 
 // buildOAuthExtension wires the OIDC human-login handler into an api.Extension.
-// It discovers the IdP through its issuer (fetching the discovery document and
-// JWKS URL), builds the oauth2 config and the ID-token verifier, and mounts the
-// two browser-facing routes outside the gRPC interceptor. OAuth needs auth on:
-// a minted token is only useful if the interceptor verifies it, so a nil
-// authenticator is a configuration error here. The concrete *auth.Authenticator
-// is taken rather than the minter interface so the nil check is real (a nil
-// pointer in an interface reads as non-nil). ctx bounds the discovery fetch.
+// The two browser-facing routes mount outside the gRPC interceptor. A nil
+// authenticator is a configuration error: a minted token is only useful if the
+// interceptor verifies it. The concrete *auth.Authenticator is taken, not the
+// minter interface, so a nil pointer cannot hide inside a non-nil interface.
 func buildOAuthExtension(ctx context.Context, cfg *config.Config, authn *auth.Authenticator, members oauth.Tenancy, logger *slog.Logger) (*api.Extension, error) {
 	if authn == nil {
 		return nil, fmt.Errorf("%w: oauth login requires auth.enabled = true so the minted token can be verified", errOAuthNeedsAuth)
