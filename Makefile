@@ -4,13 +4,16 @@
 
 BINARY := bin/cairnos
 
-.PHONY: help build test test-unit test-integration lint tidy proto
+.PHONY: help build deploy test test-unit test-integration lint tidy proto
 
 help: ## List available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-17s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build: proto ## Build the cairnos binary into bin/
 	go build -o $(BINARY) ./cmd/cairnos
+
+deploy: ## Rebuild and restart the cairnos user service when it is not running HEAD
+	./scripts/deploy.sh
 
 test: proto test-unit test-integration ## Run unit then integration tests with the race detector
 
