@@ -251,6 +251,15 @@ runner = "exec"
 params = { command = "/path/to/reconciler.py", workdir = "/path/to/scripts" }
 ```
 
+`stdin` hands a string to the command's standard input, which is how a webhook
+receiver gets its payload without it showing up in a process listing:
+
+```toml
+[action.approval]
+runner = "exec"
+params = { command = "/path/to/receiver.sh", stdin = "${{ inputs.payload }}" }
+```
+
 `allow_actions` denies by default. An action name absent from the list is
 refused at validate time, and a block that is missing or lists nothing refuses
 every action.

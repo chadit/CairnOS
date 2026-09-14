@@ -30,8 +30,14 @@ const cfgKeyEnv = "env"
 // the workflow chooses it, so the two are separate contracts.
 const paramArgs = "args"
 
+// paramStdin names the text handed to the command's standard input. A webhook
+// receiver reads its payload from stdin, so the same script keeps one contract
+// whether a scheduler or an HTTP hop feeds it, and the payload stays out of
+// argv where a process listing would expose it.
+const paramStdin = "stdin"
+
 // Classified error codes this runner returns. The param codes (missing_command,
-// bad_command, bad_workdir) come from requireStringParam and
+// bad_command, bad_workdir, bad_stdin) come from requireStringParam and
 // optionalStringParam with the ExecName prefix.
 const (
 	codeExecDenied   = ExecName + ".denied"
@@ -102,7 +108,11 @@ func (e *Exec) Validate(task *runner.Task) error {
 		return err
 	}
 
-	return optionalStringParam(task, keyWorkdir, ExecName)
+	if err := optionalStringParam(task, keyWorkdir, ExecName); err != nil {
+		return err
+	}
+
+	return optionalStringParam(task, paramStdin, ExecName)
 }
 
 // Execute implements runner.Runner. A non-zero exit comes back permanent with
@@ -125,6 +135,13 @@ func (e *Exec) Execute(ctx context.Context, task *runner.Task) (runner.Result, e
 	cmd.Dir, _ = task.Params[keyWorkdir].(string)
 
 	cmd.Env = append(os.Environ(), e.env...)
+
+	// A nil Stdin hands the child /dev/null, so an absent param leaves a command
+	// that reads stdin seeing EOF straight away instead of blocking on the
+	// serve process's own terminal.
+	if text, hasStdin := task.Params[paramStdin].(string); hasStdin {
+		cmd.Stdin = strings.NewReader(text)
+	}
 
 	return launchExec(runCtx, cmd)
 }

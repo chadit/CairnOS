@@ -153,6 +153,12 @@ func TestExecValidateParams(t *testing.T) {
 			wantCode: codeExecBadArgs,
 		},
 		{
+			name:     "non-string stdin",
+			params:   map[string]any{cmdKey: binTrue, stdinKey: int64(7)},
+			resolved: true,
+			wantCode: builtins.ExecName + ".bad_stdin",
+		},
+		{
 			name:     "unresolved args reference defers",
 			params:   map[string]any{cmdKey: binTrue, argsKey: unresolved},
 			resolved: false,
@@ -288,10 +294,10 @@ func TestExecBuildsWithoutAConfigBlock(t *testing.T) {
 }
 
 func TestExecCapturesOutputExitCodeAndStderrTail(t *testing.T) {
-	t.Parallel()
-
 	shim := writeShim(t, t.TempDir(), "reporter", `echo "ran: $1"
 echo "warn" >&2`)
+
+	t.Parallel()
 
 	result, err := newExec(t, execConfig(nil)).Execute(t.Context(),
 		execTask(map[string]any{cmdKey: shim, argsKey: []any{"nightly"}}))
@@ -319,10 +325,10 @@ echo "warn" >&2`)
 // TestExecNonZeroExitIsPermanent pins the retry contract: the runner reports
 // the exit code and stays permanent, leaving the retry decision to the engine.
 func TestExecNonZeroExitIsPermanent(t *testing.T) {
-	t.Parallel()
-
 	shim := writeShim(t, t.TempDir(), "failer", `echo "reconcile refused" >&2
 exit 3`)
+
+	t.Parallel()
 
 	_, err := newExec(t, execConfig(nil)).Execute(t.Context(), execTask(map[string]any{cmdKey: shim}))
 
@@ -357,11 +363,11 @@ func TestExecMissingCommandIsPermanent(t *testing.T) {
 // that would otherwise outlive its schedule, and that the kill surfaces as a
 // transient error rather than a silent success.
 func TestExecTimeoutKillsTheProcess(t *testing.T) {
-	t.Parallel()
-
 	// The exec keeps sleep from surviving as an orphan holding the stdout pipe
 	// open past the kill.
 	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
+
+	t.Parallel()
 
 	start := time.Now()
 
@@ -378,10 +384,50 @@ func TestExecTimeoutKillsTheProcess(t *testing.T) {
 	}
 }
 
-func TestExecRunsInTheConfiguredWorkdir(t *testing.T) {
+// TestExecFeedsStdinToTheCommand covers the webhook-receiver shape: the payload
+// reaches the script on stdin rather than argv, so a process listing never
+// carries it.
+func TestExecFeedsStdinToTheCommand(t *testing.T) {
+	shim := writeShim(t, t.TempDir(), "reader", "exec cat")
+
 	t.Parallel()
 
+	payload := `{"id":42,"state":"approved"}`
+
+	result, err := newExec(t, execConfig(nil)).Execute(t.Context(),
+		execTask(map[string]any{cmdKey: shim, stdinKey: payload}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if result.Output != payload {
+		t.Fatalf("output = %#v, want the stdin payload %q", result.Output, payload)
+	}
+}
+
+// TestExecWithoutStdinClosesIt proves an absent param leaves a stdin-reading
+// command at EOF instead of blocking on whatever the serve process inherited.
+func TestExecWithoutStdinClosesIt(t *testing.T) {
+	shim := writeShim(t, t.TempDir(), "reader", "exec cat")
+
+	t.Parallel()
+
+	result, err := newExec(t, execConfig(nil)).Execute(t.Context(),
+		execTask(map[string]any{cmdKey: shim}))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if result.Output != "" {
+		t.Fatalf("output = %#v, want empty", result.Output)
+	}
+}
+
+func TestExecRunsInTheConfiguredWorkdir(t *testing.T) {
 	shim := writeShim(t, t.TempDir(), "wherearewe", "pwd")
+
+	t.Parallel()
+
 	workdir := t.TempDir()
 
 	result, err := newExec(t, execConfig(nil)).Execute(t.Context(),
@@ -403,9 +449,10 @@ func TestExecRunsInTheConfiguredWorkdir(t *testing.T) {
 }
 
 func TestExecRejectsAMissingWorkdir(t *testing.T) {
+	shim := writeShim(t, t.TempDir(), "noop", "true")
+
 	t.Parallel()
 
-	shim := writeShim(t, t.TempDir(), "noop", "true")
 	missing := filepath.Join(t.TempDir(), "gone")
 
 	_, err := newExec(t, execConfig(nil)).Execute(t.Context(),
@@ -441,13 +488,13 @@ func TestExecPassesConfigEnvAndKeepsInheritedEnv(t *testing.T) {
 // TestExecCapsCapturedOutput proves a chatty command cannot balloon run
 // storage: the transcript stops at 1 MiB plus at most the line that crossed it.
 func TestExecCapsCapturedOutput(t *testing.T) {
-	t.Parallel()
-
 	shim := writeShim(t, t.TempDir(), "chatty", `i=0
 while [ $i -lt 20000 ]; do
   echo "0123456789012345678901234567890123456789012345678901234567890123"
   i=$((i+1))
 done`)
+
+	t.Parallel()
 
 	result, err := newExec(t, execConfig(nil)).Execute(t.Context(), execTask(map[string]any{cmdKey: shim}))
 	if err != nil {

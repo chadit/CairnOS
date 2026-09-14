@@ -27,6 +27,10 @@ const (
 
 // writeShim drops an executable script into dir and returns its path. Tests
 // point a runner's binary at it instead of any real CLI.
+//
+// Call it before t.Parallel: a fork racing an open write fd fails with ETXTBSY
+// (Go issue 22315), and top-level tests run serially until they go parallel,
+// so writing first closes it before any fork.
 func writeShim(t *testing.T, dir, name, script string) string {
 	t.Helper()
 
@@ -50,10 +54,10 @@ func cliTask() *runner.Task {
 }
 
 func TestCLICapturesOutputAndExitCode(t *testing.T) {
-	t.Parallel()
-
 	shim := writeShim(t, t.TempDir(), "echoer", `echo "got: $1"
 echo "warn" >&2`)
+
+	t.Parallel()
 
 	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: shim}, nil)
 	if err != nil {
@@ -84,11 +88,11 @@ echo "warn" >&2`)
 }
 
 func TestCLIClassifiesFailures(t *testing.T) {
-	t.Parallel()
-
 	tmpDir := t.TempDir()
 	failing := writeShim(t, tmpDir, "failing", `echo "boom" >&2
 exit 1`)
+
+	t.Parallel()
 
 	cases := []struct {
 		name      string
@@ -124,13 +128,13 @@ exit 1`)
 }
 
 func TestCLIClassifiesReauthAndRateLimit(t *testing.T) {
-	t.Parallel()
-
 	tmpDir := t.TempDir()
 	reauth := writeShim(t, tmpDir, "reauth", `echo "error: invalid_grant" >&2
 exit 1`)
 	throttled := writeShim(t, tmpDir, "throttled", `echo "429 too many requests; exceeded retry limit" >&2
 exit 1`)
+
+	t.Parallel()
 
 	cases := []struct {
 		name      string
@@ -166,11 +170,11 @@ exit 1`)
 }
 
 func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
-	t.Parallel()
-
 	// The exec keeps sleep from surviving as an orphan that holds the
 	// stdout pipe open past the kill.
 	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
+
+	t.Parallel()
 
 	cli, err := builtins.NewCLI(builtins.QwenName, builtins.CLITool{Binary: sleeper}, nil)
 	if err != nil {
@@ -200,9 +204,9 @@ func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 // deny the retry a fresh deadline could clear, and under load a short deadline
 // takes this path rather than the mid-run one.
 func TestCLIDeadlineAtStartIsTransientTimeout(t *testing.T) {
-	t.Parallel()
-
 	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
+
+	t.Parallel()
 
 	cli, err := builtins.NewCLI(builtins.QwenName, builtins.CLITool{Binary: sleeper}, nil)
 	if err != nil {
@@ -221,10 +225,10 @@ func TestCLIDeadlineAtStartIsTransientTimeout(t *testing.T) {
 }
 
 func TestCLIStreamsChunks(t *testing.T) {
-	t.Parallel()
-
 	multi := writeShim(t, t.TempDir(), "multi", `echo "line one"
 echo "line two"`)
+
+	t.Parallel()
 
 	cli, err := builtins.NewCLI(builtins.OMPName, builtins.CLITool{Binary: multi}, nil)
 	if err != nil {
@@ -256,9 +260,9 @@ echo "line two"`)
 }
 
 func TestCLIStdinMode(t *testing.T) {
-	t.Parallel()
-
 	catShim := writeShim(t, t.TempDir(), "catter", "cat")
+
+	t.Parallel()
 
 	cli, err := builtins.NewCLI(builtins.AntigravityName, builtins.CLITool{Binary: catShim}, map[string]any{stdinKey: true})
 	if err != nil {
@@ -276,9 +280,9 @@ func TestCLIStdinMode(t *testing.T) {
 }
 
 func TestCLIConfigOverridesBinaryAndArgs(t *testing.T) {
-	t.Parallel()
-
 	shim := writeShim(t, t.TempDir(), "override", `echo "$1|$2"`)
+
+	t.Parallel()
 
 	cfg := map[string]any{
 		binaryKey: shim,
