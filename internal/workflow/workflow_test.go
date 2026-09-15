@@ -380,7 +380,7 @@ name     = "prflow_app"
 schedule = "* * * * *"
 
 [workflow.requires]
-urls = ["https://git.example.com/operator/Imagetool-Work"]
+urls = ["https://git.example.com/team/app"]
 vpn  = "tun0"
 
 [action.reconcile]
@@ -396,7 +396,7 @@ runner = "mock"
 		t.Fatal("requires was not parsed")
 	}
 
-	if len(flow.Requires.URLs) != 1 || flow.Requires.URLs[0] != "https://git.example.com/operator/Imagetool-Work" {
+	if len(flow.Requires.URLs) != 1 || flow.Requires.URLs[0] != "https://git.example.com/team/app" {
 		t.Errorf("urls = %q, want the one repository URL", flow.Requires.URLs)
 	}
 

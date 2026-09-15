@@ -1,7 +1,7 @@
 {
   "version": "0.2",
   "language": "en",
-  "$comment": "Read by ops's scripts/lint.sh tool_cspell on every markdown file in this repo. Code spans, fences, URLs, paths, and snake_case identifiers are skipped so the list only has to hold prose terms. Add a word here when it is spelled the way you mean it.",
+  "$comment": "Read by the markdown spell-check lane on every markdown file in this repo. Code spans, fences, URLs, paths, and snake_case identifiers are skipped so the list only has to hold prose terms. Add a word here when it is spelled the way you mean it.",
   "ignoreRegExpList": [
     "/```[\\s\\S]*?```/g",
     "/`[^`\\n]*`/g",

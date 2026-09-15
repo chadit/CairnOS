@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	repoURL      = "https://git.example.com/operator/Imagetool-Work"
+	repoURL      = "https://git.example.com/team/app"
 	hostAddr     = "git.example.com:443"
 	workflowName = "prflow_app"
 )

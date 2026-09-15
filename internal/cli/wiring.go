@@ -26,6 +26,7 @@ import (
 	"github.com/chadit/CairnOS/internal/runner/plugin"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/secrets"
+	sourcesync "github.com/chadit/CairnOS/internal/source"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/store/postgres"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
@@ -875,6 +876,26 @@ func (a *App) closeSecretSource(closeSource func() error) {
 	}
 }
 
+// sourceSpecs flattens the configured [source.<name>] blocks into the slice the
+// source package and its runner work from, in name order so the boot log and the
+// registry see the same sequence every start. Every entry point passes its own
+// config's blocks, so a local run agrees with serve about which names exist.
+func sourceSpecs(sources map[string]config.Source) []sourcesync.Spec {
+	specs := make([]sourcesync.Spec, 0, len(sources))
+
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		block := sources[name]
+		specs = append(specs, sourcesync.Spec{
+			Name: name,
+			Repo: block.Repo,
+			Dest: block.Dest,
+			Ref:  block.Ref,
+		})
+	}
+
+	return specs
+}
+
 // newRegistry wires every built-in runner, plus a plugin-backed runner per
 // type = "plugin" block and a per-name mcp_client per type = "mcp_client"
 // block. BuildAll hands each factory its [runner.<name>] block and spawns
@@ -885,6 +906,8 @@ func (a *App) closeSecretSource(closeSource func() error) {
 func newRegistry(
 	ctx context.Context,
 	runnerCfgs map[string]map[string]any,
+	sources []sourcesync.Spec,
+	hostEnv []string,
 	mem memory.Store,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
@@ -893,7 +916,7 @@ func newRegistry(
 	registry := runner.NewRegistry()
 
 	for name, tool := range builtins.CLIDefaults() {
-		if err := registry.Register(name, builtins.CLIFactory(name, tool)); err != nil {
+		if err := registry.Register(name, builtins.CLIFactory(name, tool, hostEnv)); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", name, err)
 		}
 	}
@@ -928,8 +951,9 @@ func newRegistry(
 		{name: builtins.GitHubName, factory: builtins.GitHubFactory},
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
-		{name: builtins.ExecName, factory: builtins.ExecFactory},
+		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv)},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
+		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand)},
 	}
 
 	for _, builtin := range fixed {

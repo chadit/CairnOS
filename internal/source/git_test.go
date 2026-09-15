@@ -1,0 +1,144 @@
+package source_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/chadit/CairnOS/internal/source"
+)
+
+// stubGitScript stands in for git long enough to report what GitCommand handed
+// it: the two prompt settings and the argv it was launched with.
+const stubGitScript = `#!/bin/sh
+echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT}"
+echo "GIT_SSH_COMMAND=${GIT_SSH_COMMAND}"
+echo "argv=$*"
+`
+
+// orphanGitScript stands in for a git that leaves a grandchild holding the
+// pipes, the shape a credential helper or an ssh process takes when it survives
+// the kill a context deadline triggers. The background sleeper inherits stdout,
+// so nothing closes the write end on its own.
+const orphanGitScript = `#!/bin/sh
+sleep 60 &
+sleep 60
+`
+
+// killedCallDeadline is how long the stand-in runs before the context kills it,
+// short enough that the wait afterwards is the only thing the case measures.
+const killedCallDeadline = 200 * time.Millisecond
+
+// returnBound is the ceiling the killed call has to come back inside. With no
+// WaitDelay on the command, Wait blocks on the orphan's pipe for the sleeper's
+// full minute, so this case reports the hang instead of sitting through it.
+const returnBound = 20 * time.Second
+
+// stubPerm is the mode the stand-in script needs to be launched.
+const stubPerm = 0o700
+
+// TestGitCommandRunsNonInteractively proves the production command cannot stop
+// on a credential prompt: a real prompt would hang the clone at serve start or a
+// sync inside a scheduled run. It replaces git on PATH, so it stays sequential:
+// Go finishes every non-parallel case before it resumes the parallel ones, which
+// keeps the stand-in out of their way.
+func TestGitCommandRunsNonInteractively(t *testing.T) {
+	binDir := t.TempDir()
+
+	stub := filepath.Join(binDir, "git")
+	if err := os.WriteFile(stub, []byte(stubGitScript), stubPerm); err != nil {
+		t.Fatalf("write stub git: %v", err)
+	}
+
+	t.Setenv("PATH", binDir)
+	t.Setenv("GIT_TERMINAL_PROMPT", "1")
+
+	out, err := source.GitCommand(t.Context(), "/some/checkout", "fetch", "origin")
+	if err != nil {
+		t.Fatalf("GitCommand: %v", err)
+	}
+
+	if !strings.Contains(out, "GIT_TERMINAL_PROMPT=0") {
+		t.Fatalf("git saw %q, want GIT_TERMINAL_PROMPT=0 even though the parent set 1", out)
+	}
+
+	if !strings.Contains(out, "argv=-C /some/checkout fetch origin") {
+		t.Fatalf("git saw %q, want the invocation rooted at the checkout with -C", out)
+	}
+
+	if !strings.Contains(out, "GIT_SSH_COMMAND=ssh -o BatchMode=yes") {
+		t.Fatalf("git saw %q, want ssh put in batch mode so a host-key question fails instead of asking", out)
+	}
+}
+
+// TestGitCommandKeepsOperatorSSHCommand proves the batch-mode default yields to
+// an operator who has already said how this host reaches its remotes.
+func TestGitCommandKeepsOperatorSSHCommand(t *testing.T) {
+	binDir := t.TempDir()
+
+	stub := filepath.Join(binDir, "git")
+	if err := os.WriteFile(stub, []byte(stubGitScript), stubPerm); err != nil {
+		t.Fatalf("write stub git: %v", err)
+	}
+
+	t.Setenv("PATH", binDir)
+	t.Setenv("GIT_SSH_COMMAND", "ssh -i /etc/cairnos/deploy_key")
+
+	out, err := source.GitCommand(t.Context(), "/some/checkout", "fetch", "origin")
+	if err != nil {
+		t.Fatalf("GitCommand: %v", err)
+	}
+
+	if !strings.Contains(out, "GIT_SSH_COMMAND=ssh -i /etc/cairnos/deploy_key") {
+		t.Fatalf("git saw %q, want the operator's own ssh command left alone", out)
+	}
+}
+
+// TestGitCommandReturnsAfterKillWithOrphanHoldingPipes proves FR11's bound
+// survives a grandchild. Killing git does not close the stdout it handed down,
+// so without a WaitDelay the call never returns and the runner's per-source lock
+// stays held for the life of the process.
+func TestGitCommandReturnsAfterKillWithOrphanHoldingPipes(t *testing.T) {
+	binDir := t.TempDir()
+
+	stub := filepath.Join(binDir, "git")
+	if err := os.WriteFile(stub, []byte(orphanGitScript), stubPerm); err != nil {
+		t.Fatalf("write stub git: %v", err)
+	}
+
+	// The stand-in goes in front of the real PATH rather than replacing it: the
+	// script needs sleep to resolve, and without it both sleeps fail instantly,
+	// no orphan holds the pipes, and the case passes while proving nothing.
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(t.Context(), killedCallDeadline)
+	defer cancel()
+
+	done := make(chan error, 1)
+	start := time.Now()
+
+	go func() {
+		_, err := source.GitCommand(ctx, t.TempDir(), "fetch", "origin")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("GitCommand returned nil for a call its context killed")
+		}
+	case <-time.After(returnBound):
+		t.Fatalf("GitCommand did not return within %s of its context deadline", returnBound)
+	}
+
+	// A call that comes back before the deadline never reached the kill, which
+	// means the stand-in died on its own and the orphan this case is about was
+	// never there.
+	if elapsed := time.Since(start); elapsed < killedCallDeadline {
+		t.Fatalf("GitCommand returned after %s, before its %s deadline; the stand-in never held the pipes",
+			elapsed, killedCallDeadline)
+	}
+}

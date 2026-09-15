@@ -15,6 +15,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/hive"
+	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
@@ -188,6 +189,11 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return ExitFailure
 	}
 
+	specs, code, proceed := a.prepareSources(ctx, cfg, tel)
+	if !proceed {
+		return code
+	}
+
 	queue, closeQueue, err := openWorkQueue(ctx, dir, cfg, scheds)
 	if err != nil {
 		return a.failServe(ctx, tel, "work queue", err)
@@ -203,7 +209,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// while it is still empty and resolve identities per send later.
 	msgRegistry := messaging.NewRegistry()
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, stores.rules, credManager,
+	registry, err := newRegistry(ctx, cfg.Runners, specs, hostenv.Render(cfg.Hosts), mem, stores.rules, credManager,
 		&messageSenderAdapter{registry: msgRegistry, logger: logger})
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)

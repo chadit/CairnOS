@@ -18,7 +18,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 	registry := runner.NewRegistry()
 
 	for name, tool := range builtins.CLIDefaults() {
-		if err := registry.Register(name, builtins.CLIFactory(name, tool)); err != nil {
+		if err := registry.Register(name, builtins.CLIFactory(name, tool, nil)); err != nil {
 			t.Fatalf("register %s: %v", name, err)
 		}
 	}

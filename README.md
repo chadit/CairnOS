@@ -275,7 +275,7 @@ outage on its own:
 
 ```toml
 [workflow.requires]
-urls = ["https://git.example.com/operator/Imagetool-Work"]
+urls = ["https://git.example.com/team/app"]
 vpn  = "tun0"
 ```
 
@@ -289,6 +289,196 @@ is held rather than retried and dead-lettered, and one line goes out under the
 final line reports the recovery and how long the host was gone. Add
 `"connectivity"` to `[notify.mattermost]` or `[notify.discord]` `events` to
 receive them.
+
+### Sources
+
+A host can get its workflows and scripts from a git repository instead of a
+deploy step. Name the repository and where it goes, and serve clones it at
+startup when the path is missing:
+
+```toml
+[source.automation]
+repo = "https://github.com/example/automation.git"
+dest = "/srv/automation"
+ref  = "main"
+
+# Let workflows reach the checkout by name instead of by path.
+[env]
+allowlist = ["AUTOMATION_ROOT"]
+```
+
+Give the serve process the same path in its environment file, the one
+`EnvironmentFile=` points at:
+
+```sh
+AUTOMATION_ROOT=/srv/automation
+```
+
+Workflows then name the variable rather than the path:
+
+```toml
+[action.reconcile]
+runner = "exec"
+params = { command = "${{ env.AUTOMATION_ROOT }}/engines/pr-worker/scripts/reconcile.py" }
+```
+
+The workflow file lives in the repository and every host that clones it reads the
+same text, so only `dest` and the environment file should name the path, and a box
+where `$HOME` moves needs no edit to the workflow. `allowlist` is the gate: a
+variable missing from it fails the run instead of being read.
+
+`dest` is an absolute path outside the CairnOS directory, since CairnOS prunes
+and backs up its own home on its own schedule. CairnOS passes no git credentials
+of its own, so a private repository works only when the serve user's git setup
+already reaches it.
+
+Two settings keep a credential question from stalling a boot or a scheduled run.
+`GIT_TERMINAL_PROMPT=0` turns off git's own username and password prompt. For an
+`ssh://` or `git@host:` remote the question comes from ssh instead, so CairnOS
+also sets `GIT_SSH_COMMAND` to `ssh -o BatchMode=yes` unless you have set that
+variable yourself. A host key that is not in `known_hosts`, or a key with a
+passphrase, then fails the clone with a message rather than waiting for an answer
+nobody is there to give. Put the deploy key and the host key on the box before
+pointing a source at an ssh remote.
+
+`ref` is resolved against the remote rather than declared. A remote branch is
+followed to its tip. An exact tag pins the tree until you move the pin. A `ref`
+containing `*`, `?` or `[` is a tag pattern whose newest match by version sort
+wins, so `v*` follows releases. Write it as `v[0-9]*.[0-9]*.[0-9]*` when the
+pattern should skip pre-release tags like `v2.0.0-rc1`. A name that is both a
+branch and a tag fails instead of picking one.
+
+The sync is an ordinary runner action, so you decide when it runs:
+
+```toml
+[action.sync]
+runner = "source"
+params = { source = "automation" }
+```
+
+Its output is empty when nothing moved and `<old>..<new>` when HEAD did, which is
+what the announcement below keys on. A scheduled workflow is the usual way to
+poll:
+
+```toml
+[workflow]
+name     = "source_sync"
+schedule = "*/5 * * * *"
+timeout  = "9m"
+
+[workflow.requires]
+urls = ["https://github.com"]
+
+[action.sync]
+runner = "source"
+params = { source = "automation" }
+
+[action.announce]
+runner     = "message"
+depends_on = ["sync"]
+condition  = "${{ sync.output }} != ''"
+params     = { identity = "ops", to = "#ops", text = "automation moved ${{ sync.output }} on agent-box" }
+```
+
+That file can live inside the tree it syncs. Point `cairnos schedule add` at its
+path there once the first boot has cloned it.
+
+CairnOS never writes to a source. The sync fetches, fast-forwards a branch, and
+parks HEAD on a tag with no branch attached. It never runs reset, stash, clean,
+or a merge that is not a fast-forward. An edit sitting in the tree stops the next
+sync with a message naming the path, and the edit stays exactly where it is until
+you commit or revert it. A local commit the remote cannot fast-forward past stops
+the sync the same way.
+
+At startup serve checks that an existing tree is the repository the block names
+and puts it on the configured ref when it is somewhere else, which is how moving
+a pin works: edit `ref`, restart, and the next boot checks the new tag out. That
+repositioning follows the same rule as a sync, so a tree with uncommitted work in
+it stops serve instead of being written over. If the new ref is not on disk yet,
+serve logs a line saying so and starts anyway, and the first sync fetches it.
+
+Two syncs for one source never overlap inside one serve process. That lock is
+per process, though, so running `cairnos schedule run source_sync` by hand while
+serve's own schedule fires puts two processes in one tree. Git's index lock turns
+that into a failed run rather than a damaged checkout, but the run still fails.
+
+Warning: whoever can push to `ref` runs code on this host as the serve user
+within one polling interval. Pin `ref` to a tag on hosts where a change should be
+reviewed before it runs.
+
+### Hosts and harnesses
+
+A job that drives a model CLI on another machine has to know where that binary
+lives. A non-login ssh shell usually starts without `~/.local/bin` on its `PATH`,
+and the same tool can sit under a different name on each box. Describe the
+machines once and every job gets the answer:
+
+```toml
+[host.build_box]
+type = "worker"
+ssh  = "build-box"
+
+[host.build_box.harness.claude]
+name = "claude-agent"
+
+[host.build_box.harness.codex]
+name = "codex-agent"
+
+[host.build_box.harness.copilot]
+
+[host.build_box.harness.omp-glm]
+provider = "zai"
+```
+
+`type` is `worker` for a machine that runs the CLIs or `agent` for one that
+drives them, and `ssh` is the alias a job reaches it by, held to the same
+grammar as the block name since that is what it is. Each tool block takes
+`path`, `name`, and `provider`, and all three are optional. `path` defaults to
+`~/.local/bin` and must not end in a slash, `name` defaults to the block's own
+key, so `copilot` above needs no keys at all. `provider` is a label for whose
+model sits behind the tool.
+
+Serve, `cairnos run`, `cairnos schedule run`, `cairnos suggestions`, and the MCP
+server all render the same table into the environment of every child they launch.
+The block above becomes exactly this:
+
+```sh
+CAIRNOS_HOSTS=build_box
+CAIRNOS_HOST_BUILD_BOX_TYPE=worker
+CAIRNOS_HOST_BUILD_BOX_SSH=build-box
+CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude codex copilot omp-glm
+CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent
+CAIRNOS_HOST_BUILD_BOX_HARNESS_CODEX=~/.local/bin/codex-agent
+CAIRNOS_HOST_BUILD_BOX_HARNESS_COPILOT=~/.local/bin/copilot
+CAIRNOS_HOST_BUILD_BOX_HARNESS_OMP_GLM=~/.local/bin/omp-glm
+CAIRNOS_HOST_BUILD_BOX_HARNESS_OMP_GLM_PROVIDER=zai
+```
+
+The name after `CAIRNOS_HOST_` is the block name upper-cased with every dot and
+dash turned into an underscore, and the same rule applies to the tool key. That
+mapping loses information, so two names that would land on one variable, such as
+`build_box` and `build-box`, fail config load instead of one quietly
+winning.
+
+A variable is absent rather than empty when the thing it describes is not
+configured. `_SSH` and `_PROVIDER` appear only when the block sets them, and a
+host with no tool blocks gets no `_HARNESSES` line at all, so a job can tell
+"nothing configured" from "configured as nothing".
+
+A leading `~` is passed through exactly as written. CairnOS never expands it,
+because the machine that runs the binary is the only one that knows its own home
+directory. A job sending the path to another box should rewrite `~/` to `"$HOME"/`
+in the remote command so that box expands it.
+
+Two things do not receive the table. `[runner.exec] env` refuses any key starting
+with `CAIRNOS_HOST_`, so the blocks are the one place these values come from.
+And `sandbox_exec` passes no environment into its container at all, which is its
+isolation contract; a sandboxed action that needs a path should take it as a
+param.
+
+Which model and how hard it thinks are not host settings. They belong to the job
+that runs, next to the rest of its own config, because the same binary serves
+several jobs with different budgets.
 
 ## Chat in Mattermost
 

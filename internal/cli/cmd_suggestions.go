@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/tuning"
@@ -95,7 +96,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 		// it opens no secret source, so outbound credentials are not wired here.
 		// A workflow that binds a credential to a runner fails this replay at
 		// BuildAll, which is the same signal as a missing credential elsewhere.
-		registry, err := newRegistry(ctx, cfg.Runners, nil, nil, nil, nil)
+		registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), nil, nil, nil, nil)
 		if err != nil {
 			a.printErrf("suggestions scan: build runners for replay: %v\n", err)
 

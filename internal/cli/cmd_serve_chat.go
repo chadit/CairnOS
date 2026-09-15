@@ -12,6 +12,7 @@ import (
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/skills"
+	sourcesync "github.com/chadit/CairnOS/internal/source"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/internal/vault"
@@ -26,6 +27,20 @@ func (a *App) failServe(ctx context.Context, tel *telemetry.Telemetry, stage str
 	a.closeTelemetry(ctx, tel)
 
 	return ExitFailure
+}
+
+// prepareSources brings every configured source up before anything reads one,
+// and returns the specs the runner registry needs. A workflow can live inside
+// the tree it syncs, so serve has no business starting on a host where the first
+// clone failed or the tree on disk points at another repository.
+func (a *App) prepareSources(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry) ([]sourcesync.Spec, int, bool) {
+	specs := sourceSpecs(cfg.Sources)
+
+	if err := sourcesync.EnsureAll(ctx, sourcesync.GitCommand, specs, a.logger); err != nil {
+		return nil, a.failServe(ctx, tel, "sources", err), false
+	}
+
+	return specs, ExitOK, true
 }
 
 // attachChat builds the chat agent and, when chat is enabled, mounts it onto

@@ -487,3 +487,41 @@ func TestServeRefusesNetworkBind(t *testing.T) {
 		t.Fatalf("stderr %q does not name the explicit open-API flag", stderr.String())
 	}
 }
+
+// TestServeFailsWhenSourceCannotClone proves the boot-time source guard: a
+// configured tree whose repository does not exist stops serve before the runner
+// registry is built, and the stage name says which step refused.
+func TestServeFailsWhenSourceCannotClone(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	// dest sits outside dir because a source inside the CairnOS home is refused
+	// at config load, which would test the wrong guard.
+	dest := filepath.Join(t.TempDir(), "automation")
+	repo := filepath.Join(t.TempDir(), "no-such-repo.git")
+
+	cfgTOML := "[api]\ngrpc = \"127.0.0.1:0\"\nhttp = \"127.0.0.1:0\"\n\n" +
+		"[telemetry]\nenabled = false\n\n" +
+		"[source.automation]\nrepo = \"" + repo + "\"\ndest = \"" + dest + "\"\n"
+
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(cfgTOML), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir)
+
+	if code != cli.ExitFailure {
+		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
+	}
+
+	if !strings.Contains(stderr, "sources") {
+		t.Fatalf("stderr does not name the sources stage:\n%s", stderr)
+	}
+
+	// The block name alone would also match the dest path, so this asserts the
+	// prefix EnsureAll puts in front of it.
+	if !strings.Contains(stderr, "source automation") {
+		t.Fatalf("stderr does not name the failing source:\n%s", stderr)
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/agentloop"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/store"
@@ -262,7 +263,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, mem, nil, credManager, nil)
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), mem, nil, credManager, nil)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 

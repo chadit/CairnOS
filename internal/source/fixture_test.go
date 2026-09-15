@@ -1,0 +1,260 @@
+package source_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"testing"
+
+	"github.com/chadit/CairnOS/internal/source"
+	"github.com/chadit/CairnOS/pkg/runner"
+)
+
+// Fixture constants: the mode for files and directories the fixtures create,
+// and the source name they all carry.
+const (
+	fixtureFilePerm = 0o600
+	fixtureDirPerm  = 0o750
+	specName        = "automation"
+	trackedFile     = "README.md"
+)
+
+// TestMain points git at an empty global and system config for the whole
+// package, so a developer's own gpg signing, commit template, or default branch
+// cannot change what these fixtures build.
+func TestMain(m *testing.M) {
+	os.Exit(runWithEmptyGitConfig(m))
+}
+
+// runWithEmptyGitConfig wraps m.Run so the temp config directory is removed
+// before os.Exit skips every deferred call.
+func runWithEmptyGitConfig(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "cairnos-source-gitconfig")
+	if err != nil {
+		panic("create git config dir: " + err.Error())
+	}
+
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	empty := filepath.Join(dir, "gitconfig")
+	if writeErr := os.WriteFile(empty, nil, fixtureFilePerm); writeErr != nil {
+		panic("write empty git config: " + writeErr.Error())
+	}
+
+	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		if setErr := os.Setenv(key, empty); setErr != nil {
+			panic("set " + key + ": " + setErr.Error())
+		}
+	}
+
+	return m.Run()
+}
+
+// origin is a bare repository plus the work tree the fixtures commit through.
+type origin struct {
+	bare string
+	work string
+}
+
+// newOrigin builds a bare repository with one commit on main, reachable over a
+// local path so no test touches the network.
+func newOrigin(t *testing.T) origin {
+	t.Helper()
+
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	work := filepath.Join(root, "work")
+
+	git(t, root, "init", "--bare", "--initial-branch=main", bare)
+	git(t, root, "init", "--initial-branch=main", work)
+	setIdentity(t, work)
+	git(t, work, "remote", "add", "origin", bare)
+
+	repo := origin{bare: bare, work: work}
+	repo.commit(t, "one\n", "first")
+	repo.push(t)
+
+	return repo
+}
+
+// commit rewrites the tracked README in the work tree and commits it. One
+// tracked file is enough: these fixtures care about where HEAD lands, not about
+// the shape of the tree.
+func (o origin) commit(t *testing.T, content, message string) {
+	t.Helper()
+
+	writeFixtureFile(t, filepath.Join(o.work, trackedFile), content)
+	git(t, o.work, "add", trackedFile)
+	git(t, o.work, "commit", "-m", message)
+}
+
+// push sends main and every tag to the bare repository. The branch goes by its
+// full ref because one case deliberately creates a tag named main, and a short
+// name would then match two refs and fail the push.
+func (o origin) push(t *testing.T) {
+	t.Helper()
+
+	git(t, o.work, "push", "--tags", "origin", "refs/heads/main:refs/heads/main")
+}
+
+// tag names the work tree's current commit and pushes the tag.
+func (o origin) tag(t *testing.T, name string) {
+	t.Helper()
+
+	git(t, o.work, "tag", name)
+	o.push(t)
+}
+
+// mustEnsure runs Ensure for spec and stops on failure, so a Sync case says
+// nothing about the clone that set it up.
+func mustEnsure(t *testing.T, spec source.Spec) {
+	t.Helper()
+
+	if err := source.Ensure(t.Context(), source.GitCommand, spec, nil); err != nil {
+		t.Fatalf("ensure %s: %v", spec.Name, err)
+	}
+}
+
+// specFor builds a spec pointing at a fresh destination under a temp directory.
+func specFor(t *testing.T, repo origin, ref string) source.Spec {
+	t.Helper()
+
+	return source.Spec{
+		Name: specName,
+		Repo: repo.bare,
+		Dest: filepath.Join(t.TempDir(), "checkout"),
+		Ref:  ref,
+	}
+}
+
+// brokenSpec names a repository path that was never created, which is the
+// cheapest offline stand-in for a remote a host cannot reach.
+func brokenSpec(t *testing.T) source.Spec {
+	t.Helper()
+
+	return source.Spec{
+		Name: specName,
+		Repo: filepath.Join(t.TempDir(), "no-such-repo.git"),
+		Dest: filepath.Join(t.TempDir(), "checkout"),
+		Ref:  "main",
+	}
+}
+
+// detach parks a work tree's HEAD on one commit-ish without a branch, the state
+// a pinned tag leaves behind.
+func detach(t *testing.T, repo, commitish string) {
+	t.Helper()
+
+	git(t, repo, "checkout", "--detach", commitish)
+}
+
+// recorder wraps the production git so a case can assert on the argv a call path
+// issued while every command still does real work against the fixture.
+type recorder struct {
+	calls [][]string
+	mu    sync.Mutex
+}
+
+// git records one invocation and passes it through.
+func (r *recorder) git(ctx context.Context, dir string, argv ...string) (string, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, slices.Clone(argv))
+	r.mu.Unlock()
+
+	// The recorder is a pass-through seam, so the production error reaches the
+	// caller exactly as it would without it.
+	return source.GitCommand(ctx, dir, argv...) //nolint:wrapcheck // pass-through recorder
+}
+
+// ran reports whether any recorded invocation started with verb.
+func (r *recorder) ran(verb string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, argv := range r.calls {
+		if len(argv) > 0 && argv[0] == verb {
+			return true
+		}
+	}
+
+	return false
+}
+
+// setIdentity gives one repository a committer, since the package runs with an
+// empty global config and git refuses to commit without one.
+func setIdentity(t *testing.T, repo string) {
+	t.Helper()
+
+	git(t, repo, "config", "user.name", "CairnOS Fixture")
+	git(t, repo, "config", "user.email", "fixture@example.invalid")
+	git(t, repo, "config", "commit.gpgsign", "false")
+}
+
+// git runs one fixture command through the production entry point, stopping the
+// case on error.
+func git(t *testing.T, dir string, argv ...string) string {
+	t.Helper()
+
+	out, err := source.GitCommand(t.Context(), dir, argv...)
+	if err != nil {
+		t.Fatalf("git %v in %s: %v", argv, dir, err)
+	}
+
+	return out
+}
+
+// writeFixtureFile writes one file, creating its directory when needed.
+func writeFixtureFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), fixtureDirPerm); err != nil {
+		t.Fatalf("create %s: %v", filepath.Dir(path), err)
+	}
+
+	if err := os.WriteFile(path, []byte(content), fixtureFilePerm); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// readFixtureFile reads one file and fails the test when it is gone.
+func readFixtureFile(t *testing.T, path string) string {
+	t.Helper()
+
+	data, err := os.ReadFile(path) // #nosec G304 -- the path is built by the test itself
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	return string(data)
+}
+
+// wantCode asserts the failure is classified and carries one code.
+func wantCode(t *testing.T, err error, code string) {
+	t.Helper()
+
+	classified, ok := errors.AsType[*runner.Error](err)
+	if !ok {
+		t.Fatalf("error %v is not a classified runner error", err)
+	}
+
+	if classified.Code != code {
+		t.Fatalf("error code = %q, want %q (%v)", classified.Code, code, err)
+	}
+}
+
+// wantClass asserts the retry class the engine will act on.
+func wantClass(t *testing.T, err error, class runner.ErrorClass) {
+	t.Helper()
+
+	classified, ok := errors.AsType[*runner.Error](err)
+	if !ok {
+		t.Fatalf("error %v is not a classified runner error", err)
+	}
+
+	if classified.Class != class {
+		t.Fatalf("error class = %v, want %v (%v)", classified.Class, class, err)
+	}
+}

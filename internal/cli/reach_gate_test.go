@@ -22,7 +22,7 @@ name     = "prflow_app"
 schedule = "* * * * *"
 
 [workflow.requires]
-urls = ["https://git.example.com/operator/Imagetool-Work"]
+urls = ["https://git.example.com/team/app"]
 vpn  = "tun0"
 
 [action.reconcile]

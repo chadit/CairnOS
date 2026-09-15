@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -26,6 +27,16 @@ type Config struct {
 	// into a typed Credential (unlike Runners, which stays verbatim, because a
 	// credential's grant, token_url, and secret refs validate at Load).
 	Credentials map[string]Credential
+
+	// Sources carries each [source.<name>] block parsed and validated into a
+	// typed Source, so serve can clone a missing tree before the runner registry
+	// is built.
+	Sources map[string]Source
+
+	// Hosts carries each [host.<name>] block, with the tool blocks nested under
+	// it, parsed and validated into a typed Host. Wiring renders the table into
+	// the environment every job's child process receives.
+	Hosts map[string]Host
 
 	Hive      Hive
 	MCP       MCP
@@ -91,6 +102,25 @@ type Credential struct {
 	// the scheme guard) for a provider on an internal or dev endpoint, matching
 	// the runner opt-out. It also lets TokenURL use http.
 	AllowPrivateTargets bool
+}
+
+// Source is one [source.<name>] block: a git working tree CairnOS clones when
+// it is absent and keeps current through the source runner, never writing to
+// it. The tree is how a host gets the workflows and scripts it runs, so whoever
+// can push to Ref runs code as the serve user.
+type Source struct {
+	// Repo is the clone URL. CairnOS passes no credentials of its own, so a
+	// private repo works only when the serve user's own git setup reaches it.
+	Repo string
+
+	// Dest is the absolute path of the working tree. It sits outside the CairnOS
+	// directory so the state CairnOS prunes and the source it syncs never
+	// overlap.
+	Dest string
+
+	// Ref is a remote branch to follow, an exact tag to pin, or a tag glob whose
+	// newest match by version sort wins. Empty means DefaultSourceRef.
+	Ref string
 }
 
 // Engine bounds execution.
@@ -774,6 +804,8 @@ func Default() Config {
 		},
 		Runners:     map[string]map[string]any{},
 		Credentials: map[string]Credential{},
+		Sources:     map[string]Source{},
+		Hosts:       map[string]Host{},
 	}
 }
 
@@ -910,6 +942,16 @@ func Load(path string) (Config, error) {
 	}
 
 	if validErr := validateCredentials(cfg.Credentials); validErr != nil {
+		return cfg, validErr
+	}
+
+	// The config file's own directory is the CairnOS home a synced tree must stay
+	// out of, so a source declared in a scaffold cannot land inside it.
+	if validErr := validateSources(cfg.Sources, filepath.Dir(path)); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateHosts(cfg.Hosts); validErr != nil {
 		return cfg, validErr
 	}
 
@@ -1221,6 +1263,16 @@ type fileConfig struct {
 	// file unnoticed (security amendment 4).
 	Credential map[string]map[string]any `toml:"credential"`
 
+	// Host holds each [host.<name>] block verbatim, nested tool blocks included:
+	// go-toml hands the whole two-level shape back inside this one raw type, and
+	// parsing it here is what lets an unknown key at any level fail Load.
+	Host map[string]map[string]any `toml:"host"`
+
+	// Source holds each [source.<name>] block verbatim for the same reason as
+	// Credential: go-toml drops unknown struct fields silently, which would leave
+	// a typo'd dest or ref syncing a tree the operator never meant to name.
+	Source map[string]map[string]any `toml:"source"`
+
 	OAuth struct {
 		Enabled             *bool    `toml:"enabled"`
 		Issuer              *string  `toml:"issuer"`
@@ -1289,6 +1341,24 @@ func applyTOML(cfg *Config, data []byte) error {
 		}
 
 		cfg.Credentials = credentials
+	}
+
+	if file.Source != nil {
+		sources, err := parseSourceBlocks(file.Source)
+		if err != nil {
+			return err
+		}
+
+		cfg.Sources = sources
+	}
+
+	if file.Host != nil {
+		hosts, err := parseHostBlocks(file.Host)
+		if err != nil {
+			return err
+		}
+
+		cfg.Hosts = hosts
 	}
 
 	return nil

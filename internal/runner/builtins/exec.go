@@ -84,9 +84,30 @@ func NewExec(cfg map[string]any) (*Exec, error) {
 	return &Exec{allowActions: toSet(allowList), timeout: timeout, env: env}, nil
 }
 
-// ExecFactory adapts the runner to the registry contract.
+// ExecFactory adapts the runner to the registry contract with no host table,
+// which is the shape the runner's own tests want. Production wiring must not use
+// it: every entry point goes through newRegistry, and registering this one there
+// would drop the host table for that path without any signal. Use
+// ExecFactoryWithHostEnv, passing nil for the no-hosts case.
 func ExecFactory(cfg map[string]any) (runner.Runner, error) {
 	return NewExec(cfg)
+}
+
+// ExecFactoryWithHostEnv adapts the runner to the registry contract and hands
+// every child the rendered host table. The entries land after the config env
+// table, though nothing can collide there: decodeExecEnv refuses a key with the
+// reserved prefix, so the rendered table is the only writer of those names.
+func ExecFactoryWithHostEnv(hostEnv []string) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		built, err := NewExec(cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		built.env = append(built.env, hostEnv...)
+
+		return built, nil
+	}
 }
 
 // Name implements runner.Runner.
@@ -375,10 +396,16 @@ func decodeExecEnv(cfg map[string]any) ([]string, error) {
 	return entries, nil
 }
 
-// checkExecEnvKey rejects a name os/exec cannot carry. An empty key, an equals
-// sign inside one, or a NUL byte each produce an entry the child ignores or
-// reads as a different variable, so the config file would be describing an
-// environment the command never sees.
+// hostEnvPrefix is reserved for the rendered host table. A config env key using
+// it would shadow or be shadowed by a rendered entry depending on append order,
+// which is a question nobody should have to answer; refusing the key keeps the
+// table's one source obvious.
+const hostEnvPrefix = "CAIRNOS_HOST_"
+
+// checkExecEnvKey rejects a name os/exec cannot carry, or one that belongs to
+// the host table. An empty key, an equals sign inside one, or a NUL byte each
+// produce an entry the child ignores or reads as a different variable, so the
+// config file would be describing an environment the command never sees.
 func checkExecEnvKey(name string) error {
 	if name == "" {
 		return fmt.Errorf("%w: %s has an empty key", ErrConfigValue, cfgKeyEnv)
@@ -387,6 +414,11 @@ func checkExecEnvKey(name string) error {
 	if strings.ContainsAny(name, "=\x00") {
 		return fmt.Errorf("%w: %s key %q must not contain an equals sign or a NUL byte",
 			ErrConfigValue, cfgKeyEnv, name)
+	}
+
+	if strings.HasPrefix(name, hostEnvPrefix) {
+		return fmt.Errorf("%w: %s key %q is reserved; %s variables come from the [host.<name>] blocks",
+			ErrConfigValue, cfgKeyEnv, name, hostEnvPrefix)
 	}
 
 	return nil
