@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -473,6 +474,55 @@ func TestInstallRefusesAWorldWritableBinDir(t *testing.T) {
 
 	if !messageMentions(t, err, dir) {
 		t.Fatalf("the error does not name the directory: %v", err)
+	}
+}
+
+// TestInstallAcceptsAUserPrivateGroupBinDir covers the stock Ubuntu layout.
+// ~/.local/bin arrives as 0775 owned by a group named after the account and
+// holding only that account, so refusing the group bit there would fail the
+// install on every default host while protecting nothing.
+//
+//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+func TestInstallAcceptsAUserPrivateGroupBinDir(t *testing.T) {
+	requirePrivateGroup(t)
+
+	opts := options(t, map[string]string{entryName: fakeScript}, "")
+
+	dir := filepath.Dir(opts.Dest)
+	if err := os.Chmod(dir, 0o775); err != nil {
+		t.Fatalf("set the install directory to the stock bin-dir mode: %v", err)
+	}
+
+	result, err := bwinstall.Install(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	if !result.Installed {
+		t.Fatalf("install wrote nothing into %s, want the pinned binary", dir)
+	}
+}
+
+// requirePrivateGroup skips unless the account running the test sits in the
+// user-private-group layout the acceptance case is about. CI accounts vary: a
+// runner whose primary group is shared, such as a user in "staff" or "users",
+// is a directory the installer is supposed to keep refusing.
+func requirePrivateGroup(t *testing.T) {
+	t.Helper()
+
+	current, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot read the current account: %v", err)
+	}
+
+	group, err := user.LookupGroupId(current.Gid)
+	if err != nil {
+		t.Skipf("cannot read group %s: %v", current.Gid, err)
+	}
+
+	if group.Name != current.Username {
+		t.Skipf("account %q has primary group %q, so this host has no user-private group",
+			current.Username, group.Name)
 	}
 }
 
