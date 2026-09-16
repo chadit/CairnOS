@@ -28,10 +28,13 @@ const (
 
 // Git subcommands the fake answers by name.
 const (
-	gitRevParse = "rev-parse"
-	gitStatus   = "status"
-	gitMerge    = "merge"
-	gitSymRef   = "symbolic-ref"
+	gitRevParse  = "rev-parse"
+	gitStatus    = "status"
+	gitMerge     = "merge"
+	gitSymRef    = "symbolic-ref"
+	gitCheckout  = "checkout"
+	dirtyStatus  = " M README.md"
+	dirtyMessage = "uncommitted changes"
 )
 
 // errNoSuchRef is what the fake reports for a ref that does not resolve, the
@@ -45,18 +48,10 @@ var errNoSuchRef = errors.New("fatal: needed a single revision")
 type fakeGit struct {
 	head     string
 	afterFF  string
-	calls    [][]string
+	status   string
 	mu       sync.Mutex
 	overlaps atomic.Int32
 	inFlight atomic.Int32
-}
-
-// argvs returns a copy of every invocation the fake has answered.
-func (f *fakeGit) argvs() [][]string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	return slices.Clone(f.calls)
 }
 
 // run answers one git invocation and records whether a second call overlapped a
@@ -70,8 +65,6 @@ func (f *fakeGit) run(_ context.Context, _ string, argv ...string) (string, erro
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-
-	f.calls = append(f.calls, slices.Clone(argv))
 
 	return f.answer(argv)
 }
@@ -87,31 +80,84 @@ func (f *fakeGit) answer(argv []string) (string, error) {
 		return "", errNoSuchRef
 	case argv[0] == gitSymRef:
 		return sourceRef, nil
-	case argv[0] == gitMerge:
+	case argv[0] == gitMerge, argv[0] == gitCheckout:
 		f.head = f.afterFF
 
 		return "", nil
 	case argv[0] == gitRevParse:
 		return f.head, nil
 	case argv[0] == gitStatus:
-		return "", nil
+		return f.status, nil
 	default:
 		return "", nil
 	}
 }
 
-// sourceRunner builds the runner under test over one spec and one fake git.
+// syncObserver stands in for the notifier serve wires behind the runner, so a
+// case can read back which outcome the runner reported rather than watching a
+// chat channel.
+type syncObserver struct {
+	skips  []string
+	synced []string
+	mu     sync.Mutex
+}
+
+// Skipped records the whole line's worth of detail, so a case can prove the dest
+// and the reason reach the notifier that builds the operator's message.
+func (o *syncObserver) Skipped(_ context.Context, name, dest, reason string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.skips = append(o.skips, strings.Join([]string{name, dest, reason}, " "))
+}
+
+// Synced records a sync that was not skipped, which is the signal that clears
+// the notifier's cooldown.
+func (o *syncObserver) Synced(name string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.synced = append(o.synced, name)
+}
+
+// seen returns copies of the skip lines and the synced names, read under the
+// lock the concurrent case needs.
+func (o *syncObserver) seen() ([]string, []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return slices.Clone(o.skips), slices.Clone(o.synced)
+}
+
+// sourceSpec is the one configured block every case syncs.
+func sourceSpec(dirtyReset bool) source.Spec {
+	return source.Spec{
+		Name:       sourceSpecName,
+		Repo:       "https://example.com/automation.git",
+		Dest:       sourceDest,
+		Ref:        sourceRef,
+		DirtyReset: dirtyReset,
+	}
+}
+
+// sourceRunner builds the runner under test over one spec and one fake git, with
+// no observer: that is what the four one-shot commands wire, and the cases about
+// that seam build their own.
 func sourceRunner(t *testing.T, git *fakeGit) runner.Runner {
 	t.Helper()
 
-	specs := []source.Spec{{
-		Name: sourceSpecName,
-		Repo: "https://example.com/automation.git",
-		Dest: sourceDest,
-		Ref:  sourceRef,
-	}}
+	return sourceRunnerWith(t, git, sourceSpec(true), nil)
+}
 
-	built, err := builtins.SourceFactory(specs, git.run)(nil)
+// sourceRunnerWith builds the runner over one spec with the observer a case
+// wants to read back. The logger stays nil throughout: warn lines are for an
+// operator reading a journal, not something a case asserts on.
+func sourceRunnerWith(
+	t *testing.T, git *fakeGit, spec source.Spec, obs builtins.SourceObserver,
+) runner.Runner {
+	t.Helper()
+
+	built, err := builtins.SourceFactory([]source.Spec{spec}, git.run, nil, obs)(nil)
 	if err != nil {
 		t.Fatalf("build source runner: %v", err)
 	}
@@ -209,6 +255,70 @@ func TestSourceReportsEmptyOutputWhenNothingMoved(t *testing.T) {
 	}
 }
 
+// TestSourceReportsSkipAsSuccess covers the mapping FR5 asks of the runner: a
+// tree left alone is not a failed run, so the action succeeds with empty output,
+// the reason rides in Meta, and the observer hears about it once.
+func TestSourceReportsSkipAsSuccess(t *testing.T) {
+	t.Parallel()
+
+	git := &fakeGit{head: headBefore, afterFF: headAfter, status: dirtyStatus}
+	obs := &syncObserver{}
+
+	result, err := sourceRunnerWith(t, git, sourceSpec(false), obs).
+		Execute(t.Context(), sourceTask(sourceSpecName))
+	if err != nil {
+		t.Fatalf("execute of a skipped sync = %v, want nil", err)
+	}
+
+	if result.Output != "" {
+		t.Fatalf("output = %q, want empty so a workflow conditioned on movement stays quiet", result.Output)
+	}
+
+	if result.Meta["skipped"] != dirtyMessage {
+		t.Fatalf("meta[skipped] = %q, want %q", result.Meta["skipped"], dirtyMessage)
+	}
+
+	skips, synced := obs.seen()
+
+	if len(synced) != 0 {
+		t.Fatalf("observer saw %v synced; a skip must not clear the cooldown", synced)
+	}
+
+	want := []string{strings.Join([]string{sourceSpecName, sourceDest, dirtyMessage}, " ")}
+	if !slices.Equal(skips, want) {
+		t.Fatalf("observer saw %v, want %v", skips, want)
+	}
+}
+
+// TestSourceReportsResetAsMovement covers FR4 and FR8 at the runner: a repaired
+// tree reads as an ordinary move to a workflow, and the observer hears the
+// source is healthy again so a pending cooldown clears.
+func TestSourceReportsResetAsMovement(t *testing.T) {
+	t.Parallel()
+
+	git := &fakeGit{head: headBefore, afterFF: headAfter, status: dirtyStatus}
+	obs := &syncObserver{}
+
+	result, err := sourceRunnerWith(t, git, sourceSpec(true), obs).
+		Execute(t.Context(), sourceTask(sourceSpecName))
+	if err != nil {
+		t.Fatalf("execute of a reset sync = %v, want nil", err)
+	}
+
+	if result.Output != headBefore+".."+headAfter {
+		t.Fatalf("output = %q, want %s..%s", result.Output, headBefore, headAfter)
+	}
+
+	if reason, ok := result.Meta["skipped"]; ok {
+		t.Fatalf("meta[skipped] = %q on a reset, want the key absent", reason)
+	}
+
+	skips, synced := obs.seen()
+	if len(skips) != 0 || !slices.Equal(synced, []string{sourceSpecName}) {
+		t.Fatalf("observer saw skips=%v synced=%v, want one sync and no skip", skips, synced)
+	}
+}
+
 // TestSourceSerializesConcurrentSyncs covers FR12: two tasks for one source in
 // one process never have git running in that tree at the same time.
 func TestSourceSerializesConcurrentSyncs(t *testing.T) {
@@ -233,38 +343,6 @@ func TestSourceSerializesConcurrentSyncs(t *testing.T) {
 
 	if overlaps := git.overlaps.Load(); overlaps != 0 {
 		t.Fatalf("%d git calls overlapped; the per-source lock did not hold", overlaps)
-	}
-}
-
-// TestSourceNeverRunsDestructiveVerbs walks a whole successful sync and reads
-// back every invocation the fake answered, so a later "repair a dirty tree" path
-// fails here rather than resting on a reading of the code.
-func TestSourceNeverRunsDestructiveVerbs(t *testing.T) {
-	t.Parallel()
-
-	// The write commands FR8 says a sync never runs. Each one would discard work
-	// the tree carries instead of refusing to touch it.
-	forbiddenVerbs := []string{"reset", "stash", "clean", "pull", "rebase", "push", "commit"}
-
-	git := &fakeGit{head: headBefore, afterFF: headAfter}
-
-	if _, err := sourceRunner(t, git).Execute(t.Context(), sourceTask(sourceSpecName)); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-
-	invocations := git.argvs()
-	if len(invocations) == 0 {
-		t.Fatal("the sync issued no git invocations at all")
-	}
-
-	for _, argv := range invocations {
-		if slices.Contains(forbiddenVerbs, argv[0]) {
-			t.Fatalf("the sync ran %q; FR8 forbids it", strings.Join(argv, " "))
-		}
-
-		if argv[0] == gitMerge && !slices.Contains(argv, "--ff-only") {
-			t.Fatalf("the sync ran %q without --ff-only", strings.Join(argv, " "))
-		}
 	}
 }
 

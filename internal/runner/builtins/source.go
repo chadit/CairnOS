@@ -2,6 +2,7 @@ package builtins
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -20,12 +21,27 @@ const paramSource = "source"
 const codeSourceUnknown = SourceName + ".unknown"
 
 // metaRef, metaOld, and metaNew report what the sync did, so a workflow can read
-// the movement from Meta instead of parsing Output.
+// the movement from Meta instead of parsing Output. metaSkipped appears only on
+// a sync that left the tree alone, carrying the reason.
 const (
-	metaRef = "ref"
-	metaOld = "old"
-	metaNew = "new"
+	metaRef     = "ref"
+	metaOld     = "old"
+	metaNew     = "new"
+	metaSkipped = "skipped"
 )
+
+// SourceObserver watches sync outcomes that deserve more than a log line.
+// internal/notify transitively depends on this package, so a fan-out cannot be
+// imported here; internal/cli closes over one and passes it in.
+type SourceObserver interface {
+	// Skipped reports a tree left alone because dirty_reset is off. The
+	// implementation owns any rate limiting: this fires on every skipped sync.
+	Skipped(ctx context.Context, name, dest, reason string)
+
+	// Synced reports a sync that was not skipped, which is what lets a rate
+	// limiter forget a source whose tree has been put right.
+	Synced(name string)
+}
 
 // Source brings one configured git tree to the current tip of its ref. Polling
 // is an ordinary scheduled workflow rather than a loop inside serve, so this
@@ -33,15 +49,22 @@ const (
 //
 // Config: none, since the blocks live in [source.<name>]. Params: source.
 type Source struct {
-	specs map[string]source.Spec
-	locks map[string]*sync.Mutex
-	git   source.Git
+	specs    map[string]source.Spec
+	locks    map[string]*sync.Mutex
+	git      source.Git
+	logger   *slog.Logger
+	observer SourceObserver
 }
 
 // SourceFactory adapts the configured specs to the registry contract. Every
 // instance shares one lock per spec, which is what keeps a webhook fire and a
 // schedule fire from running git in the same tree at once (FR12).
-func SourceFactory(specs []source.Spec, git source.Git) runner.Factory {
+//
+// logger and observer may both be nil: only serve has a fan-out, and the four
+// one-shot commands build the same registry without one.
+func SourceFactory(
+	specs []source.Spec, git source.Git, logger *slog.Logger, observer SourceObserver,
+) runner.Factory {
 	indexed := make(map[string]source.Spec, len(specs))
 	locks := make(map[string]*sync.Mutex, len(specs))
 
@@ -51,7 +74,7 @@ func SourceFactory(specs []source.Spec, git source.Git) runner.Factory {
 	}
 
 	return func(_ map[string]any) (runner.Runner, error) {
-		return &Source{specs: indexed, locks: locks, git: git}, nil
+		return &Source{specs: indexed, locks: locks, git: git, logger: logger, observer: observer}, nil
 	}
 }
 
@@ -122,20 +145,64 @@ func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 		return runner.Result{}, err //nolint:wrapcheck // already a classified runner.Error
 	}
 
+	s.report(ctx, spec, result)
+
+	meta := map[string]string{
+		paramSource: name,
+		metaRef:     spec.Ref,
+		metaOld:     result.Old,
+		metaNew:     result.New,
+	}
+
+	if result.Skipped != "" {
+		meta[metaSkipped] = result.Skipped
+	}
+
 	return runner.Result{
 		Output: syncOutput(result),
 		Usage:  runner.Usage{Latency: time.Since(start)},
-		Meta: map[string]string{
-			paramSource: name,
-			metaRef:     spec.Ref,
-			metaOld:     result.Old,
-			metaNew:     result.New,
-		},
+		Meta:   meta,
 	}, nil
 }
 
+// report logs what the sync decided and tells the observer. A reset and a skip
+// both carry a warn line every time they happen: the log is the record an
+// operator can go back to, while the notification is rate limited elsewhere.
+func (s *Source) report(ctx context.Context, spec source.Spec, result source.Result) {
+	if result.Skipped != "" {
+		s.warn("source sync skipped, tree left alone", spec, "reason", result.Skipped)
+
+		if s.observer != nil {
+			s.observer.Skipped(ctx, spec.Name, spec.Dest, result.Skipped)
+		}
+
+		return
+	}
+
+	if result.Reset {
+		s.warn("source reset onto ref, local changes discarded", spec, "old", result.Old, "new", result.New)
+	}
+
+	if s.observer != nil {
+		s.observer.Synced(spec.Name)
+	}
+}
+
+// warn emits one line with the source fields every log site here shares, so a
+// caller states only what is particular to its outcome.
+func (s *Source) warn(message string, spec source.Spec, extra ...any) {
+	if s.logger == nil {
+		return
+	}
+
+	args := append([]any{"source", spec.Name, "dest", spec.Dest, "ref", spec.Ref}, extra...)
+
+	s.logger.Warn(message, args...)
+}
+
 // syncOutput renders the movement a workflow reads: the empty string when HEAD
-// stayed put, and old..new when it moved.
+// stayed put or the sync was skipped, and old..new when it moved. A skipped sync
+// has to answer empty so a workflow conditioned on movement stays quiet.
 func syncOutput(result source.Result) string {
 	if result.Old == result.New {
 		return ""

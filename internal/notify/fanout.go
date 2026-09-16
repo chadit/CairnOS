@@ -20,7 +20,8 @@ type Poster interface {
 }
 
 // Sink is one destination plus the event names it wants, as serve declares it.
-// Events is the same four-name vocabulary config validates, so two sinks can
+// Events is the same six-name vocabulary config validates (held, run_failed,
+// dead_lettered, budget_denied, connectivity, source_dirty), so two sinks can
 // subscribe to different slices of it: Discord to everything, Mattermost to the
 // held alert only, say.
 type Sink struct {

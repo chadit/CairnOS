@@ -11,28 +11,14 @@ import (
 	"github.com/chadit/CairnOS/internal/bwinstall"
 )
 
-// The pinned release. Upgrading means changing the version and all four digests
-// together, since a digest belonging to another release fails the install
-// rather than being accepted quietly.
-//
-// Each pair was taken by downloading the asset from
-// https://github.com/bitwarden/clients/releases/download/cli-v2026.8.0/ and
-// running sha256sum on the zip and on the single `bw` entry unpacked from it.
-// The binary digest is the one a later run compares the installed file against,
-// so it has to come from the same download as the archive digest.
+// bwReleaseT is the release tag the version in bwpin_gen.go belongs to, and
+// bwReleaseBase where its assets live. The version and the four digests are
+// generated together by `go run ./tools/bwpin`, because a digest belonging to
+// another release fails the install rather than being accepted quietly.
 const (
-	bwVersion  = "2026.8.0"
-	bwReleaseT = "cli-v" + bwVersion
-
-	bwLinuxArchiveSHA256 = "367f618e9fcccaac4980ec12c7bafd01df739b5f3cb1af31bc9045cf75eea1d6"
-	bwLinuxBinarySHA256  = "73b6e9b5706b6ba315974ada6723b5bb3e54b51b99583a58d9968925b607cd9c"
-
-	bwMacOSArchiveSHA256 = "c5d57f70d5394f8c348f6c3bf53683ad6d15e6acfe55e7c1e0a8f376482d8e71"
-	bwMacOSBinarySHA256  = "16219f8c8e5fd1bc8211ea1294cb866fc6a100d7bb43b79814afeabfbe1c11eb"
+	bwReleaseT    = "cli-v" + bwVersion
+	bwReleaseBase = "https://github.com/bitwarden/clients/releases/download"
 )
-
-// bwReleaseBase is where the assets live.
-const bwReleaseBase = "https://github.com/bitwarden/clients/releases/download"
 
 // cmdSecretsInstallBW installs the pinned Bitwarden CLI. The alternative is a
 // README block that fetches a zip, checks a hash, and unpacks it, which is
@@ -81,7 +67,7 @@ func (a *App) cmdSecretsInstallBW(ctx context.Context, args []string) int {
 // installBitwarden runs one install against the pinned release for this
 // platform.
 func (a *App) installBitwarden(ctx context.Context, dir string, force bool) (bwinstall.Result, error) {
-	asset, err := bwAsset(runtime.GOOS)
+	asset, err := a.bwPin(runtime.GOOS)
 	if err != nil {
 		return bwinstall.Result{}, err
 	}
@@ -133,6 +119,31 @@ func bwAsset(goos string) (bwAssetPin, error) {
 		archiveSum: pin.archiveSum,
 		binarySum:  pin.binarySum,
 	}, nil
+}
+
+// WithBitwardenPin replaces the release pin for this App and returns it for
+// chaining. Only a test build calls it: every vault command hashes the bw it
+// resolves, and a suite's fake bw is a symlink to its own test binary, which no
+// published release will ever hash to. source is the asset an install would
+// fetch, so a case meaning to reach the installer can point it at something
+// that fails loudly rather than downloading the real CLI.
+func (a *App) WithBitwardenPin(source, binarySum string) *App {
+	pin := bwAssetPin{url: source, binarySum: binarySum}
+	a.bwPin = func(string) (bwAssetPin, error) { return pin, nil }
+
+	return a
+}
+
+// WithoutBitwardenPin makes every platform look unpinned, and returns the App
+// for chaining. Only a test build calls it: runtime.GOOS is fixed at compile
+// time, so this is the only way to reach the path a platform outside the pin
+// table takes.
+func (a *App) WithoutBitwardenPin() *App {
+	a.bwPin = func(goos string) (bwAssetPin, error) {
+		return bwAssetPin{}, fmt.Errorf("%w: %s", errNoPinnedBitwarden, goos)
+	}
+
+	return a
 }
 
 // bwInstallDir resolves where the binary goes.

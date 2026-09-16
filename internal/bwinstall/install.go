@@ -44,6 +44,15 @@ const (
 // exactly this entry and nothing else.
 const entryName = "bw"
 
+// sidecarSuffix names the file that records the digest of the binary this tool
+// last wrote, and sidecarPerm its mode. The record is what lets a later run
+// tell its own previous pin, which it may replace unasked, from a binary that
+// arrived some other way, which still needs --force.
+const (
+	sidecarSuffix = ".cairnos-sha256"
+	sidecarPerm   = 0o600
+)
+
 // Default size limits. The archive is around 45 MB and the binary inside it
 // around 142 MB, so these leave room for the release to grow without letting a
 // redirected or hostile response write until the disk fills.
@@ -126,6 +135,12 @@ type Result struct {
 	Path    string
 	Version string
 
+	// Previous is the digest of the binary this install replaced, set only
+	// when the file at Dest was one an earlier install wrote. It is what a
+	// caller names when it reports an upgrade, since the version the old
+	// binary claimed was never trusted enough to read.
+	Previous string
+
 	// Installed is false when the pinned binary was already in place.
 	Installed bool
 }
@@ -138,16 +153,18 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 		return Result{}, err
 	}
 
-	if !opts.Force {
-		found, err := alreadyInstalled(opts)
-		if found || err != nil {
-			return Result{Path: opts.Dest, Version: opts.Version}, err
-		}
+	done, previous, err := existingBinary(opts)
+	if err != nil {
+		return Result{Path: opts.Dest, Version: opts.Version}, err
+	}
+
+	if done {
+		return alreadyCurrent(opts), nil
 	}
 
 	dir := filepath.Dir(opts.Dest)
-	if err := prepareDir(dir); err != nil {
-		return Result{}, err
+	if prepErr := prepareDir(dir); prepErr != nil {
+		return Result{}, prepErr
 	}
 
 	archive, err := download(ctx, opts, dir)
@@ -161,6 +178,10 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 		return Result{}, extractErr
 	}
 
+	if recordErr := recordDigest(opts); recordErr != nil {
+		return Result{}, recordErr
+	}
+
 	version, err := readVersion(ctx, opts)
 	if err != nil {
 		return Result{}, err
@@ -168,7 +189,7 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 
 	opts.log().Debug("installed the Bitwarden CLI", "path", opts.Dest, "version", version)
 
-	return Result{Path: opts.Dest, Version: version, Installed: true}, nil
+	return Result{Path: opts.Dest, Version: version, Previous: previous, Installed: true}, nil
 }
 
 // checkSource refuses anything but https. Both callers pass a compiled-in
@@ -187,28 +208,91 @@ func checkSource(source string) error {
 	return nil
 }
 
-// alreadyInstalled reports whether the pinned binary is in place, by hashing
-// the file rather than asking it what it is. A binary that prints the right
-// version string is not evidence of anything: whatever can write the
-// destination can write a wrapper that prints it and forwards the vault
-// credentials somewhere else.
-func alreadyInstalled(opts *Options) (bool, error) {
-	if !exists(opts.Dest) {
-		return false, nil
+// alreadyCurrent reports the binary that was already the pinned one, writing
+// the record if it is missing. Every host installed its bw before the record
+// existed, so without this line the first bump would refuse on all of them and
+// an operator would visit each one with --force. Nothing was downloaded, so a
+// record that cannot be written is worth a line rather than failing a command
+// that did its job.
+func alreadyCurrent(opts *Options) Result {
+	if err := recordDigest(opts); err != nil {
+		opts.log().Warn("could not record the digest of the installed binary",
+			"path", sidecarPath(opts.Dest), "error", err)
 	}
 
-	sum, err := fileDigest(opts.Dest)
+	return Result{Path: opts.Dest, Version: opts.Version}
+}
+
+// existingBinary decides what a file already at Dest means. It hashes that file
+// rather than asking it what it is, because a binary that prints the right
+// version string is no evidence: whatever can write the destination can write a
+// wrapper that prints it and forwards the vault credentials somewhere else.
+//
+// It reports whether the install has nothing left to do, and the digest of a
+// binary it may replace, which is one an earlier install wrote and the pin has
+// since moved past.
+func existingBinary(opts *Options) (bool, string, error) {
+	if opts.Force || !exists(opts.Dest) {
+		return false, "", nil
+	}
+
+	sum, err := FileDigest(opts.Dest)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	if strings.EqualFold(sum, opts.BinarySHA256) {
-		return true, nil
+		return true, "", nil
 	}
 
-	return false, cairnerr.Newf(CodeExisting,
+	if writtenByThisTool(opts, sum) {
+		return false, sum, nil
+	}
+
+	return false, "", cairnerr.Newf(CodeExisting,
 		"%s is not the pinned version %s (sha256 %s); re-run with --force to replace it",
 		opts.Dest, opts.Version, sum)
+}
+
+// sidecarPath is where the digest of the installed binary is recorded, beside
+// the binary itself so the pair moves and is removed together.
+func sidecarPath(dest string) string {
+	return dest + sidecarSuffix
+}
+
+// writtenByThisTool reports whether the file at Dest carries the digest an
+// earlier install recorded beside it. This is a usability marker, not evidence:
+// anyone who can write the binary can write the record next to it. What it
+// separates is a bw an earlier install wrote, which a pin bump may replace
+// without asking, from one a package manager or a hand install left, which has
+// no record and keeps the refusal. Forging a record buys nothing, since the
+// only thing it unlocks is being overwritten by the pinned release.
+func writtenByThisTool(opts *Options, digest string) bool {
+	path := sidecarPath(opts.Dest)
+
+	recorded, err := os.ReadFile(path) // #nosec G304 -- the path is the install destination plus a fixed suffix
+	if err != nil {
+		opts.log().Debug("no recorded digest beside the installed binary", "path", path, "error", err)
+
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(string(recorded)), digest)
+}
+
+// recordDigest writes what this install put in place, so the next run can tell
+// its own previous pin from a stranger. A failure here is an error rather than
+// a warning: without the record, the next upgrade refuses and an operator has
+// to reach for --force.
+func recordDigest(opts *Options) error {
+	path := sidecarPath(opts.Dest)
+
+	body := []byte(strings.ToLower(opts.BinarySHA256) + "\n")
+	if err := os.WriteFile(path, body, sidecarPerm); err != nil {
+		return cairnerr.Wrapf(err, CodeInstall, "record the installed digest in %s: %v", path, err)
+	}
+
+	return nil
 }
 
 // exists reports whether anything is at the path. Why it cannot be read does
@@ -219,18 +303,33 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// fileDigest hashes a file on disk.
-func fileDigest(path string) (string, error) {
-	file, err := os.Open(path) // #nosec G304 -- the path is the install destination
+// FileDigest hashes a file on disk. The vault commands use it to compare the bw
+// they found on PATH against the pin, which is the same question this package
+// asks about its own destination.
+func FileDigest(path string) (string, error) {
+	file, err := os.Open(path) // #nosec G304 -- the caller names the file it wants hashed
 	if err != nil {
 		return "", cairnerr.Wrapf(err, CodeChecksum, "open %s: %v", path, err)
 	}
 
 	defer func() { _ = file.Close() }()
 
-	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
+	sum, err := EntryDigest(file)
+	if err != nil {
 		return "", cairnerr.Wrapf(err, CodeChecksum, "read %s: %v", path, err)
+	}
+
+	return sum, nil
+}
+
+// EntryDigest hashes a stream the same way an install hashes the binary on its
+// way out of the archive. tools/bwpin needs it to learn a new release's digests
+// without writing the entry to disk, and the two have to agree or the pin it
+// generates would fail the very check it was generated for.
+func EntryDigest(source io.Reader) (string, error) {
+	digest := sha256.New()
+	if _, err := io.Copy(digest, source); err != nil {
+		return "", cairnerr.Wrapf(err, CodeChecksum, "hash the stream: %v", err)
 	}
 
 	return hex.EncodeToString(digest.Sum(nil)), nil

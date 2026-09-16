@@ -203,9 +203,28 @@ somewhere else.
 Running it again is cheap: it hashes the installed file and skips the download
 when that hash is the pinned one. It never asks the binary what version it is to
 decide, because a file that prints the right version is no evidence of what it
-does with your master password. A `bw` that is there but hashes to something
-else stops the run and reports what it found; `--force` replaces it. Re-run
-after upgrading CairnOS to pick up a newer pinned release.
+does with your master password.
+
+Every install records the digest it wrote in a `bw.cairnos-sha256` file beside
+the binary, including a run that found the pinned binary already in place. The
+record marks a `bw` this tool installed, so a later pin bump replaces it without
+asking. A `bw` that arrived any other way, from a package manager or by hand,
+has no record, so it stops the run and `--force` stays the only way past it.
+The record is a marker and not a proof: anyone who can write the binary can
+write the file next to it, and all that buys them is having their binary
+replaced by the pinned one.
+
+Hosts follow the pin on their own. Both `cairnos secrets auth` and
+`cairnos secrets pull` hash the `bw` they find on PATH and compare it to the
+pin. A match is used as it is. A mismatch at `~/.local/bin/bw` is upgraded in place, with one
+line in the log naming the digest it replaced and the version it installed. A
+mismatch anywhere else stops the command and names both paths, because a `bw`
+your package manager installed is not for CairnOS to replace. Install the pinned
+release and put `~/.local/bin` first on PATH, or tell `secrets pull` where to
+look with `--bin-dir`. `make deploy` runs `secrets pull`, so a refusal there
+stops the deploy with the previous unit still running. A `--system` run resolves
+`~/.local/bin` against the account it runs as, so a `bw` in another account's
+home is refused by name and `--bin-dir` is how you point at it.
 
 `cairnos secrets auth` runs the install itself when it needs `bw` and finds
 none, so on a fresh host there is usually nothing to do here.
@@ -264,6 +283,39 @@ conversational needs serve.
 `make build` regenerates the gRPC and gateway code under `internal/api/gen`
 first. `buf` and its plugins are Go tool directives in `go.mod`, so a clone
 needs nothing beyond the Go toolchain; the first run downloads them.
+
+### Upgrading dependencies
+
+```sh
+make update-dep
+```
+
+It moves the Go modules, the `go.mod` tool directives, the Go toolchain line,
+the buf registry dependency, the npm packages under `web/`, and the two linter
+versions the Makefile pins, then regenerates the protobuf code. It writes files
+and stops there: no commit, no push, no tests. At the end it prints
+`git status --short` along with what it left alone on purpose, which is the two
+`FROM` lines in the Dockerfile (both carry float markers), the postgres image
+the integration tests start, and the action versions in the GitHub workflows,
+which you bump by hand.
+
+Run `make test` and `make lint` before committing any of it. `make lint`
+installs `golangci-lint` and `gosec` into `bin/tools` at the versions the
+Makefile names, so a developer machine and CI run the same linters instead of
+whatever each happens to have on PATH.
+
+The Bitwarden CLI pin is the slow part of a bump, and it runs on its own too:
+
+```sh
+go run ./tools/bwpin
+```
+
+It lists the `bitwarden/clients` releases, takes the highest `cli-v` tag, and
+says so and changes nothing when that is already what is pinned. Otherwise it
+downloads both platform archives, hashes each archive and the single `bw`
+inside it, and rewrites `internal/cli/bwpin_gen.go`. Upstream publishes no
+checksum file for these assets, so the download is the only place those four
+digests can come from, which is around 90 MB a bump.
 
 ## Model setup
 
@@ -536,19 +588,49 @@ params     = { identity = "ops", to = "#ops", text = "automation moved ${{ sync.
 That file can live inside the tree it syncs. Point `cairnos schedule add` at its
 path there once the first boot has cloned it.
 
-CairnOS never writes to a source. The sync fetches, fast-forwards a branch, and
-parks HEAD on a tag with no branch attached. It never runs reset, stash, clean,
-or a merge that is not a fast-forward. An edit sitting in the tree stops the next
-sync with a message naming the path, and the edit stays exactly where it is until
-you commit or revert it. A local commit the remote cannot fast-forward past stops
-the sync the same way.
+A sync that can fast-forward does. When it cannot, because the tree carries
+uncommitted changes to tracked files, sits on another branch, has a detached
+HEAD, or holds commits the remote cannot fast-forward past, `dirty_reset`
+decides what happens next:
+
+```toml
+[source.automation]
+repo = "https://github.com/example/automation.git"
+dest = "/srv/automation"
+ref  = "main"
+# Default. false makes a blocked sync report the problem instead of fixing it.
+dirty_reset = true
+```
+
+Left at its default, the sync fetches and then forces the tree back onto `ref`:
+a forced checkout that recreates the local branch at the remote tip, or a forced
+detached checkout for a tag. Tracked edits and local commits go with it. Set it
+to `false` and the sync leaves the tree exactly as it found it, succeeds with
+empty output, and reports the reason instead. Either way the run does not fail,
+so a box no longer files a `run_failed` line every five minutes until someone
+logs in.
+
+Untracked files survive both paths, with one exception. Nothing in CairnOS runs
+`clean`, `stash`, or `reset`, so no untracked file is swept. A forced checkout
+does replace an untracked file when the incoming ref tracks a file at the same
+path, since that is what `-f` means: the ref's copy wins. A scratch file at a
+path the repository does not track is still there afterwards.
+
+A skipped sync is quiet in the run history, so it gets its own notification. One
+line goes out under the `source_dirty` event naming the host, the source, the
+path, and what is in the way, at most once every 12 hours per source. A sync of
+that source that is not skipped clears the timer, so a tree you fix and dirty
+again is reported again rather than staying silent. Add `"source_dirty"` to
+`[notify.mattermost]` or `[notify.discord]` `events` to receive them. Every reset
+and every skip is also logged at warn level each time it happens.
 
 At startup serve checks that an existing tree is the repository the block names
 and puts it on the configured ref when it is somewhere else, which is how moving
-a pin works: edit `ref`, restart, and the next boot checks the new tag out. That
-repositioning follows the same rule as a sync, so a tree with uncommitted work in
-it stops serve instead of being written over. If the new ref is not on disk yet,
-serve logs a line saying so and starts anyway, and the first sync fetches it.
+a pin works: edit `ref`, restart, and the next boot checks the new tag out. Boot
+never fetches and never forces anything: a tree carrying local changes is logged
+and left where it is, and the first sync repairs or reports it. If the new ref is
+not on disk yet, serve logs a line saying so and starts anyway, and the first
+sync fetches it.
 
 Two syncs for one source never overlap inside one serve process. That lock is
 per process, though, so running `cairnos schedule run source_sync` by hand while
@@ -730,10 +812,12 @@ channel:
 [notify.mattermost]
 identity = "ops"
 channel  = "#alerts"
-events   = ["held", "run_failed"]
+events   = ["held", "run_failed", "source_dirty"]
 ```
 
-The Discord webhook and this block both deliver when both are set. Targets are
+`events` accepts `held`, `run_failed`, `dead_lettered`, `budget_denied`,
+`connectivity`, and `source_dirty`; any other name fails the config load. The
+Discord webhook and this block both deliver when both are set. Targets are
 written as `#channel`, `@user`, `channel:<id>`, or `user:<id>`.
 
 ## Development

@@ -14,13 +14,20 @@ import (
 // so a typo'd key fails Load rather than leaving a checkout pointing at a ref or
 // a path the operator never wrote, the same trap [credential.<name>] blocks use.
 const (
-	sourceKeyRepo = "repo"
-	sourceKeyDest = "dest"
-	sourceKeyRef  = "ref"
+	sourceKeyRepo       = "repo"
+	sourceKeyDest       = "dest"
+	sourceKeyRef        = "ref"
+	sourceKeyDirtyReset = "dirty_reset"
 )
 
 // DefaultSourceRef is what a block that names no ref follows.
 const DefaultSourceRef = "main"
+
+// defaultSourceDirtyReset is what a block naming no dirty_reset gets. True,
+// because an unattended host that repairs its own checkout is worth more than
+// one that keeps a stray edit and stops syncing. It is seeded before the key
+// loop because a raw map cannot tell an absent bool from a false one afterwards.
+const defaultSourceDirtyReset = true
 
 // gitBinary is the executable every source operation shells out to. Config load
 // refuses a host without it so the failure names the missing binary instead of
@@ -49,13 +56,13 @@ func parseSourceBlocks(raw map[string]map[string]any) (map[string]Source, error)
 	return sources, nil
 }
 
-// parseSourceBlock decodes one block strictly, seeding the ref default so an
-// absent key carries the ref the sync will follow. A key written blank keeps the
-// blank and fails validation, since an operator who typed the key meant to name
-// something. Keys are walked sorted so a block with several problems reports the
-// same one each run.
+// parseSourceBlock decodes one block strictly, seeding the defaults so an absent
+// key carries what the sync will do. A key written blank keeps the blank and
+// fails validation, since an operator who typed the key meant to name something.
+// Keys are walked sorted so a block with several problems reports the same one
+// each run.
 func parseSourceBlock(name string, block map[string]any) (Source, error) {
-	src := Source{Ref: DefaultSourceRef}
+	src := Source{Ref: DefaultSourceRef, DirtyReset: defaultSourceDirtyReset}
 
 	for _, key := range slices.Sorted(maps.Keys(block)) {
 		entry := sourceEntry{block: name, key: key, value: block[key]}
@@ -88,6 +95,8 @@ func applySourceKey(src *Source, entry sourceEntry) error {
 		src.Dest, err = sourceString(entry)
 	case sourceKeyRef:
 		src.Ref, err = sourceString(entry)
+	case sourceKeyDirtyReset:
+		src.DirtyReset, err = sourceBool(entry)
 	default:
 		err = fmt.Errorf("%w: source.%s has unknown key %q", ErrInvalidConfig, entry.block, entry.key)
 	}
@@ -107,6 +116,19 @@ func sourceString(entry sourceEntry) (string, error) {
 	}
 
 	return strings.TrimSpace(str), nil
+}
+
+// sourceBool asserts a bool value or returns a key-named type error. A quoted
+// "true" is a mistake worth failing the load over, since the tree it governs is
+// the one a sync may overwrite.
+func sourceBool(entry sourceEntry) (bool, error) {
+	flag, ok := entry.value.(bool)
+	if !ok {
+		return false, fmt.Errorf("%w: source.%s.%s must be a boolean",
+			ErrInvalidConfig, entry.block, entry.key)
+	}
+
+	return flag, nil
 }
 
 // validateSources checks every parsed source and, when any exist, that the git

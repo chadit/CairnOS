@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -121,6 +122,12 @@ type Source struct {
 	// Ref is a remote branch to follow, an exact tag to pin, or a tag glob whose
 	// newest match by version sort wins. Empty means DefaultSourceRef.
 	Ref string
+
+	// DirtyReset lets the sync force the tree back onto Ref when it carries
+	// tracked changes, sits elsewhere, or cannot fast-forward. It defaults to
+	// true so a host repairs itself instead of failing a scheduled sync every
+	// few minutes until someone logs in. False leaves the tree alone.
+	DirtyReset bool
 }
 
 // Engine bounds execution.
@@ -698,8 +705,8 @@ type Notify struct {
 // re-authentication hold message byte-identical.
 type Discord struct {
 	// Events is the selected event set. Every value must be one of held,
-	// run_failed, dead_lettered, or budget_denied; any other value is a
-	// configuration error.
+	// run_failed, dead_lettered, budget_denied, connectivity, or source_dirty;
+	// any other value is a configuration error.
 	Events []string
 }
 
@@ -867,7 +874,26 @@ const (
 	// workflow paused because a host it requires is down, the hourly reminder
 	// while it stays down, and the recovery.
 	NotifyEventConnectivity = "connectivity"
+	// NotifyEventSourceDirty carries a source sync that left a tree alone
+	// because dirty_reset is off. The sync itself succeeds, so this is the only
+	// line an operator gets, and its producer rate-limits it per source.
+	NotifyEventSourceDirty = "source_dirty"
 )
+
+// notifyEvents returns the closed vocabulary in the order the load error lists
+// it, so the whitelist and the message an operator reads cannot drift apart. It
+// is a function rather than a package var because gochecknoglobals refuses one,
+// and its caller reads it once per key rather than once per event.
+func notifyEvents() []string {
+	return []string{
+		NotifyEventHeld,
+		NotifyEventRunFailed,
+		NotifyEventDeadLettered,
+		NotifyEventBudgetDenied,
+		NotifyEventConnectivity,
+		NotifyEventSourceDirty,
+	}
+}
 
 // Hive publish floor defaults (.agents/spec/09-a2a-and-hive.md,
 // "k-anonymity threshold"). The k-anonymity floor is the server-side k the
@@ -1118,25 +1144,16 @@ func validateNotify(notify *Notify, identities map[string]MattermostIdentity) er
 // validateNotifyEvents reports the failing value under the key it was read
 // from, so an operator with both sinks configured knows which list to fix.
 func validateNotifyEvents(key string, events []string) error {
+	known := notifyEvents()
+
 	for _, event := range events {
-		if !validNotifyEvent(event) {
-			return fmt.Errorf("%w: %s %q is not one of %s, %s, %s, %s, %s",
-				ErrInvalidConfig, key, event, NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered,
-				NotifyEventBudgetDenied, NotifyEventConnectivity)
+		if !slices.Contains(known, event) {
+			return fmt.Errorf("%w: %s %q is not one of %s",
+				ErrInvalidConfig, key, event, strings.Join(known, ", "))
 		}
 	}
 
 	return nil
-}
-
-// validNotifyEvent reports whether event is one of the fan-out event names.
-func validNotifyEvent(event string) bool {
-	switch event {
-	case NotifyEventHeld, NotifyEventRunFailed, NotifyEventDeadLettered, NotifyEventBudgetDenied, NotifyEventConnectivity:
-		return true
-	default:
-		return false
-	}
 }
 
 // fileConfig mirrors the TOML layout with string durations, so duration

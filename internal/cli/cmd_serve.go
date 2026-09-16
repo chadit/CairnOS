@@ -15,7 +15,6 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/hive"
-	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
@@ -209,8 +208,8 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// while it is still empty and resolve identities per send later.
 	msgRegistry := messaging.NewRegistry()
 
-	registry, err := newRegistry(ctx, cfg.Runners, specs, hostenv.Render(cfg.Hosts), mem, stores.rules, credManager,
-		&messageSenderAdapter{registry: msgRegistry, logger: logger})
+	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, mem, stores.rules, credManager,
+		&messageSenderAdapter{registry: msgRegistry, logger: logger}, logger)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}
@@ -227,6 +226,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	// (held, dead_lettered). Nil when neither the Discord webhook nor a Mattermost
 	// identity is configured, which disables every producer (decision 7).
 	fanout := BuildFanout(cfg, msgRegistry, logger)
+	sourceNotifier.SetFanout(fanout)
 
 	eng, err := buildServeEngine(ctx, cfg, &serveEngineDeps{
 		manager:      manager,

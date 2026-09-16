@@ -1049,3 +1049,30 @@ func TestLoadSecretsBackendRejectsUnknown(t *testing.T) {
 		t.Fatalf("unknown secrets.backend error = %v, want ErrInvalidConfig", err)
 	}
 }
+
+// TestLoadNotifyAcceptsSourceDirty covers FR2 from the operator's side: the
+// sixth event name has to clear validation, and a typo of it still has to fail
+// the load rather than selecting nothing at runtime.
+func TestLoadNotifyAcceptsSourceDirty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(writeConfig(t,
+		"[notify.discord]\nevents = [\"run_failed\", \"source_dirty\"]\n"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	want := []string{config.NotifyEventRunFailed, config.NotifyEventSourceDirty}
+	if !slices.Equal(cfg.Notify.Discord.Events, want) {
+		t.Fatalf("notify.discord.events = %v, want %v", cfg.Notify.Discord.Events, want)
+	}
+}
+
+func TestLoadNotifyRejectsUnknownEvent(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Load(writeConfig(t, "[notify.discord]\nevents = [\"source_dirtied\"]\n"))
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("unknown notify event error = %v, want ErrInvalidConfig", err)
+	}
+}

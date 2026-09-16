@@ -1,8 +1,6 @@
 package source_test
 
 import (
-	"bytes"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,8 +21,8 @@ func TestEnsureClonesAndChecksOutBranch(t *testing.T) {
 
 	mustEnsure(t, spec)
 
-	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != "one\n" {
-		t.Fatalf("cloned README = %q, want %q", got, "one\n")
+	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != firstContent {
+		t.Fatalf("cloned README = %q, want %q", got, firstContent)
 	}
 
 	if branch := git(t, spec.Dest, "symbolic-ref", "--short", "HEAD"); branch != branchMain {
@@ -56,7 +54,7 @@ func TestEnsureChecksOutNewestGlobMatch(t *testing.T) {
 
 	repo := newOrigin(t)
 	repo.tag(t, "v1.2.0")
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.tag(t, "v1.10.0")
 
 	spec := specFor(t, repo, "v[0-9]*.[0-9]*.[0-9]*")
@@ -118,7 +116,7 @@ func TestSyncFastForwardsBranch(t *testing.T) {
 
 	mustEnsure(t, spec)
 
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.push(t)
 
 	result, err := source.Sync(t.Context(), source.GitCommand, spec)
@@ -130,8 +128,8 @@ func TestSyncFastForwardsBranch(t *testing.T) {
 		t.Fatalf("sync reported no movement (%s) after a pushed commit", result.Old)
 	}
 
-	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != "two\n" {
-		t.Fatalf("README after sync = %q, want %q", got, "two\n")
+	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != secondContent {
+		t.Fatalf("README after sync = %q, want %q", got, secondContent)
 	}
 }
 
@@ -153,67 +151,299 @@ func TestSyncReportsNoMovementWhenCurrent(t *testing.T) {
 	}
 }
 
-// TestSyncRefusesDirtyTree covers FR8 on both halves: the failure is classified
-// dirty, and the operator's edit is still there afterwards.
-func TestSyncRefusesDirtyTree(t *testing.T) {
-	t.Parallel()
+// untrackedFile is the file every blocked-tree case drops in the checkout. The
+// fixture repository tracks nothing at this path, which is the case FR3 protects:
+// it has to survive the reset and the skip alike. A forced checkout does replace
+// an untracked file whose path the incoming ref tracks, so the name matters.
+const untrackedFile = "scratch.local"
 
-	repo := newOrigin(t)
-	spec := specFor(t, repo, branchMain)
+// dirtyReason is the line FR5 promises for a tree carrying tracked edits. It is
+// asserted against both a branch ref and a tag ref, which is the only reason
+// they can be blocked at all.
+const dirtyReason = "uncommitted changes"
 
-	mustEnsure(t, spec)
+// blockedCase is one tree state a plain fast-forward cannot move. The reset
+// cases and the skip cases walk the same list, so the two halves of FR4 and FR5
+// cannot drift apart. keeps is the tracked content a skip has to preserve.
+type blockedCase struct {
+	setUp func(t *testing.T, spec source.Spec)
+	name  string
+	want  string
+	keeps string
+}
 
-	local := filepath.Join(spec.Dest, trackedFile)
-	writeFixtureFile(t, local, "edited by hand\n")
+// blockedCases enumerates the four states FR5 names a reason for. Every case
+// runs against an origin that has already moved ahead, since a branch the remote
+// is not ahead of fast-forwards without complaint.
+func blockedCases() []blockedCase {
+	return []blockedCase{
+		{
+			name: "tracked edit",
+			setUp: func(t *testing.T, spec source.Spec) {
+				t.Helper()
 
-	repo.commit(t, "two\n", "second")
-	repo.push(t)
+				writeFixtureFile(t, filepath.Join(spec.Dest, trackedFile), handEdit)
+			},
+			want:  dirtyReason,
+			keeps: handEdit,
+		},
+		{
+			name: "detached head",
+			setUp: func(t *testing.T, spec source.Spec) {
+				t.Helper()
 
-	_, err := source.Sync(t.Context(), source.GitCommand, spec)
-	wantCode(t, err, source.CodeDirty)
+				detach(t, spec.Dest, "HEAD")
+			},
+			want:  "HEAD is detached",
+			keeps: firstContent,
+		},
+		{
+			name: "another branch",
+			setUp: func(t *testing.T, spec source.Spec) {
+				t.Helper()
 
-	if got := readFixtureFile(t, local); got != "edited by hand\n" {
-		t.Fatalf("README after a refused sync = %q, want the local edit intact", got)
+				git(t, spec.Dest, "switch", "-c", "side")
+			},
+			want:  "HEAD is on branch side, ref is main",
+			keeps: firstContent,
+		},
+		{
+			name: "local commit the remote cannot reach",
+			setUp: func(t *testing.T, spec source.Spec) {
+				t.Helper()
+
+				setIdentity(t, spec.Dest)
+				writeFixtureFile(t, filepath.Join(spec.Dest, "local.txt"), "local only\n")
+				git(t, spec.Dest, "add", "local.txt")
+				git(t, spec.Dest, "commit", "-m", "local work")
+			},
+			want:  "local commits the remote cannot fast-forward past",
+			keeps: firstContent,
+		},
 	}
 }
 
-func TestSyncRefusesDivergedBranch(t *testing.T) {
+// blockTree builds a checkout in one blocked state against an origin that has
+// moved on, and returns the path of the untracked file both paths must spare.
+func blockTree(t *testing.T, repo origin, spec source.Spec, setUp func(*testing.T, source.Spec)) string {
+	t.Helper()
+
+	mustEnsure(t, spec)
+	setUp(t, spec)
+
+	scratch := filepath.Join(spec.Dest, untrackedFile)
+	writeFixtureFile(t, scratch, untrackedBody)
+
+	repo.commit(t, secondContent, "second")
+	repo.push(t)
+
+	return scratch
+}
+
+// TestSyncResetsBlockedTreeOntoBranch covers FR4 for every state a plain
+// fast-forward cannot move: the tree lands on the fetched tip through one forced
+// checkout, and the untracked file is still there afterwards.
+func TestSyncResetsBlockedTreeOntoBranch(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range blockedCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newOrigin(t)
+			spec := specFor(t, repo, branchMain)
+			scratch := blockTree(t, repo, spec, testCase.setUp)
+
+			result, err := source.Sync(t.Context(), source.GitCommand, spec)
+			if err != nil {
+				t.Fatalf("sync: %v", err)
+			}
+
+			if !result.Reset || result.Skipped != "" {
+				t.Fatalf("result reset=%v skipped=%q, want a reset and no skip", result.Reset, result.Skipped)
+			}
+
+			if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != secondContent {
+				t.Fatalf("README after a reset = %q, want the upstream content", got)
+			}
+
+			if got := readFixtureFile(t, scratch); got != untrackedBody {
+				t.Fatalf("untracked file after a reset = %q, want it untouched", got)
+			}
+
+			if head := git(t, spec.Dest, "symbolic-ref", "--short", "HEAD"); head != branchMain {
+				t.Fatalf("branch after a reset = %q, want %s", head, branchMain)
+			}
+		})
+	}
+}
+
+// TestSyncSkipsBlockedTreeWhenResetIsOff covers FR5: the sync succeeds, writes
+// nothing, and hands back the reason, so the action reports no failure and the
+// five-minute run_failed line stops.
+func TestSyncSkipsBlockedTreeWhenResetIsOff(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range blockedCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := newOrigin(t)
+			spec := specFor(t, repo, branchMain)
+			spec.DirtyReset = false
+
+			scratch := blockTree(t, repo, spec, testCase.setUp)
+			before := git(t, spec.Dest, "rev-parse", "HEAD")
+
+			result, err := source.Sync(t.Context(), source.GitCommand, spec)
+			if err != nil {
+				t.Fatalf("sync with dirty_reset off = %v, want nil", err)
+			}
+
+			if result.Skipped != testCase.want {
+				t.Fatalf("result.Skipped = %q, want %q", result.Skipped, testCase.want)
+			}
+
+			if result.Reset || result.Old != result.New {
+				t.Fatalf("result reset=%v %s..%s, want no movement", result.Reset, result.Old, result.New)
+			}
+
+			// Divergence is found by an ancestry probe that writes nothing, so
+			// HEAD and the two files below are what prove the tree was left
+			// exactly as the setup left it.
+			if after := git(t, spec.Dest, "rev-parse", "HEAD"); after != before {
+				t.Fatalf("HEAD moved from %s to %s on a skipped sync", before, after)
+			}
+
+			if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != testCase.keeps {
+				t.Fatalf("README after a skipped sync = %q, want %q", got, testCase.keeps)
+			}
+
+			if got := readFixtureFile(t, scratch); got != untrackedBody {
+				t.Fatalf("untracked file after a skipped sync = %q, want it untouched", got)
+			}
+		})
+	}
+}
+
+// TestSyncReportsAProbeFailureRatherThanForcing is the reason the ancestry
+// check is its own command. A merge that fails says the branch diverged or says
+// git could not run; a probe that fails says only the second. A sync that cannot
+// tell must report the failure, because forcing is destructive and a stale
+// index.lock is not evidence that forcing is safe.
+func TestSyncReportsAProbeFailureRatherThanForcing(t *testing.T) {
 	t.Parallel()
 
 	repo := newOrigin(t)
 	spec := specFor(t, repo, branchMain)
 
 	mustEnsure(t, spec)
-	setIdentity(t, spec.Dest)
-
-	writeFixtureFile(t, filepath.Join(spec.Dest, "local.txt"), "local only\n")
-	git(t, spec.Dest, "add", "local.txt")
-	git(t, spec.Dest, "commit", "-m", "local work")
 
 	before := git(t, spec.Dest, "rev-parse", "HEAD")
 
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.push(t)
 
-	_, err := source.Sync(t.Context(), source.GitCommand, spec)
-	wantCode(t, err, source.CodeDiverged)
+	// 128 is what git exits on a fatal, which is the shape of the locked index
+	// and unreadable object this probe has to stop distinguishing from divergence.
+	probe := failingGit{verb: "merge-base", code: 128}
+
+	_, err := source.Sync(t.Context(), probe.git, spec)
+	wantCode(t, err, source.CodeGit)
 
 	if after := git(t, spec.Dest, "rev-parse", "HEAD"); after != before {
-		t.Fatalf("HEAD moved from %s to %s on a refused sync", before, after)
+		t.Fatalf("HEAD moved from %s to %s after a failed ancestry probe", before, after)
+	}
+
+	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != firstContent {
+		t.Fatalf("README after a failed probe = %q, want the tree untouched", got)
 	}
 }
 
-func TestSyncRefusesDetachedHeadOnBranchRef(t *testing.T) {
+// TestSyncResetsDirtyTreeOntoTag is the tag half of FR4. A pinned source has no
+// branch to recreate, so the forced checkout is detached and leaves the tree in
+// the shape an ordinary tag sync does.
+func TestSyncResetsDirtyTreeOntoTag(t *testing.T) {
 	t.Parallel()
 
 	repo := newOrigin(t)
-	spec := specFor(t, repo, branchMain)
+	repo.tag(t, "v1.0.0")
+
+	spec := specFor(t, repo, "v2.0.0")
+
+	repo.commit(t, secondContent, "second")
+	repo.tag(t, "v2.0.0")
 
 	mustEnsure(t, spec)
-	detach(t, spec.Dest, "HEAD")
+	detach(t, spec.Dest, "refs/tags/v1.0.0")
 
-	_, err := source.Sync(t.Context(), source.GitCommand, spec)
-	wantCode(t, err, source.CodeDiverged)
+	local := filepath.Join(spec.Dest, trackedFile)
+	writeFixtureFile(t, local, handEdit)
+
+	scratch := filepath.Join(spec.Dest, untrackedFile)
+	writeFixtureFile(t, scratch, untrackedBody)
+
+	result, err := source.Sync(t.Context(), source.GitCommand, spec)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	if !result.Reset {
+		t.Fatal("result.Reset = false on a forced tag checkout")
+	}
+
+	// A pinned source has no branch to land on, so the tree has to come out of
+	// the reset detached rather than attached to whatever it was on before.
+	if head := git(t, spec.Dest, "rev-parse", "--symbolic-full-name", "HEAD"); head != "HEAD" {
+		t.Fatalf("HEAD is attached to %q after a forced tag checkout, want it detached", head)
+	}
+
+	if got := readFixtureFile(t, local); got != secondContent {
+		t.Fatalf("README after a reset = %q, want the v2.0.0 content", got)
+	}
+
+	if got := readFixtureFile(t, scratch); got != untrackedBody {
+		t.Fatalf("untracked file after a reset = %q, want it untouched", got)
+	}
+
+	want := git(t, spec.Dest, "rev-parse", "refs/tags/v2.0.0^{commit}")
+	if head := git(t, spec.Dest, "rev-parse", "HEAD"); head != want {
+		t.Fatalf("HEAD = %s, want the v2.0.0 commit %s", head, want)
+	}
+}
+
+// TestSyncSkipsDirtyTagWhenResetIsOff is the tag half of FR5: the pin does not
+// outrank an edit an operator left behind when they asked it not to.
+func TestSyncSkipsDirtyTagWhenResetIsOff(t *testing.T) {
+	t.Parallel()
+
+	repo := newOrigin(t)
+	repo.tag(t, "v1.0.0")
+
+	spec := specFor(t, repo, "v2.0.0")
+	spec.DirtyReset = false
+
+	repo.commit(t, secondContent, "second")
+	repo.tag(t, "v2.0.0")
+
+	mustEnsure(t, spec)
+	detach(t, spec.Dest, "refs/tags/v1.0.0")
+
+	local := filepath.Join(spec.Dest, trackedFile)
+	writeFixtureFile(t, local, handEdit)
+
+	result, err := source.Sync(t.Context(), source.GitCommand, spec)
+	if err != nil {
+		t.Fatalf("sync with dirty_reset off = %v, want nil", err)
+	}
+
+	if result.Skipped != dirtyReason {
+		t.Fatalf("result.Skipped = %q, want the uncommitted-changes reason", result.Skipped)
+	}
+
+	if got := readFixtureFile(t, local); got != handEdit {
+		t.Fatalf("README after a skipped sync = %q, want the local edit intact", got)
+	}
 }
 
 func TestSyncMovesToExactTagWhenHeadDiffers(t *testing.T) {
@@ -224,7 +454,7 @@ func TestSyncMovesToExactTagWhenHeadDiffers(t *testing.T) {
 
 	spec := specFor(t, repo, "v2.0.0")
 
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.tag(t, "v2.0.0")
 
 	mustEnsure(t, spec)
@@ -257,7 +487,7 @@ func TestSyncFollowsNewestGlobMatch(t *testing.T) {
 
 	mustEnsure(t, spec)
 
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.tag(t, "v1.10.0")
 
 	result, err := source.Sync(t.Context(), source.GitCommand, spec)
@@ -365,7 +595,7 @@ func TestEnsureRepositionsTreeAtAnotherTag(t *testing.T) {
 
 	repo := newOrigin(t)
 	repo.tag(t, "v1.0.0")
-	repo.commit(t, "two\n", "second")
+	repo.commit(t, secondContent, "second")
 	repo.tag(t, "v2.0.0")
 
 	spec := specFor(t, repo, "v2.0.0")
@@ -385,10 +615,10 @@ func TestEnsureRepositionsTreeAtAnotherTag(t *testing.T) {
 	}
 }
 
-// TestEnsureRefusesToRepositionDirtyTree proves the repair still honors FR8: an
-// operator's uncommitted work outranks the pin, so serve stops and says why
-// rather than checking out over it.
-func TestEnsureRefusesToRepositionDirtyTree(t *testing.T) {
+// TestEnsureLeavesADirtyTreeAlone covers FR7. Stopping serve here left an
+// unattended host down until someone logged in, so boot now finishes and leaves
+// the repair or the skip to the first sync, with the operator's edit still there.
+func TestEnsureLeavesADirtyTreeAlone(t *testing.T) {
 	t.Parallel()
 
 	repo := newOrigin(t)
@@ -398,18 +628,18 @@ func TestEnsureRefusesToRepositionDirtyTree(t *testing.T) {
 	git(t, spec.Dest, "switch", "-c", "side")
 
 	local := filepath.Join(spec.Dest, trackedFile)
-	writeFixtureFile(t, local, "edited by hand\n")
+	writeFixtureFile(t, local, handEdit)
 
-	err := source.Ensure(t.Context(), source.GitCommand, spec, nil)
-	wantCode(t, err, source.CodeDirty)
-	wantClass(t, err, runner.ClassPermanent)
+	if err := source.Ensure(t.Context(), source.GitCommand, spec, nil); err != nil {
+		t.Fatalf("ensure over a dirty tree = %v, want nil", err)
+	}
 
-	if got := readFixtureFile(t, local); got != "edited by hand\n" {
-		t.Fatalf("README after a refused ensure = %q, want the local edit intact", got)
+	if got := readFixtureFile(t, local); got != handEdit {
+		t.Fatalf("README after ensure = %q, want the local edit intact", got)
 	}
 
 	if branch := git(t, spec.Dest, "symbolic-ref", "--short", "HEAD"); branch != "side" {
-		t.Fatalf("branch after a refused ensure = %q, want side", branch)
+		t.Fatalf("branch after ensure = %q, want side", branch)
 	}
 }
 
@@ -424,25 +654,29 @@ func TestEnsureAllowsRefNotYetOnDisk(t *testing.T) {
 
 	mustEnsure(t, spec)
 
+	before := git(t, spec.Dest, "rev-parse", "HEAD")
+
 	spec.Ref = "v9.9.9"
 
-	logs := &bytes.Buffer{}
-	logger := slog.New(slog.NewTextHandler(logs, nil))
-
-	if err := source.Ensure(t.Context(), source.GitCommand, spec, logger); err != nil {
+	if err := source.Ensure(t.Context(), source.GitCommand, spec, nil); err != nil {
 		t.Fatalf("ensure with a ref not yet on disk = %v, want nil", err)
 	}
 
-	line := logs.String()
-	if !strings.Contains(line, "v9.9.9") || !strings.Contains(line, specName) {
-		t.Fatalf("log %q does not name the source and the ref the first sync has to fetch", line)
+	// Nothing on disk answers the new ref, so the tree stays where the previous
+	// pin left it and the first sync is what fetches and moves it.
+	if after := git(t, spec.Dest, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("HEAD moved from %s to %s for a ref no local ref resolves", before, after)
+	}
+
+	if branch := git(t, spec.Dest, "symbolic-ref", "--short", "HEAD"); branch != branchMain {
+		t.Fatalf("branch after ensure = %q, want %s", branch, branchMain)
 	}
 }
 
-// TestEnsureDoesNotFetchExistingTree covers FR5. An offline host with a tree on
-// disk has to finish serve startup, so nothing on this path may reach the
-// network.
-func TestEnsureDoesNotFetchExistingTree(t *testing.T) {
+// TestEnsureStartsWithAnUnreachableRemote covers FR5. Deleting the origin is the
+// offline host: a tree already on disk has to finish serve startup, which it can
+// only do by reading local refs and never reaching for the remote.
+func TestEnsureStartsWithAnUnreachableRemote(t *testing.T) {
 	t.Parallel()
 
 	repo := newOrigin(t)
@@ -450,15 +684,20 @@ func TestEnsureDoesNotFetchExistingTree(t *testing.T) {
 
 	mustEnsure(t, spec)
 
-	rec := &recorder{}
-	if err := source.Ensure(t.Context(), rec.git, spec, nil); err != nil {
-		t.Fatalf("ensure over an existing tree: %v", err)
+	if err := os.RemoveAll(repo.bare); err != nil {
+		t.Fatalf("remove the origin: %v", err)
 	}
 
-	for _, verb := range []string{"fetch", "clone", "pull", "remote-update"} {
-		if rec.ran(verb) {
-			t.Fatalf("ensure over an existing tree ran %q; it must read only what is on disk", verb)
-		}
+	if err := source.Ensure(t.Context(), source.GitCommand, spec, nil); err != nil {
+		t.Fatalf("ensure over an existing tree with no reachable origin: %v", err)
+	}
+
+	if branch := git(t, spec.Dest, "symbolic-ref", "--short", "HEAD"); branch != branchMain {
+		t.Fatalf("branch after an offline ensure = %q, want %s", branch, branchMain)
+	}
+
+	if got := readFixtureFile(t, filepath.Join(spec.Dest, trackedFile)); got != firstContent {
+		t.Fatalf("README after an offline ensure = %q, want %q", got, firstContent)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/credentials"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/rules"
@@ -886,14 +888,39 @@ func sourceSpecs(sources map[string]config.Source) []sourcesync.Spec {
 	for _, name := range slices.Sorted(maps.Keys(sources)) {
 		block := sources[name]
 		specs = append(specs, sourcesync.Spec{
-			Name: name,
-			Repo: block.Repo,
-			Dest: block.Dest,
-			Ref:  block.Ref,
+			Name:       name,
+			Repo:       block.Repo,
+			Dest:       block.Dest,
+			Ref:        block.Ref,
+			DirtyReset: block.DirtyReset,
 		})
 	}
 
 	return specs
+}
+
+// newServeRegistry builds serve's runner registry along with the source
+// notifier wired into it. The notifier comes back rather than staying inside
+// because serve only has a fan-out to give it later, once BuildFanout has run.
+func newServeRegistry(
+	ctx context.Context,
+	cfg *config.Config,
+	sources []sourcesync.Spec,
+	mem memory.Store,
+	rulesSvc rules.Service,
+	credLookup builtins.TokenLookup,
+	msgSender builtins.MessageSender,
+	logger *slog.Logger,
+) (*runner.Registry, *SourceDirtyNotifier, error) {
+	notifier := NewSourceDirtyNotifier(nil)
+
+	registry, err := newRegistry(ctx, cfg.Runners, sources, hostenv.Render(cfg.Hosts), mem,
+		rulesSvc, credLookup, msgSender, logger, notifier)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return registry, notifier, nil
 }
 
 // newRegistry wires every built-in runner, plus a plugin-backed runner per
@@ -901,8 +928,8 @@ func sourceSpecs(sources map[string]config.Source) []sourcesync.Spec {
 // block. BuildAll hands each factory its [runner.<name>] block and spawns
 // plugin child processes, so ctx bounds construction.
 //
-// msgSender is the chat-send seam only serve has; with nil the message runner
-// refuses at execute time, like rulesSvc.
+// msgSender and sourceObs are seams only serve fills; with nil the message
+// runner refuses and the source runner only logs.
 func newRegistry(
 	ctx context.Context,
 	runnerCfgs map[string]map[string]any,
@@ -912,6 +939,8 @@ func newRegistry(
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
 	msgSender builtins.MessageSender,
+	logger *slog.Logger,
+	sourceObs builtins.SourceObserver,
 ) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
 
@@ -953,7 +982,7 @@ func newRegistry(
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
 		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv)},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
-		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand)},
+		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
 	}
 
 	for _, builtin := range fixed {

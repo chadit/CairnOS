@@ -1,13 +1,19 @@
 // Package source keeps a git working tree current from its remote so a host
-// gets its workflows and scripts from a repository instead of a deploy step. It
-// only ever clones, fetches, fast-forwards, and checks out a tag detached: reset,
-// stash, clean, and a non-fast-forward merge are never run, so a tree an operator
-// has edited fails the sync untouched.
+// gets its workflows and scripts from a repository instead of a deploy step. A
+// tree it can fast-forward it fast-forwards; a tree it cannot it puts back on
+// the ref with a forced checkout, discarding tracked edits, but only when the
+// source leaves dirty_reset at its default. With dirty_reset off the sync
+// reports what is in the way and writes nothing.
+//
+// Untracked files survive with one exception. clean, stash, and reset are never
+// run, so nothing sweeps them, but a forced checkout replaces an untracked file
+// whose path the incoming ref also tracks, because that is what -f means.
 package source
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,8 +49,35 @@ const waitDelay = 5 * time.Second
 
 // Git runs one git invocation inside dir and returns its trimmed stdout. It is a
 // function rather than an interface so a test can hand Ensure and Sync a
-// recorder, and so the argv stays the unit both sides agree on.
+// recorder, and so the argv stays the unit both sides agree on. A failure that
+// was a process exiting non-zero carries an *ExitError.
 type Git func(ctx context.Context, dir string, argv ...string) (string, error)
+
+// ExitError reports a git invocation that ran and exited non-zero, carrying the
+// status alongside git's own message. merge-base --is-ancestor is why the status
+// has to survive the Git seam: it answers through the exit code, where 1 is an
+// answer and anything else is a real failure.
+type ExitError struct {
+	// Cause carries the message, including the stderr git printed.
+	Cause error
+
+	// Code is the process exit status.
+	Code int
+}
+
+// Error implements error.
+func (e *ExitError) Error() string {
+	if e.Cause == nil {
+		return fmt.Sprintf("git exited %d", e.Code)
+	}
+
+	return e.Cause.Error()
+}
+
+// Unwrap keeps errors.Is and errors.As reaching the underlying failure.
+func (e *ExitError) Unwrap() error {
+	return e.Cause
+}
 
 // GitCommand is the production Git over os/exec. It returns trimmed stdout on
 // success and, on failure, an error carrying git's own stderr, which is where
@@ -67,11 +100,26 @@ func GitCommand(ctx context.Context, dir string, argv ...string) (string, error)
 
 	stdout, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s",
-			strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
+		return "", gitFailure(argv, stderr.String(), err)
 	}
 
 	return strings.TrimSpace(string(stdout)), nil
+}
+
+// gitFailure builds the error a failed invocation returns: git's own argv and
+// stderr, wrapped in an ExitError when the process actually ran, so a caller
+// probing through the exit status can read it. A failure to start the process
+// carries no status and stays a plain error.
+func gitFailure(argv []string, stderr string, cause error) error {
+	failure := fmt.Errorf("git %s: %w: %s",
+		strings.Join(argv, " "), cause, strings.TrimSpace(stderr))
+
+	exit, ok := errors.AsType[*exec.ExitError](cause)
+	if !ok {
+		return failure
+	}
+
+	return &ExitError{Code: exit.ExitCode(), Cause: failure}
 }
 
 // gitEnv builds the child's environment from the parent's: prompts off always,

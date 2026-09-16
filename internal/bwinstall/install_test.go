@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,11 +28,14 @@ const (
 	fakeScript  = "#!/bin/sh\necho " + fakeVersion + "\n"
 )
 
-// installPerm is the mode an installed binary carries, and entryName the one
-// file the release archive holds.
+// installPerm is the mode an installed binary carries, entryName the one file
+// the release archive holds, and sidecarSuffix the record the installer leaves
+// beside the binary saying what it wrote. sidecarPerm is that record's mode.
 const (
-	installPerm = 0o755
-	entryName   = "bw"
+	installPerm   = 0o755
+	entryName     = "bw"
+	sidecarSuffix = ".cairnos-sha256"
+	sidecarPerm   = 0o600
 )
 
 // These cases do not run in parallel. Each one writes an executable and then
@@ -40,6 +44,11 @@ const (
 
 // wrongDigest is a well-formed sha256 that matches nothing.
 const wrongDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// unreachableSource is a URL nothing serves. A case that expects the install to
+// skip or refuse points here, so a run that downloads anyway fails on the
+// connection rather than passing quietly and hiding what the case was about.
+const unreachableSource = "https://127.0.0.1:1/bw.zip"
 
 // digestOf hashes one string the way the installer hashes bytes.
 func digestOf(content string) string {
@@ -177,8 +186,84 @@ func TestInstallPlacesTheVerifiedBinary(t *testing.T) {
 
 	// The downloaded archive is a temp file in this directory, so a cleanup
 	// that stopped running would leave the release zip behind next to the
-	// binary.
-	assertOnlyEntry(t, filepath.Dir(opts.Dest), entryName)
+	// binary. What should be there is the binary and the digest record.
+	assertHolds(t, filepath.Dir(opts.Dest), entryName, entryName+sidecarSuffix)
+
+	assertRecorded(t, opts.Dest, opts.BinarySHA256)
+}
+
+// TestInstallRecordsTheDigestAtTheModeItPromises covers the record itself. It
+// sits in a personal bin directory next to the binary it vouches for, so it is
+// owner-only like the credentials file, not world-readable like the binary.
+//
+//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+func TestInstallRecordsTheDigestAtTheModeItPromises(t *testing.T) {
+	opts := options(t, map[string]string{entryName: fakeScript}, "")
+
+	if _, err := bwinstall.Install(t.Context(), opts); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	info, err := os.Stat(opts.Dest + sidecarSuffix)
+	if err != nil {
+		t.Fatalf("stat the digest record: %v", err)
+	}
+
+	if info.Mode().Perm() != sidecarPerm {
+		t.Fatalf("record mode = %04o, want %04o", info.Mode().Perm(), sidecarPerm)
+	}
+}
+
+// TestInstallReplacesTheBinaryItWroteBefore is the upgrade a host takes on its
+// own. The file at the destination is not the pin any more, but it is the one an
+// earlier install recorded, so nothing unknown is being overwritten and --force
+// would be asking the operator to approve this tool replacing its own work.
+//
+//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+func TestInstallReplacesTheBinaryItWroteBefore(t *testing.T) {
+	const olderPin = "#!/bin/sh\necho 2026.7.0\n"
+
+	opts := options(t, map[string]string{entryName: fakeScript}, "")
+	stageBinary(t, opts.Dest, olderPin)
+	stageRecord(t, opts.Dest, digestOf(olderPin))
+
+	result, err := bwinstall.Install(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	if !result.Installed || result.Version != fakeVersion {
+		t.Fatalf("result = %+v, want the pinned version installed", result)
+	}
+
+	if !strings.EqualFold(result.Previous, digestOf(olderPin)) {
+		t.Fatalf("result.Previous = %q, want the digest of the binary it replaced", result.Previous)
+	}
+
+	assertRecorded(t, opts.Dest, opts.BinarySHA256)
+}
+
+// TestInstallRefusesABinaryTheRecordDoesNotVouchFor is the other half. A record
+// naming some other digest says nothing about the file that is actually there,
+// so the refusal has to stand: this is the shape a wrapper dropped over a real
+// install would take.
+//
+//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+func TestInstallRefusesABinaryTheRecordDoesNotVouchFor(t *testing.T) {
+	opts := options(t, map[string]string{entryName: fakeScript}, "")
+	stageBinary(t, opts.Dest, "#!/bin/sh\necho "+fakeVersion+"\n# and then something else\n")
+	stageRecord(t, opts.Dest, wrongDigest)
+
+	opts.URL = unreachableSource
+
+	_, err := bwinstall.Install(t.Context(), opts)
+	if err == nil {
+		t.Fatal("install replaced a binary its own record did not vouch for")
+	}
+
+	if !messageMentions(t, err, "--force") {
+		t.Fatalf("the error does not point at the way past it: %v", err)
+	}
 }
 
 // TestInstallRefusesAChecksumMismatch is the case the whole package exists for:
@@ -387,16 +472,17 @@ func TestInstallLeavesTheProbeWithoutVaultCredentials(t *testing.T) {
 }
 
 // TestInstallLeavesAMatchingBinaryAlone keeps a re-run cheap, and does it by
-// hashing the file rather than asking it what it is.
+// hashing the file rather than asking it what it is. The record still gets
+// written: every host installed its bw before the record existed, and this skip
+// is the path an ordinary re-run takes, so it is the one chance to bootstrap
+// one before the pin next moves.
 //
 //nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallLeavesAMatchingBinaryAlone(t *testing.T) {
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	stageBinary(t, opts.Dest, fakeScript)
 
-	// A URL nothing serves, so a download would fail the case rather than pass
-	// it quietly.
-	opts.URL = "https://127.0.0.1:1/bw.zip"
+	opts.URL = unreachableSource
 
 	result, err := bwinstall.Install(t.Context(), opts)
 	if err != nil {
@@ -406,6 +492,8 @@ func TestInstallLeavesAMatchingBinaryAlone(t *testing.T) {
 	if result.Installed {
 		t.Fatal("install replaced a binary that was already the pinned one")
 	}
+
+	assertRecorded(t, opts.Dest, opts.BinarySHA256)
 }
 
 // TestInstallRefusesAnImpostorThatPrintsTheRightVersion is the reason the skip
@@ -418,9 +506,7 @@ func TestInstallRefusesAnImpostorThatPrintsTheRightVersion(t *testing.T) {
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	stageBinary(t, opts.Dest, "#!/bin/sh\necho "+fakeVersion+"\n# and then something else\n")
 
-	// The download is unreachable, so a run that gets past the skip fails here
-	// rather than quietly reinstalling and hiding the point of the case.
-	opts.URL = "https://127.0.0.1:1/bw.zip"
+	opts.URL = unreachableSource
 
 	_, err := bwinstall.Install(t.Context(), opts)
 	if err == nil {
@@ -540,6 +626,30 @@ func messageMentions(t *testing.T, err error, want string) bool {
 	return strings.Contains(structured.Message, want)
 }
 
+// stageRecord writes the digest record an earlier install would have left, so a
+// case can say what this tool believes it put there.
+func stageRecord(t *testing.T, dest, digest string) {
+	t.Helper()
+
+	if err := os.WriteFile(dest+sidecarSuffix, []byte(digest+"\n"), sidecarPerm); err != nil {
+		t.Fatalf("stage a digest record beside %s: %v", dest, err)
+	}
+}
+
+// assertRecorded proves the record beside the binary names the digest given.
+func assertRecorded(t *testing.T, dest, want string) {
+	t.Helper()
+
+	body, err := os.ReadFile(dest + sidecarSuffix) // #nosec G304 -- the path is built by the test
+	if err != nil {
+		t.Fatalf("read the digest record: %v", err)
+	}
+
+	if recorded := strings.TrimSpace(string(body)); !strings.EqualFold(recorded, want) {
+		t.Fatalf("recorded digest = %q, want %q", recorded, want)
+	}
+}
+
 // stageBinary puts a runnable stand-in at the destination.
 func stageBinary(t *testing.T, path, script string) {
 	t.Helper()
@@ -549,8 +659,9 @@ func stageBinary(t *testing.T, path, script string) {
 	}
 }
 
-// assertOnlyEntry proves the directory holds exactly the one file.
-func assertOnlyEntry(t *testing.T, dir, name string) {
+// assertHolds proves the directory holds exactly the named files and nothing
+// else, which is what catches a temp file or a downloaded archive left behind.
+func assertHolds(t *testing.T, dir string, want ...string) {
 	t.Helper()
 
 	entries, err := os.ReadDir(dir)
@@ -558,8 +669,13 @@ func assertOnlyEntry(t *testing.T, dir, name string) {
 		t.Fatalf("read the install directory: %v", err)
 	}
 
-	if len(entries) != 1 || entries[0].Name() != name {
-		t.Fatalf("install directory holds %v, want just %q", entryNamesOf(entries), name)
+	found := entryNamesOf(entries)
+
+	slices.Sort(found)
+	slices.Sort(want)
+
+	if !slices.Equal(found, want) {
+		t.Fatalf("install directory holds %v, want %v", found, want)
 	}
 }
 

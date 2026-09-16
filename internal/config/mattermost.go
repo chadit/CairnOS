@@ -109,7 +109,7 @@ type BotLoop struct {
 
 // NotifyMattermost selects the engine and queue events that fan out to a
 // Mattermost channel. The sink is off until both Identity and Channel are set;
-// Events then selects which of the four fan-out events reach it.
+// Events then selects which of the fan-out events reach it.
 type NotifyMattermost struct {
 	// Identity names the bridge identity that posts the line. It must be declared
 	// under [bridge.mattermost.identity].
@@ -119,7 +119,7 @@ type NotifyMattermost struct {
 	Channel string
 
 	// Events is the selected event set. Every value must be one of held,
-	// run_failed, dead_lettered, or budget_denied.
+	// run_failed, dead_lettered, budget_denied, connectivity, or source_dirty.
 	Events []string
 }
 

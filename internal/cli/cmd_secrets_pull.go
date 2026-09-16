@@ -43,6 +43,11 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 	system := flags.Bool("system", false,
 		"write where a system-mode unit reads, under /etc/cairnos rather than the home")
 
+	// Spelled the same as on `secrets install-bw`, because this command now
+	// upgrades the binary that one installed and the two have to agree on
+	// where it lives.
+	binDir := flags.String("bin-dir", "", "look for and install the pinned bw here instead of ~/.local/bin")
+
 	if code, proceed := parseFlags(flags, args); !proceed {
 		return code
 	}
@@ -73,7 +78,7 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return ExitOK
 	}
 
-	opts := pullOptions{dir: dir, cfg: &cfg, system: *system, dryRun: *dryRun}
+	opts := pullOptions{dir: dir, binDir: *binDir, cfg: &cfg, system: *system, dryRun: *dryRun}
 
 	return a.pullBitwarden(ctx, label, cfg.Secrets.Bitwarden, opts)
 }
@@ -109,6 +114,11 @@ type pullOptions struct {
 	// credentials this host will want that the vault did not supply.
 	cfg *config.Config
 
+	// binDir is where the pinned bw is looked for and installed, empty for
+	// the default. It rides here rather than in a second parameter because
+	// pullBitwarden already carries this struct.
+	binDir string
+
 	dir    string
 	system bool
 	dryRun bool
@@ -119,7 +129,7 @@ type pullOptions struct {
 func (a *App) pullBitwarden(
 	ctx context.Context, label string, block *config.Bitwarden, opts pullOptions,
 ) int {
-	binary, err := lookBitwardenBinary()
+	binary, err := a.ensureBitwardenBinary(ctx, label, opts.binDir)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 

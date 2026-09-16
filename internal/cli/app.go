@@ -78,6 +78,11 @@ type App struct {
 	// WithInterrupts so no test ever sends a real SIGINT.
 	interrupts <-chan os.Signal
 
+	// bwPin resolves the pinned Bitwarden release for a platform. New sets it
+	// to the generated pin; tests replace it through WithBitwardenPin, since
+	// the fake bw a suite stages can never hash to a published release.
+	bwPin func(goos string) (bwAssetPin, error)
+
 	// echoNoticed keeps the visible-input warning to one line per run. The
 	// prompts ask three times and the answer is the same every time.
 	echoNoticed bool
@@ -91,6 +96,7 @@ func New(stdout, stderr io.Writer) *App {
 		stderr: stderr,
 		stdin:  os.Stdin,
 		logger: slog.New(slog.NewTextHandler(stderr, nil)),
+		bwPin:  bwAsset,
 	}
 }
 

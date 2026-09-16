@@ -40,7 +40,9 @@ func runAuth(t *testing.T, stdin string, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 
 	argv := append([]string{secretsCmd, authSubcmd}, args...)
-	code := cli.New(&stdout, &stderr).WithStdin(strings.NewReader(stdin)).Run(t.Context(), argv)
+	code := pinnedApp(t, &stdout, &stderr, testBinaryDigest(t)).
+		WithStdin(strings.NewReader(stdin)).
+		Run(t.Context(), argv)
 
 	return code, stdout.String(), stderr.String()
 }

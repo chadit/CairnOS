@@ -5,8 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
-	"sync"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/source"
@@ -20,6 +18,16 @@ const (
 	fixtureDirPerm  = 0o750
 	specName        = "automation"
 	trackedFile     = "README.md"
+)
+
+// The tracked file contents the fixtures commit, plus the two strings a blocked
+// tree carries. Named so a case reads as the first commit or the second rather
+// than as two similar literals.
+const (
+	firstContent  = "one\n"
+	secondContent = "two\n"
+	handEdit      = "edited by hand\n"
+	untrackedBody = "not tracked\n"
 )
 
 // TestMain points git at an empty global and system config for the whole
@@ -74,7 +82,7 @@ func newOrigin(t *testing.T) origin {
 	git(t, work, "remote", "add", "origin", bare)
 
 	repo := origin{bare: bare, work: work}
-	repo.commit(t, "one\n", "first")
+	repo.commit(t, firstContent, "first")
 	repo.push(t)
 
 	return repo
@@ -119,14 +127,17 @@ func mustEnsure(t *testing.T, spec source.Spec) {
 }
 
 // specFor builds a spec pointing at a fresh destination under a temp directory.
+// DirtyReset matches what config seeds for a block that never names the key, so
+// a fixture and a real host agree on what a blocked tree gets.
 func specFor(t *testing.T, repo origin, ref string) source.Spec {
 	t.Helper()
 
 	return source.Spec{
-		Name: specName,
-		Repo: repo.bare,
-		Dest: filepath.Join(t.TempDir(), "checkout"),
-		Ref:  ref,
+		Name:       specName,
+		Repo:       repo.bare,
+		Dest:       filepath.Join(t.TempDir(), "checkout"),
+		Ref:        ref,
+		DirtyReset: true,
 	}
 }
 
@@ -151,36 +162,26 @@ func detach(t *testing.T, repo, commitish string) {
 	git(t, repo, "checkout", "--detach", commitish)
 }
 
-// recorder wraps the production git so a case can assert on the argv a call path
-// issued while every command still does real work against the fixture.
-type recorder struct {
-	calls [][]string
-	mu    sync.Mutex
+// failingGit wraps the production git so one verb fails with a chosen exit
+// status while every other command still does real work against the fixture. It
+// is how a case reaches a git failure a real fixture cannot be talked into.
+type failingGit struct {
+	verb string
+	code int
 }
 
-// git records one invocation and passes it through.
-func (r *recorder) git(ctx context.Context, dir string, argv ...string) (string, error) {
-	r.mu.Lock()
-	r.calls = append(r.calls, slices.Clone(argv))
-	r.mu.Unlock()
-
-	// The recorder is a pass-through seam, so the production error reaches the
-	// caller exactly as it would without it.
-	return source.GitCommand(ctx, dir, argv...) //nolint:wrapcheck // pass-through recorder
-}
-
-// ran reports whether any recorded invocation started with verb.
-func (r *recorder) ran(verb string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, argv := range r.calls {
-		if len(argv) > 0 && argv[0] == verb {
-			return true
+// git fails the chosen verb with the canned status and passes everything else
+// straight through, so the production error reaches the caller exactly as it
+// would without the wrapper.
+func (f failingGit) git(ctx context.Context, dir string, argv ...string) (string, error) {
+	if len(argv) > 0 && argv[0] == f.verb {
+		return "", &source.ExitError{
+			Code:  f.code,
+			Cause: errors.New("fatal: the fixture forced " + f.verb + " to fail"),
 		}
 	}
 
-	return false
+	return source.GitCommand(ctx, dir, argv...) //nolint:wrapcheck // pass-through fixture
 }
 
 // setIdentity gives one repository a committer, since the package runs with an

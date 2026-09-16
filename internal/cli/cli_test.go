@@ -2,12 +2,15 @@ package cli_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/bwinstall"
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/store"
@@ -68,12 +71,73 @@ name = "Bad Name"
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 
+	return runPinnedCLI(t, testBinaryDigest(t), args...)
+}
+
+// runPinnedCLI drives one invocation with the Bitwarden release pinned to a
+// given digest. A case about the refusal passes a digest nothing matches.
+func runPinnedCLI(t *testing.T, binarySum string, args ...string) (int, string, string) {
+	t.Helper()
+
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).Run(t.Context(), args)
+	code := pinnedApp(t, &stdout, &stderr, binarySum).Run(t.Context(), args)
 
 	return code, stdout.String(), stderr.String()
 }
+
+// pinnedApp builds the App every run helper drives, with the Bitwarden release
+// pinned to one digest. It exists because a command that resolves bw hashes it
+// and refuses anything but the pin, so a helper that builds an App without
+// passing through here would put its own cases in front of that refusal.
+//
+// The asset URL is one nothing serves: a case reaches the installer only when
+// it is about the refusal, and downloading the real CLI from a unit test is
+// never what that case meant.
+func pinnedApp(t *testing.T, stdout, stderr *bytes.Buffer, binarySum string) *cli.App {
+	t.Helper()
+
+	return cli.New(stdout, stderr).WithBitwardenPin(unreachableAsset, binarySum)
+}
+
+// runUnpinnedCLI drives one invocation on a platform this build pins no release
+// for, which runtime.GOOS makes unreachable any other way.
+func runUnpinnedCLI(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	code := cli.New(&stdout, &stderr).WithoutBitwardenPin().Run(t.Context(), args)
+
+	return code, stdout.String(), stderr.String()
+}
+
+// testBinaryDigest hashes the binary running this suite. stageFakeBW stages its
+// fake bw as a symlink to this same file, so this is the digest of the binary
+// those cases actually put on PATH. The result is cached because every
+// invocation asks for it and the test binary runs to tens of megabytes.
+func testBinaryDigest(t *testing.T) string {
+	t.Helper()
+
+	digest, err := cachedTestBinaryDigest()
+	if err != nil {
+		t.Fatalf("hash the test binary: %v", err)
+	}
+
+	return digest
+}
+
+// cachedTestBinaryDigest hashes the test binary once per process.
+//
+//nolint:gochecknoglobals // a read-only cache of one immutable value, computed on first use
+var cachedTestBinaryDigest = sync.OnceValues(func() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate the test binary: %w", err)
+	}
+
+	return bwinstall.FileDigest(self)
+})
 
 // initDir scaffolds a fresh CairnOS home in a temp directory.
 func initDir(t *testing.T) string {

@@ -70,6 +70,45 @@ func TestLoadSourceDefaultsRef(t *testing.T) {
 	}
 }
 
+// TestLoadSourceDefaultsDirtyReset covers the half of FR1 a raw map cannot
+// recover later: an absent key has to arrive as true, not as the zero value.
+func TestLoadSourceDefaultsDirtyReset(t *testing.T) {
+	t.Parallel()
+
+	toml := sourceTOML(
+		`repo = "`+sourceRepoURL+`"`,
+		`dest = "/opt/src/automation"`,
+	)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !cfg.Sources["automation"].DirtyReset {
+		t.Fatal("dirty_reset = false with the key absent, want the true default")
+	}
+}
+
+func TestLoadSourceAcceptsDirtyResetFalse(t *testing.T) {
+	t.Parallel()
+
+	toml := sourceTOML(
+		`repo        = "`+sourceRepoURL+`"`,
+		`dest        = "/opt/src/automation"`,
+		`dirty_reset = false`,
+	)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Sources["automation"].DirtyReset {
+		t.Fatal("dirty_reset = true with the key written false")
+	}
+}
+
 func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +134,15 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 				`ref  = 7`,
 			),
 			want: "source.automation.ref must be a string",
+		},
+		{
+			name: "non-bool dirty_reset",
+			toml: sourceTOML(
+				`repo        = "`+sourceRepoURL+`"`,
+				`dest        = "/opt/src/automation"`,
+				`dirty_reset = "true"`,
+			),
+			want: "source.automation.dirty_reset must be a boolean",
 		},
 		{
 			name: "non-string repo",

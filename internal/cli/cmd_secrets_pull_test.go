@@ -43,6 +43,19 @@ const bwFakeName = "bw"
 // for the same reason.
 const bwFakeSettingsFile = "fake.json"
 
+// unreachableAsset is the release URL the staged pin carries. Nothing serves it,
+// so a case that reaches the installer fails there instead of downloading the
+// real Bitwarden CLI from a unit test.
+const unreachableAsset = "https://127.0.0.1:1/bw.zip"
+
+// strangerDigest is a well-formed sha256 no staged binary matches, which is how
+// a case puts the host a pin behind.
+const strangerDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// bwDigestRecord is the suffix bwinstall records an installed digest under,
+// beside the binary it wrote.
+const bwDigestRecord = ".cairnos-sha256"
+
 // bwFakeSettings is what the fake reads out of that file.
 type bwFakeSettings struct {
 	ItemsFile string `json:"items_file"`
@@ -176,6 +189,10 @@ func credentialsFixture() string {
 // stageFakeBW symlinks this test binary as bw and writes the item fixture. It
 // returns the directory to put first on PATH, which is how `secrets pull` finds
 // it through LookPath.
+//
+// runCLI pins the release to this same binary's digest, which is what keeps
+// these cases exercising the command rather than the refusal a bw that is not
+// the pin would get.
 func stageFakeBW(t *testing.T, fields map[string]string) string {
 	t.Helper()
 
@@ -195,6 +212,15 @@ func stageFakeBW(t *testing.T, fields map[string]string) string {
 	}
 
 	return dir
+}
+
+// stageDigestRecord writes the record an earlier install would have left beside
+// the binary it wrote, which is what separates a bw this tool owns from one it
+// must not replace.
+func stageDigestRecord(t *testing.T, binary, digest string) {
+	t.Helper()
+
+	writePullFile(t, binary+bwDigestRecord, digest+"\n")
 }
 
 // encodeItems renders the list response through encoding/json. Building it by
@@ -265,6 +291,82 @@ func TestSecretsPullWithoutABlockIsANoOp(t *testing.T) {
 
 	if !strings.Contains(stdout, "nothing to do") {
 		t.Fatalf("stdout does not say the block is absent:\n%s", stdout)
+	}
+}
+
+// TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH covers FR8. A bw from a
+// package manager or a hand install is not CairnOS's to replace, and a deploy
+// that quietly drove it would be running the vault through a binary nothing in
+// this repository vouches for.
+func TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH(t *testing.T) {
+	binDir := stageFakeBW(t, bothFields())
+	dir := pullConfig(t)
+
+	t.Setenv("PATH", pathWith(binDir))
+
+	code, _, stderr := runPinnedCLI(t, strangerDigest, secretsCmd, "pull", flagDirArg, dir)
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want failure\nstderr: %s", code, stderr)
+	}
+
+	// Both paths, because the fix is a PATH change as often as an install.
+	for _, want := range []string{filepath.Join(binDir, bwFakeName), ".local/bin"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("the refusal does not name %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// TestSecretsPullUpgradesTheBWItInstalled is the other half of FR8: the binary
+// the pin moved past sits in the install directory and carries the digest an
+// earlier install recorded, so the command installs over it rather than asking
+// for --force. The staged pin points at an asset nothing serves, so the case
+// proves which branch ran by where it failed.
+func TestSecretsPullUpgradesTheBWItInstalled(t *testing.T) {
+	binDir := stageFakeBW(t, bothFields())
+	dir := pullConfig(t)
+
+	stageDigestRecord(t, filepath.Join(binDir, bwFakeName), testBinaryDigest(t))
+
+	t.Setenv("PATH", pathWith(binDir))
+
+	code, _, stderr := runPinnedCLI(t, strangerDigest,
+		secretsCmd, "pull", flagDirArg, dir, "--bin-dir", binDir)
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want the unreachable download to fail\nstderr: %s", code, stderr)
+	}
+
+	if strings.Contains(stderr, "not the pinned release") {
+		t.Fatalf("a bw in the install directory was refused instead of upgraded:\n%s", stderr)
+	}
+
+	if !strings.Contains(stderr, unreachableAsset) {
+		t.Fatalf("the failure does not come from the install this should have started:\n%s", stderr)
+	}
+}
+
+// TestSecretsPullUsesAnUnpinnedPlatformsOwnBW covers the platforms outside the
+// two-entry pin table. There is no digest to compare against there, and before
+// the pin check existed a working bw on PATH was simply used. Refusing the
+// command instead would leave the operator no flag to get past it.
+func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
+	binDir := stageFakeBW(t, bothFields())
+	dir := pullConfig(t)
+
+	t.Setenv("PATH", pathWith(binDir))
+
+	code, stdout, stderr := runUnpinnedCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
+	}
+
+	// Used, but the operator is told it went unchecked.
+	if !strings.Contains(stderr, "without checking it") {
+		t.Fatalf("stderr does not say the bw went unchecked:\n%s", stderr)
+	}
+
+	if !strings.Contains(stdout, pullVarOne) {
+		t.Fatalf("the pull did not render the vault fields:\n%s", stdout)
 	}
 }
 

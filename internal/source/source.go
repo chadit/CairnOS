@@ -22,8 +22,6 @@ const (
 	CodeClone       = "source.clone"
 	CodeFetch       = "source.fetch"
 	CodeMismatch    = "source.mismatch"
-	CodeDirty       = "source.dirty"
-	CodeDiverged    = "source.diverged"
 	CodeAmbiguous   = "source.ambiguous"
 	CodeNoRef       = "source.no_ref"
 	CodeNotWorktree = "source.not_worktree"
@@ -49,6 +47,15 @@ const (
 // globChars are the characters that make a ref a tag pattern rather than a name.
 const globChars = "*?["
 
+// Exit statuses the ancestry probe reads. merge-base --is-ancestor documents 1
+// as "not an ancestor" and reserves every other non-zero status for a real
+// failure, so the two must never be confused. unknownExit stands for a failure
+// that never became a process exit at all.
+const (
+	exitNotAncestor = 1
+	unknownExit     = -1
+)
+
 // parentPerm is the mode for a parent directory created on the way to dest:
 // group-readable, owner-writable, within gosec's G301 bound. Git sets the mode
 // of the tree itself.
@@ -60,6 +67,10 @@ type Spec struct {
 	Repo string
 	Dest string
 	Ref  string
+
+	// DirtyReset lets Sync force a tree that cannot fast-forward back onto Ref.
+	// False makes the same tree a skip with a reason instead of a write.
+	DirtyReset bool
 }
 
 // Result reports where HEAD was and where it ended up, as short hashes. Equal
@@ -67,7 +78,26 @@ type Spec struct {
 type Result struct {
 	Old string
 	New string
+
+	// Skipped is non-empty when DirtyReset is off and something in the tree
+	// blocked the move. It is a one-line reason for an operator, and the sync
+	// still counts as a success: nothing failed, the tree was left alone.
+	Skipped string
+
+	// Reset reports that the tree was forced onto the ref and tracked local
+	// changes went with it.
+	Reset bool
 }
+
+// The one-line reasons a blocked tree carries into Result.Skipped and the warn
+// logs. They are phrased for an operator reading a chat notification, so they
+// name the state rather than the git command that found it.
+const (
+	reasonDirty       = "uncommitted changes"
+	reasonDetached    = "HEAD is detached"
+	reasonOtherBranch = "HEAD is on branch %s, ref is %s"
+	reasonDiverged    = "local commits the remote cannot fast-forward past"
+)
 
 // target is a resolved ref: either a branch to follow or the tag to pin to.
 type target struct {
@@ -115,15 +145,11 @@ func EnsureAll(ctx context.Context, git Git, specs []Spec, logger *slog.Logger) 
 }
 
 // Sync brings dest to the current tip of its ref. The caller serializes calls
-// for one spec; nothing here writes to a tracked file beyond the fast-forward
-// merge or the detached tag checkout, and both refuse rather than overwrite.
+// for one spec. The status read comes after the fetch, not before it, because a
+// tree that has to be forced onto the ref needs the fetched tip to aim at.
 func Sync(ctx context.Context, git Git, spec Spec) (Result, error) {
 	runCtx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
-
-	if err := requireClean(runCtx, git, spec); err != nil {
-		return Result{}, err
-	}
 
 	if _, err := git(runCtx, spec.Dest, "fetch", "--prune", "--tags", "origin"); err != nil {
 		return Result{}, transientf(err, CodeFetch, "fetch origin in %s: %v", spec.Dest, err)
@@ -139,8 +165,13 @@ func Sync(ctx context.Context, git Git, spec Spec) (Result, error) {
 		return Result{}, err
 	}
 
-	if advanceErr := advance(runCtx, git, spec, want); advanceErr != nil {
-		return Result{}, advanceErr
+	blocking, err := tryAdvance(runCtx, git, spec, want)
+	if err != nil {
+		return Result{}, err
+	}
+
+	if blocking != "" {
+		return resolveBlocked(runCtx, git, spec, want, old, blocking)
 	}
 
 	moved, err := shortHead(runCtx, git, spec.Dest)
@@ -149,6 +180,46 @@ func Sync(ctx context.Context, git Git, spec Spec) (Result, error) {
 	}
 
 	return Result{Old: old, New: moved}, nil
+}
+
+// tryAdvance moves HEAD onto want when nothing is in the way, and otherwise
+// names what is. Tracked changes are read first because a fast-forward merge
+// over them fails with git's own wording rather than a reason an operator can
+// act on.
+func tryAdvance(ctx context.Context, git Git, spec Spec, want target) (string, error) {
+	dirty, err := localChanges(ctx, git, spec)
+	if err != nil {
+		return "", err
+	}
+
+	if dirty {
+		return reasonDirty, nil
+	}
+
+	return advance(ctx, git, spec, want)
+}
+
+// resolveBlocked settles a tree that cannot move on its own: force it back onto
+// the ref, or report the skip and write nothing. A skip is a success, which is
+// the whole point of dirty_reset = false: a run that fails every few minutes
+// notifies every few minutes.
+func resolveBlocked(
+	ctx context.Context, git Git, spec Spec, want target, old, blocking string,
+) (Result, error) {
+	if !spec.DirtyReset {
+		return Result{Old: old, New: old, Skipped: blocking}, nil
+	}
+
+	if err := forceOnto(ctx, git, spec, want); err != nil {
+		return Result{}, err
+	}
+
+	moved, err := shortHead(ctx, git, spec.Dest)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{Old: old, New: moved, Reset: true}, nil
 }
 
 // destPresent reports whether dest already exists. A stat that fails for any
@@ -252,9 +323,9 @@ func sameDir(toplevel, dest string) error {
 
 // positionExisting leaves an existing tree on the configured ref. Moving a pin
 // is routine and an interrupted sync leaves the same shape, so a tree sitting
-// elsewhere is repaired rather than refused: refusing stops serve with nothing on
-// the boot path able to clear it. Nothing here fetches, and a tree carrying local
-// work is left alone.
+// elsewhere is repaired rather than refused: refusing stops serve with nothing
+// able to clear it. Nothing here fetches, and a tree carrying local work is left
+// for the first sync.
 func positionExisting(ctx context.Context, git Git, spec Spec, logger *slog.Logger) error {
 	want, err := resolveRef(ctx, git, spec)
 	if err != nil {
@@ -270,8 +341,15 @@ func positionExisting(ctx context.Context, git Git, spec Spec, logger *slog.Logg
 		return nil
 	}
 
-	if cleanErr := requireClean(ctx, git, spec); cleanErr != nil {
-		return cleanErr
+	dirty, err := localChanges(ctx, git, spec)
+	if err != nil {
+		return err
+	}
+
+	if dirty {
+		logDirtyAtBoot(spec, logger)
+
+		return nil
 	}
 
 	if checkoutErr := checkoutTarget(ctx, git, spec, want); checkoutErr != nil {
@@ -281,6 +359,18 @@ func positionExisting(ctx context.Context, git Git, spec Spec, logger *slog.Logg
 	logRepositioned(ctx, git, spec, logger, old)
 
 	return nil
+}
+
+// logDirtyAtBoot records a tree the boot leaves where it is. Serve used to stop
+// here, which left an unattended host down until someone logged in, so the
+// repair or the report is the first sync's job now.
+func logDirtyAtBoot(spec Spec, logger *slog.Logger) {
+	if logger == nil {
+		return
+	}
+
+	logger.Warn("source tree has local changes; the first sync will reset or skip it",
+		"source", spec.Name, "dest", spec.Dest, "ref", spec.Ref, "dirty_reset", spec.DirtyReset)
 }
 
 // tolerateMissingRef lets a ref that no local ref answers through with a warning.
@@ -363,8 +453,8 @@ func checkoutTarget(ctx context.Context, git Git, spec Spec, want target) error 
 	// The trailing separator settles branch-versus-file ambiguity in favor of the
 	// branch. It cannot turn the name into a path the way a leading one would,
 	// since nothing follows it.
-	if _, err := git(ctx, spec.Dest, "checkout", spec.Ref, "--"); err != nil {
-		return permanentf(err, CodeGit, "check out branch %s in %s: %v", spec.Ref, spec.Dest, err)
+	if _, err := git(ctx, spec.Dest, "checkout", want.name, "--"); err != nil {
+		return permanentf(err, CodeGit, "check out branch %s in %s: %v", want.name, spec.Dest, err)
 	}
 
 	return nil
@@ -425,50 +515,132 @@ func refExists(ctx context.Context, git Git, dir, ref string) bool {
 	return err == nil
 }
 
-// requireClean refuses a tree with local modifications. CairnOS never writes to
-// a source, so the operator's edit wins and the sync fails until they deal with
-// it themselves.
-func requireClean(ctx context.Context, git Git, spec Spec) error {
-	status, err := git(ctx, spec.Dest, "status", "--porcelain")
+// localChanges reports whether the tree carries tracked modifications.
+// Untracked files are deliberately excluded: a repair does not remove them, so
+// counting them would leave a tree that still reads dirty after every repair and
+// never settles.
+func localChanges(ctx context.Context, git Git, spec Spec) (bool, error) {
+	status, err := git(ctx, spec.Dest, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
-		return permanentf(err, CodeGit, "read the status of %s: %v", spec.Dest, err)
+		return false, permanentf(err, CodeGit, "read the status of %s: %v", spec.Dest, err)
 	}
 
-	if status != "" {
-		return permanentf(nil, CodeDirty,
-			"%s has uncommitted changes; commit or revert them, CairnOS never writes to a source", spec.Dest)
+	return status != "", nil
+}
+
+// advance moves HEAD onto the resolved target, or names what blocks it. A tag
+// is checked out detached from wherever the tree sits, so only a branch ref has
+// anything that can block.
+func advance(ctx context.Context, git Git, spec Spec, want target) (string, error) {
+	if want.branch {
+		return fastForward(ctx, git, spec, want)
+	}
+
+	return "", detachAtTag(ctx, git, spec, want.name)
+}
+
+// fastForward moves the local branch to the remote tip, or reports why it
+// cannot. A detached HEAD, a different branch, and a history the remote cannot
+// reach each mean the tree carries work only a forced checkout would discard,
+// so that choice belongs to the caller. The ref comes from want, leaving
+// resolveRef to decide what it means.
+func fastForward(ctx context.Context, git Git, spec Spec, want target) (string, error) {
+	head, err := git(ctx, spec.Dest, "symbolic-ref", "--short", "-q", "HEAD")
+	if err != nil {
+		// -q makes a detached HEAD exit non-zero with no output, so this is the
+		// state itself rather than a command that went wrong.
+		return reasonDetached, nil //nolint:nilerr // a non-zero exit here means detached HEAD
+	}
+
+	if head != want.name {
+		return fmt.Sprintf(reasonOtherBranch, head, want.name), nil
+	}
+
+	remote := remoteRef(want.name)
+
+	ahead, err := remoteIsAhead(ctx, git, spec.Dest, remote)
+	if err != nil {
+		return "", err
+	}
+
+	if !ahead {
+		return reasonDiverged, nil
+	}
+
+	if _, mergeErr := git(ctx, spec.Dest, "merge", "--ff-only", remote); mergeErr != nil {
+		return "", permanentf(mergeErr, CodeGit,
+			"fast-forward %s to %s: %v", spec.Dest, remote, mergeErr)
+	}
+
+	return "", nil
+}
+
+// remoteIsAhead asks whether the remote tip has HEAD in its history, which is
+// the one condition a fast-forward needs. Asking outright is what keeps a
+// locked index or an unreadable object from being reported as a diverged branch
+// and then forced over: merge-base writes nothing, answers "no" with exit 1, and
+// signals a genuine failure with any other status.
+func remoteIsAhead(ctx context.Context, git Git, dir, remote string) (bool, error) {
+	_, err := git(ctx, dir, "merge-base", "--is-ancestor", "HEAD", remote)
+	if err == nil {
+		return true, nil
+	}
+
+	if exitCode(err) == exitNotAncestor {
+		return false, nil
+	}
+
+	return false, permanentf(err, CodeGit, "compare %s with %s: %v", dir, remote, err)
+}
+
+// exitCode reports the status a failed git invocation exited with, or
+// unknownExit when the failure was not a process that ran and exited.
+func exitCode(err error) int {
+	exit, ok := errors.AsType[*ExitError](err)
+	if !ok {
+		return unknownExit
+	}
+
+	return exit.Code
+}
+
+// remoteRef is the fully qualified remote-tracking ref for a branch name, the
+// one spelling both the probe and the forced checkout aim at.
+func remoteRef(branch string) string {
+	return "refs/remotes/origin/" + branch
+}
+
+// forceOnto puts the tree on want whatever it was carrying. Tracked edits and
+// local commits are discarded. An untracked file survives unless want tracks a
+// file at the same path, where -f lets the ref's copy replace it; clean, stash,
+// and reset are never run, so nothing else untracked is touched.
+func forceOnto(ctx context.Context, git Git, spec Spec, want target) error {
+	if want.branch {
+		return forceOntoBranch(ctx, git, spec, want)
+	}
+
+	return forceOntoTag(ctx, git, spec, want.name)
+}
+
+// forceOntoBranch recreates the local branch at the fetched remote tip. The -B
+// is what covers a detached HEAD and a tree sitting on some other branch: a
+// plain forced checkout of the branch would leave a diverged local branch
+// exactly where it was.
+func forceOntoBranch(ctx context.Context, git Git, spec Spec, want target) error {
+	remote := remoteRef(want.name)
+
+	if _, err := git(ctx, spec.Dest, "checkout", "-f", "-B", want.name, remote); err != nil {
+		return permanentf(err, CodeGit, "force %s onto %s: %v", spec.Dest, remote, err)
 	}
 
 	return nil
 }
 
-// advance moves HEAD onto the resolved target.
-func advance(ctx context.Context, git Git, spec Spec, want target) error {
-	if want.branch {
-		return fastForward(ctx, git, spec)
-	}
-
-	return detachAtTag(ctx, git, spec, want.name)
-}
-
-// fastForward moves the local branch to the remote tip. A detached HEAD, a
-// different branch, and a history the remote cannot fast-forward all fail here:
-// each one means the tree carries work only a write could discard.
-func fastForward(ctx context.Context, git Git, spec Spec) error {
-	head, err := git(ctx, spec.Dest, "symbolic-ref", "--short", "-q", "HEAD")
-	if err != nil {
-		return permanentf(err, CodeDiverged,
-			"%s is not on a branch, but source %s follows branch %s", spec.Dest, spec.Name, spec.Ref)
-	}
-
-	if head != spec.Ref {
-		return permanentf(nil, CodeDiverged,
-			"%s is on branch %q, but source %s follows %q", spec.Dest, head, spec.Name, spec.Ref)
-	}
-
-	if _, mergeErr := git(ctx, spec.Dest, "merge", "--ff-only", "refs/remotes/origin/"+spec.Ref); mergeErr != nil {
-		return permanentf(mergeErr, CodeDiverged,
-			"%s cannot fast-forward to origin/%s: %v", spec.Dest, spec.Ref, mergeErr)
+// forceOntoTag parks HEAD on the tag's commit with no branch attached, the same
+// shape an ordinary pinned-tag sync leaves behind.
+func forceOntoTag(ctx context.Context, git Git, spec Spec, tag string) error {
+	if _, err := git(ctx, spec.Dest, "checkout", "-f", "--detach", "refs/tags/"+tag); err != nil {
+		return permanentf(err, CodeGit, "force %s onto tag %s: %v", spec.Dest, tag, err)
 	}
 
 	return nil

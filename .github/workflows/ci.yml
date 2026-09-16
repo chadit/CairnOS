@@ -50,14 +50,15 @@ jobs:
       - name: plugin lifetime tests
         run: go test -race ./internal/runner/plugin/...
 
-  # The SPA bundle is committed at internal/webui/dist because go:embed reads
-  # from disk at compile time, so `go install <module>@latest` has to find it
-  # already built. The container image and CI both use that same committed
-  # bundle rather than rebuilding it, which keeps every build producing the same
-  # binary. The cost of that choice is drift, so this job is the guard: rebuild
-  # from web/src and fail if the result differs from what is committed.
-  webui-current:
+  # The SPA is a separate static bundle served outside the image, not something
+  # the Go binary embeds, so there is no committed build to check for drift. What
+  # is worth checking is that the bundle still lints, tests, and builds from
+  # web/src, which is the only coverage this tree has for the front end.
+  web:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -65,15 +66,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: rebuild the bundle
-        working-directory: web
-        run: npm ci && npm run build
-      - name: fail when the committed bundle is stale
-        run: |
-          if ! git diff --exit-code -- internal/webui/dist; then
-            echo "E: internal/webui/dist is out of date; run 'make build-web' and commit the result" >&2
-            exit 1
-          fi
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
 
   lint:
     runs-on: ubuntu-latest
@@ -82,5 +78,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # The Makefile is the one place the linter versions are written down, so
+      # CI and a developer machine cannot drift apart. Without this the action
+      # picks its own default and nothing declares which version ran.
+      - name: read the pinned linter version
+        id: pins
+        run: echo "golangci=$(sed -n 's/^GOLANGCI_LINT_VERSION *:= *//p' Makefile)" >> "$GITHUB_OUTPUT"
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ steps.pins.outputs.golangci }}
+      # gosec runs standalone because its golangci integration deadlocks on
+      # multi-package runs; the make target holds the exclude list.
+      - name: gosec
+        run: make gosec
