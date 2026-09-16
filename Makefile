@@ -27,8 +27,8 @@ lint: ## Run golangci-lint, then gosec standalone (its golangci integration dead
 	golangci-lint run
 	gosec -quiet -exclude-dir=internal/api/gen ./...
 
-proto: ## Regenerate gRPC, gateway, and OpenAPI code from proto/ (plugins pinned via go.mod tool directives)
-	buf generate
+proto: ## Regenerate gRPC, gateway, and OpenAPI code from proto/ (buf and its plugins are go.mod tools, nothing to install)
+	go tool buf generate
 
 tidy: ## Sync go.mod and go.sum with the source
 	go mod tidy

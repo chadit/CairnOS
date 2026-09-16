@@ -261,6 +261,10 @@ make build           # builds bin/cairnos without touching $GOBIN
 One-shot `cairnos run` is for trying a workflow out; anything scheduled or
 conversational needs serve.
 
+`make build` regenerates the gRPC and gateway code under `internal/api/gen`
+first. `buf` and its plugins are Go tool directives in `go.mod`, so a clone
+needs nothing beyond the Go toolchain; the first run downloads them.
+
 ## Model setup
 
 There are two kinds of model runner. Pick per action.

@@ -1,9 +1,9 @@
-# Code generation for the CairnOS protos. Every plugin runs through the Go
-# tool directives in go.mod (`go get -tool ...`), so plugin versions are
-# pinned by the module graph, not by whatever happens to be on PATH.
+# Code generation for the CairnOS protos. buf itself and every plugin run
+# through the Go tool directives in go.mod (`go get -tool ...`), so their
+# versions are pinned by the module graph, not by whatever happens to be on
+# PATH, and a fresh clone needs only the Go toolchain.
 #
-# Regenerate with: buf generate
-# (or: go run github.com/bufbuild/buf/cmd/buf@latest generate)
+# Regenerate with: make proto   (go tool buf generate)
 version: v2
 clean: false
 plugins:
