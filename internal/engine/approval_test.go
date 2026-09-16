@@ -3,10 +3,12 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/store"
@@ -131,9 +133,35 @@ func TestApprovalApproveResumesRun(t *testing.T) {
 		t.Errorf("send did not run after the approval resumed; order = %v", rec.order())
 	}
 
-	if draftAfter := db.storedAction(run.ID, apActionDraft); !reflect.DeepEqual(draftBefore, draftAfter) {
+	if draftAfter := db.storedAction(run.ID, apActionDraft); !sameActionRow(draftBefore, draftAfter) {
 		t.Errorf("resume changed the pre-park draft row:\n before %#v\n after  %#v", draftBefore, draftAfter)
 	}
+}
+
+// sameActionRow compares two snapshots of one action row, column by column. A
+// whole-struct DeepEqual would compare the chain behind the row's
+// *cairnerr.Error rather than the code and message the row carries.
+func sameActionRow(before, after *store.ActionResult) bool {
+	if before == nil || after == nil {
+		return before == after
+	}
+
+	return cairnerr.Equal(before.Error, after.Error) &&
+		sameActionColumns(before, after) &&
+		reflect.DeepEqual(before.Output, after.Output) &&
+		maps.Equal(before.Meta, after.Meta)
+}
+
+// sameActionColumns compares the row's scalar columns and its timestamps.
+func sameActionColumns(before, after *store.ActionResult) bool {
+	return before.RunID == after.RunID &&
+		before.ActionName == after.ActionName &&
+		before.Runner == after.Runner &&
+		before.Status == after.Status &&
+		before.Attempt == after.Attempt &&
+		before.Usage == after.Usage &&
+		before.StartedAt.Equal(after.StartedAt) &&
+		before.FinishedAt.Equal(after.FinishedAt)
 }
 
 func TestApprovalDenyFailsRun(t *testing.T) {

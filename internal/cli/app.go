@@ -77,6 +77,10 @@ type App struct {
 	// registers a real signal.Notify channel. Tests inject one through
 	// WithInterrupts so no test ever sends a real SIGINT.
 	interrupts <-chan os.Signal
+
+	// echoNoticed keeps the visible-input warning to one line per run. The
+	// prompts ask three times and the answer is the same every time.
+	echoNoticed bool
 }
 
 // New wires an App over the given streams, reading interactive input from

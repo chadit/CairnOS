@@ -24,7 +24,7 @@ const envShadowMarker = "shadowed_by_env"
 // from a CSPRNG, so the hazards are visible before anything runs (security
 // council amendment 3).
 func (a *App) cmdSecrets(ctx context.Context, args []string) int {
-	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen> [flags]
+	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen|install-bw|auth|pull> [flags]
 
   set <name>   Read a value from stdin (never argv, which leaks into shell
                history and ps) and seal it. One trailing newline is trimmed.
@@ -39,12 +39,24 @@ func (a *App) cmdSecrets(ctx context.Context, args []string) int {
                previous-key window (CAIRNOS_SECRETS_PREV_KEY) is the only
                recovery path, and the ls key id column is the only diagnostic
                for which generation a stuck row belongs to.
+  install-bw   Download the pinned Bitwarden CLI, check its sha256, and install
+               it at ~/.local/bin/bw. --bin-dir installs somewhere else,
+               --force replaces a binary that is already there.
+  auth         Write the Bitwarden credentials file when it is missing,
+               prompting for the item name and the API credentials and taking
+               chezmoi's values as the defaults. When the file already exists,
+               open the vault once and report the item and how many CAIRNOS_
+               fields it carries, then lock it again.
+  pull         Render the [secrets.bitwarden] fields into the service's second
+               environment file. Runs at deployment, not at run time, because
+               most credentials here are read by bare os.Getenv. --dry-run
+               resolves everything and reports without writing.
   keygen       Print a fresh base64 master key from the OS CSPRNG. A hand-typed
                or passphrase-derived 32-byte key passes the length check yet is
                insecure; a master key must come from a CSPRNG. Key compromise
                loses the whole store.
 
-Every subcommand except keygen needs [secrets] backend = "store".
+Only set, get, rm, ls, and rotate need [secrets] backend = "store".
 `
 
 	if len(args) == 0 {
@@ -64,6 +76,12 @@ Every subcommand except keygen needs [secrets] backend = "store".
 		return a.cmdSecretsLs(ctx, args[1:])
 	case "rotate":
 		return a.cmdSecretsRotate(ctx, args[1:])
+	case "install-bw":
+		return a.cmdSecretsInstallBW(ctx, args[1:])
+	case "auth":
+		return a.cmdSecretsAuth(ctx, args[1:])
+	case "pull":
+		return a.cmdSecretsPull(ctx, args[1:])
 	case "keygen":
 		return a.cmdSecretsKeygen(args[1:])
 	default:

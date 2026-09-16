@@ -12,7 +12,7 @@ import (
 
 func TestOpenAIEmbedderPostsAndDecodes(t *testing.T) {
 	// No t.Parallel: t.Setenv forbids it.
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	var gotPath, gotModel, gotInput string
 
@@ -67,7 +67,7 @@ func TestOpenAIEmbedderPostsAndDecodes(t *testing.T) {
 
 func TestOpenAIEmbedderEmptyVectorIsError(t *testing.T) {
 	// No t.Parallel: t.Setenv forbids it.
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[]}`))

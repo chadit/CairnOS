@@ -14,7 +14,19 @@ const (
 	launchdLabel = "dev.cairnos.serve"
 
 	systemUnitPath = "/etc/systemd/system/cairnos.service"
-	systemEnvPath  = "/etc/cairnos/env"
+
+	// systemEnvDir is where a system install keeps both environment files. A
+	// system unit runs as the cairnos account, whose home holds state rather
+	// than configuration, so the files live under /etc like any other unit's.
+	systemEnvDir = "/etc/cairnos"
+
+	// envFileName is the hand-written environment file, and secretsEnvFileName
+	// the one `cairnos secrets pull` generates. They are named here rather than
+	// at each use so the unit and the pull cannot drift apart.
+	envFileName = "env"
+
+	// #nosec G101 -- a file name, not a credential.
+	secretsEnvFileName = "secrets.env"
 
 	// SystemHome is the default data directory for a system-mode install,
 	// matching the doc-11 host-install layout.
@@ -280,8 +292,29 @@ func userUnitPath(host *Host) string {
 	return filepath.Join(host.ConfigDir, "systemd", "user", unitName)
 }
 
-// envPath is the per-user env file, kept inside the CairnOS home so one
-// directory carries the whole footprint.
-func envPath(home string) string {
-	return filepath.Join(home, "env")
+// EnvDir is the directory holding both environment files: the CairnOS home for
+// a user install, /etc/cairnos for a system one. It is exported because
+// `cairnos secrets pull` has to write into the same directory the unit reads
+// from, and a system unit does not read from the home at all.
+func EnvDir(home string, system bool) string {
+	if system {
+		return systemEnvDir
+	}
+
+	return home
+}
+
+// envFilePath is the hand-written environment file the unit loads first. It
+// stays unexported because nothing outside this package writes it: the pull
+// only ever touches the generated file beside it.
+func envFilePath(home string, system bool) string {
+	return filepath.Join(EnvDir(home, system), envFileName)
+}
+
+// SecretsEnvFile is the generated file the unit loads second. It is never
+// scaffolded or templated: `cairnos secrets pull` writes it whole, so setup only
+// has to tell the unit where to look, and the pull has to ask here rather than
+// guessing from the home.
+func SecretsEnvFile(home string, system bool) string {
+	return filepath.Join(EnvDir(home, system), secretsEnvFileName)
 }

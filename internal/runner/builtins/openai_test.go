@@ -22,7 +22,6 @@ const (
 	testModel       = "test-model"
 	testAPIKey      = "sk-test" // #nosec G101 -- fixture value for httptest servers, not a credential
 	actionLLM       = "llm"
-	openaiKeyEnv    = "CAIRNOS_RUNNER_OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential
 	unresolved      = "${{ pick.output }}"
 	outputFormatKey = "output_format"
 	formatJSON      = "json"
@@ -120,7 +119,7 @@ func assertLLMUsage(t *testing.T, usage runner.Usage) {
 }
 
 func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -169,7 +168,7 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 }
 
 func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -220,7 +219,7 @@ func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
 }
 
 func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, openaiProseContentBody)
@@ -247,7 +246,7 @@ func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
 }
 
 func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -302,7 +301,7 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(openaiKeyEnv, testAPIKey)
+			t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
@@ -338,7 +337,7 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 }
 
 func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -432,7 +431,7 @@ func TestOpenAIValidate(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(openaiKeyEnv, tt.key)
+			t.Setenv(builtins.OpenAIKeyEnv, tt.key)
 
 			llm, err := builtins.NewOpenAI(tt.cfg, &http.Client{Timeout: time.Second})
 			if err != nil {

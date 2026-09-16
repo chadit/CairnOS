@@ -43,7 +43,7 @@ func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv(openaiKeyEnv, "")
+			t.Setenv(builtins.OpenAIKeyEnv, "")
 
 			llm, err := builtins.NewOpenAI(map[string]any{
 				modelKey:   localModelName,
@@ -69,7 +69,7 @@ func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 // simply go away: a block with no base_url still reaches api.openai.com, and a
 // call there without a key is a permanent failure worth catching early.
 func TestOpenAIValidateStillRequiresAPIKeyForTheHostedAPI(t *testing.T) {
-	t.Setenv(openaiKeyEnv, "")
+	t.Setenv(builtins.OpenAIKeyEnv, "")
 
 	llm, err := builtins.NewOpenAI(map[string]any{modelKey: testModel}, &http.Client{Timeout: time.Second})
 	if err != nil {
@@ -90,7 +90,7 @@ func TestOpenAIValidateStillRequiresAPIKeyForTheHostedAPI(t *testing.T) {
 // block's model string reaches the server as the request model, which is what
 // lets one llama-server name the model it loaded.
 func TestOpenAISendsTheConfiguredModelToALocalServer(t *testing.T) {
-	t.Setenv(openaiKeyEnv, "")
+	t.Setenv(builtins.OpenAIKeyEnv, "")
 
 	var gotModel string
 

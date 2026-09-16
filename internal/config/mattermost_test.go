@@ -428,6 +428,12 @@ func TestLoadRejectsInvalidMattermost(t *testing.T) {
 			toml: "[bridge.mattermost]\nurl = \"https://mm.example.com\"\n\n[bridge.mattermost.identity.\"Ops-1\"]\nusername = \"a\"\nworkspace = \"w\"",
 		},
 		{
+			// The name has to be one a shell can export, or the token it points
+			// at can never be set.
+			name: "token_env that is not a variable name",
+			toml: validMattermostTOML + "token_env = \"bw token\"",
+		},
+		{
 			name: "missing username",
 			toml: "[bridge.mattermost]\nurl = \"https://mm.example.com\"\n\n[bridge.mattermost.identity.ops]\nworkspace = \"w\"",
 		},
@@ -633,5 +639,44 @@ func TestMattermostTokenEnv(t *testing.T) {
 				t.Fatalf("MattermostTokenEnv(%q) = %q, want %q", tt.identity, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestLoadMattermostKeepsTokenEnv covers the config key itself: the name an
+// identity states is the one serve reads, with no fallback behind it.
+func TestLoadMattermostKeepsTokenEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(writeConfig(t, validMattermostTOML+"token_env = \""+secondBotTokenEnv+"\""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	identity := cfg.Bridge.Mattermost.Identity["ops"]
+	if identity.TokenEnv != secondBotTokenEnv {
+		t.Fatalf("token_env = %q, want the configured name", identity.TokenEnv)
+	}
+
+	envs := config.MattermostTokenEnvs(&identity, "ops")
+	if len(envs) != 1 || envs[0] != secondBotTokenEnv {
+		t.Fatalf("token envs = %v, want only the configured name", envs)
+	}
+}
+
+// TestLoadMattermostWithoutTokenEnvTakesTheDefault is the ordinary host: one
+// Mattermost server, one bot token, nothing to write in config.
+func TestLoadMattermostWithoutTokenEnvTakesTheDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(writeConfig(t, validMattermostTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	identity := cfg.Bridge.Mattermost.Identity["ops"]
+
+	envs := config.MattermostTokenEnvs(&identity, "ops")
+	if len(envs) != 2 || envs[1] != config.DefaultMattermostTokenEnv {
+		t.Fatalf("token envs = %v, want the shared default last", envs)
 	}
 }

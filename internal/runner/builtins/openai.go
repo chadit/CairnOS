@@ -6,20 +6,24 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 // OpenAIName is the registry name of the OpenAI chat-completions runner.
 const OpenAIName = "openai"
 
-// openaiKeyEnv names where the API key comes from. The config file never
-// carries it, matching the repo-wide rule that secrets live in the
-// environment.
-const openaiKeyEnv = "CAIRNOS_RUNNER_OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential
+// OpenAIKeyEnv is the API-key variable an openai-type block falls back to. A
+// block reads CAIRNOS_RUNNER_<NAME>_API_KEY first and this one second, so a
+// host that sets only this keeps working however its blocks are named. The
+// config file never carries the key, matching the repo-wide rule that secrets
+// live in the environment.
+//
+// It is exported so the secrets pull warning can name what a runner reads.
+const OpenAIKeyEnv = "CAIRNOS_RUNNER_OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential
 
 // defaultOpenAIBaseURL targets the hosted API; base_url in config points the
 // runner at compatible gateways and proxies instead.
@@ -37,28 +41,53 @@ const openaiStreamDone = "[DONE]"
 //
 // Config: model (required to run), base_url, max_tokens, temperature, and
 // price_in/price_out in USD per million tokens for cost reporting. Params:
-// prompt (required), system, and model (overrides config). The API key comes
-// from CAIRNOS_RUNNER_OPENAI_API_KEY at call time.
+// prompt (required), system, and model (overrides config). The API key is read
+// at call time from the block's own CAIRNOS_RUNNER_<NAME>_API_KEY, falling back
+// to OpenAIKeyEnv (see config.RunnerKeyEnvs).
 type OpenAI struct {
 	client *http.Client
-	cfg    llmConfig
+
+	// keyEnvs are the API-key variables this block reads, most specific first.
+	keyEnvs []string
+
+	cfg llmConfig
 }
 
-// NewOpenAI builds the runner over an injected HTTP client so tests can
-// point it at httptest servers.
+// NewOpenAI builds the runner for a block named after the type, over an
+// injected HTTP client so tests can point it at httptest servers.
 func NewOpenAI(cfg map[string]any, client *http.Client) (*OpenAI, error) {
+	return NewOpenAIFor(OpenAIName, cfg, client)
+}
+
+// NewOpenAIFor builds the runner for a block under any name. The name decides
+// which API key it reads first, so two openai-type blocks pointed at different
+// vendors do not have to share one credential.
+func NewOpenAIFor(block string, cfg map[string]any, client *http.Client) (*OpenAI, error) {
 	decoded, err := decodeLLMConfig(cfg, OpenAIName, defaultOpenAIBaseURL, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	return &OpenAI{cfg: decoded, client: client}, nil
+	return &OpenAI{
+		cfg:     decoded,
+		client:  client,
+		keyEnvs: config.RunnerKeyEnvs(block, OpenAIKeyEnv),
+	}, nil
 }
 
 // OpenAIFactory adapts NewOpenAI to the registry contract with a
 // backstopped HTTP client.
 func OpenAIFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewOpenAI(cfg, &http.Client{Timeout: defaultLLMTimeout})
+	return OpenAIFactoryFor(OpenAIName)(cfg)
+}
+
+// OpenAIFactoryFor is the registration for a `[runner.<name>]` block of this
+// type under another name, which is what makes CAIRNOS_RUNNER_<NAME>_API_KEY
+// reach the right runner.
+func OpenAIFactoryFor(block string) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		return NewOpenAIFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout})
+	}
 }
 
 // Name implements runner.Runner.
@@ -69,7 +98,7 @@ func (*OpenAI) Name() string {
 // Validate implements runner.Runner: params must carry a string prompt, a
 // model must come from params or config, and the API key must be set.
 func (o *OpenAI) Validate(task *runner.Task) error {
-	return o.cfg.validateTask(task, OpenAIName, openaiKeyEnv)
+	return o.cfg.validateTask(task, OpenAIName, o.keyEnvs)
 }
 
 // Execute implements runner.Runner.
@@ -140,8 +169,8 @@ func (o *OpenAI) run(ctx context.Context, task *runner.Task, stream chan<- runne
 
 // authHeaders builds the per-call auth header; the key reads at call time
 // so a rotation needs no restart.
-func (*OpenAI) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + os.Getenv(openaiKeyEnv)}
+func (o *OpenAI) authHeaders() map[string]string {
+	return map[string]string{"Authorization": "Bearer " + apiKey(o.keyEnvs)}
 }
 
 // payload assembles the request body for one task.

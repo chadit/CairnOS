@@ -76,6 +76,11 @@ type MattermostIdentity struct {
 	// gets. Empty falls back to [chat] default_personality.
 	Personality string
 
+	// TokenEnv names the variable this identity's bot token comes from, for the
+	// case one CairnOS talks to a Mattermost server as two different bots. Empty
+	// takes the shared default (see MattermostTokenEnvs).
+	TokenEnv string
+
 	// Approvers lists the Mattermost usernames allowed to approve a D9 proposal.
 	// Empty means nobody can, which leaves every proposal to expire as a deny:
 	// chat access does not imply workflow-approval authority.
@@ -138,12 +143,44 @@ const mattermostIdentityPattern = `^[a-z][a-z0-9_]*$`
 
 var mattermostIdentityName = regexp.MustCompile(mattermostIdentityPattern)
 
-// MattermostTokenEnv returns the environment variable one identity's bot token
-// is read from. Exported because serve reads the token and the config layer
-// decides its name, so both sides name it from one place rather than rebuilding
-// the same string twice.
+// DefaultMattermostTokenEnv is where a bot token comes from when nothing says
+// otherwise. One Mattermost server is the ordinary case and every identity on
+// it can post as the same bot, so the token is not per-identity by default.
+const DefaultMattermostTokenEnv = envPrefix + "BRIDGE_MATTERMOST_TOKEN" // #nosec G101 -- a variable name, not a credential
+
+// MattermostTokenEnv returns the per-identity variable name. It stays the
+// second name tried rather than the first, so a host that already exports one
+// keeps working, and a host that does not never has to invent one.
 func MattermostTokenEnv(name string) string {
 	return envPrefix + "BRIDGE_MATTERMOST_" + strings.ToUpper(name) + "_TOKEN"
+}
+
+// MattermostTokenEnvs lists the variables one identity's token may come from,
+// most specific first. An explicit token_env is the whole list: an operator who
+// named the variable meant that one, and falling back from it would hide a typo
+// behind another bot's token.
+func MattermostTokenEnvs(identity *MattermostIdentity, name string) []string {
+	// A nil identity is one that declared nothing, which is the same answer as
+	// one that set no token_env.
+	if identity != nil && identity.TokenEnv != "" {
+		return []string{identity.TokenEnv}
+	}
+
+	return []string{MattermostTokenEnv(name), DefaultMattermostTokenEnv}
+}
+
+// ResolveMattermostToken returns the token and the variable it came from, or
+// empty strings when none of the names carries one.
+func ResolveMattermostToken(
+	identity *MattermostIdentity, name string, getenv func(string) string,
+) (string, string) {
+	for _, env := range MattermostTokenEnvs(identity, name) {
+		if token := getenv(env); token != "" {
+			return token, env
+		}
+	}
+
+	return "", ""
 }
 
 // validateMattermost fails fast when the bridge is declared but unusable. With
@@ -230,8 +267,9 @@ func validateMattermostLimits(mattermost *Mattermost) error {
 func rejectMattermostToken(identities map[string]fileMattermostIdentity) error {
 	for _, name := range slices.Sorted(maps.Keys(identities)) {
 		if identities[name].Token != nil {
-			return fmt.Errorf("%w: bridge.mattermost.identity.%s.token is not a config key; set %s instead",
-				ErrInvalidConfig, name, MattermostTokenEnv(name))
+			return fmt.Errorf("%w: bridge.mattermost.identity.%s.token is not a config key; "+
+				"set %s, or %s for this identity alone",
+				ErrInvalidConfig, name, DefaultMattermostTokenEnv, MattermostTokenEnv(name))
 		}
 	}
 
@@ -279,6 +317,11 @@ func validateMattermostIdentity(name string, identity *MattermostIdentity) error
 
 	if identity.Workspace == "" {
 		return fmt.Errorf("%w: bridge.mattermost.identity.%s.workspace must be set", ErrInvalidConfig, name)
+	}
+
+	if identity.TokenEnv != "" && !envNamePattern.MatchString(identity.TokenEnv) {
+		return fmt.Errorf("%w: bridge.mattermost.identity.%s.token_env %q is not a variable name matching %s",
+			ErrInvalidConfig, name, identity.TokenEnv, envNamePattern)
 	}
 
 	for index, approver := range identity.Approvers {
@@ -387,6 +430,7 @@ type fileMattermostIdentity struct {
 	DisplayName string   `toml:"display_name"`
 	Workspace   string   `toml:"workspace"`
 	Personality string   `toml:"personality"`
+	TokenEnv    string   `toml:"token_env"`
 	Approvers   []string `toml:"approvers"`
 	AllowBotsIn []string `toml:"allow_bots_in"`
 }
@@ -401,12 +445,15 @@ type fileNotifyMattermost struct {
 // resolved map.
 func convertMattermostIdentities(identities map[string]fileMattermostIdentity) map[string]MattermostIdentity {
 	resolved := make(map[string]MattermostIdentity, len(identities))
-	for name, identity := range identities {
+	for name := range identities {
+		identity := identities[name]
+
 		resolved[name] = MattermostIdentity{
 			Username:    identity.Username,
 			DisplayName: identity.DisplayName,
 			Workspace:   identity.Workspace,
 			Personality: identity.Personality,
+			TokenEnv:    strings.TrimSpace(identity.TokenEnv),
 			Approvers:   identity.Approvers,
 			AllowBotsIn: identity.AllowBotsIn,
 		}

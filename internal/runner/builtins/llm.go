@@ -204,7 +204,7 @@ func (c *llmConfig) resolveOutputFormat(task *runner.Task) string {
 // resolves to a known value, a model from params or config, and the provider's
 // API key in the environment. An unresolved model reference reads as a
 // non-empty string, so the load-time pass accepts it.
-func (c *llmConfig) validateTask(task *runner.Task, name, keyEnv string) error {
+func (c *llmConfig) validateTask(task *runner.Task, name string, keyEnvs []string) error {
 	if err := requireStringParam(task, paramPrompt, name); err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func (c *llmConfig) validateTask(task *runner.Task, name, keyEnv string) error {
 			"set model in params or in the runner config")
 	}
 
-	if err := c.requireAPIKey(name, keyEnv); err != nil {
+	if err := c.requireAPIKey(name, keyEnvs); err != nil {
 		return err
 	}
 
@@ -247,24 +247,50 @@ func (c *llmConfig) validateTask(task *runner.Task, name, keyEnv string) error {
 // The exemption keys on the address, not on differing from the vendor default:
 // a typo differs too, and exempting it would trade a validate-time complaint
 // for a 401 mid-run.
-func (c *llmConfig) requireAPIKey(name, keyEnv string) error {
-	if localEndpoint(c.baseURL) {
+func (c *llmConfig) requireAPIKey(name string, keyEnvs []string) error {
+	if LocalEndpoint(c.baseURL) {
 		return nil
 	}
 
-	if os.Getenv(keyEnv) == "" {
-		return runner.NewError(runner.ClassPermanent, name+".missing_api_key",
-			"set the "+keyEnv+" environment variable")
+	if apiKey(keyEnvs) != "" {
+		return nil
 	}
 
-	return nil
+	return runner.NewError(runner.ClassPermanent, name+".missing_api_key", missingKeyMessage(keyEnvs))
 }
 
-// localEndpoint reports whether a base_url names a server this machine or its
+// missingKeyMessage tells the operator what to set. A block named after its
+// type reads one variable, and "set one of the X environment variables" reads
+// like a list with one thing in it.
+func missingKeyMessage(keyEnvs []string) string {
+	if len(keyEnvs) == 1 {
+		return "set the " + keyEnvs[0] + " environment variable"
+	}
+
+	return "set one of the " + strings.Join(keyEnvs, " or ") + " environment variables"
+}
+
+// apiKey returns the first key the environment carries, so a block named after
+// itself wins over the variable named after its type. It reads at call time,
+// which is what lets a rotation land without a restart.
+func apiKey(keyEnvs []string) string {
+	for _, env := range keyEnvs {
+		if value := os.Getenv(env); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+// LocalEndpoint reports whether a base_url names a server this machine or its
 // operators run. A bare "localhost" counts because it resolves to loopback
 // everywhere. Any other name keeps the credential requirement: what it resolves
 // to is unknowable at validate time, and a hosted endpoint is likelier.
-func localEndpoint(baseURL string) bool {
+//
+// Exported because `cairnos secrets pull` warns about a runner that will want an
+// API key, and it has to draw that line in the same place the runner does.
+func LocalEndpoint(baseURL string) bool {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return false

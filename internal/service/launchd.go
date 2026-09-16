@@ -42,12 +42,20 @@ const launchdAgentPlist = `<?xml version="1.0" encoding="UTF-8"?>
 // bootout is optional because a first install has nothing to boot out.
 func planLaunchdSetup(host *Host, opts Options) Plan {
 	plistPath := launchdAgentPath(host)
-	envFile := envPath(opts.Home)
+	envFile := envFilePath(opts.Home, false)
 	logPath := filepath.Join(opts.Home, "logs", "serve.log")
 
+	secretsFile := SecretsEnvFile(opts.Home, false)
+
+	// launchd has no EnvironmentFile, so the preamble sources both files in the
+	// same order systemd would read them: the hand-written one first, then the
+	// file `cairnos secrets pull` generates, so a pulled value wins a collision.
+	// Each test guards its own source, which is what the systemd dash does.
 	shellLine := fmt.Sprintf(
-		"set -a; [ -f %s ] && . %s; set +a; exec %s serve --dir %s",
-		shQuote(envFile), shQuote(envFile), shQuote(opts.Binary), shQuote(opts.Home),
+		"set -a; [ -f %s ] && . %s; [ -f %s ] && . %s; set +a; exec %s serve --dir %s",
+		shQuote(envFile), shQuote(envFile),
+		shQuote(secretsFile), shQuote(secretsFile),
+		shQuote(opts.Binary), shQuote(opts.Home),
 	)
 
 	plist := fmt.Sprintf(

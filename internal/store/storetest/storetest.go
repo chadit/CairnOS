@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"sync"
 	"testing"
@@ -294,15 +295,37 @@ func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
 		t.Errorf("timestamps = %v/%v, want %v/%v", got.StartedAt, got.FinishedAt, want.StartedAt, want.FinishedAt)
 	}
 
-	// Zero the times already compared with Equal; DeepEqual would trip on
-	// time.Time internals (monotonic clock, location pointers) that differ
-	// between backends.
-	got.StartedAt, got.FinishedAt = time.Time{}, time.Time{}
-	want.StartedAt, want.FinishedAt = time.Time{}, time.Time{}
+	// The row is compared column by column rather than whole. DeepEqual on an
+	// ActionResult would compare the error chain behind its *cairnerr.Error,
+	// which no store round-trips, and would trip on time.Time internals that
+	// differ between backends.
+	if !cairnerr.Equal(got.Error, want.Error) {
+		t.Errorf("error = %#v, want %#v", got.Error, want.Error)
+	}
 
-	if !reflect.DeepEqual(got, want) {
+	if !sameActionColumns(got, want) {
 		t.Errorf("action result = %#v, want %#v", got, want)
 	}
+
+	if !reflect.DeepEqual(got.Output, want.Output) {
+		t.Errorf("output = %#v, want %#v", got.Output, want.Output)
+	}
+
+	if !maps.Equal(got.Meta, want.Meta) {
+		t.Errorf("meta = %#v, want %#v", got.Meta, want.Meta)
+	}
+}
+
+// sameActionColumns compares the row's scalar columns. The timestamps were
+// already compared with Equal above, and the two fields that need a deep look
+// are compared beside the call.
+func sameActionColumns(got, want *store.ActionResult) bool {
+	return got.RunID == want.RunID &&
+		got.ActionName == want.ActionName &&
+		got.Runner == want.Runner &&
+		got.Status == want.Status &&
+		got.Attempt == want.Attempt &&
+		got.Usage == want.Usage
 }
 
 // testParentRunIDRoundTrip proves runs.parent_run_id survives the store: a

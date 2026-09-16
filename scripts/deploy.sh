@@ -14,6 +14,12 @@ readonly UNIT="cairnos"
 readonly BINARY="bin/cairnos"
 readonly START_TIMEOUT_SECONDS=30
 
+# CAIRNOS_HOME is where the unit reads its config and both environment files
+# from. It is overridable so a second instance on one box can be deployed
+# without editing this script.
+CAIRNOS_HOME="${CAIRNOS_HOME:-$HOME/.cairnos}"
+readonly CAIRNOS_HOME
+
 info() { echo "I: $*" >&2; }
 
 die() {
@@ -78,6 +84,13 @@ deploy() {
 	old_pid="$(unit_pid)"
 	info "building $BINARY at ${wanted}"
 	make --no-print-directory build >&2
+	# Render the vault fields before the restart, so the service starts against
+	# the values it is about to be given rather than the previous run's. A host
+	# with no [secrets.bitwarden] block prints that and exits 0, so this is a
+	# no-op there; any real failure stops the deploy with the old unit still up.
+	info "pulling secrets into $CAIRNOS_HOME"
+	"$BINARY" secrets pull --dir "$CAIRNOS_HOME" >&2 ||
+		die "secrets pull failed; $UNIT was left running the previous build"
 	info "restarting $UNIT"
 	systemctl --user restart -- "$UNIT"
 	wait_for_serve "$old_pid"

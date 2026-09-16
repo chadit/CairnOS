@@ -5,20 +5,20 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 // AnthropicName is the registry name of the Anthropic Messages API runner.
 const AnthropicName = "anthropic"
 
-// anthropicKeyEnv names where the API key comes from. The config file never
-// carries it, matching the repo-wide rule that secrets live in the
-// environment.
-const anthropicKeyEnv = "CAIRNOS_RUNNER_ANTHROPIC_API_KEY" // #nosec G101 -- environment variable name, not a credential
+// AnthropicKeyEnv is the API-key variable an anthropic-type block falls back
+// to, behind its own CAIRNOS_RUNNER_<NAME>_API_KEY. Exported for the same
+// reason as OpenAIKeyEnv.
+const AnthropicKeyEnv = "CAIRNOS_RUNNER_ANTHROPIC_API_KEY" // #nosec G101 -- environment variable name, not a credential
 
 // defaultAnthropicBaseURL targets the hosted API; base_url in config points
 // the runner at gateways and proxies instead.
@@ -54,28 +54,52 @@ const anthropicBlockToolUse = "tool_use"
 // Config: model (required to run), base_url, max_tokens (default 4096; the
 // API requires the field), temperature, and price_in/price_out in USD per
 // million tokens. Params: prompt (required), system, and model (overrides
-// config). The API key comes from CAIRNOS_RUNNER_ANTHROPIC_API_KEY at call
-// time.
+// config). The API key is read at call time from the block's own
+// CAIRNOS_RUNNER_<NAME>_API_KEY, falling back to AnthropicKeyEnv (see
+// config.RunnerKeyEnvs).
 type Anthropic struct {
 	client *http.Client
-	cfg    llmConfig
+
+	// keyEnvs are the API-key variables this block reads, most specific first.
+	keyEnvs []string
+
+	cfg llmConfig
 }
 
-// NewAnthropic builds the runner over an injected HTTP client so tests can
-// point it at httptest servers.
+// NewAnthropic builds the runner for a block named after the type, over an
+// injected HTTP client so tests can point it at httptest servers.
 func NewAnthropic(cfg map[string]any, client *http.Client) (*Anthropic, error) {
+	return NewAnthropicFor(AnthropicName, cfg, client)
+}
+
+// NewAnthropicFor builds the runner for a block under any name. The name
+// decides which API key it reads first, so two anthropic-type blocks pointed at
+// different gateways do not have to share one credential.
+func NewAnthropicFor(block string, cfg map[string]any, client *http.Client) (*Anthropic, error) {
 	decoded, err := decodeLLMConfig(cfg, AnthropicName, defaultAnthropicBaseURL, defaultAnthropicMaxTokens)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Anthropic{cfg: decoded, client: client}, nil
+	return &Anthropic{
+		cfg:     decoded,
+		client:  client,
+		keyEnvs: config.RunnerKeyEnvs(block, AnthropicKeyEnv),
+	}, nil
 }
 
 // AnthropicFactory adapts NewAnthropic to the registry contract with a
 // backstopped HTTP client.
 func AnthropicFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewAnthropic(cfg, &http.Client{Timeout: defaultLLMTimeout})
+	return AnthropicFactoryFor(AnthropicName)(cfg)
+}
+
+// AnthropicFactoryFor is the registration for a `[runner.<name>]` block of this
+// type under another name.
+func AnthropicFactoryFor(block string) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		return NewAnthropicFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout})
+	}
 }
 
 // Name implements runner.Runner.
@@ -86,7 +110,7 @@ func (*Anthropic) Name() string {
 // Validate implements runner.Runner: params must carry a string prompt, a
 // model must come from params or config, and the API key must be set.
 func (a *Anthropic) Validate(task *runner.Task) error {
-	return a.cfg.validateTask(task, AnthropicName, anthropicKeyEnv)
+	return a.cfg.validateTask(task, AnthropicName, a.keyEnvs)
 }
 
 // Execute implements runner.Runner.
@@ -151,9 +175,9 @@ func (a *Anthropic) run(ctx context.Context, task *runner.Task, stream chan<- ru
 
 // authHeaders builds the per-call auth headers; the key reads at call time
 // so a rotation needs no restart.
-func (*Anthropic) authHeaders() map[string]string {
+func (a *Anthropic) authHeaders() map[string]string {
 	return map[string]string{
-		"x-api-key":         os.Getenv(anthropicKeyEnv),
+		"x-api-key":         apiKey(a.keyEnvs),
 		"anthropic-version": anthropicVersion,
 	}
 }

@@ -73,7 +73,7 @@ const anthropicToolUseBody = `{
 }`
 
 func TestOpenAIExecuteWithToolsParsesToolCall(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -139,7 +139,7 @@ func assertOpenAIToolRequest(t *testing.T, request map[string]any) {
 }
 
 func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
-	t.Setenv(openaiKeyEnv, testAPIKey)
+	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, openaiSuccessBody)
@@ -168,7 +168,7 @@ func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
 }
 
 func TestAnthropicExecuteWithToolsParsesToolUse(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -228,7 +228,7 @@ func assertAnthropicToolRequest(t *testing.T, request map[string]any) {
 }
 
 func TestAnthropicExecuteWithToolsReturnsFinalText(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, anthropicSuccessBody)

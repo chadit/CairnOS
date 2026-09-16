@@ -165,6 +165,11 @@ type Store struct {
 // who injects environment variables. Secrets interpolated into action output
 // stay plaintext in run history, and env secrets reach child CLI runners.
 type Secrets struct {
+	// Bitwarden is the [secrets.bitwarden] block, nil when absent. It renders an
+	// environment file at deployment time rather than resolving at runtime,
+	// because most credentials here are read by bare os.Getenv.
+	Bitwarden *Bitwarden
+
 	// Backend is "env" (default) or "store".
 	Backend string
 }
@@ -955,6 +960,10 @@ func Load(path string) (Config, error) {
 		return cfg, validErr
 	}
 
+	if validErr := validateRunnerNames(cfg.Runners); validErr != nil {
+		return cfg, validErr
+	}
+
 	if validErr := validateBridge(&cfg.Bridge.Telegram); validErr != nil {
 		return cfg, validErr
 	}
@@ -984,11 +993,12 @@ const (
 func validateSecrets(secrets *Secrets) error {
 	switch secrets.Backend {
 	case SecretsBackendEnv, SecretsBackendStore:
-		return nil
 	default:
 		return fmt.Errorf("%w: secrets.backend %q is not %s or %s",
 			ErrInvalidConfig, secrets.Backend, SecretsBackendEnv, SecretsBackendStore)
 	}
+
+	return validateBitwarden(secrets.Bitwarden)
 }
 
 // validateAuth fails fast when auth is enabled with an unusable identity:
@@ -1254,6 +1264,13 @@ type fileConfig struct {
 	} `toml:"autonomic"`
 	Secrets struct {
 		Backend *string `toml:"backend"`
+
+		// Bitwarden holds the [secrets.bitwarden] block verbatim so parsing can
+		// reject unknown keys itself, the same trap [credential.<name>] uses.
+		//
+		// The pointer separates a header written with no keys, which is a working
+		// config, from no header at all. Both unmarshal to a nil map.
+		Bitwarden *map[string]any `toml:"bitwarden"`
 	} `toml:"secrets"`
 	Runner map[string]map[string]any `toml:"runner"`
 
@@ -1350,6 +1367,15 @@ func applyTOML(cfg *Config, data []byte) error {
 		}
 
 		cfg.Sources = sources
+	}
+
+	if file.Secrets.Bitwarden != nil {
+		block, err := parseBitwardenBlock(*file.Secrets.Bitwarden)
+		if err != nil {
+			return err
+		}
+
+		cfg.Secrets.Bitwarden = block
 	}
 
 	if file.Host != nil {

@@ -14,9 +14,6 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// anthropicKeyEnv mirrors the runner's key source for t.Setenv.
-const anthropicKeyEnv = "CAIRNOS_RUNNER_ANTHROPIC_API_KEY" // #nosec G101 -- environment variable name, not a credential
-
 // anthropicSuccessBody is the golden Messages response, priced like the
 // OpenAI golden body so assertLLMUsage covers both providers.
 const anthropicSuccessBody = `{
@@ -79,7 +76,7 @@ data: {"type":"message_stop"}
 `
 
 func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -130,7 +127,7 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 }
 
 func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -181,7 +178,7 @@ func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
 }
 
 func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, anthropicProseContentBody)
@@ -208,7 +205,7 @@ func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
 }
 
 func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -265,7 +262,7 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(anthropicKeyEnv, testAPIKey)
+			t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
@@ -301,7 +298,7 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 }
 
 func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
-	t.Setenv(anthropicKeyEnv, testAPIKey)
+	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
 
 	requests := make(chan map[string]any, 1)
 
@@ -394,7 +391,7 @@ func TestAnthropicValidate(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(anthropicKeyEnv, tt.key)
+			t.Setenv(builtins.AnthropicKeyEnv, tt.key)
 
 			llm, err := builtins.NewAnthropic(tt.cfg, &http.Client{Timeout: time.Second})
 			if err != nil {

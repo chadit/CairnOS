@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
 	"github.com/chadit/CairnOS/internal/config"
@@ -84,14 +85,17 @@ func mattermostIdentities(settings *config.Mattermost, logger *slog.Logger) ([]m
 	identities := make([]mattermost.Identity, 0, len(settings.Identity))
 
 	for _, name := range slices.Sorted(maps.Keys(settings.Identity)) {
-		env := config.MattermostTokenEnv(name)
+		identity := settings.Identity[name]
 
-		token := os.Getenv(env)
+		token, env := config.ResolveMattermostToken(&identity, name, os.Getenv)
 		if token == "" {
-			logger.Info("mattermost identity disabled: token env unset", "identity", name, "env", env)
+			logger.Info("mattermost identity disabled: no token env set", "identity", name,
+				"tried", strings.Join(config.MattermostTokenEnvs(&identity, name), " "))
 
 			continue
 		}
+
+		logger.Debug("mattermost identity token resolved", "identity", name, "env", env)
 
 		client, err := mattermost.NewClient(mattermost.ClientConfig{
 			Limiter:      limiter,

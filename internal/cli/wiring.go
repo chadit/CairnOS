@@ -981,9 +981,9 @@ func newRegistry(
 
 // registerConfiguredRunners registers a runner for every [runner.<name>] block
 // whose type selects a registration path: "plugin" for an out-of-process runner
-// (Phase 1b), "mcp_client" for a per-name MCP client, "openai" for a second
-// chat-completions runner under its own name. Blocks with no type, or another
-// value, stay plain config for the built-in of that name.
+// (Phase 1b), "mcp_client" for a per-name MCP client, and "openai" or
+// "anthropic" for a chat-completions runner under its own name. Blocks with no
+// type, or another value, stay plain config for the built-in of that name.
 func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any, credLookup builtins.TokenLookup) error {
 	// A name colliding with an already-registered runner surfaces as the
 	// registry's duplicate-registration error rather than silently shadowing it.
@@ -1007,22 +1007,34 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 			if err := registry.Register(name, builtins.MCPClientFactoryForWithCredentials(name, credLookup)); err != nil {
 				return fmt.Errorf("register mcp_client runner %q: %w", name, err)
 			}
-		case builtins.OpenAIName:
-			// The built-in is already registered under this exact name with
-			// the same factory, and BuildAll hands it that block, so only a
-			// differently named block needs its own registration. A local
-			// server reached this way is an openai block with a base_url.
-			if name == builtins.OpenAIName {
+		case builtins.OpenAIName, builtins.AnthropicName:
+			// The built-in is already registered under its own name with the
+			// same factory, and BuildAll hands it that block, so only a
+			// differently named block needs its own registration. The name is
+			// threaded into the factory because it decides which API key the
+			// runner reads. A local server reached this way is an openai block
+			// with a base_url.
+			if name == kind {
 				continue
 			}
 
-			if err := registry.Register(name, builtins.OpenAIFactory); err != nil {
-				return fmt.Errorf("register openai runner %q: %w", name, err)
+			if err := registry.Register(name, namedLLMFactory(kind, name)); err != nil {
+				return fmt.Errorf("register %s runner %q: %w", kind, name, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// namedLLMFactory builds the registration for one chat-completions block under
+// a name of its own.
+func namedLLMFactory(kind, name string) runner.Factory {
+	if kind == builtins.AnthropicName {
+		return builtins.AnthropicFactoryFor(name)
+	}
+
+	return builtins.OpenAIFactoryFor(name)
 }
 
 // closeRegistry shuts every built runner down, logging instead of failing:

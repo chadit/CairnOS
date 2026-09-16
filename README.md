@@ -111,6 +111,145 @@ JSON/HTTP gateway on 8080, Prometheus metrics on 9090. Keep the ports on
 localhost or a private network (Tailscale works well) and turn auth on
 (`[auth] enabled = true`) before anything else can reach them.
 
+## Secrets from Bitwarden
+
+Every bot token and API key a host needs is otherwise hand-typed into its env
+file. If you already keep them as custom fields on one Bitwarden item, CairnOS
+can render that item into a second environment file at deployment time.
+
+Name a custom field after the variable it fills and there is nothing to
+configure. Every field matching `CAIRNOS_[A-Z0-9_]+` is written under its own
+name, so an empty block is a working one:
+
+```toml
+[secrets.bitwarden]
+```
+
+Fields with names of your own need a line each. A mapping wins when both it and
+an inferred field would set the same variable:
+
+```toml
+[secrets.bitwarden]
+item = "chezmoi"
+
+[secrets.bitwarden.fields]
+CAIRNOS_BRIDGE_MATTERMOST_TOKEN = "mattermost bot token"
+CAIRNOS_RUNNER_ZAI_API_KEY      = "z.ai key"
+```
+
+`item` is optional here because the credentials file carries it as `BW_ITEM`;
+set it in the config when you want one host reading a different item, and the
+config value wins. `credentials_file` and `env_file` default to `bitwarden.env`
+and `secrets.env` under the CairnOS home, and both take an absolute path
+instead.
+
+Create the credentials file with:
+
+```sh
+cairnos secrets auth
+```
+
+It asks for the item name and the vault's API key and master password, and
+writes them at 0600. If your workstation runs chezmoi against the same vault,
+its `[data.secret]` values are offered as the defaults, so four Enters are the
+whole answer. Anything already in the process environment is taken from there
+without asking, which is what a host that injects one of these elsewhere should
+do. The three secrets are read with the terminal's echo turned off, and a
+terminal that will not allow that gets one line saying so before the first
+prompt. Run it again later and it checks instead of writing: it opens the
+vault, reports the item and how many `CAIRNOS_` fields it carries, and locks up
+again. A host running the system-mode unit keeps its config under
+`/var/lib/cairnos` and both environment files under `/etc/cairnos`, so both
+commands need to be told:
+
+```sh
+sudo cairnos secrets auth --system
+sudo cairnos secrets pull --system
+```
+
+`--system` reads the system install's config on its own, so there is no `--dir`
+to remember.
+
+Writing the file by hand does the same job:
+
+```sh
+install -m 600 /dev/null ~/.cairnos/bitwarden.env
+cat >> ~/.cairnos/bitwarden.env <<'EOF'
+BW_ITEM=<the item name>
+BW_CLIENTID=<client id from the vault API key>
+BW_CLIENTSECRET=<client secret>
+BW_PASSWORD=<your master password>
+EOF
+```
+
+CairnOS refuses a credentials file that anyone but its owner can read. Nothing
+you put there ever reaches a command line: the API key goes to the login child's
+environment and the master password travels in a request body to a loopback
+daemon, because arguments are readable from `/proc`.
+
+You need the standalone `bw` CLI, not the npm package, since the service user has
+no node toolchain. CairnOS installs it:
+
+```sh
+cairnos secrets install-bw
+```
+
+It downloads the pinned release, checks its sha256 against a digest compiled
+into CairnOS, unpacks the one file the archive holds, checks that file against a
+second compiled-in digest, and installs it at `~/.local/bin/bw`. A download that
+does not match is discarded and nothing is written. `--bin-dir` installs
+somewhere else.
+
+Running it again is cheap: it hashes the installed file and skips the download
+when that hash is the pinned one. It never asks the binary what version it is to
+decide, because a file that prints the right version is no evidence of what it
+does with your master password. A `bw` that is there but hashes to something
+else stops the run and reports what it found; `--force` replaces it. Re-run
+after upgrading CairnOS to pick up a newer pinned release.
+
+`cairnos secrets auth` runs the install itself when it needs `bw` and finds
+none, so on a fresh host there is usually nothing to do here.
+
+Then pull:
+
+```sh
+cairnos secrets pull --dry-run   # resolve everything, report, write nothing
+cairnos secrets pull             # write the file
+```
+
+Both print the variable names and the path, never a value, so the output is safe
+in a deploy log. A mapped field that is missing fails the whole run and writes
+nothing, so the service never starts against a half-filled file. An item with no
+`CAIRNOS_` field and no mapping table fails the same way, naming the item it
+read. With no `[secrets.bitwarden]` block the command says so and exits 0, which
+is why `make deploy` can run it on every host.
+
+The pull also warns about the credentials your config implies that the item does
+not carry: `CAIRNOS_BRIDGE_MATTERMOST_TOKEN` when an identity has no token by any
+of the names it reads, and `CAIRNOS_RUNNER_<NAME>_API_KEY` for each openai or
+anthropic runner whose `base_url` points off your own network. It is a warning
+and not a failure, because the value may be in the hand-written env file beside
+the generated one.
+
+`cairnos service setup` points the unit at both files:
+
+```ini
+EnvironmentFile=-/home/you/.cairnos/env
+EnvironmentFile=-/home/you/.cairnos/secrets.env
+```
+
+The first stays hand-written and yours. The second is generated whole and
+replaced on every pull, so never edit it. The generated file comes second, so it
+wins when both set the same variable. On macOS the launchd preamble sources both
+in the same order. `make deploy` runs the pull between the build and the restart,
+and stops before restarting if it fails.
+
+Warning: this host now holds Bitwarden API credentials and your master password
+on disk at 0600, which is the same trust you already place in a workstation
+running chezmoi. Anyone who can read files as the service user can open the
+vault. Use an API key scoped to this purpose, and treat losing the host as losing
+the vault.
+
 ## Working from a clone
 
 ```sh
@@ -134,13 +273,23 @@ model = "claude-sonnet-4-5"
 
 [runner.openai]
 model = "gpt-4.1"
-# base_url points this runner at any OpenAI-compatible endpoint, so a hosted
-# subscription with a compatible API works through it too.
-# base_url = "https://api.example.com/v1"
+
+[runner.zai]
+type     = "openai"
+model    = "glm-4.6"
+base_url = "https://api.z.ai/api/paas/v4"
 ```
 
-Keys ride the environment (`CAIRNOS_RUNNER_ANTHROPIC_API_KEY`,
-`CAIRNOS_RUNNER_OPENAI_API_KEY`), never the config file.
+A block with a name of its own reads `CAIRNOS_RUNNER_<NAME>_API_KEY`, so the
+block above reads `CAIRNOS_RUNNER_ZAI_API_KEY` and each vendor keeps its own
+key. `CAIRNOS_RUNNER_OPENAI_API_KEY` and `CAIRNOS_RUNNER_ANTHROPIC_API_KEY`
+stay as the fallback for a block that has no key of its own. Keys ride the
+environment, never the config file, and a run that finds neither name set stops
+and reports both.
+
+`base_url` on a `type = "openai"` block points it at any endpoint that speaks
+the OpenAI chat-completions API, which is how a hosted subscription with a
+compatible API is reached.
 
 **CLI runners** wrap a tool that carries its own subscription login, so no API
 key touches CairnOS at all. Built-ins: `claude`, `codex`, `qwen`, `omp`,
@@ -503,15 +652,33 @@ approvers     = ["alice"]
 allow_bots_in = ["#agents"]
 ```
 
-The token is read only from the environment, one variable per identity, named
-after the identity:
+The token is read only from the environment. One Mattermost server is the
+ordinary case and every identity on it can post as the same bot, so there is one
+variable:
 
 ```sh
-export CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN=...
+export CAIRNOS_BRIDGE_MATTERMOST_TOKEN=...
 ```
 
+Two identities that must talk as different bots need different tokens. Name the
+variable on the identity:
+
+```toml
+[bridge.mattermost.identity.review]
+username  = "review-agent"
+workspace = "default"
+token_env = "CAIRNOS_BRIDGE_MATTERMOST_REVIEW_TOKEN"
+```
+
+`CAIRNOS_BRIDGE_MATTERMOST_<ID>_TOKEN` also works without a config line: an
+identity reads it when it is set, ahead of the shared one, which keeps a host
+that already exports it working untouched. An identity that sets `token_env`
+reads only that name, so a typo there stops the identity rather than quietly
+posting as another bot.
+
 No token means no connection for that identity, and serve logs one line naming
-the variable it looked for. No identity at all means the whole bridge stays off.
+every variable it looked for. No identity at all means the whole bridge stays
+off.
 
 A DM needs no mention. In a channel the bot answers only when you `@mention` it
 in ordinary text, and it replies in that post's thread, so each thread is its
