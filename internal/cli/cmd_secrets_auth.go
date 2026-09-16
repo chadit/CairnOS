@@ -322,6 +322,16 @@ func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (
 		return binary, nil
 	}
 
+	// A bw at the install target goes through the installer whatever it hashes
+	// to. On a match nothing is downloaded, and the install is what writes the
+	// digest record beside it. Every host installed its bw before that record
+	// existed, so this is the run that gives them one, and without it the next
+	// pin bump refuses on every box.
+	target := filepath.Join(dir, bwBinary)
+	if filepath.Clean(binary) == target {
+		return a.installPinnedBitwarden(ctx, label, dir)
+	}
+
 	digest, err := bwinstall.FileDigest(binary)
 	if err != nil {
 		return "", fmt.Errorf("hash the bw on PATH: %w", err)
@@ -331,7 +341,12 @@ func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (
 		return binary, nil
 	}
 
-	return a.upgradeBitwarden(ctx, label, binary, dir, digest)
+	// A bw somewhere else that is not the pin is not CairnOS's to replace, and
+	// naming both paths is what turns the refusal into a fix the operator can
+	// make.
+	return "", fmt.Errorf("%w: %s has sha256 %s, and the pinned %s installs to %s; "+
+		"run `cairnos secrets install-bw` and put %s ahead of it on PATH",
+		errUnpinnedBitwarden, binary, digest, bwVersion, target, dir)
 }
 
 // installMissingBitwarden installs the pinned release on a host that has none.
@@ -350,26 +365,23 @@ func (a *App) installMissingBitwarden(ctx context.Context, label, dir string) (s
 	return result.Path, nil
 }
 
-// upgradeBitwarden replaces a bw the pin has moved past, and only the one this
-// tool installed: bwinstall refuses anything it has no record of writing, and a
-// bw from a package manager or a hand install lives somewhere else entirely.
-// Naming both paths is what turns the refusal into a fix the operator can make.
-func (a *App) upgradeBitwarden(ctx context.Context, label, binary, dir, digest string) (string, error) {
-	target := filepath.Join(dir, bwBinary)
-
-	if filepath.Clean(binary) != target {
-		return "", fmt.Errorf("%w: %s has sha256 %s, and the pinned %s installs to %s; "+
-			"run `cairnos secrets install-bw` and put %s ahead of it on PATH",
-			errUnpinnedBitwarden, binary, digest, bwVersion, target, dir)
-	}
-
+// installPinnedBitwarden runs the non-forced install over the binary already at
+// the install target. bwinstall decides what happens there: the pinned binary is
+// left alone and its record written, a binary an earlier install wrote is
+// replaced, and anything else keeps the refusal that only --force clears.
+//
+// It says nothing when nothing changed, so an ordinary pull reads as it always
+// has, and one line when a version moved.
+func (a *App) installPinnedBitwarden(ctx context.Context, label, dir string) (string, error) {
 	result, err := a.installBitwarden(ctx, dir, false)
 	if err != nil {
 		return "", err
 	}
 
-	a.printOutf("%s: upgraded %s from sha256 %s to version %s\n",
-		label, result.Path, shortDigest(result.Previous), result.Version)
+	if result.Installed {
+		a.printOutf("%s: upgraded %s from sha256 %s to version %s\n",
+			label, result.Path, shortDigest(result.Previous), result.Version)
+	}
 
 	return result.Path, nil
 }

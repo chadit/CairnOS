@@ -317,6 +317,41 @@ func TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH(t *testing.T) {
 	}
 }
 
+// TestSecretsPullRecordsTheDigestOfABWItFindsCurrent is the case the fleet is
+// actually in. Every host installed its bw before the digest record existed, so
+// the binary matches the pin and nothing beside it says who put it there. The
+// pull has to leave that record behind, because the next pin bump refuses
+// without it and an operator would have to visit every box with --force.
+func TestSecretsPullRecordsTheDigestOfABWItFindsCurrent(t *testing.T) {
+	binDir := stageFakeBW(t, bothFields())
+	dir := pullConfig(t)
+
+	record := filepath.Join(binDir, bwFakeName+bwDigestRecord)
+	if _, err := os.Stat(record); err == nil {
+		t.Fatalf("the fixture already wrote %s, so this case would prove nothing", record)
+	}
+
+	t.Setenv("PATH", pathWith(binDir))
+
+	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir, "--bin-dir", binDir)
+	if code != cli.ExitOK {
+		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
+	}
+
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("the pull left no digest record beside the bw it accepted: %v", err)
+	}
+
+	// Nothing changed, so the pull reads exactly as it did before.
+	if !strings.Contains(stdout, pullVarOne) || !strings.Contains(stdout, pullVarTwo) {
+		t.Fatalf("the pull did not render the vault fields:\n%s", stdout)
+	}
+
+	if strings.Contains(stdout, "upgraded") {
+		t.Fatalf("a bw that was already the pin was reported as an upgrade:\n%s", stdout)
+	}
+}
+
 // TestSecretsPullUpgradesTheBWItInstalled is the other half of FR8: the binary
 // the pin moved past sits in the install directory and carries the digest an
 // earlier install recorded, so the command installs over it rather than asking
