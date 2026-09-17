@@ -14,11 +14,32 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
 // promptWait bounds how long a case waits for one prompt to reach the terminal.
 const promptWait = 10 * time.Second
+
+// promptCount is how many answers one run of `secrets auth` needs.
+const promptCount = 4
+
+// authPrompts names the prompts in the order the command asks them.
+func authPrompts() [promptCount]string {
+	return [promptCount]string{"item name", "client id", "client secret", "master password"}
+}
+
+// What a hidden prompt writes per typed rune, and what it writes to take one back.
+const (
+	promptStar  = "*"
+	promptErase = "\b \b"
+)
+
+// The two bytes a terminal sends for its erase key.
+const (
+	keyBackspace = 0x08
+	keyDelete    = 0x7f
+)
 
 // terminalTranscriptSize preallocates the transcript, which the reader appends
 // to in a loop.
@@ -43,33 +64,12 @@ func TestSecretsAuthHidesTypingAndRestoresTheTerminal(t *testing.T) {
 		t.Fatal("the fresh terminal already has echo off, so this proves nothing")
 	}
 
-	seen := watchTerminal(t, master, slave)
-
-	// The command owns both ends of the conversation, writing its prompts to the
-	// terminal the way it would for an operator sitting at one.
-	finished := make(chan int, 1)
-
-	go func() {
-		finished <- cli.New(slave, io.Discard).WithStdin(slave).
-			Run(t.Context(), []string{secretsCmd, authSubcmd, flagDirArg, dir})
-	}()
-
-	for _, step := range []struct{ prompt, answer string }{
-		{"item name", authTypedItem},
-		{"client id", authTypedID},
-		{"client secret", authTypedSecret},
-		{"master password", authTypedKey},
-	} {
-		seen.await(t, step.prompt)
-
-		if _, err := master.WriteString(step.answer + "\n"); err != nil {
-			t.Fatalf("type the answer to %q: %v", step.prompt, err)
-		}
-	}
-
-	if code := awaitExit(t, finished); code != cli.ExitOK {
-		t.Fatalf("exit = %d, want ok", code)
-	}
+	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+		authTypedItem + "\n",
+		authTypedID + "\n",
+		authTypedSecret + "\n",
+		authTypedKey + "\n",
+	})
 
 	assertTerminalTranscript(t, seen.text())
 
@@ -98,6 +98,168 @@ func assertTerminalTranscript(t *testing.T, transcript string) {
 			t.Fatalf("the terminal echoed a secret back:\n%s", transcript)
 		}
 	}
+}
+
+// TestSecretsAuthShowsOneStarPerTypedCharacter proves a hidden prompt shows how
+// much arrived, which is what a mis-paste is otherwise invisible to.
+//
+//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
+func TestSecretsAuthShowsOneStarPerTypedCharacter(t *testing.T) {
+	emptyHome(t)
+
+	master, slave := openPTY(t)
+	dir := t.TempDir()
+
+	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+		authTypedItem + "\n",
+		authTypedID + "\n",
+		authTypedSecret + "\n",
+		authTypedKey + "\n",
+	})
+
+	transcript := seen.text()
+
+	for _, want := range []struct{ prompt, next, typed string }{
+		{authPrompts()[1], authPrompts()[2], authTypedID},
+		{authPrompts()[2], authPrompts()[3], authTypedSecret},
+		{authPrompts()[3], "", authTypedKey},
+	} {
+		if stars := visibleStars(t, transcript, want.prompt, want.next); stars != len(want.typed) {
+			t.Fatalf("the prompt for %q showed %d stars, want %d", want.prompt, stars, len(want.typed))
+		}
+	}
+
+	// The item name is not a secret, so the terminal echoes it instead.
+	if stars := visibleStars(t, transcript, authPrompts()[0], authPrompts()[1]); stars != 0 {
+		t.Fatalf("the item name prompt showed %d stars, want none", stars)
+	}
+
+	for _, field := range []struct{ variable, typed string }{
+		{bitwarden.EnvClientID, authTypedID},
+		{bitwarden.EnvClientSecret, authTypedSecret},
+		{bitwarden.EnvMasterKey, authTypedKey},
+	} {
+		assertStored(t, dir, field.variable, field.typed)
+	}
+}
+
+// TestSecretsAuthBackspaceTakesBackACharacter types both erase bytes, since a
+// terminal sends one or the other.
+//
+//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
+func TestSecretsAuthBackspaceTakesBackACharacter(t *testing.T) {
+	emptyHome(t)
+
+	master, slave := openPTY(t)
+	dir := t.TempDir()
+
+	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+		authTypedItem + "\n",
+		authTypedID + "X" + string(rune(keyDelete)) + "\n",
+		authTypedSecret + "Y" + string(rune(keyBackspace)) + "\n",
+		authTypedKey + "\n",
+	})
+
+	transcript := seen.text()
+
+	for _, want := range []struct{ prompt, next, typed string }{
+		{authPrompts()[1], authPrompts()[2], authTypedID},
+		{authPrompts()[2], authPrompts()[3], authTypedSecret},
+	} {
+		if stars := visibleStars(t, transcript, want.prompt, want.next); stars != len(want.typed) {
+			t.Fatalf("the prompt for %q was left showing %d stars, want %d after the backspace",
+				want.prompt, stars, len(want.typed))
+		}
+	}
+
+	assertStored(t, dir, bitwarden.EnvClientID, authTypedID)
+	assertStored(t, dir, bitwarden.EnvClientSecret, authTypedSecret)
+}
+
+// TestSecretsAuthStripsAPastedCarriageReturn checks a CRLF paste: the second
+// byte would otherwise answer the next prompt with an empty line.
+//
+//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
+func TestSecretsAuthStripsAPastedCarriageReturn(t *testing.T) {
+	emptyHome(t)
+
+	master, slave := openPTY(t)
+	dir := t.TempDir()
+
+	answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+		authTypedItem + "\n",
+		authTypedID + "\r\n",
+		authTypedSecret + "\n",
+		authTypedKey + "\n",
+	})
+
+	assertStored(t, dir, bitwarden.EnvClientID, authTypedID)
+	assertStored(t, dir, bitwarden.EnvClientSecret, authTypedSecret)
+	assertStored(t, dir, bitwarden.EnvMasterKey, authTypedKey)
+}
+
+// assertStored reports lengths rather than values, so no password reaches a log.
+func assertStored(t *testing.T, dir, variable, typed string) {
+	t.Helper()
+
+	if !strings.Contains(readCredentials(t, dir), assignment(variable, typed)) {
+		t.Fatalf("%s does not hold the %d characters typed for it", variable, len(typed))
+	}
+}
+
+// visibleStars counts the stars left on screen between two prompts, erased ones
+// taken back off. An empty next marker reads to the end of the transcript.
+func visibleStars(t *testing.T, transcript, prompt, next string) int {
+	t.Helper()
+
+	start := strings.Index(transcript, prompt)
+	if start < 0 {
+		t.Fatalf("the transcript never carried the prompt for %q", prompt)
+	}
+
+	segment := transcript[start+len(prompt):]
+
+	if next != "" {
+		end := strings.Index(segment, next)
+		if end < 0 {
+			t.Fatalf("the transcript never carried the prompt for %q", next)
+		}
+
+		segment = segment[:end]
+	}
+
+	return strings.Count(segment, promptStar) - strings.Count(segment, promptErase)
+}
+
+// answerAuthPrompts runs `secrets auth` against the terminal, typing each answer
+// once its prompt lands: typing ahead would buffer it while echo was still on.
+func answerAuthPrompts(t *testing.T, master, slave *os.File, dir string, typed [promptCount]string) *terminalWatch {
+	t.Helper()
+
+	seen := watchTerminal(t, master, slave)
+
+	// The command owns both ends of the conversation, writing its prompts to the
+	// terminal the way it would for an operator sitting at one.
+	finished := make(chan int, 1)
+
+	go func() {
+		finished <- cli.New(slave, io.Discard).WithStdin(slave).
+			Run(t.Context(), []string{secretsCmd, authSubcmd, flagDirArg, dir})
+	}()
+
+	for index, marker := range authPrompts() {
+		seen.await(t, marker)
+
+		if _, err := master.WriteString(typed[index]); err != nil {
+			t.Fatalf("type the answer to %q: %v", marker, err)
+		}
+	}
+
+	if code := awaitExit(t, finished); code != cli.ExitOK {
+		t.Fatalf("exit = %d, want ok", code)
+	}
+
+	return seen
 }
 
 // terminalWatch collects everything the terminal sends back, which is the

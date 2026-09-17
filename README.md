@@ -221,8 +221,8 @@ line in the log naming the digest it replaced and the version it installed. A
 mismatch anywhere else stops the command and names both paths, because a `bw`
 your package manager installed is not for CairnOS to replace. Install the pinned
 release and put `~/.local/bin` first on PATH, or tell `secrets pull` where to
-look with `--bin-dir`. `make deploy` runs `secrets pull`, so a refusal there
-stops the deploy with the previous unit still running. A `--system` run resolves
+look with `--bin-dir`. `make deploy` runs `secrets pull` on every run, so a
+refusal there stops the deploy with the previous unit still running. A `--system` run resolves
 `~/.local/bin` against the account it runs as, so a `bw` in another account's
 home is refused by name and `--bin-dir` is how you point at it.
 
@@ -241,7 +241,7 @@ in a deploy log. A mapped field that is missing fails the whole run and writes
 nothing, so the service never starts against a half-filled file. An item with no
 `CAIRNOS_` field and no mapping table fails the same way, naming the item it
 read. With no `[secrets.bitwarden]` block the command says so and exits 0, which
-is why `make deploy` can run it on every host.
+is why `make deploy` can run it on every host, on every run.
 
 The pull also warns about the credentials your config implies that the item does
 not carry: `CAIRNOS_BRIDGE_MATTERMOST_TOKEN` when an identity has no token by any
@@ -260,8 +260,11 @@ EnvironmentFile=-/home/you/.cairnos/secrets.env
 The first stays hand-written and yours. The second is generated whole and
 replaced on every pull, so never edit it. The generated file comes second, so it
 wins when both set the same variable. On macOS the launchd preamble sources both
-in the same order. `make deploy` runs the pull between the build and the restart,
-and stops before restarting if it fails.
+in the same order. `make deploy` pulls on every run, before it decides whether
+to restart, and stops there if the pull fails. It restarts when the binary is
+behind HEAD or when the pull changed `secrets.env`, so a rotated or renamed
+vault field reaches the service without waiting for a code change. When neither
+moved it says `secrets unchanged` and leaves the running service alone.
 
 Warning: this host now holds Bitwarden API credentials and your master password
 on disk at 0600, which is the same trust you already place in a workstation

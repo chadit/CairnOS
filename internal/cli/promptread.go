@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"unicode/utf8"
 )
 
 // echoOnNotice is printed once per run, and only when a terminal refuses to
@@ -46,7 +47,117 @@ func (a *App) readLine(ctx context.Context, reader *bufio.Reader, prompt string,
 
 	a.printOutf("%s", prompt)
 
-	return readString(reader)
+	return a.readMasked(reader)
+}
+
+// The two bytes a terminal sends for its erase key.
+const (
+	asciiBackspace = 0x08
+	asciiDelete    = 0x7f
+)
+
+// What one typed rune shows as, and the sequence that takes one star back.
+const (
+	maskCharacter  = "*"
+	eraseCharacter = "\b \b"
+)
+
+// readMasked reads a hidden answer keystroke by keystroke, printing a star per
+// rune so the operator sees how much arrived. The newline is not in the value.
+func (a *App) readMasked(reader *bufio.Reader) (string, error) {
+	var typed maskedInput
+
+	for {
+		next, err := reader.ReadByte()
+		if err != nil {
+			return typed.value(), fmt.Errorf("read a line: %w", err)
+		}
+
+		switch next {
+		case '\n', '\r':
+			dropPairedNewline(reader)
+
+			return typed.value(), nil
+		case asciiBackspace, asciiDelete:
+			if typed.eraseRune() {
+				a.printOutf("%s", eraseCharacter)
+			}
+		default:
+			if typed.addByte(next) {
+				a.printOutf("%s", maskCharacter)
+			}
+		}
+	}
+}
+
+// dropPairedNewline eats the second half of a pasted CRLF, which would otherwise
+// answer the next prompt with an empty line. Waiting for a byte would hang a
+// plain newline, so only a buffered one is taken.
+func dropPairedNewline(reader *bufio.Reader) {
+	if reader.Buffered() == 0 {
+		return
+	}
+
+	paired, err := reader.Peek(1)
+	if err != nil || (paired[0] != '\n' && paired[0] != '\r') {
+		return
+	}
+
+	_, _ = reader.ReadByte()
+}
+
+// maskedInput tracks the bytes behind each star, so one typed rune is one star
+// and one backspace whatever its encoding costs.
+type maskedInput struct {
+	typed []byte
+
+	// pending holds a multi-byte rune that has not arrived whole yet.
+	pending []byte
+
+	// widths is the byte count behind each printed star, newest last.
+	widths []int
+}
+
+// value returns what was typed, half-finished rune included: a truncated paste
+// is the operator's to see.
+func (m *maskedInput) value() string {
+	return string(m.typed) + string(m.pending)
+}
+
+// addByte reports whether the byte completed a rune, which is when a star is
+// due. An invalid byte counts at once, the way utf8 decoding treats it.
+func (m *maskedInput) addByte(next byte) bool {
+	m.pending = append(m.pending, next)
+
+	if !utf8.FullRune(m.pending) {
+		return false
+	}
+
+	m.typed = append(m.typed, m.pending...)
+	m.widths = append(m.widths, len(m.pending))
+	m.pending = m.pending[:0]
+
+	return true
+}
+
+// eraseRune drops the last rune and reports whether a star goes with it. A
+// half-typed rune goes first and was never shown.
+func (m *maskedInput) eraseRune() bool {
+	if len(m.pending) > 0 {
+		m.pending = m.pending[:0]
+
+		return false
+	}
+
+	if len(m.widths) == 0 {
+		return false
+	}
+
+	last := len(m.widths) - 1
+	m.typed = m.typed[:len(m.typed)-m.widths[last]]
+	m.widths = m.widths[:last]
+
+	return true
 }
 
 // readString reads through the newline, leaving an EOF for the caller to decide

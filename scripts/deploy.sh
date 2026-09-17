@@ -2,13 +2,13 @@
 set -euo pipefail
 trap 'echo "E: deploy failed on line $LINENO" >&2' ERR
 
-# deploy.sh - rebuild and restart the cairnos user service when the running
-# binary is not built from HEAD. Uses the vcs.revision stamp Go embeds in
-# every build, so nothing else has to carry a version.
+# deploy.sh - pull secrets, rebuild when the running binary is behind HEAD, and
+# restart the cairnos user service when either changed. Uses the vcs.revision
+# stamp Go embeds in every build, so nothing else has to carry a version.
 #
 # Usage:
-#   scripts/deploy.sh          # build and restart when behind
-#   scripts/deploy.sh --check  # report only; exit 3 when behind
+#   scripts/deploy.sh          # pull, build when behind, restart on change
+#   scripts/deploy.sh --check  # report only, no pull; exit 3 when behind
 
 readonly UNIT="cairnos"
 readonly BINARY="bin/cairnos"
@@ -65,6 +65,24 @@ wanted_revision() {
 	echo "${head}${suffix}"
 }
 
+# secrets_digest prints the sha256 of the secrets file, nothing when absent.
+# Returns 0 either way.
+secrets_digest() {
+	local path="$CAIRNOS_HOME/secrets.env"
+	if [[ ! -f "$path" ]]; then
+		return 0
+	fi
+	sha256sum -- "$path" | awk '{ print $1 }'
+}
+
+# pull_secrets renders the vault fields into $CAIRNOS_HOME, leaving the file
+# alone on a host with no [secrets.bitwarden] block. Returns 0 or dies.
+pull_secrets() {
+	info "pulling secrets into $CAIRNOS_HOME"
+	"$BINARY" secrets pull --dir "$CAIRNOS_HOME" >&2 ||
+		die "secrets pull failed; $UNIT was left running the previous build"
+}
+
 # wait_for_serve returns once the unit is active under a new pid, or dies.
 wait_for_serve() {
 	local old_pid="$1" waited=0 pid
@@ -79,18 +97,10 @@ wait_for_serve() {
 	die "$UNIT did not come back within ${START_TIMEOUT_SECONDS}s; see: journalctl --user -u $UNIT -n 50"
 }
 
-deploy() {
-	local wanted="$1" old_pid now
-	old_pid="$(unit_pid)"
-	info "building $BINARY at ${wanted}"
-	make --no-print-directory build >&2
-	# Render the vault fields before the restart, so the service starts against
-	# the values it is about to be given rather than the previous run's. A host
-	# with no [secrets.bitwarden] block prints that and exits 0, so this is a
-	# no-op there; any real failure stops the deploy with the old unit still up.
-	info "pulling secrets into $CAIRNOS_HOME"
-	"$BINARY" secrets pull --dir "$CAIRNOS_HOME" >&2 ||
-		die "secrets pull failed; $UNIT was left running the previous build"
+# restart_unit restarts the service and checks the revision it comes back on.
+# Returns 0 or dies.
+restart_unit() {
+	local wanted="$1" old_pid="$2" now
 	info "restarting $UNIT"
 	systemctl --user restart -- "$UNIT"
 	wait_for_serve "$old_pid"
@@ -99,8 +109,29 @@ deploy() {
 	info "$UNIT is running ${now}"
 }
 
+# deploy builds when behind and pulls secrets every run, so a rotated field
+# reaches the service without a code change. Returns 0 or dies.
+deploy() {
+	local wanted="$1" behind="$2" old_pid before after
+	old_pid="$(unit_pid)"
+	# The pull runs the binary, so a missing one needs a build even at HEAD.
+	if ((behind)) || [[ ! -x "$BINARY" ]]; then
+		info "building $BINARY at ${wanted}"
+		make --no-print-directory build >&2
+	fi
+	# Pull before the restart so the service starts on the new values.
+	before="$(secrets_digest)"
+	pull_secrets
+	after="$(secrets_digest)"
+	if ((behind == 0)) && [[ "$before" == "$after" ]]; then
+		info "secrets unchanged; $UNIT keeps running ${wanted}"
+		return
+	fi
+	restart_unit "$wanted" "$old_pid"
+}
+
 main() {
-	local check_only=0 wanted running
+	local check_only=0 wanted running behind=0
 	if [[ "${1:-}" == "--check" ]]; then
 		check_only=1
 	fi
@@ -108,16 +139,29 @@ main() {
 
 	wanted="$(wanted_revision)"
 	running="$(running_revision)"
-	if [[ "$running" == "$wanted" && "$wanted" != *+dirty ]]; then
-		info "$UNIT already runs ${running}"
-		return
+	if [[ "$running" != "$wanted" || "$wanted" == *+dirty ]]; then
+		behind=1
 	fi
-	info "running: ${running:-not running}"
-	info "wanted:  ${wanted}"
+
+	# --check never pulls, so it stays safe on a host you only inspect.
 	if ((check_only)); then
+		if ((behind == 0)); then
+			info "$UNIT already runs ${running}"
+			return
+		fi
+		info "running: ${running:-not running}"
+		info "wanted:  ${wanted}"
 		exit 3
 	fi
-	deploy "$wanted"
+
+	command -v sha256sum >/dev/null 2>&1 || die "sha256sum required"
+	if ((behind)); then
+		info "running: ${running:-not running}"
+		info "wanted:  ${wanted}"
+	else
+		info "$UNIT already runs ${running}"
+	fi
+	deploy "$wanted" "$behind"
 }
 
 main "$@"

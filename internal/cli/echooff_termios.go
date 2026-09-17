@@ -12,10 +12,10 @@ import (
 
 // echoOff stops the terminal behind file from printing what is typed, and
 // returns the call that puts it back. A master password is otherwise left on
-// screen and in the scrollback of whoever looks next.
+// screen for whoever looks next.
 //
-// ICANON is left alone on purpose: the read still wants whole lines with the
-// usual editing keys.
+// ICANON goes off with it, so a read returns per keystroke and the prompt can
+// star it. ISIG stays on, so Ctrl+C still works.
 func echoOff(file *os.File) (func(), error) {
 	descriptor := int(file.Fd())
 
@@ -31,7 +31,12 @@ func echoOff(file *os.File) (func(), error) {
 	}
 
 	quiet := *before
-	quiet.Lflag &^= unix.ECHO
+	quiet.Lflag &^= unix.ECHO | unix.ICANON
+
+	// Out of canonical mode these two decide when a read returns: on the first
+	// byte, with no timer.
+	quiet.Cc[unix.VMIN] = 1
+	quiet.Cc[unix.VTIME] = 0
 
 	if err := unix.IoctlSetTermios(descriptor, ioctlWriteTermios, &quiet); err != nil {
 		return nil, fmt.Errorf("turn terminal echo off: %w", err)
