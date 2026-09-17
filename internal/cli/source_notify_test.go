@@ -81,9 +81,9 @@ func waitForSkipLine(t *testing.T, bodies <-chan string) string {
 
 // TestSourceDirtyLineNamesHostSourceAndFix covers FR9's wording: an operator
 // reading one line in a shared channel has to learn which box, which source,
-// what is wrong, and what to do about it.
+// what is wrong, and what to do about it. The webhook env is process-global, so
+// t.Setenv rules out t.Parallel here.
 func TestSourceDirtyLineNamesHostSourceAndFix(t *testing.T) {
-	// t.Setenv forbids t.Parallel; the webhook env is process-global.
 	server, bodies := fanoutCaptureServer(t)
 	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
 

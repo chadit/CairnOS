@@ -158,10 +158,9 @@ func MattermostTokenEnv(name string) string {
 // MattermostTokenEnvs lists the variables one identity's token may come from,
 // most specific first. An explicit token_env is the whole list: an operator who
 // named the variable meant that one, and falling back from it would hide a typo
-// behind another bot's token.
+// behind another bot's token. A nil identity declared nothing, so it gets the
+// same answer as one that set no token_env.
 func MattermostTokenEnvs(identity *MattermostIdentity, name string) []string {
-	// A nil identity is one that declared nothing, which is the same answer as
-	// one that set no token_env.
 	if identity != nil && identity.TokenEnv != "" {
 		return []string{identity.TokenEnv}
 	}

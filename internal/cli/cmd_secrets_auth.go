@@ -283,18 +283,15 @@ func (a *App) checkVault(ctx context.Context, label, path string, cfg *config.Co
 		return ExitFailure
 	}
 
-	a.printOutf("%s: item %q carries %d CAIRNOS_ fields; the vault is locked again\n",
-		label, item.Name, countCairnosFields(item))
+	a.printOutf("%s: item %q carries %d fields; the vault is locked again\n",
+		label, item.Name, countPulledFields(cfg, item))
 
 	return ExitOK
 }
 
-// ensureBitwardenBinary resolves the CLI and makes the host follow the pin.
-// Finding any bw on PATH used to be enough, which left a host driving whatever
-// it installed once, however far the pin had moved since. The file is hashed
-// rather than asked its version, for the reason bwinstall hashes it: a binary
-// that prints the right string is no evidence of what it does with the master
-// password.
+// ensureBitwardenBinary returns a bw the pin vouches for. One in the install
+// directory goes through the installer so the digest record exists; one
+// elsewhere is used on a digest match and refused by both paths on a mismatch.
 func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (string, error) {
 	dir, err := bwInstallDir(binDir)
 	if err != nil {
@@ -366,12 +363,9 @@ func (a *App) installMissingBitwarden(ctx context.Context, label, dir string) (s
 }
 
 // installPinnedBitwarden runs the non-forced install over the binary already at
-// the install target. bwinstall decides what happens there: the pinned binary is
-// left alone and its record written, a binary an earlier install wrote is
-// replaced, and anything else keeps the refusal that only --force clears.
-//
-// It says nothing when nothing changed, so an ordinary pull reads as it always
-// has, and one line when a version moved.
+// the install target, leaving bwinstall to decide what happens there. The
+// upgrade line is printed only when something was installed, so an ordinary
+// pull reads as it always has.
 func (a *App) installPinnedBitwarden(ctx context.Context, label, dir string) (string, error) {
 	result, err := a.installBitwarden(ctx, dir, false)
 	if err != nil {

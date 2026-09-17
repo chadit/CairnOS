@@ -262,6 +262,8 @@ func TestLoadWithoutSourcesSkipsGitProbe(t *testing.T) {
 // TestLoadSourceRejectsDestInsideCairnOSDir proves the home guard against the
 // directory Load actually derives, the config file's own, rather than a literal
 // path a fixture could drift from.
+// TestLoadSourceRejectsDestInsideCairnOSDir writes the config into home itself,
+// since Load derives the off-limits directory from the config file's own path.
 func TestLoadSourceRejectsDestInsideCairnOSDir(t *testing.T) {
 	t.Parallel()
 
@@ -273,8 +275,6 @@ func TestLoadSourceRejectsDestInsideCairnOSDir(t *testing.T) {
 			`dest = "`+dest+`"`,
 		)
 
-		// The config has to live in home itself, since Load derives the directory
-		// a source must stay out of from the config file's own path.
 		path := filepath.Join(home, "config.toml")
 		if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
 			t.Fatalf("write config: %v", err)

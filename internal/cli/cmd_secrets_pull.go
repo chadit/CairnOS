@@ -161,7 +161,7 @@ func (a *App) pullBitwarden(
 		return ExitFailure
 	}
 
-	values, err := planValues(item, block.Fields)
+	values, err := planValues(opts.cfg, item, block.Fields)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 

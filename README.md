@@ -137,6 +137,13 @@ CAIRNOS_BRIDGE_MATTERMOST_TOKEN = "mattermost bot token"
 CAIRNOS_RUNNER_ZAI_API_KEY      = "z.ai key"
 ```
 
+A field named after a Mattermost bot's username is written as that identity's
+token, under the `CAIRNOS_BRIDGE_MATTERMOST_<ID>_TOKEN` name the identity reads
+first. One vault item can then hold every bot's token under the bot's own name,
+with no mapping per bot. A `CAIRNOS_`-named field or a `[secrets.bitwarden.fields]`
+mapping for the same variable still wins, and a username field left empty counts
+as absent.
+
 `item` is optional here because the credentials file carries it as `BW_ITEM`;
 set it in the config when you want one host reading a different item, and the
 config value wins. `credentials_file` and `env_file` default to `bitwarden.env`
@@ -157,7 +164,7 @@ without asking, which is what a host that injects one of these elsewhere should
 do. The three secrets are read with the terminal's echo turned off, and a
 terminal that will not allow that gets one line saying so before the first
 prompt. Run it again later and it checks instead of writing: it opens the
-vault, reports the item and how many `CAIRNOS_` fields it carries, and locks up
+vault, reports the item and how many fields a pull would take off it, and locks up
 again. A host running the system-mode unit keeps its config under
 `/var/lib/cairnos` and both environment files under `/etc/cairnos`, so both
 commands need to be told:

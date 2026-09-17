@@ -37,8 +37,8 @@ func resolveItem(block *config.Bitwarden, creds bitwarden.Credentials) (string, 
 // variable they fill are picked up on their own; the config table adds the ones
 // that are not, and wins a collision because an operator who wrote a mapping
 // meant it.
-func planValues(item bitwarden.Item, table map[string]string) (map[string]string, error) {
-	values := inferValues(item)
+func planValues(cfg *config.Config, item bitwarden.Item, table map[string]string) (map[string]string, error) {
+	values := inferredValues(cfg, item)
 
 	mapped, err := bitwarden.Select(item, slices.Sorted(maps.Values(table)))
 	if err != nil {
@@ -54,6 +54,56 @@ func planValues(item bitwarden.Item, table map[string]string) (map[string]string
 	}
 
 	return values, nil
+}
+
+// inferredValues is everything the item offers without a mapping. A field named
+// after a bot loses to one named after the variable, because a name that says
+// which variable it fills is the more specific of the two.
+func inferredValues(cfg *config.Config, item bitwarden.Item) map[string]string {
+	values := inferUsernameValues(cfg, item)
+
+	maps.Copy(values, inferValues(item))
+
+	return values
+}
+
+// usernameTokenEnvs maps each Mattermost bot's username to the token variable
+// its identity reads first, so one vault item can hold every bot's token under
+// the bot's own name instead of a mapping per bot.
+func usernameTokenEnvs(cfg *config.Config) map[string]string {
+	identities := cfg.Bridge.Mattermost.Identity
+	envs := make(map[string]string, len(identities))
+
+	// Sorted so two identities sharing a username land the same way on every
+	// host rather than following map order.
+	for _, name := range slices.Sorted(maps.Keys(identities)) {
+		identity := identities[name]
+		if identity.Username == "" {
+			continue
+		}
+
+		if _, taken := envs[identity.Username]; !taken {
+			envs[identity.Username] = config.MattermostTokenEnvs(&identity, name)[0]
+		}
+	}
+
+	return envs
+}
+
+// inferUsernameValues keeps the fields named after a bot, each under the
+// variable that bot's identity reads. An empty value is skipped for the reason
+// inferValues skips one.
+func inferUsernameValues(cfg *config.Config, item bitwarden.Item) map[string]string {
+	envs := usernameTokenEnvs(cfg)
+	values := make(map[string]string, len(envs))
+
+	for username, env := range envs {
+		if value := item.Fields[username]; value != "" {
+			values[env] = value
+		}
+	}
+
+	return values
 }
 
 // inferValues keeps the fields whose names are already variable names. An empty
@@ -178,10 +228,12 @@ func mattermostOverrideApplies(cfg *config.Config, values map[string]string) boo
 	return false
 }
 
-// countCairnosFields reports how many of an item's fields are named like a
-// variable, which is what `secrets auth` prints back as a status check.
-func countCairnosFields(item bitwarden.Item) int {
-	return len(inferValues(item))
+// countPulledFields reports how many variables a pull would take off the item
+// without a mapping, which is what `secrets auth` prints back as a status check.
+// Fields named after a bot count too, so the number matches the file a pull
+// writes rather than one naming convention.
+func countPulledFields(cfg *config.Config, item bitwarden.Item) int {
+	return len(inferredValues(cfg, item))
 }
 
 // joinNames renders a list for one output line.
