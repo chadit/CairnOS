@@ -23,15 +23,14 @@ const (
 // cmdSecretsInstallBW installs the pinned Bitwarden CLI. The alternative is a
 // README block that fetches a zip, checks a hash, and unpacks it, which is
 // several steps an operator can get almost right and end up with an unverified
-// binary.
+// binary. The flag is --bin-dir, not --dir, because --dir names the CairnOS home
+// everywhere else under `secrets`, which this command never uses.
 func (a *App) cmdSecretsInstallBW(ctx context.Context, args []string) int {
 	const label = "secrets install-bw"
 
 	flags := flag.NewFlagSet(label, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
 
-	// Not --dir: that flag names the CairnOS home everywhere else under
-	// `secrets`, and this command has no use for the home at all.
 	binDir := flags.String("bin-dir", "", "install into this directory instead of ~/.local/bin")
 	force := flags.Bool("force", false, "reinstall even when the pinned version is already there")
 
@@ -146,7 +145,8 @@ func (a *App) WithoutBitwardenPin() *App {
 	return a
 }
 
-// bwInstallDir resolves where the binary goes.
+// bwInstallDir resolves where the binary goes, defaulting to the personal bin
+// directory a login shell already has on its PATH.
 func bwInstallDir(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -157,6 +157,5 @@ func bwInstallDir(flagValue string) (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	// The personal bin directory, which a login shell already has on its PATH.
 	return filepath.Join(home, ".local", "bin"), nil
 }

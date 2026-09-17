@@ -240,20 +240,16 @@ func destPresent(dest string) (bool, error) {
 
 // cloneInto clones the repository and leaves the configured ref checked out.
 // The clone itself runs from the parent directory, which dest does not exist
-// inside yet.
+// inside yet. A parent that cannot be created takes CodeGit, not CodeClone:
+// FR10 makes source.clone retryable and a permissions problem is not. The clone
+// passes -- so a repo value cannot read as an option.
 func cloneInto(ctx context.Context, git Git, spec Spec) error {
 	parent := filepath.Dir(spec.Dest)
 
-	// A directory that cannot be created is not a clone failure, so it does not
-	// take CodeClone: FR10 makes every source.clone retryable and a permissions
-	// problem on the parent path is not.
 	if err := os.MkdirAll(parent, parentPerm); err != nil {
 		return permanentf(err, CodeGit, "create %s: %v", parent, err)
 	}
 
-	// The separator keeps a repo value from being read as an option. Config load
-	// already refuses one that starts with a dash, and git clone is the only verb
-	// here that documents an end-of-options marker.
 	if _, err := git(ctx, parent, "clone", "--", spec.Repo, spec.Dest); err != nil {
 		return transientf(err, CodeClone, "clone %s into %s: %v", spec.Repo, spec.Dest, err)
 	}
@@ -393,7 +389,8 @@ func tolerateMissingRef(spec Spec, logger *slog.Logger, cause error) error {
 
 // headOnRef reports whether HEAD already sits on the resolved target, with the
 // short HEAD to log when it does not. A branch only has to be checked out, not at
-// the remote tip, since catching up is the sync's job.
+// the remote tip, since catching up is the sync's job. A detached HEAD exits
+// non-zero here, which is not being on the branch rather than a failure.
 func headOnRef(ctx context.Context, git Git, spec Spec, want target) (bool, string, error) {
 	old, err := shortHead(ctx, git, spec.Dest)
 	if err != nil {
@@ -401,8 +398,6 @@ func headOnRef(ctx context.Context, git Git, spec Spec, want target) (bool, stri
 	}
 
 	if want.branch {
-		// A detached HEAD makes symbolic-ref exit non-zero, which is one of the
-		// ways of not being on the branch rather than a failure.
 		head, symErr := git(ctx, spec.Dest, "symbolic-ref", "--short", "-q", "HEAD")
 
 		return symErr == nil && head == spec.Ref, old, nil
@@ -444,15 +439,14 @@ func checkoutRef(ctx context.Context, git Git, spec Spec) error {
 
 // checkoutTarget puts a tree on an already-resolved ref. A branch gets a local
 // branch tracking the remote; a tag is checked out detached, because a pinned tag
-// has no branch to move.
+// has no branch to move. The trailing separator settles branch-versus-file
+// ambiguity toward the branch, and cannot turn the name into a path since
+// nothing follows it.
 func checkoutTarget(ctx context.Context, git Git, spec Spec, want target) error {
 	if !want.branch {
 		return detachAtTag(ctx, git, spec, want.name)
 	}
 
-	// The trailing separator settles branch-versus-file ambiguity in favor of the
-	// branch. It cannot turn the name into a path the way a leading one would,
-	// since nothing follows it.
 	if _, err := git(ctx, spec.Dest, "checkout", want.name, "--"); err != nil {
 		return permanentf(err, CodeGit, "check out branch %s in %s: %v", want.name, spec.Dest, err)
 	}
@@ -487,11 +481,9 @@ func resolveRef(ctx context.Context, git Git, spec Spec) (target, error) {
 
 // resolveGlob picks the newest tag matching the pattern. Version sort, not
 // creation date, decides "newest", so a patch tagged late on an old line does
-// not pull the tree backwards.
+// not pull the tree backwards. git tag documents no end-of-options separator,
+// so the pattern is guarded by config load refusing a ref starting with a dash.
 func resolveGlob(ctx context.Context, git Git, spec Spec) (target, error) {
-	// git tag documents no end-of-options separator, so the pattern is guarded the
-	// same way the branch checkout is: config load refuses a ref starting with a
-	// dash, which is the only way this argument could read as an option.
 	listed, err := git(ctx, spec.Dest, "tag", "--list", spec.Ref, "--sort=-v:refname")
 	if err != nil {
 		return target{}, permanentf(err, CodeGit, "list tags matching %q: %v", spec.Ref, err)
@@ -547,9 +539,7 @@ func advance(ctx context.Context, git Git, spec Spec, want target) (string, erro
 func fastForward(ctx context.Context, git Git, spec Spec, want target) (string, error) {
 	head, err := git(ctx, spec.Dest, "symbolic-ref", "--short", "-q", "HEAD")
 	if err != nil {
-		// -q makes a detached HEAD exit non-zero with no output, so this is the
-		// state itself rather than a command that went wrong.
-		return reasonDetached, nil //nolint:nilerr // a non-zero exit here means detached HEAD
+		return reasonDetached, nil //nolint:nilerr // -q means a non-zero exit here is a detached HEAD, not a failure
 	}
 
 	if head != want.name {
@@ -693,14 +683,13 @@ func shortHead(ctx context.Context, git Git, dir string) (string, error) {
 
 // logReady records what a source is sitting on after Ensure. A HEAD that will
 // not resolve is reported rather than raised: Ensure already passed, so the
-// startup line is worth more than a second failure path.
+// startup line is worth more than a second failure path. Ensure has canceled its
+// own deadline by now, so the bound FR11 asks for comes from here.
 func logReady(ctx context.Context, git Git, spec Spec, logger *slog.Logger) {
 	if logger == nil {
 		return
 	}
 
-	// Ensure has already canceled its own deadline by the time this runs, so the
-	// bound FR11 asks for has to come from here.
 	logCtx, cancel := context.WithTimeout(ctx, logReadyTimeout)
 	defer cancel()
 

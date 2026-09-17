@@ -86,29 +86,35 @@ func (n *SourceDirtyNotifier) Synced(source string) {
 }
 
 // claim records the send and answers with the fan-out to use, or reports that
-// this source is still inside its window. The emit happens outside the lock, so
-// a slow destination never holds up another source's sync.
+// this source is still inside its window. With no fan-out it claims nothing,
+// since recording a send would start a 12-hour silence for a notification nobody
+// got. The emit happens outside the lock, so a slow destination never holds up
+// another source's sync.
 func (n *SourceDirtyNotifier) claim(source string) (*notify.Fanout, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// With no fan-out the line goes nowhere, so recording the send would start a
-	// 12-hour silence for a notification nobody got.
 	if n.fanout == nil {
 		return nil, false
 	}
 
-	// One read, so the window is anchored on the instant the comparison used.
 	now := n.now()
-
-	last, seen := n.notified[source]
-	if seen && now.Sub(last) < sourceDirtyRepeat {
+	if n.silenced(source, now) {
 		return nil, false
 	}
 
 	n.notified[source] = now
 
 	return n.fanout, true
+}
+
+// silenced reports whether source already sent inside the repeat window. It
+// takes now rather than reading the clock, so the window is anchored on the same
+// instant the caller goes on to record.
+func (n *SourceDirtyNotifier) silenced(source string, now time.Time) bool {
+	last, seen := n.notified[source]
+
+	return seen && now.Sub(last) < sourceDirtyRepeat
 }
 
 // sourceDirtyLine names the host, because a notification channel collects lines

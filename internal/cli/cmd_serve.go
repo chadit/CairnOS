@@ -37,7 +37,9 @@ const serveUsage = "usage: cairnos serve [--dir D]\n"
 const serveShutdownTimeout = 10 * time.Second
 
 // cmdServe is the Phase 1a long-lived process: the gRPC and HTTP API plus
-// the scheduler daemon in one process, stopping cleanly on interrupt.
+// the scheduler daemon in one process, stopping cleanly on interrupt. The auth
+// store opens only with auth on, and the tenancy store only with OAuth login on,
+// so a nil store keeps that whole path out of the process.
 func (a *App) cmdServe(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -91,8 +93,6 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(scheds)
 
-	// The auth store only opens when auth is on; a nil store keeps the
-	// whole token path out of the process.
 	var keyStore authStore
 
 	if cfg.Auth.Enabled {
@@ -103,8 +103,6 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 		defer a.closeStore(keyStore)
 	}
 
-	// The tenancy store only opens when OAuth human login is on; the
-	// access-key path needs no workspace membership lookup.
 	var tenants tenancyStore
 
 	if cfg.OAuth.Enabled {
@@ -199,13 +197,8 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	}
 	defer func() { _ = closeQueue() }()
 
-	// Every serve component logs through the trace-correlating handler, so
-	// records emitted inside a span carry its trace and span IDs.
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
 
-	// The identity registry is created empty and populated once the Mattermost
-	// bridge connects, so the message runner and the notify fan-out can hold it
-	// while it is still empty and resolve identities per send later.
 	msgRegistry := messaging.NewRegistry()
 
 	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, mem, stores.rules, credManager,
@@ -215,16 +208,10 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	}
 	defer a.closeRegistry(registry)
 
-	// The manager owns run IDs and event fan-out, so its hooks ride the
-	// engine config; every run in this process starts through the manager.
 	manager := api.NewManager(logger)
 
 	workflowsDir := filepath.Join(dir, workflowsDirName)
 
-	// The event fan-out is one drainer over every configured destination, shared
-	// by the engine producers (run_failed, budget_denied) and the queue producers
-	// (held, dead_lettered). Nil when neither the Discord webhook nor a Mattermost
-	// identity is configured, which disables every producer (decision 7).
 	fanout := BuildFanout(cfg, msgRegistry, logger)
 	sourceNotifier.SetFanout(fanout)
 
@@ -266,10 +253,6 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return code
 	}
 
-	// The bridges build right after chat because they drive the chat agent: a
-	// configured bridge with chat off fails fast here, before any listener binds.
-	// Both adapters take the one core built above them, so a conversation started
-	// on either transport shares the session map and the pending proposals.
 	bridges, code, bridgesMounted := a.buildServeBridges(ctx, cfg, tel, msgRegistry, &bridgeDeps{
 		chat:    chatAgent,
 		store:   db,
@@ -284,9 +267,6 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	applyServeAuth(apiCfg, cfg, authn)
 
-	// A2A mounts after the bridges so the card is signed over a registry the
-	// Mattermost builder has already populated, and so SendMessage gets the same
-	// core the chat transports hand their turns to.
 	if attachA2AServeErr, a2aMounted := a.attachA2AServe(ctx, cfg, tel, apiCfg, &a2aServeDeps{
 		manager:      manager,
 		store:        db,
@@ -298,18 +278,10 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return attachA2AServeErr
 	}
 
-	// OAuth human login mounts when configured and auth is on: a minted
-	// CairnOS token is only useful if the interceptor verifies it, which needs
-	// authn. tenants is the membership store the callback resolves roles in.
 	if attachOAuthServeErr, oauthMounted := a.attachOAuthServe(ctx, cfg, tel, authn, stores.tenants, apiCfg, logger); !oauthMounted {
 		return attachOAuthServeErr
 	}
 
-	// Webhook ingress mounts only when [webhook] enabled is true; unregistered
-	// workflows stay unreachable and the default posture exposes no public
-	// webhook route. The routes sit on the root mux outside the gRPC interceptor
-	// by design, so scopeForMethod is untouched. The closer releases the
-	// registration store's handle at shutdown.
 	closeHooks, code, hooksMounted := a.attachWebhookServe(ctx, cfg, tel, dir, apiCfg, &webhookDeps{
 		scheds:  scheds,
 		manager: manager,
@@ -322,10 +294,6 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	}
 	defer func() { _ = closeHooks() }()
 
-	// The MCP http transport mounts on the same mux as A2A and OAuth: the MCP
-	// handlers enforce auth themselves (the same authn the interceptor uses), so
-	// they sit on a root HTTP route outside the gateway interceptor
-	// (.agents/spec/10-mcp-integration.md, "MCP Server").
 	if code, mcpMounted := a.attachMCPServe(ctx, cfg, tel, apiCfg, &mcpServeDeps{
 		manager:      manager,
 		store:        db,
@@ -338,9 +306,6 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return code
 	}
 
-	// The OpenAI-compatible adapter mounts on the same root mux, its explicit
-	// method patterns winning over the gateway catch-all. It reuses the chat
-	// agent and the personality set built above (.agents/spec/parity/openai-compat.md).
 	if code, compatMounted := a.attachOpenAICompatServe(ctx, cfg, tel, apiCfg, &openaiCompatDeps{
 		agent:         chatAgent,
 		personalities: personalities,
@@ -527,20 +492,11 @@ type serveEngineDeps struct {
 func buildServeEngine(ctx context.Context, cfg *config.Config, deps *serveEngineDeps) (*engine.Engine, error) {
 	engCfg := engineConfig(cfg, deps.secrets)
 	engCfg.NewID = deps.manager.NewID
-	// The manager dispatch runs first and unchanged; the fan-out wrapper adds a
-	// run_failed line on a failed finish when that event is selected (decision 7).
 	engCfg.OnEvent = WrapRunFailedFanout(ctx, deps.manager.Dispatch, deps.fanout)
 	engCfg.Instrumentation = deps.tel.Recorder()
 	engCfg.AgentExecutor = agentloop.New(deps.registry, deps.mem, deps.db, deps.tel.Recorder())
-	// A workflow-call action resolves its child by name from the same
-	// directory-backed resolver serve mode resolves run names in
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
 	engCfg.Workflows = api.NewWorkflowResolver(deps.workflowsDir, deps.logger)
-	// Governance enforcement reads the store's spend and pause state. The
-	// fan-out-backed notifier reproduces the engine's nil-fallback warn log, so
-	// warn-mode behavior is unchanged, and emits a budget_denied line on the
-	// pause path when that event is selected (decision 7). A nil fan-out leaves
-	// the notifier unset, keeping the pre-fan-out slog fallback.
+
 	if notifier := NewBudgetFanoutNotifier(deps.fanout, deps.logger); notifier != nil {
 		engCfg.Notifier = notifier
 	}
@@ -556,6 +512,13 @@ func buildServeEngine(ctx context.Context, cfg *config.Config, deps *serveEngine
 	}
 
 	return eng, nil
+}
+
+// releaseHivePrimary drops the primary lock on shutdown so another node takes
+// over promptly. The release rides a detached context, since ctx is already
+// canceled by the time this runs.
+func releaseHivePrimary(ctx context.Context, closeCoord func(context.Context)) {
+	closeCoord(context.WithoutCancel(ctx))
 }
 
 // announceHiveSubscribe prints the hive-subscribe banner when the loop is
@@ -581,10 +544,6 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 		return nil
 	}
 
-	// The hive is a private cluster over shared state, so it enables only on
-	// Postgres; on SQLite there is no shared backend for the elected primary or
-	// the sealed multi-node model, so serve refuses rather than running a
-	// single-node hive that cannot coordinate (R2/R3 in 14-open-decisions.md).
 	if cfg.HiveNeedsPostgres() {
 		logger.Warn("hive subscribe loop not started: the hive requires the postgres store backend",
 			"store_backend", cfg.Store.Backend)
@@ -592,9 +551,6 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 		return nil
 	}
 
-	// One elected node in the cluster runs the hive loop, so a multi-node cluster
-	// presents as one hive participant rather than N. The primary election is the
-	// scheduler-leader advisory-lock pattern on its own key (R3).
 	coord, closeCoord := newHiveCoordinator(scheds)
 	if coord == nil {
 		logger.Warn("hive subscribe loop not started: no postgres coordinator for the hive primary")
@@ -623,9 +579,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 
 	go func() {
 		defer close(done)
-		// Release the primary lock on shutdown so another node takes over
-		// promptly; a detached context because ctx is already canceled by then.
-		defer closeCoord(context.WithoutCancel(ctx))
+		defer releaseHivePrimary(ctx, closeCoord)
 
 		runHiveSubscribeLoop(ctx, coord, client, ingester, categories, logger)
 	}()
@@ -681,7 +635,8 @@ func runHiveSubscribeLoop(ctx context.Context, coord scheduler.Coordinator, clie
 // startSweep runs the retention prune loop on its own goroutine, closing
 // the returned channel once the loop exits so shutdown can wait for an
 // in-flight pass to finish its writes. With auth on, the same pass clears
-// expired denylist rows.
+// expired denylist rows. The denylist is assigned only when non-nil, so sweep's
+// own nil check stays meaningful.
 func startSweep(ctx context.Context, cfg *config.Config, db store.Store, keyStore authStore, logger *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
 
@@ -693,8 +648,6 @@ func startSweep(ctx context.Context, cfg *config.Config, db store.Store, keyStor
 		Logger:   logger,
 	}
 
-	// Assigned only when non-nil so a nil interface never reaches the
-	// Denylist field, which keeps sweep's own nil check meaningful.
 	if keyStore != nil {
 		sweepCfg.Denylist = keyStore
 	}
@@ -737,7 +690,8 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore) (*auth.Authentic
 // manager, which is what unblocks a daemon stuck mid-fire.
 
 // serveUntilCanceled runs the scheduler daemon alongside the API and drains both
-// on cancellation. The coordinator is the advisory-lock PostgresCoordinator on a
+// on cancellation. The daemon enqueues each due fire and the worker drains the
+// queue through the manager fire runner. The coordinator is the advisory-lock PostgresCoordinator on a
 // Postgres backend, so only one serving node fires schedules, and the
 // SoloCoordinator on sqlite (.agents/spec/14-open-decisions.md, S2).
 func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
@@ -746,16 +700,6 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 		defer closeCoord(context.WithoutCancel(ctx))
 	}
 
-	// The daemon enqueues each fire; the worker drains the queue and runs the
-	// workflow through the manager fire runner. A fire no worker can take right
-	// away waits in the queue rather than being skipped (S8). The poll-aware
-	// wrapper turns a [workflow.poll] fire into per-event enqueues and leaves a
-	// plain schedule untouched.
-
-	// The reach monitor probes every workflow's [workflow.requires] hosts on a
-	// timer; the daemon skips fires and the worker holds items while one is
-	// down. It rides the serve context and needs no drain: a probe cut off by
-	// shutdown has nothing left to record.
 	monitor := newReachMonitor(sched.fanout, a.logger)
 
 	enqueue := &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}

@@ -132,8 +132,10 @@ func sourceBool(entry sourceEntry) (bool, error) {
 }
 
 // validateSources checks every parsed source and, when any exist, that the git
-// binary they all shell out to is on PATH. Names are walked sorted so the first
-// invalid block is reported reproducibly.
+// binary they all shell out to is on PATH. homeDir is the config file's own
+// directory, the CairnOS home no synced tree may land inside, so a source
+// declared in a scaffold cannot sync over it. Names are walked sorted so the
+// first invalid block is reported reproducibly.
 func validateSources(sources map[string]Source, homeDir string) error {
 	if len(sources) == 0 {
 		return nil

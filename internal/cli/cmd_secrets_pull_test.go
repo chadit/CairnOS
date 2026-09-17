@@ -298,6 +298,8 @@ func TestSecretsPullWithoutABlockIsANoOp(t *testing.T) {
 // package manager or a hand install is not CairnOS's to replace, and a deploy
 // that quietly drove it would be running the vault through a binary nothing in
 // this repository vouches for.
+// TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH checks that the refusal
+// names both paths, since the fix is a PATH change as often as an install.
 func TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH(t *testing.T) {
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
@@ -309,7 +311,6 @@ func TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH(t *testing.T) {
 		t.Fatalf("exit = %d, want failure\nstderr: %s", code, stderr)
 	}
 
-	// Both paths, because the fix is a PATH change as often as an install.
 	for _, want := range []string{filepath.Join(binDir, bwFakeName), ".local/bin"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("the refusal does not name %q:\n%s", want, stderr)
@@ -342,7 +343,6 @@ func TestSecretsPullRecordsTheDigestOfABWItFindsCurrent(t *testing.T) {
 		t.Fatalf("the pull left no digest record beside the bw it accepted: %v", err)
 	}
 
-	// Nothing changed, so the pull reads exactly as it did before.
 	if !strings.Contains(stdout, pullVarOne) || !strings.Contains(stdout, pullVarTwo) {
 		t.Fatalf("the pull did not render the vault fields:\n%s", stdout)
 	}
@@ -384,6 +384,8 @@ func TestSecretsPullUpgradesTheBWItInstalled(t *testing.T) {
 // two-entry pin table. There is no digest to compare against there, and before
 // the pin check existed a working bw on PATH was simply used. Refusing the
 // command instead would leave the operator no flag to get past it.
+// TestSecretsPullUsesAnUnpinnedPlatformsOwnBW checks that the bw is used and
+// the operator is told it went unchecked.
 func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
@@ -395,7 +397,6 @@ func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
-	// Used, but the operator is told it went unchecked.
 	if !strings.Contains(stderr, "without checking it") {
 		t.Fatalf("stderr does not say the bw went unchecked:\n%s", stderr)
 	}
@@ -405,6 +406,8 @@ func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 	}
 }
 
+// TestSecretsPullWritesTheEnvFile covers the rendered file and the line the
+// pull prints. The variable names belong in a deploy log; the values never do.
 func TestSecretsPullWritesTheEnvFile(t *testing.T) {
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
@@ -433,7 +436,6 @@ func TestSecretsPullWritesTheEnvFile(t *testing.T) {
 		}
 	}
 
-	// The names belong in a deploy log; the values never do.
 	if !strings.Contains(stdout, pullVarOne) || strings.Contains(stdout, pullValueOne) {
 		t.Fatalf("stdout must name the variables and no value:\n%s", stdout)
 	}
@@ -821,7 +823,8 @@ func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 // TestSecretsPullWarnsAboutImpliedVariables covers FR20. The host will want a
 // bot token and an API key at run time; the item carries neither. The pull says
 // so and still writes, because a value may well be in the hand-written env file
-// beside the generated one.
+// beside the generated one. The warning names the shared default an operator
+// should add, with the override mentioned separately.
 func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
@@ -839,8 +842,6 @@ func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
-	// The shared default is what an operator should add, so that is the name
-	// the warning carries; the per-identity override is mentioned separately.
 	for _, want := range []string{"CAIRNOS_BRIDGE_MATTERMOST_TOKEN", "CAIRNOS_RUNNER_OPENAI_API_KEY"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("the warning does not name %s:\n%s", want, stderr)
@@ -902,6 +903,9 @@ func TestSecretsPullIsQuietWhenTheItemCarriesTheIdentityToken(t *testing.T) {
 
 // TestSecretsPullNamesAnIdentityTokenEnv covers the explicit key: an identity
 // that names its own variable is warned about under that name, not the default.
+// TestSecretsPullNamesAnIdentityTokenEnv covers an explicit token_env, which
+// nothing falls back from, so an override sentence would tell the operator about
+// a name this config never reads.
 func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
@@ -923,8 +927,6 @@ func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
 		t.Fatalf("the warning does not name the identity's own variable:\n%s", stderr)
 	}
 
-	// Nothing falls back from an explicit name, so the override sentence would
-	// be telling the operator about a name this config never reads.
 	if strings.Contains(stderr, "CAIRNOS_BRIDGE_MATTERMOST_<ID>_TOKEN") {
 		t.Fatalf("the warning offered an override an explicit token_env rules out:\n%s", stderr)
 	}
@@ -969,27 +971,20 @@ func runPullRead(t *testing.T, path string) string {
 // TestSecretsPullRendersTheBytesSystemdParses pins the generated format. The
 // launchd side is covered by sourcing the file through /bin/sh; systemd is the
 // only platform this actually ships to and it is not present in a test run, so
-// its half is pinned as exact bytes with the parse spelled out per case.
+// its half is pinned as exact bytes. A single-quoted run is taken literally, so
+// a plain value comes back with the wrap removed.
 func TestSecretsPullRendersTheBytesSystemdParses(t *testing.T) {
 	cases := []struct {
 		name  string
 		value string
 		want  string
 	}{
-		// systemd takes a single-quoted run literally, so the plain cases are
-		// the value back with the wrap removed.
 		{name: "a plain value", value: "abc", want: `CAIRNOS_ONE='abc'`},
 		{name: "a value with spaces", value: "two words", want: `CAIRNOS_ONE='two words'`},
-		// Outside quotes a backslash escapes; inside single quotes it does not,
-		// so this reaches the service as typed.
-		{name: "a value with a backslash", value: `a\b`, want: `CAIRNOS_ONE='a\b'`},
-		// systemd performs no command substitution, and the quotes keep a
-		// sourcing shell from performing any either.
-		{name: "a value that looks like a command", value: "$(id)", want: `CAIRNOS_ONE='$(id)'`},
+		{name: "a backslash single quotes do not let escape", value: `a\b`, want: `CAIRNOS_ONE='a\b'`},
+		{name: "a value that looks like a command nothing substitutes", value: "$(id)", want: `CAIRNOS_ONE='$(id)'`},
 		{name: "a value with double quotes", value: `say "hi"`, want: `CAIRNOS_ONE='say "hi"'`},
-		// The close, escaped quote, reopen sequence: both readers see one
-		// literal quote, because the backslash sits outside the quoted runs.
-		{name: "a value with a single quote", value: "it's", want: `CAIRNOS_ONE='it'\''s'`},
+		{name: "a single quote, closed and reopened around an escaped one", value: "it's", want: `CAIRNOS_ONE='it'\''s'`},
 	}
 
 	for _, testCase := range cases {
@@ -1014,7 +1009,8 @@ func TestSecretsPullRendersTheBytesSystemdParses(t *testing.T) {
 // TestSecretsPullSystemModeReadsTheSystemConfig covers the documented sudo form.
 // Without --dir, --system has to read the system install's config: reading the
 // invoking user's home instead finds no block, prints "nothing to do", and exits
-// 0, so a deploy reports success having written nothing.
+// 0, so a deploy reports success having written nothing. The user home is staged
+// with a block too, so a fallback there fails on missing credentials.
 func TestSecretsPullSystemModeReadsTheSystemConfig(t *testing.T) {
 	if _, err := os.Stat(systemConfigPath); err == nil {
 		t.Skipf("%s exists on this host, so its contents would decide the case", systemConfigPath)
@@ -1023,9 +1019,6 @@ func TestSecretsPullSystemModeReadsTheSystemConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// The user home does hold a block, so the case fails loudly if --system
-	// ever falls back to it: the run would find the block and then fail on the
-	// missing credentials instead of reporting the system path.
 	userDir := filepath.Join(home, ".cairnos")
 	if err := os.MkdirAll(userDir, 0o750); err != nil {
 		t.Fatalf("stage the user home: %v", err)

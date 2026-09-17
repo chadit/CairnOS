@@ -101,7 +101,8 @@ func assertTerminalTranscript(t *testing.T, transcript string) {
 }
 
 // TestSecretsAuthShowsOneStarPerTypedCharacter proves a hidden prompt shows how
-// much arrived, which is what a mis-paste is otherwise invisible to.
+// much arrived, which is what a mis-paste is otherwise invisible to. The item
+// name is not a secret, so the terminal echoes that one instead.
 //
 //nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthShowsOneStarPerTypedCharacter(t *testing.T) {
@@ -129,7 +130,6 @@ func TestSecretsAuthShowsOneStarPerTypedCharacter(t *testing.T) {
 		}
 	}
 
-	// The item name is not a secret, so the terminal echoes it instead.
 	if stars := visibleStars(t, transcript, authPrompts()[0], authPrompts()[1]); stars != 0 {
 		t.Fatalf("the item name prompt showed %d stars, want none", stars)
 	}
@@ -233,13 +233,13 @@ func visibleStars(t *testing.T, transcript, prompt, next string) int {
 
 // answerAuthPrompts runs `secrets auth` against the terminal, typing each answer
 // once its prompt lands: typing ahead would buffer it while echo was still on.
+// The command owns both ends of the conversation, writing its prompts to the
+// terminal the way it would for an operator sitting at one.
 func answerAuthPrompts(t *testing.T, master, slave *os.File, dir string, typed [promptCount]string) *terminalWatch {
 	t.Helper()
 
 	seen := watchTerminal(t, master, slave)
 
-	// The command owns both ends of the conversation, writing its prompts to the
-	// terminal the way it would for an operator sitting at one.
 	finished := make(chan int, 1)
 
 	go func() {
@@ -324,7 +324,8 @@ func (w *terminalWatch) record(chunk []byte) {
 
 // watchTerminal reads the master side for the life of the case. The read has to
 // run while the command is blocked on a prompt, which is also what keeps the
-// terminal's buffer from filling.
+// terminal's buffer from filling. Cleanup wakes the reader with one byte, then
+// waits, so the goroutine cannot outlive the case.
 func watchTerminal(t *testing.T, master, slave *os.File) *terminalWatch {
 	t.Helper()
 
@@ -350,9 +351,6 @@ func watchTerminal(t *testing.T, master, slave *os.File) *terminalWatch {
 		}
 	}()
 
-	// The command has finished by now, so one byte through the terminal wakes
-	// the reader and it sees the flag. The wait keeps the goroutine from
-	// outliving the case, which the package's leak sweep would report.
 	t.Cleanup(func() {
 		watch.stopping.Store(true)
 

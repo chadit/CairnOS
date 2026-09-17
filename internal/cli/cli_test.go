@@ -183,6 +183,9 @@ func openRunStore(t *testing.T, dir string) *sqlite.Store {
 	return db
 }
 
+// TestInitScaffoldsRunnableLayout checks that the rendered config round-trips
+// the compiled-in defaults, which also proves the duration formatting ("90d",
+// "10m") parses back.
 func TestInitScaffoldsRunnableLayout(t *testing.T) {
 	t.Parallel()
 
@@ -209,8 +212,6 @@ func TestInitScaffoldsRunnableLayout(t *testing.T) {
 		t.Fatalf("scaffolded config does not load: %v", err)
 	}
 
-	// The rendered file must round-trip the compiled-in defaults, which also
-	// proves the duration formatting ("90d", "10m") parses back.
 	def := config.Default()
 	if cfg.Engine.MaxConcurrentActions != def.Engine.MaxConcurrentActions {
 		t.Fatalf("max_concurrent_actions = %d, want %d",
@@ -408,7 +409,6 @@ func TestRunsReplayHashGuard(t *testing.T) {
 
 	runID := runs[0].ID
 
-	// Editing the file changes its hash, so a bare replay must refuse.
 	writeWorkflow(t, dir, replayableWorkflowEdited)
 
 	code, _, stderr = runCLI(t, "runs", "replay", runID, flagDirArg, dir)
@@ -420,7 +420,6 @@ func TestRunsReplayHashGuard(t *testing.T) {
 		t.Fatalf("replay error does not explain the hash mismatch:\n%s", stderr)
 	}
 
-	// --force overrides the guard and replays, minting a fresh run.
 	code, stdout, stderr := runCLI(t, "runs", "replay", runID, "--force", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("forced replay exited %d: %s", code, stderr)
@@ -468,6 +467,9 @@ func TestMemoryLifecycle(t *testing.T) {
 	}
 }
 
+// TestMemoryExportImportRoundTrip edits an exported file on disk, which is the
+// point of file-based memory: grep and edit offline, then import the change
+// back. A second import with no further edits must report everything unchanged.
 func TestMemoryExportImportRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -490,8 +492,6 @@ func TestMemoryExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("memory export (exit %d) stdout=%q stderr=%q", code, stdout, stderr)
 	}
 
-	// Editing the exported file on disk is the whole point of file-based memory:
-	// grep and edit offline, then import the change back.
 	mdPath := filepath.Join(exportDir, id+".md")
 
 	data, err := os.ReadFile(mdPath) //nolint:gosec // test-owned temp path
@@ -514,7 +514,6 @@ func TestMemoryExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("memory get (exit %d) missing the offline edit:\n%s", code, stdout)
 	}
 
-	// A second import with no further edits must report everything unchanged.
 	code, stdout, _ = runCLI(t, memoryCmd, "import", "--from", exportDir, flagDirArg, dir)
 	if code != cli.ExitOK || !strings.Contains(stdout, "unchanged 1") {
 		t.Fatalf("second import (exit %d) is not a no-op:\n%s", code, stdout)

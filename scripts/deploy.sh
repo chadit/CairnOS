@@ -110,16 +110,16 @@ restart_unit() {
 }
 
 # deploy builds when behind and pulls secrets every run, so a rotated field
-# reaches the service without a code change. Returns 0 or dies.
+# reaches the service without a code change. The pull runs the binary, so a
+# missing one needs a build even at HEAD, and the pull comes before the restart
+# so the service starts on the new values. Returns 0 or dies.
 deploy() {
 	local wanted="$1" behind="$2" old_pid before after
 	old_pid="$(unit_pid)"
-	# The pull runs the binary, so a missing one needs a build even at HEAD.
 	if ((behind)) || [[ ! -x "$BINARY" ]]; then
 		info "building $BINARY at ${wanted}"
 		make --no-print-directory build >&2
 	fi
-	# Pull before the restart so the service starts on the new values.
 	before="$(secrets_digest)"
 	pull_secrets
 	after="$(secrets_digest)"
@@ -130,6 +130,9 @@ deploy() {
 	restart_unit "$wanted" "$old_pid"
 }
 
+# main compares the running revision against HEAD and deploys the difference.
+# --check never pulls, so it stays safe on a host you only inspect: it reports
+# and exits 3 when behind. Returns 0 or dies.
 main() {
 	local check_only=0 wanted running behind=0
 	if [[ "${1:-}" == "--check" ]]; then
@@ -143,7 +146,6 @@ main() {
 		behind=1
 	fi
 
-	# --check never pulls, so it stays safe on a host you only inspect.
 	if ((check_only)); then
 		if ((behind == 0)); then
 			info "$UNIT already runs ${running}"

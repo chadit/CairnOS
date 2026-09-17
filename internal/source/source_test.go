@@ -280,7 +280,9 @@ func TestSyncResetsBlockedTreeOntoBranch(t *testing.T) {
 
 // TestSyncSkipsBlockedTreeWhenResetIsOff covers FR5: the sync succeeds, writes
 // nothing, and hands back the reason, so the action reports no failure and the
-// five-minute run_failed line stops.
+// five-minute run_failed line stops. Divergence is found by an ancestry probe
+// that writes nothing, so HEAD and the two files are what prove the tree was
+// left exactly as the setup left it.
 func TestSyncSkipsBlockedTreeWhenResetIsOff(t *testing.T) {
 	t.Parallel()
 
@@ -308,9 +310,6 @@ func TestSyncSkipsBlockedTreeWhenResetIsOff(t *testing.T) {
 				t.Fatalf("result reset=%v %s..%s, want no movement", result.Reset, result.Old, result.New)
 			}
 
-			// Divergence is found by an ancestry probe that writes nothing, so
-			// HEAD and the two files below are what prove the tree was left
-			// exactly as the setup left it.
 			if after := git(t, spec.Dest, "rev-parse", "HEAD"); after != before {
 				t.Fatalf("HEAD moved from %s to %s on a skipped sync", before, after)
 			}
@@ -344,8 +343,6 @@ func TestSyncReportsAProbeFailureRatherThanForcing(t *testing.T) {
 	repo.commit(t, secondContent, "second")
 	repo.push(t)
 
-	// 128 is what git exits on a fatal, which is the shape of the locked index
-	// and unreadable object this probe has to stop distinguishing from divergence.
 	probe := failingGit{verb: "merge-base", code: 128}
 
 	_, err := source.Sync(t.Context(), probe.git, spec)
@@ -392,8 +389,6 @@ func TestSyncResetsDirtyTreeOntoTag(t *testing.T) {
 		t.Fatal("result.Reset = false on a forced tag checkout")
 	}
 
-	// A pinned source has no branch to land on, so the tree has to come out of
-	// the reset detached rather than attached to whatever it was on before.
 	if head := git(t, spec.Dest, "rev-parse", "--symbolic-full-name", "HEAD"); head != "HEAD" {
 		t.Fatalf("HEAD is attached to %q after a forced tag checkout, want it detached", head)
 	}
@@ -446,6 +441,8 @@ func TestSyncSkipsDirtyTagWhenResetIsOff(t *testing.T) {
 	}
 }
 
+// TestSyncMovesToExactTagWhenHeadDiffers parks HEAD on the older tag first, so
+// the sync has somewhere to move from.
 func TestSyncMovesToExactTagWhenHeadDiffers(t *testing.T) {
 	t.Parallel()
 
@@ -459,7 +456,6 @@ func TestSyncMovesToExactTagWhenHeadDiffers(t *testing.T) {
 
 	mustEnsure(t, spec)
 
-	// Park HEAD on the older tag so the sync has somewhere to move from.
 	detach(t, spec.Dest, "refs/tags/v1.0.0")
 
 	result, err := source.Sync(t.Context(), source.GitCommand, spec)
@@ -645,7 +641,8 @@ func TestEnsureLeavesADirtyTreeAlone(t *testing.T) {
 
 // TestEnsureAllowsRefNotYetOnDisk is the other half of the pin move: the new tag
 // has not been fetched. Ensure never fetches, so refusing here would stop serve
-// for a state only the first sync can resolve.
+// for a state only the first sync can resolve. The tree stays where the previous
+// pin left it until that sync moves it.
 func TestEnsureAllowsRefNotYetOnDisk(t *testing.T) {
 	t.Parallel()
 
@@ -662,8 +659,6 @@ func TestEnsureAllowsRefNotYetOnDisk(t *testing.T) {
 		t.Fatalf("ensure with a ref not yet on disk = %v, want nil", err)
 	}
 
-	// Nothing on disk answers the new ref, so the tree stays where the previous
-	// pin left it and the first sync is what fetches and moves it.
 	if after := git(t, spec.Dest, "rev-parse", "HEAD"); after != before {
 		t.Fatalf("HEAD moved from %s to %s for a ref no local ref resolves", before, after)
 	}

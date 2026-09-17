@@ -90,7 +90,9 @@ func readCredentials(t *testing.T, dir string) string {
 }
 
 // TestSecretsAuthWritesWhatWasTyped covers FR14: a host with no credentials file
-// gets one from four answers, at the mode the loader insists on.
+// gets one from four answers, at the mode the loader insists on. The three
+// credentials are not operator-visible, so no transcript may carry them, and a
+// redirected stdin skips the visible-typing warning.
 //
 //nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthWritesWhatWasTyped(t *testing.T) {
@@ -117,16 +119,12 @@ func TestSecretsAuthWritesWhatWasTyped(t *testing.T) {
 		}
 	}
 
-	// The item name is operator-visible; the three credentials are not, so a
-	// terminal transcript or a scrollback buffer must not carry them.
 	for _, secret := range []string{authTypedID, authTypedSecret, authTypedKey} {
 		if strings.Contains(stdout, secret) {
 			t.Fatalf("stdout echoed a credential back:\n%s", stdout)
 		}
 	}
 
-	// A redirected stdin shows nobody anything, so the warning about visible
-	// typing would be noise on every scripted run.
 	if strings.Contains(stdout, "visible") {
 		t.Fatalf("a redirected stdin warned about visible typing:\n%s", stdout)
 	}
@@ -143,7 +141,8 @@ func TestSecretsAuthWritesWhatWasTyped(t *testing.T) {
 
 // TestSecretsAuthTakesChezmoiDefaults covers FR15: the operator already holds
 // these four values on the workstation, so four Enters reuse them rather than
-// asking for a second copy.
+// asking for a second copy. The three secrets are offered as "from chezmoi" and
+// never printed, which is why defaultHint treats them apart from the item name.
 //
 //nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthTakesChezmoiDefaults(t *testing.T) {
@@ -156,9 +155,6 @@ func TestSecretsAuthTakesChezmoiDefaults(t *testing.T) {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
-	// The item name is shown so the operator can see what will be used; the
-	// three secrets are offered as "from chezmoi" and never printed, which is
-	// the whole reason defaultHint treats them apart.
 	for _, secret := range []string{chezmoiID, chezmoiSecret, chezmoiKey} {
 		if strings.Contains(stdout, secret) {
 			t.Fatalf("a chezmoi secret was printed at the prompt:\n%s", stdout)

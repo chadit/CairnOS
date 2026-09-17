@@ -46,6 +46,11 @@ func (a *App) cmdSchedule(ctx context.Context, args []string) int {
 	}
 }
 
+// cmdScheduleAdd stores a workflow file's schedule key
+// (.agents/spec/02-workflow-schema.md) as an absolute path, so the daemon can
+// load it from any directory. An unregistered poll source parses fine and fails
+// at every fire, so it warns while the operator is watching rather than only in
+// the daemon log.
 func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("schedule add", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -70,25 +75,16 @@ func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	// The cron expression lives in the workflow file's schedule key
-	// (.agents/spec/02-workflow-schema.md); a file without one has nothing
-	// to schedule.
 	if flow.Schedule == "" {
 		a.printErrf("schedule add: %s has no schedule key; add one (e.g. schedule = \"@hourly\")\n", path)
 
 		return ExitUsage
 	}
 
-	// A poll workflow naming an unregistered source parses fine but fails at
-	// every fire (poll.ErrUnknownSource is a runtime lookup, not a load-time
-	// rule), so warn now while the operator is watching rather than only in the
-	// daemon log later.
 	if flow.Poll != nil && !slices.Contains(poll.BuiltinSourceNames(), flow.Poll.Source) {
 		a.printErrf("schedule add: warning: unknown poll source %q; the schedule will fail at fire time\n", flow.Poll.Source)
 	}
 
-	// Store the absolute path so the daemon can load the file no matter
-	// which directory it starts from.
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		a.printErrf("schedule add: resolve path: %v\n", err)
@@ -192,9 +188,31 @@ func (a *App) cmdScheduleRemove(ctx context.Context, args []string) int {
 	return ExitOK
 }
 
-// cmdScheduleRun is the foreground Phase 0b daemon: it fires due schedules
-// through the engine until the context is canceled, which exits clean.
-// Phase 1a's serve embeds the same loop.
+// reconcileInterrupted clears runs a previous process left mid-flight and
+// reports whether the daemon can carry on. It runs first because the daemon may
+// be the first thing started after a crash.
+func (a *App) reconcileInterrupted(ctx context.Context, label string, db store.Store) bool {
+	reconciled, err := db.ReconcileInterrupted(ctx)
+	if err != nil {
+		a.printErrf("%s: reconcile interrupted runs: %v\n", label, err)
+
+		return false
+	}
+
+	if reconciled > 0 {
+		a.logger.Info("reconciled interrupted runs", "count", reconciled)
+	}
+
+	return true
+}
+
+// cmdScheduleRun is the foreground Phase 0b daemon: the daemon enqueues each
+// due fire and the worker drains the queue through the engine fire runner, until
+// the context is canceled, which exits clean. Phase 1a's serve embeds the same
+// loop.
+//
+// It fans held and dead_lettered alerts the way serve does, so running the
+// scheduler alone still notifies.
 func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("schedule run", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -223,17 +241,8 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(mem)
 
-	// Reconcile work a previous process left mid-flight, same as cmdRun:
-	// the daemon may be the first thing started after a crash.
-	reconciled, err := db.ReconcileInterrupted(ctx)
-	if err != nil {
-		a.printErrf("schedule run: reconcile interrupted runs: %v\n", err)
-
+	if !a.reconcileInterrupted(ctx, "schedule run", db) {
 		return ExitFailure
-	}
-
-	if reconciled > 0 {
-		a.logger.Info("reconciled interrupted runs", "count", reconciled)
 	}
 
 	dir, err := resolveDir(*dirFlag)
@@ -243,8 +252,6 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	// The source is built before the registry so the credential manager and the
-	// runners share one secret chain.
 	source, closeSource, err := a.buildSecretSource(ctx, dir, &cfg)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
@@ -253,9 +260,6 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 	defer func() { _ = closeSource() }()
 
-	// Outbound credentials resolve their secret refs through the source so the
-	// http and mcp_client runners mint bearer tokens. Construction does no
-	// network and fails fast on a missing ref.
 	credManager, err := buildCredentialManager(ctx, &cfg, source)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
@@ -287,29 +291,15 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 	defer func() { _ = closeQueue() }()
 
-	// On a Postgres backend this is the advisory-lock coordinator, so two
-	// `cairnos schedule run` nodes against one database never double-enqueue; on
-	// sqlite it is the single-node SoloCoordinator
-	// (.agents/spec/14-open-decisions.md, S2).
 	coord, closeCoord := newCoordinator(scheds)
 	if closeCoord != nil {
 		defer closeCoord(context.WithoutCancel(ctx))
 	}
 
-	// The `schedule run` worker fans held and dead_lettered alerts the same way
-	// serve does, so an operator running the scheduler outside serve still gets
-	// Discord notifications. It holds no messaging identities, so the nil registry
-	// drops the Mattermost sink. The drainer rides a child context so it stops
-	// once the producer and worker return, even on an early error.
 	fanoutCtx, stopFanout := context.WithCancel(ctx)
 	fanout := BuildFanout(&cfg, nil, a.logger)
 	fanoutDone := StartFanout(fanoutCtx, fanout)
 
-	// The daemon enqueues each fire; the worker drains the queue and runs the
-	// workflow through the engine fire runner. A fire no worker can take right
-	// away waits in the queue instead of being skipped (S8). The poll-aware
-	// wrapper turns a [workflow.poll] fire into per-event enqueues and skips a
-	// workflow whose required host the reach monitor reports down.
 	monitor := newReachMonitor(fanout, a.logger)
 	enqueue := &scheduleEnqueueRunner{queue: queue, logger: a.logger}
 	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, monitor, a.logger)

@@ -88,15 +88,14 @@ func buildZip(t *testing.T, entries map[string]string) ([]byte, string) {
 
 // serveBody stands one response up on a loopback TLS-free server and returns
 // its URL. Install refuses anything but https, so the URL is rewritten to the
-// https form and the test's own client is pointed back at the plain listener.
+// https form and the test's own client is pointed back at the plain listener,
+// which it dials whatever the URL says, so the scheme check sees https.
 func serveBody(t *testing.T, handler http.Handler) (string, *http.Client) {
 	t.Helper()
 
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	// The client dials the real listener whatever the URL says, so the scheme
-	// check sees https while the request still reaches the test server.
 	client := &http.Client{
 		Transport: &rewriteTransport{target: strings.TrimPrefix(server.URL, "http://")},
 		Timeout:   30 * time.Second,
@@ -151,7 +150,9 @@ func options(t *testing.T, entries map[string]string, sum string) *bwinstall.Opt
 }
 
 // TestInstallPlacesTheVerifiedBinary is the happy path: both digests match, the
-// one entry comes out, and the directory is left holding only the binary.
+// one entry comes out, and the directory holds only the binary and its digest
+// record. The download is a temp file there, so a stopped cleanup would leave
+// the release zip beside it.
 //
 //nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallPlacesTheVerifiedBinary(t *testing.T) {
@@ -184,9 +185,6 @@ func TestInstallPlacesTheVerifiedBinary(t *testing.T) {
 		t.Fatalf("installed contents = %q, want the archive entry", string(body))
 	}
 
-	// The downloaded archive is a temp file in this directory, so a cleanup
-	// that stopped running would leave the release zip behind next to the
-	// binary. What should be there is the binary and the digest record.
 	assertHolds(t, filepath.Dir(opts.Dest), entryName, entryName+sidecarSuffix)
 
 	assertRecorded(t, opts.Dest, opts.BinarySHA256)
@@ -323,12 +321,11 @@ func TestInstallRefusesAnArchiveWithATraversalEntry(t *testing.T) {
 }
 
 // TestInstallRefusesAnOversizedDownload pins the cap that stops a redirected or
-// hostile response from writing until the disk fills.
+// hostile response from writing until the disk fills. The body is plain bytes,
+// since the size check fires while the response is still being read.
 //
 //nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnOversizedDownload(t *testing.T) {
-	// A plain body rather than an archive: the size check fires while the
-	// response is still being read, long before anything looks at it as a zip.
 	url, client := serveBody(t, archiveServer(bytes.Repeat([]byte("a"), 4096)))
 
 	opts := &bwinstall.Options{
@@ -355,7 +352,8 @@ func TestInstallRefusesAnOversizedDownload(t *testing.T) {
 
 // TestInstallRefusesAnOversizedEntry pins the other cap. The archive is small
 // and its digest matches, so only the decompressed size can stop this, which is
-// the zip-bomb shape.
+// the zip-bomb shape. The empty directory also proves the binary is assembled
+// elsewhere and renamed in.
 //
 //nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnOversizedEntry(t *testing.T) {
@@ -371,8 +369,6 @@ func TestInstallRefusesAnOversizedEntry(t *testing.T) {
 		t.Fatalf("the error does not report a size limit: %v", err)
 	}
 
-	// The write had already started when the limit hit, so this is also what
-	// proves the binary is assembled somewhere else and renamed into place.
 	assertNothingLeftBehind(t, opts.Dest)
 }
 
@@ -444,19 +440,17 @@ func TestInstallStopsAProbeThatHangs(t *testing.T) {
 }
 
 // TestInstallLeavesTheProbeWithoutVaultCredentials covers the child's
-// environment. `secrets auth` reads the vault API key and the master password
-// out of this process's environment when a host injects them, and a version
-// probe has no business seeing either.
+// environment. `secrets auth` reads the vault API key and master password from
+// this process when a host injects them, and a version probe has no business
+// seeing either. The staged fake reports the marker, so its output says what the
+// probe was handed.
 //
-// This one needs no paralleltest directive: t.Setenv already rules the case out
-// of running in parallel, so the linter never asks.
+// No paralleltest directive: t.Setenv already rules the case out of parallel.
 func TestInstallLeavesTheProbeWithoutVaultCredentials(t *testing.T) {
 	const marker = "BW_PROBE_MARKER"
 
 	t.Setenv(marker, "should-not-reach-the-child")
 
-	// The fake reports whatever the marker holds, so the installed binary's own
-	// output says what the probe handed it.
 	reporter := "#!/bin/sh\necho \"${" + marker + ":-" + fakeVersion + "}\"\n"
 
 	opts := options(t, map[string]string{entryName: reporter}, "")

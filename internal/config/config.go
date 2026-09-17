@@ -711,7 +711,9 @@ type Discord struct {
 }
 
 // Default returns the settings a fresh `cairnos init` ships: local-only,
-// SQLite, auth and API off, so the result runs immediately.
+// SQLite, auth and API off, so the result runs immediately. Every slice is built
+// per call, so a caller that mutates one result never leaks the change into the
+// next.
 func Default() Config {
 	return Config{
 		Engine: Engine{
@@ -788,8 +790,6 @@ func Default() Config {
 				ConfirmTTL:  defaultBridgeConfirmTTL,
 			},
 			Mattermost: Mattermost{
-				// Send timeout and confirm TTL mean the same thing on both
-				// transports, so they share one constant rather than drifting.
 				SendTimeout: defaultBridgeSendTimeout,
 				ConfirmTTL:  defaultBridgeConfirmTTL,
 				RatePerSec:  defaultMattermostRatePerSec,
@@ -803,14 +803,9 @@ func Default() Config {
 		},
 		Notify: Notify{
 			Discord: Discord{
-				// A fresh slice per call so a mutated result never leaks into
-				// the next Default(); ["held"] keeps today's behavior.
 				Events: []string{NotifyEventHeld},
 			},
 			Mattermost: NotifyMattermost{
-				// Same default set as Discord, so naming an identity and a
-				// channel is the only step to the hold notice. A fresh slice
-				// per call, for the same reason as above.
 				Events: []string{NotifyEventHeld},
 			},
 		},
@@ -852,7 +847,8 @@ const (
 // Telegram bridge timing defaults (.agents/spec/parity/messaging-bridge.md,
 // "Config"). The long poll holds each getUpdates call for 50s, each outbound
 // call gets 10s, and an unanswered proposal expires as deny after 10m. All only
-// matter once an operator sets [bridge.telegram] enabled = true.
+// matter once an operator sets [bridge.telegram] enabled = true. Mattermost
+// shares the send timeout and confirm TTL, which mean the same thing there.
 const (
 	defaultBridgePollTimeout = 50 * time.Second
 	defaultBridgeSendTimeout = 10 * time.Second
@@ -976,8 +972,6 @@ func Load(path string) (Config, error) {
 		return cfg, validErr
 	}
 
-	// The config file's own directory is the CairnOS home a synced tree must stay
-	// out of, so a source declared in a scaffold cannot land inside it.
 	if validErr := validateSources(cfg.Sources, filepath.Dir(path)); validErr != nil {
 		return cfg, validErr
 	}
@@ -1608,11 +1602,11 @@ func setIf[T any](dst, src *T) {
 }
 
 // convertBridgeUsers turns the file layout's user tables into the resolved
-// TelegramUser map keyed by Telegram user ID.
+// TelegramUser map keyed by Telegram user ID. The two types carry an identical
+// field set, so a struct conversion drops the file tags.
 func convertBridgeUsers(users map[string]fileBridgeUser) map[string]TelegramUser {
 	resolved := make(map[string]TelegramUser, len(users))
 	for id, user := range users {
-		// Identical field set, so a struct conversion carries the tags off.
 		resolved[id] = TelegramUser(user)
 	}
 

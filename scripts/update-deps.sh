@@ -90,31 +90,12 @@ latest_tag() {
 	curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name'
 }
 
-# pin_version rewrites one Makefile version variable to a repository's newest
-# release tag. A missing variable is a failure rather than an append: a silent
-# no-op would leave the linter frozen while everything else moved.
-pin_version() {
-	local variable="$1" repo="$2"
-	local current tag rewritten
+# rewrite_pin replaces one variable's value in the Makefile. The scratch file
+# starts as a copy so it carries the Makefile's own mode, and lands by rename,
+# so an interrupted run leaves the previous Makefile whole. Returns 0 or dies.
+rewrite_pin() {
+	local variable="$1" tag="$2" rewritten
 
-	current="$(sed -n "s/^${variable} *:= *//p" "$REPO_ROOT/Makefile")"
-	[[ -n "$current" ]] || die "$variable is not set in $REPO_ROOT/Makefile"
-
-	tag="$(latest_tag "$repo")"
-	[[ -n "$tag" && "$tag" != "null" ]] || die "could not read the newest release of $repo"
-
-	# The tag is remote input on its way into a sed replacement, where &, | and
-	# a backslash each mean something. A release tag is digits and dots.
-	[[ "$tag" =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || die "$repo published an unexpected tag: $tag"
-
-	if [[ "$tag" == "$current" ]]; then
-		info "$variable is already $current"
-		return
-	fi
-
-	# The scratch file starts as a copy so it carries the Makefile's own mode,
-	# and lands by rename, so an interrupted run leaves the previous Makefile
-	# whole rather than empty or half written.
 	rewritten="$(mktemp "${REPO_ROOT}/Makefile.XXXXXX")"
 	WORK="$rewritten"
 
@@ -123,6 +104,31 @@ pin_version() {
 	mv -- "$rewritten" "$REPO_ROOT/Makefile"
 
 	WORK=""
+}
+
+# pin_version rewrites one Makefile version variable to a repository's newest
+# release tag. A missing variable is a failure rather than an append: a silent
+# no-op would leave the linter frozen while everything else moved. The tag is
+# checked because it reaches a sed replacement, where &, | and a backslash each
+# mean something. Returns 0 or dies.
+pin_version() {
+	local variable="$1" repo="$2"
+	local current tag
+
+	current="$(sed -n "s/^${variable} *:= *//p" "$REPO_ROOT/Makefile")"
+	[[ -n "$current" ]] || die "$variable is not set in $REPO_ROOT/Makefile"
+
+	tag="$(latest_tag "$repo")"
+	[[ -n "$tag" && "$tag" != "null" ]] || die "could not read the newest release of $repo"
+
+	[[ "$tag" =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || die "$repo published an unexpected tag: $tag"
+
+	if [[ "$tag" == "$current" ]]; then
+		info "$variable is already $current"
+		return
+	fi
+
+	rewrite_pin "$variable" "$tag"
 
 	info "$variable $current -> $tag"
 }

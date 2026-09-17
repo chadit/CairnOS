@@ -19,10 +19,26 @@ import (
 func echoOff(file *os.File) (func(), error) {
 	descriptor := int(file.Fd())
 
+	before, err := currentTermios(descriptor)
+	if err != nil {
+		return nil, err
+	}
+
+	quiet := quietTermios(*before)
+
+	if err := unix.IoctlSetTermios(descriptor, ioctlWriteTermios, &quiet); err != nil {
+		return nil, fmt.Errorf("turn terminal echo off: %w", err)
+	}
+
+	return func() { _ = unix.IoctlSetTermios(descriptor, ioctlWriteTermios, before) }, nil
+}
+
+// currentTermios reads the terminal settings, answering errNotATerminal for the
+// ENOTTY a pipe or a redirected stdin gives back. That answer is how a real
+// terminal is told apart without a second probe.
+func currentTermios(descriptor int) (*unix.Termios, error) {
 	before, err := unix.IoctlGetTermios(descriptor, ioctlReadTermios)
 	if err != nil {
-		// A pipe or a file answers ENOTTY here, which is how this tells a real
-		// terminal from a redirected stdin without a second probe.
 		if errors.Is(err, unix.ENOTTY) {
 			return nil, errNotATerminal
 		}
@@ -30,17 +46,17 @@ func echoOff(file *os.File) (func(), error) {
 		return nil, fmt.Errorf("read the terminal settings: %w", err)
 	}
 
-	quiet := *before
-	quiet.Lflag &^= unix.ECHO | unix.ICANON
+	return before, nil
+}
 
-	// Out of canonical mode these two decide when a read returns: on the first
-	// byte, with no timer.
+// quietTermios turns off echo and canonical mode. Out of canonical mode VMIN and
+// VTIME decide when a read returns, and these values return it on the first
+// byte with no timer.
+func quietTermios(before unix.Termios) unix.Termios {
+	quiet := before
+	quiet.Lflag &^= unix.ECHO | unix.ICANON
 	quiet.Cc[unix.VMIN] = 1
 	quiet.Cc[unix.VTIME] = 0
 
-	if err := unix.IoctlSetTermios(descriptor, ioctlWriteTermios, &quiet); err != nil {
-		return nil, fmt.Errorf("turn terminal echo off: %w", err)
-	}
-
-	return func() { _ = unix.IoctlSetTermios(descriptor, ioctlWriteTermios, before) }, nil
+	return quiet
 }

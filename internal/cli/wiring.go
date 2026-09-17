@@ -950,42 +950,7 @@ func newRegistry(
 		}
 	}
 
-	// The language_rules_service runner queries the real Rules Service when one
-	// is wired (Phase 7b), with the static-file reader as the fallback for an
-	// unknown language. With no service (the local `cairnos run` path), it is
-	// the static-file-only runner the examples have always used.
-	rulesFactory := builtins.LanguageRulesFactory
-	if rulesSvc != nil {
-		rulesFactory = builtins.LanguageRulesServiceFactory(newRulesLookup(rulesSvc))
-	}
-
-	// One table rather than one if per runner: the list grows with every
-	// built-in, and a per-runner branch pushed this function past the
-	// complexity ceiling. credLookup reaches the http and mcp_client factories
-	// here; a nil lookup stays fine until a block names a credential, which
-	// then fails BuildAll.
-	fixed := []struct {
-		factory runner.Factory
-		name    string
-	}{
-		{name: builtins.MockName, factory: builtins.MockFactory},
-		{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{})},
-		{name: builtins.EmailName, factory: builtins.EmailFactory},
-		{name: builtins.WebhookName, factory: builtins.WebhookFactory},
-		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
-		{name: builtins.CodeName, factory: builtins.CodeFactory},
-		{name: builtins.LanguageRulesName, factory: rulesFactory},
-		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory},
-		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory},
-		{name: builtins.GitHubName, factory: builtins.GitHubFactory},
-		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
-		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
-		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv)},
-		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
-		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
-	}
-
-	for _, builtin := range fixed {
+	for _, builtin := range fixedBuiltins(sources, hostEnv, rulesSvc, credLookup, msgSender, logger, sourceObs) {
 		if err := registry.Register(builtin.name, builtin.factory); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", builtin.name, err)
 		}
@@ -1008,14 +973,70 @@ func newRegistry(
 	return registry, nil
 }
 
+// languageRulesFactory picks the language_rules runner. With a Rules Service
+// wired (Phase 7b) it queries the service and falls back to the static-file
+// reader for an unknown language. With none, on the local `cairnos run` path, it
+// is the static-file-only runner the examples have always used.
+func languageRulesFactory(rulesSvc rules.Service) runner.Factory {
+	if rulesSvc == nil {
+		return builtins.LanguageRulesFactory
+	}
+
+	return builtins.LanguageRulesServiceFactory(newRulesLookup(rulesSvc))
+}
+
+// builtinRunner pairs a built-in's registered name with the factory that builds
+// it.
+type builtinRunner struct {
+	factory runner.Factory
+	name    string
+}
+
+// fixedBuiltins lists every built-in registered under its own name. One table
+// rather than an if per runner, because the list grows with every built-in and a
+// per-runner branch pushed newRegistry past the complexity ceiling.
+func fixedBuiltins(
+	sources []sourcesync.Spec,
+	hostEnv []string,
+	rulesSvc rules.Service,
+	credLookup builtins.TokenLookup,
+	msgSender builtins.MessageSender,
+	logger *slog.Logger,
+	sourceObs builtins.SourceObserver,
+) []builtinRunner {
+	return []builtinRunner{
+		{name: builtins.MockName, factory: builtins.MockFactory},
+		{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{})},
+		{name: builtins.EmailName, factory: builtins.EmailFactory},
+		{name: builtins.WebhookName, factory: builtins.WebhookFactory},
+		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
+		{name: builtins.CodeName, factory: builtins.CodeFactory},
+		{name: builtins.LanguageRulesName, factory: languageRulesFactory(rulesSvc)},
+		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory},
+		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory},
+		{name: builtins.GitHubName, factory: builtins.GitHubFactory},
+		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
+		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
+		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv)},
+		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
+		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
+	}
+}
+
+// alreadyRegisteredAsBuiltin reports whether a block carries the built-in's own
+// name. That one is registered with the same factory and BuildAll hands it this
+// block, so a second Register would fail existing configs. Any other collision
+// surfaces as the registry's duplicate error rather than shadowing silently.
+func alreadyRegisteredAsBuiltin(name, kind string) bool {
+	return name == kind
+}
+
 // registerConfiguredRunners registers a runner for every [runner.<name>] block
 // whose type selects a registration path: "plugin" for an out-of-process runner
 // (Phase 1b), "mcp_client" for a per-name MCP client, and "openai" or
 // "anthropic" for a chat-completions runner under its own name. Blocks with no
 // type, or another value, stay plain config for the built-in of that name.
 func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any, credLookup builtins.TokenLookup) error {
-	// A name colliding with an already-registered runner surfaces as the
-	// registry's duplicate-registration error rather than silently shadowing it.
 	for _, name := range slices.Sorted(maps.Keys(runnerCfgs)) {
 		kind, _ := runnerCfgs[name]["type"].(string)
 
@@ -1025,11 +1046,7 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 				return fmt.Errorf("register plugin runner %q: %w", name, err)
 			}
 		case builtins.MCPClientName:
-			// A block literally named mcp_client is the built-in's own config:
-			// already registered with this factory, and BuildAll hands it that
-			// block, so a second Register would fail existing configs. Other
-			// names get their own instance, the shape `cairnos mcp import` emits.
-			if name == builtins.MCPClientName {
+			if alreadyRegisteredAsBuiltin(name, kind) {
 				continue
 			}
 
@@ -1037,13 +1054,7 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 				return fmt.Errorf("register mcp_client runner %q: %w", name, err)
 			}
 		case builtins.OpenAIName, builtins.AnthropicName:
-			// The built-in is already registered under its own name with the
-			// same factory, and BuildAll hands it that block, so only a
-			// differently named block needs its own registration. The name is
-			// threaded into the factory because it decides which API key the
-			// runner reads. A local server reached this way is an openai block
-			// with a base_url.
-			if name == kind {
+			if alreadyRegisteredAsBuiltin(name, kind) {
 				continue
 			}
 
@@ -1057,7 +1068,9 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 }
 
 // namedLLMFactory builds the registration for one chat-completions block under
-// a name of its own.
+// a name of its own. The name is threaded into the factory because it decides
+// which API key the runner reads. A local server reached this way is an openai
+// block with a base_url.
 func namedLLMFactory(kind, name string) runner.Factory {
 	if kind == builtins.AnthropicName {
 		return builtins.AnthropicFactoryFor(name)
@@ -1167,7 +1180,8 @@ func parseFlags(flags *flag.FlagSet, args []string) (int, bool) {
 // parsePositional handles commands with one positional argument that may
 // carry flags on either side, since the stdlib flag package stops parsing
 // at the first non-flag token. An empty positional in the result means the
-// caller should print its usage line.
+// caller should print its usage line, which is also how extra positionals come
+// back, so that line explains the expected shape.
 func parsePositional(flags *flag.FlagSet, args []string) (string, int, bool) {
 	code, proceed := parseFlags(flags, args)
 	if !proceed {
@@ -1185,8 +1199,6 @@ func parsePositional(flags *flag.FlagSet, args []string) (string, int, bool) {
 	}
 
 	if flags.NArg() > 0 {
-		// Extra positionals surface as "no positional" so the caller's
-		// usage line explains the expected shape.
 		return "", ExitOK, true
 	}
 

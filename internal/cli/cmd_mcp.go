@@ -113,10 +113,9 @@ func (a *App) cmdMCPServe(ctx context.Context, args []string) int {
 // runMCPStdio builds the engine and the MCP service, then serves over stdio
 // until ctx cancels. It mirrors the serve wiring's run-side spine (manager,
 // engine, registry) without the telemetry, scheduler, and API listeners a stdio
-// MCP server has no use for.
+// MCP server has no use for. The secret source comes before the registry, so the
+// credential manager and the runners share one chain.
 func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, db store.Store, mem memory.Store, rulesSvc rules.Service) int {
-	// The source is built before the registry so the credential manager and the
-	// runners share one secret chain.
 	source, closeSource, err := a.buildSecretSource(ctx, dir, cfg)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
@@ -125,9 +124,6 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 	}
 	defer func() { _ = closeSource() }()
 
-	// Outbound credentials resolve their secret refs through the source so the
-	// http and mcp_client runners mint bearer tokens. Construction does no
-	// network and fails fast on a missing ref.
 	credManager, err := buildCredentialManager(ctx, cfg, source)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
@@ -215,8 +211,6 @@ func (a *App) cmdMCPPublish(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	// Every CairnOS node wires a rules store, so the served surface always
-	// includes get_language_rules; the published record reflects that.
 	record := mcp.ServerRecord(cfg.MCP.AdvertiseURL, true)
 
 	if *dryRun {

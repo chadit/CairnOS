@@ -292,6 +292,7 @@ func (a *App) checkVault(ctx context.Context, label, path string, cfg *config.Co
 // ensureBitwardenBinary returns a bw the pin vouches for. One in the install
 // directory goes through the installer so the digest record exists; one
 // elsewhere is used on a digest match and refused by both paths on a mismatch.
+// That one is not CairnOS's to replace, so the refusal names both paths.
 func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (string, error) {
 	dir, err := bwInstallDir(binDir)
 	if err != nil {
@@ -309,21 +310,9 @@ func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (
 			return "", err
 		}
 
-		// No digest to compare against on a platform this build pins nothing
-		// for, so the operator's own bw stands. Refusing a working command
-		// because CairnOS cannot check the binary helps nobody, and there is no
-		// flag that would get past it.
-		a.printErrf("%s: no pinned bw for %s; using %s without checking it\n",
-			label, runtime.GOOS, binary)
-
-		return binary, nil
+		return a.useUncheckedBitwarden(label, binary)
 	}
 
-	// A bw at the install target goes through the installer whatever it hashes
-	// to. On a match nothing is downloaded, and the install is what writes the
-	// digest record beside it. Every host installed its bw before that record
-	// existed, so this is the run that gives them one, and without it the next
-	// pin bump refuses on every box.
 	target := filepath.Join(dir, bwBinary)
 	if filepath.Clean(binary) == target {
 		return a.installPinnedBitwarden(ctx, label, dir)
@@ -338,12 +327,19 @@ func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (
 		return binary, nil
 	}
 
-	// A bw somewhere else that is not the pin is not CairnOS's to replace, and
-	// naming both paths is what turns the refusal into a fix the operator can
-	// make.
 	return "", fmt.Errorf("%w: %s has sha256 %s, and the pinned %s installs to %s; "+
 		"run `cairnos secrets install-bw` and put %s ahead of it on PATH",
 		errUnpinnedBitwarden, binary, digest, bwVersion, target, dir)
+}
+
+// useUncheckedBitwarden accepts the operator's own bw on a platform this build
+// pins nothing for. Refusing a working command because CairnOS cannot check the
+// binary helps nobody, and no flag would get past it.
+func (a *App) useUncheckedBitwarden(label, binary string) (string, error) {
+	a.printErrf("%s: no pinned bw for %s; using %s without checking it\n",
+		label, runtime.GOOS, binary)
+
+	return binary, nil
 }
 
 // installMissingBitwarden installs the pinned release on a host that has none.
@@ -365,7 +361,8 @@ func (a *App) installMissingBitwarden(ctx context.Context, label, dir string) (s
 // installPinnedBitwarden runs the non-forced install over the binary already at
 // the install target, leaving bwinstall to decide what happens there. The
 // upgrade line is printed only when something was installed, so an ordinary
-// pull reads as it always has.
+// pull reads as it always has. It runs whatever the binary hashes to, since the
+// install writes the digest record hosts from before it still lack.
 func (a *App) installPinnedBitwarden(ctx context.Context, label, dir string) (string, error) {
 	result, err := a.installBitwarden(ctx, dir, false)
 	if err != nil {

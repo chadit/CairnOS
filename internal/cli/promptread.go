@@ -36,9 +36,6 @@ func (a *App) readLine(ctx context.Context, reader *bufio.Reader, prompt string,
 		return readString(reader)
 	}
 
-	// The terminal keeps whatever state it was left in, so echo has to come back
-	// on every exit: a normal return, an interrupt, or a canceled context. The
-	// watcher covers the two the defer cannot.
 	stop := watchForRestore(ctx, restore)
 
 	defer stop()

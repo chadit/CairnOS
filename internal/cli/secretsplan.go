@@ -69,13 +69,13 @@ func inferredValues(cfg *config.Config, item bitwarden.Item) map[string]string {
 
 // usernameTokenEnvs maps each Mattermost bot's username to the token variable
 // its identity reads first, so one vault item can hold every bot's token under
-// the bot's own name instead of a mapping per bot.
+// the bot's own name instead of a mapping per bot. Identities are walked in
+// sorted order, so two that share a username land the same way on every host
+// rather than following map order.
 func usernameTokenEnvs(cfg *config.Config) map[string]string {
 	identities := cfg.Bridge.Mattermost.Identity
 	envs := make(map[string]string, len(identities))
 
-	// Sorted so two identities sharing a username land the same way on every
-	// host rather than following map order.
 	for _, name := range slices.Sorted(maps.Keys(identities)) {
 		identity := identities[name]
 		if identity.Username == "" {
@@ -136,12 +136,17 @@ func missingMattermost(cfg *config.Config, values map[string]string) []string {
 			continue
 		}
 
-		// The last name tried is the shared default, which is what an operator
-		// should add; the per-identity name above it is the override.
-		missing = append(missing, tried[len(tried)-1])
+		missing = append(missing, tokenEnvToAdd(tried))
 	}
 
 	return missing
+}
+
+// tokenEnvToAdd names the variable a warning should ask for. The last name an
+// identity reads is the shared default, which is what an operator should set;
+// the per-identity names above it are overrides.
+func tokenEnvToAdd(tried []string) string {
+	return tried[len(tried)-1]
 }
 
 // missingRunnerKeys lists the API keys no pulled value satisfies, one per model

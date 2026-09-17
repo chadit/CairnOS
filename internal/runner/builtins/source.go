@@ -112,7 +112,8 @@ func unknownSource(name string) error {
 
 // Execute implements runner.Runner. Output is empty when the sync moved nothing,
 // which is what lets a workflow condition a message on "something changed"
-// without inspecting Meta.
+// without inspecting Meta. Latency starts before the lock, so a fire that queued
+// behind another shows the wait FR12 creates rather than hiding it.
 func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	if err := s.Validate(task); err != nil {
 		return runner.Result{}, err
@@ -120,16 +121,11 @@ func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 
 	name, _ := task.Params[paramSource].(string)
 
-	// Validate lets an unresolved reference through for the launch-time pass, so a
-	// direct caller that never resolved it reaches here with a name no block
-	// matches. A missing lock is that case, and locking nil would panic.
-	lock := s.locks[name]
-	if lock == nil {
-		return runner.Result{}, unknownSource(name)
+	lock, err := s.lockFor(name)
+	if err != nil {
+		return runner.Result{}, err
 	}
 
-	// Latency starts before the lock so a fire that queued behind another shows
-	// the wait FR12 creates rather than hiding it.
 	start := time.Now()
 
 	lock.Lock()
@@ -140,8 +136,6 @@ func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 
 	result, err := source.Sync(ctx, s.git, spec)
 	if err != nil {
-		// Sync already returns a classified runner error with the code the engine
-		// retries on; wrapping it would hide that class behind a plain error.
 		return runner.Result{}, err //nolint:wrapcheck // already a classified runner.Error
 	}
 
@@ -163,6 +157,18 @@ func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 		Usage:  runner.Usage{Latency: time.Since(start)},
 		Meta:   meta,
 	}, nil
+}
+
+// lockFor returns the mutex guarding one source. Validate lets an unresolved
+// reference through for the launch-time pass, so a direct caller that never
+// resolved it arrives with a name no block matches and no lock to take.
+func (s *Source) lockFor(name string) (*sync.Mutex, error) {
+	lock := s.locks[name]
+	if lock == nil {
+		return nil, unknownSource(name)
+	}
+
+	return lock, nil
 }
 
 // report logs what the sync decided and tells the observer. A reset and a skip

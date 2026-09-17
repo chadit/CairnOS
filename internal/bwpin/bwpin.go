@@ -225,9 +225,7 @@ func latestRelease(ctx context.Context, cfg Config) (string, error) {
 
 		best = highest(best, releases, pattern)
 
-		// A short page is the end of the feed. Spending the rest of the walk
-		// on it costs calls against an hourly budget update-deps.sh shares.
-		if len(releases) < releasesPerPage {
+		if atFeedEnd(releases) {
 			break
 		}
 	}
@@ -237,6 +235,12 @@ func latestRelease(ctx context.Context, cfg Config) (string, error) {
 	}
 
 	return best, nil
+}
+
+// atFeedEnd reports whether a short page has ended the release feed. Walking on
+// past one spends calls against an hourly budget update-deps.sh shares.
+func atFeedEnd(releases []release) bool {
+	return len(releases) < releasesPerPage
 }
 
 // highest returns the greater of the version already found and the CLI versions
@@ -562,8 +566,9 @@ func writeAtomic(path string, body []byte) error {
 	return nil
 }
 
-// finish writes the body at the mode a source file carries and closes, so
-// writeAtomic has one failure path to clean up after.
+// finish writes the body, resets the 0600 mode os.CreateTemp left behind to the
+// one checked-in source carries, and closes, so writeAtomic has one failure path
+// to clean up after.
 func finish(temp *os.File, body []byte) (err error) {
 	defer func() {
 		if closeErr := temp.Close(); closeErr != nil && err == nil {
@@ -575,7 +580,6 @@ func finish(temp *os.File, body []byte) (err error) {
 		return fmt.Errorf("write %s: %w", temp.Name(), err)
 	}
 
-	// os.CreateTemp creates at 0600, and this is checked-in source.
 	if err := temp.Chmod(generatedPerm); err != nil {
 		return fmt.Errorf("set the mode of %s: %w", temp.Name(), err)
 	}

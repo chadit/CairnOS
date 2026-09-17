@@ -31,7 +31,8 @@ const envFilePerm = 0o600
 // cmdSecretsPull renders the configured vault fields into the service's second
 // environment file. It runs at deployment rather than at run time because most
 // of these values are read by bare os.Getenv, long before any runtime secret
-// source exists to answer for them.
+// source exists to answer for them. Its --bin-dir matches the one on
+// `secrets install-bw`, whose binary this upgrades.
 func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 	const label = "secrets pull"
 
@@ -43,9 +44,6 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 	system := flags.Bool("system", false,
 		"write where a system-mode unit reads, under /etc/cairnos rather than the home")
 
-	// Spelled the same as on `secrets install-bw`, because this command now
-	// upgrades the binary that one installed and the two have to agree on
-	// where it lives.
 	binDir := flags.String("bin-dir", "", "look for and install the pinned bw here instead of ~/.local/bin")
 
 	if code, proceed := parseFlags(flags, args); !proceed {
@@ -68,14 +66,8 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	// A host with no vault is the ordinary case and not a failure: deploy runs
-	// this unconditionally, and exiting non-zero would stop every such host. The
-	// path is named because the other way to reach this line is a command that
-	// read a different config than the operator meant.
 	if cfg.Secrets.Bitwarden == nil {
-		a.printOutf("%s: no [secrets.bitwarden] block in %s, nothing to do\n", label, configPath)
-
-		return ExitOK
+		return a.reportNoVault(label, configPath)
 	}
 
 	opts := pullOptions{dir: dir, binDir: *binDir, cfg: &cfg, system: *system, dryRun: *dryRun}
@@ -338,10 +330,6 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 
-	// The contents were synced before the rename; syncing the directory is what
-	// makes the rename itself survive a crash. A filesystem that refuses the
-	// call still has the file in place, so this warns rather than turning a
-	// deploy that worked into `die "secrets pull failed"` on every retry.
 	if err := syncDir(dir); err != nil {
 		a.logger.Warn("the rename landed but the directory was not flushed",
 			"dir", dir, "error", err)
@@ -350,7 +338,20 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 	return nil
 }
 
-// syncDir flushes the directory entry the rename created.
+// reportNoVault prints the no-op line and exits clean. A host with no
+// [secrets.bitwarden] block is the ordinary case, since deploy runs this
+// unconditionally and a non-zero exit would stop every such host. The path is
+// named because the other way here is a command that read the wrong config.
+func (a *App) reportNoVault(label, configPath string) int {
+	a.printOutf("%s: no [secrets.bitwarden] block in %s, nothing to do\n", label, configPath)
+
+	return ExitOK
+}
+
+// syncDir flushes the directory entry the rename created, which is what makes
+// the rename survive a crash now that the contents are already synced. A
+// filesystem that refuses the call still has the file in place, so the caller
+// warns rather than failing a deploy that worked.
 func syncDir(dir string) error {
 	handle, err := os.Open(dir) // #nosec G304 -- the directory holds the target file
 	if err != nil {
@@ -369,7 +370,8 @@ func syncDir(dir string) error {
 // finishTempFile writes the body, sets the mode, and closes, so writeFileAtomic
 // has one error path to clean up after. The close error is returned rather than
 // discarded: this is a file the function wrote through, so a close can still
-// report a failed flush.
+// report a failed flush. The chmod states the mode the unit depends on rather
+// than inheriting os.CreateTemp's.
 func finishTempFile(temp *os.File, content []byte, perm os.FileMode) (err error) {
 	defer func() {
 		if closeErr := temp.Close(); closeErr != nil && err == nil {
@@ -381,9 +383,6 @@ func finishTempFile(temp *os.File, content []byte, perm os.FileMode) (err error)
 		return fmt.Errorf("write %s: %w", temp.Name(), err)
 	}
 
-	// os.CreateTemp already creates at 0600, so this is not closing a window; it
-	// states the mode the unit depends on rather than inheriting whatever the
-	// standard library happens to use.
 	if err := temp.Chmod(perm); err != nil {
 		return fmt.Errorf("set the mode of %s: %w", temp.Name(), err)
 	}

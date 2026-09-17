@@ -78,7 +78,10 @@ func (a *App) cmdRun(ctx context.Context, args []string) int {
 }
 
 // executeRun reconciles interrupted work, wires the engine (agent loop and
-// telemetry included), runs the flow, and renders the outcome.
+// telemetry included), runs the flow, and renders the outcome. A held run parked
+// on an approval exits OK, because the operator decides it later with
+// `cairnos runs approve` (.agents/spec/parity/workflow-language.md, "Human
+// approval").
 func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store, mem memory.Store, flow *workflow.Workflow, values map[string]any, workflowsDir string) int {
 	reconciled, err := db.ReconcileInterrupted(ctx)
 	if err != nil {
@@ -99,9 +102,7 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 
 	run, err := eng.RunWorkflow(ctx, flow, values, triggerCLI)
 	if err != nil {
-		// Rejection before any record existed: input or registration
-		// problems are validation-shaped, store failures are not.
-		if _, isValidation := errors.AsType[cairnerr.Errors](err); isValidation {
+		if rejectedBeforeAnyRecord(err) {
 			a.printWorkflowErrors(err)
 
 			return ExitUsage
@@ -114,9 +115,6 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 
 	a.printRunSummary(ctx, db, run)
 
-	// A held run parked on an approval is a clean outcome, not a failure: the
-	// operator decides it later with `cairnos runs approve`
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
 	if run.Status == store.RunSucceeded || run.Status == store.RunHeld {
 		return ExitOK
 	}
@@ -124,34 +122,21 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 	return ExitFailure
 }
 
-// buildEngine wires the runner registry, telemetry, agent loop, and
-// governance onto an engine for a one-shot CLI command, returning a cleanup
-// that flushes telemetry and closes the registry. run and replay share it so
-// both execute against an identically configured engine. A local command
-// honors budgets and pauses too: governance is an engine feature, not a
-// serve-only one (.agents/spec/12-ui-and-governance.md).
+// buildEngine wires the runner registry, telemetry, agent loop, and governance
+// onto an engine for a one-shot CLI command, returning a cleanup that flushes
+// telemetry and closes the registry. run and replay share it, so both execute
+// against an identically configured engine. A local command honors budgets and
+// pauses too: governance is an engine feature, not a serve-only one
+// (.agents/spec/12-ui-and-governance.md).
 func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *config.Config, db store.Store, mem memory.Store) (*engine.Engine, func(), int, bool) {
-	// A one-shot command has nothing to scrape, and binding the metrics port
-	// would collide with a serve process on the same machine, so it never
-	// serves /metrics. The hooks still fire: with an OTLP endpoint they push on
-	// the deferred shutdown flush, and without one they cost nearly nothing
-	// while trace IDs reach the logs.
-	telCfg := cfg.Telemetry
-	telCfg.Prometheus = ""
-
-	tel, err := telemetry.Setup(ctx, telCfg, appVersion())
+	tel, err := telemetry.Setup(ctx, oneShotTelemetry(cfg.Telemetry), appVersion())
 	if err != nil {
 		a.printErrf("%s: telemetry: %v\n", label, err)
 
 		return nil, nil, ExitFailure, false
 	}
 
-	// The secrets store shares the run store's DSN; its path resolves against the
-	// CairnOS home, the parent of the workflows directory every caller passes
-	// (filepath.Join(dir, workflowsDirName)). The default env backend opens
-	// nothing and hands back a no-op closer. The source is built before the
-	// registry so the credential manager and the runners share one chain.
-	source, closeSource, err := a.buildSecretSource(ctx, filepath.Dir(workflowsDir), cfg)
+	source, closeSource, err := a.buildSecretSource(ctx, cairnHome(workflowsDir), cfg)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
 		a.printErrf("%s: %v\n", label, err)
@@ -159,9 +144,6 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		return nil, nil, ExitFailure, false
 	}
 
-	// Outbound credentials resolve their secret refs through the same source, so
-	// an http or mcp_client runner naming a credential mints a bearer token.
-	// Construction does no network; a missing ref fails here, not mid-run.
 	credManager, err := buildCredentialManager(ctx, cfg, source)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
@@ -186,9 +168,6 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 	engCfg.AgentExecutor = agentloop.New(registry, mem, db, tel.Recorder())
 	engCfg.Budget = db
 	engCfg.Pause = db
-	// A workflow-call action resolves its child by name from the workflows
-	// directory, the same directory-backed resolver the API and replay use
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
 	engCfg.Workflows = api.NewWorkflowResolver(workflowsDir, a.logger)
 
 	eng := engine.New(engCfg, registry, db)
@@ -210,6 +189,32 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 	return eng, cleanup, ExitOK, true
 }
 
+// rejectedBeforeAnyRecord reports whether the engine refused before any run
+// record existed. Input, registration, and governance problems are
+// validation-shaped; store failures are not.
+func rejectedBeforeAnyRecord(err error) bool {
+	_, isValidation := errors.AsType[cairnerr.Errors](err)
+
+	return isValidation
+}
+
+// oneShotTelemetry drops the Prometheus listener from a telemetry config. A
+// one-shot command has nothing to scrape, and binding the port would collide
+// with a serve process on the same machine. The hooks still fire: with an OTLP
+// endpoint they push on the deferred shutdown flush, and without one they cost
+// nearly nothing while trace IDs reach the logs.
+func oneShotTelemetry(cfg config.Telemetry) config.Telemetry {
+	cfg.Prometheus = ""
+
+	return cfg
+}
+
+// cairnHome returns the home the secrets store resolves its path against, which
+// is the parent of the workflows directory every caller passes.
+func cairnHome(workflowsDir string) string {
+	return filepath.Dir(workflowsDir)
+}
+
 // executeReplay wires the engine and replays a prior run, seeding its
 // succeeded actions and re-executing the rest, then renders the outcome. The
 // prior run, its results, and the current workflow arrive already resolved and
@@ -223,9 +228,7 @@ func (a *App) executeReplay(ctx context.Context, cfg *config.Config, db store.St
 
 	run, err := eng.ReplayRun(ctx, prior, results, flow)
 	if err != nil {
-		// Rejection before any record existed: registration or governance
-		// problems are validation-shaped, store failures are not.
-		if _, isValidation := errors.AsType[cairnerr.Errors](err); isValidation {
+		if rejectedBeforeAnyRecord(err) {
 			a.printWorkflowErrors(err)
 
 			return ExitUsage

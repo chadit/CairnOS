@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/tuning"
 	"github.com/chadit/CairnOS/internal/workflow"
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 const suggestionsUsage = "usage: cairnos suggestions <scan|list|approve|reject|apply|revert> [flags]\n"
@@ -92,12 +94,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 	tuneCfg.NewID = store.NewID
 
 	if *replayFlag {
-		// Replay analysis re-executes prior actions to score tuning suggestions;
-		// it opens no secret source, so outbound credentials are not wired here.
-		// A workflow that binds a credential to a runner fails this replay at
-		// BuildAll, which is the same signal as a missing credential elsewhere.
-		registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), nil, nil, nil, nil,
-			a.logger, nil)
+		registry, err := a.replayRegistry(ctx, &cfg)
 		if err != nil {
 			a.printErrf("suggestions scan: build runners for replay: %v\n", err)
 
@@ -107,9 +104,6 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 
 		tuneCfg.Runners = registry
 
-		// With an embedding model configured, replay judges output equivalence
-		// by embedding similarity instead of exact match (R1); otherwise the
-		// engine keeps its exact-match default.
 		if comparator := replayComparator(cfg.Tuning.EmbeddingModel, cfg.Tuning.EquivalenceThreshold, cfg.Runners); comparator != nil {
 			tuneCfg.Comparator = comparator
 		}
@@ -147,6 +141,14 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 	a.writeSuggestionTable(suggestions)
 
 	return ExitOK
+}
+
+// replayRegistry builds the runners replay re-executes prior actions through. It
+// opens no secret source, so a workflow binding a credential to a runner fails
+// here at BuildAll, the same signal a missing credential gives elsewhere.
+func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.Registry, error) {
+	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), nil, nil, nil, nil,
+		a.logger, nil)
 }
 
 // replayComparator builds the output-equivalence comparator for replay. An

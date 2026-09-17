@@ -75,6 +75,8 @@ func TestLoadMissingFileServesDefaults(t *testing.T) {
 	}
 }
 
+// TestLoadOverlaysFileOnDefaults checks that keys the file sets win and keys it
+// leaves out keep their defaults.
 func TestLoadOverlaysFileOnDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +93,6 @@ func TestLoadOverlaysFileOnDefaults(t *testing.T) {
 		t.Fatalf("retry overlay missing: %+v", cfg.Engine.Retry)
 	}
 
-	// Values the file leaves out keep their defaults.
 	if cfg.Engine.Retry.MaxDelay != 30*time.Second || !cfg.Engine.Retry.Jitter {
 		t.Fatalf("retry defaults lost: %+v", cfg.Engine.Retry)
 	}
@@ -207,6 +208,8 @@ func TestLoadEngineFallbackDefaultsEmpty(t *testing.T) {
 	}
 }
 
+// TestLoadTuningEmbeddingDefaultsOff checks the opt-in default: an empty model
+// keeps replay on exact-match comparison.
 func TestLoadTuningEmbeddingDefaultsOff(t *testing.T) {
 	t.Parallel()
 
@@ -215,7 +218,6 @@ func TestLoadTuningEmbeddingDefaultsOff(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	// Empty model is the opt-in default: replay keeps exact-match comparison.
 	if cfg.Tuning.EmbeddingModel != "" {
 		t.Fatalf("embedding_model = %q, want empty by default", cfg.Tuning.EmbeddingModel)
 	}
@@ -366,6 +368,9 @@ func TestLoadSkipsAuthValidationWhenDisabled(t *testing.T) {
 	}
 }
 
+// TestLoadAuthBlockFromFile checks the auth overlay, including that require_exp
+// keeps its secure default when the file leaves it out while the deliberately
+// overridden require_jti takes the file's value.
 func TestLoadAuthBlockFromFile(t *testing.T) {
 	t.Parallel()
 
@@ -394,8 +399,6 @@ tls_terminated = true
 		t.Fatalf("token overlay missing: %+v", cfg.Auth)
 	}
 
-	// require_exp was left out, so its secure default survives; require_jti
-	// was deliberately overridden.
 	if !cfg.Auth.RequireExp || cfg.Auth.RequireJTI {
 		t.Fatalf("require flags wrong: %+v", cfg.Auth)
 	}
@@ -765,14 +768,15 @@ signature_skew  = "2m"
 	}
 }
 
+// TestLoadWebhookEnvOverrides gives the file different values than the
+// environment, so passing proves the environment beat a file that set the same
+// keys rather than agreeing with it.
 func TestLoadWebhookEnvOverrides(t *testing.T) {
 	t.Setenv("CAIRNOS_WEBHOOK_ENABLED", "true")
 	t.Setenv("CAIRNOS_WEBHOOK_RATE_PER_MINUTE", "240")
 	t.Setenv("CAIRNOS_WEBHOOK_TEST_WAIT", "45s")
 	t.Setenv("CAIRNOS_WEBHOOK_SIGNATURE_SKEW", "90s")
 
-	// The env override must beat a file that sets the same keys, so the file
-	// carries different values than the environment.
 	fileWithWebhook := "[webhook]\nenabled = false\nrate_per_minute = 60\ntest_wait = \"30s\"\nsignature_skew = \"5m\""
 
 	cfg, err := config.Load(writeConfig(t, fileWithWebhook))
@@ -1027,10 +1031,11 @@ func TestLoadSecretsBackendFromFile(t *testing.T) {
 	}
 }
 
+// TestLoadSecretsBackendEnvOverridesFile has the file ask for the env backend,
+// so passing means the environment won and the store backend took.
 func TestLoadSecretsBackendEnvOverridesFile(t *testing.T) {
 	t.Setenv("CAIRNOS_SECRETS_BACKEND", "store")
 
-	// The file asks for env; the environment wins, so the store backend takes.
 	cfg, err := config.Load(writeConfig(t, "[secrets]\nbackend = \"env\"\n"))
 	if err != nil {
 		t.Fatalf("load: %v", err)
