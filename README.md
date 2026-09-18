@@ -634,6 +634,16 @@ again is reported again rather than staying silent. Add `"source_dirty"` to
 `[notify.mattermost]` or `[notify.discord]` `events` to receive them. Every reset
 and every skip is also logged at warn level each time it happens.
 
+A serve that cannot finish starting is the other quiet failure. The supervisor
+restarts it every few seconds, so the only record is the journal on a box nobody
+is logged into. When startup dies before the chat bridges connect, serve posts
+one line under the `serve_failed` event naming the host, the stage that failed,
+and the error, through a client it builds for that one post. The same failure
+stays quiet for 12 hours, a different failure is reported at once, and a start
+that reaches the bridges clears the window. That window lives in
+`serve-failed.json` under the data directory, since the process exits between
+attempts.
+
 At startup serve checks that an existing tree is the repository the block names
 and puts it on the configured ref when it is somewhere else, which is how moving
 a pin works: edit `ref`, restart, and the next boot checks the new tag out. Boot
@@ -822,13 +832,13 @@ channel:
 [notify.mattermost]
 identity = "ops"
 channel  = "#alerts"
-events   = ["held", "run_failed", "source_dirty"]
+events   = ["held", "run_failed", "source_dirty", "serve_failed"]
 ```
 
 `events` accepts `held`, `run_failed`, `dead_lettered`, `budget_denied`,
-`connectivity`, and `source_dirty`; any other name fails the config load. The
-Discord webhook and this block both deliver when both are set. Targets are
-written as `#channel`, `@user`, `channel:<id>`, or `user:<id>`.
+`connectivity`, `source_dirty`, and `serve_failed`; any other name fails the
+config load. The Discord webhook and this block both deliver when both are set.
+Targets are written as `#channel`, `@user`, `channel:<id>`, or `user:<id>`.
 
 ## Development
 

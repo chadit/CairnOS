@@ -269,9 +269,10 @@ func verifyExisting(ctx context.Context, git Git, spec Spec, logger *slog.Logger
 }
 
 // verifyOrigin proves dest is the root of a work tree whose origin is this
-// spec's repository. A path that is not a work tree, one that is a subdirectory
-// of some other checkout, or one whose origin points somewhere else is an
-// operator mistake that syncing would turn into a surprise write.
+// spec's repository. A path that is not a work tree, or sits inside another
+// checkout, or points elsewhere, is a mistake syncing would turn into a
+// surprise write. It reads the raw remote.origin.url, the value the operator
+// wrote, so an insteadOf rewrite is not a mismatch.
 func verifyOrigin(ctx context.Context, git Git, spec Spec) error {
 	toplevel, err := git(ctx, spec.Dest, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -282,9 +283,6 @@ func verifyOrigin(ctx context.Context, git Git, spec Spec) error {
 		return rootErr
 	}
 
-	// The raw config value is what the operator wrote, so a host-level
-	// url.<base>.insteadOf rewrite does not turn a correct block into a
-	// mismatch. get-url applies those rewrites; this comparison must not.
 	origin, err := git(ctx, spec.Dest, "config", "--get", "remote.origin.url")
 	if err != nil {
 		return permanentf(err, CodeMismatch, "%s has no origin remote: %v", spec.Dest, err)

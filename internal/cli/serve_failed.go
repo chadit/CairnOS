@@ -48,14 +48,17 @@ type serveFailNotifier struct {
 	host   string
 }
 
-// newServeFailNotifier wires the notifier runServe hands its failures to.
+// newServeFailNotifier wires the notifier runServe hands its failures to,
+// before the first stage that can fail, so a startup that never reaches the
+// bridges still reports.
 func newServeFailNotifier(cfg *config.Config, dir string, logger *slog.Logger) *serveFailNotifier {
 	return &serveFailNotifier{cfg: cfg, dir: dir, logger: logger, host: hostname()}
 }
 
 // announce posts one serve_failed line unless an earlier notice already covered
-// this same failure inside the repeat window. Delivery is synchronous: the
-// process is about to exit, and a queued line dies with it.
+// this same failure inside the repeat window. Delivery is synchronous, since a
+// queued line dies with the exiting process, and it drops the caller's
+// cancellation, which the interrupt tearing serve down may already have fired.
 func (n *serveFailNotifier) announce(ctx context.Context, stage string, cause error) {
 	digest := serveFailedDigest(stage, cause)
 	if n.silenced(digest) {
@@ -70,8 +73,6 @@ func (n *serveFailNotifier) announce(ctx context.Context, stage string, cause er
 		return
 	}
 
-	// The caller's context may already be canceled by the same interrupt that
-	// is tearing serve down, and the notice is the whole point of this path.
 	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), serveFailedPostTimeout)
 	defer cancel()
 

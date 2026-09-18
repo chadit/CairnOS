@@ -3,7 +3,6 @@ package source_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,15 +184,14 @@ func (f failingGit) git(ctx context.Context, dir string, argv ...string) (string
 	return source.GitCommand(ctx, dir, argv...) //nolint:wrapcheck // pass-through fixture
 }
 
-// writeInsteadOf points this process at a global config that rewrites from to
-// to, the host-level setting that made get-url disagree with the repository an
-// operator configured.
-func writeInsteadOf(t *testing.T, from, to string) {
+// setInsteadOf records a url rewrite in one checkout's own config. git merges
+// every config level before get-url applies a rewrite, so this reaches the path
+// a host gitconfig would without touching the process environment, which every
+// other test in this package shares.
+func setInsteadOf(t *testing.T, repo, from, to string) {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "gitconfig")
-	writeFixtureFile(t, path, fmt.Sprintf("[url %q]\n\tinsteadOf = %s\n", to, from))
-	t.Setenv("GIT_CONFIG_GLOBAL", path)
+	git(t, repo, "config", "url."+to+".insteadOf", from)
 }
 
 // setIdentity gives one repository a committer, since the package runs with an

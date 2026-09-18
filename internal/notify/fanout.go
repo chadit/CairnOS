@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 )
 
@@ -147,11 +148,10 @@ func (f *Fanout) Run(ctx context.Context) {
 	}
 }
 
-// Deliver posts line to the sinks that selected event on the calling goroutine
-// and reports how many accepted it, alongside every failure. Emit queues for a
-// drainer that may never run, which is no use to a caller that is about to exit;
-// a startup failure has to know the notice went out before the process dies. A
-// nil fan-out or an unselected event delivers to nobody.
+// Deliver posts line to the sinks that selected event, on the calling
+// goroutine, and reports how many accepted it alongside every failure. Emit
+// queues for a drainer a dying process never runs, so a caller about to exit
+// cannot tell whether the notice went out. A nil fan-out delivers to nobody.
 func (f *Fanout) Deliver(ctx context.Context, event, line string) (int, error) {
 	if !f.Selects(event) {
 		return 0, nil
@@ -177,7 +177,11 @@ func (f *Fanout) Deliver(ctx context.Context, event, line string) (int, error) {
 		posted++
 	}
 
-	return posted, errors.Join(failures...)
+	if len(failures) == 0 {
+		return posted, nil
+	}
+
+	return posted, fmt.Errorf("notify deliver: %w", errors.Join(failures...))
 }
 
 // post delivers one queued line to every sink that selected its event. Each sink

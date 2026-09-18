@@ -91,7 +91,8 @@ func TestEnsureRejectsForeignOrigin(t *testing.T) {
 // operator wrote, so the block still matches and serve starts instead of
 // crash-looping on a mismatch it has no way to clear.
 func TestEnsureAcceptsOriginBehindAnInsteadOfRewrite(t *testing.T) {
-	// t.Setenv forbids t.Parallel; the git config env is process-global.
+	t.Parallel()
+
 	repo := newOrigin(t)
 	spec := specFor(t, repo, branchMain)
 
@@ -100,7 +101,7 @@ func TestEnsureAcceptsOriginBehindAnInsteadOfRewrite(t *testing.T) {
 	git(t, spec.Dest, "remote", "set-url", "origin", rewrittenRepoURL)
 	spec.Repo = rewrittenRepoURL
 
-	writeInsteadOf(t, rewrittenRepoURL, repo.bare)
+	setInsteadOf(t, spec.Dest, rewrittenRepoURL, repo.bare)
 
 	if rewritten := git(t, spec.Dest, "remote", "get-url", "origin"); rewritten != repo.bare {
 		t.Fatalf("the fixture rewrite did not take: get-url = %s, want %s", rewritten, repo.bare)
