@@ -282,7 +282,10 @@ func verifyOrigin(ctx context.Context, git Git, spec Spec) error {
 		return rootErr
 	}
 
-	origin, err := git(ctx, spec.Dest, "remote", "get-url", "origin")
+	// The raw config value is what the operator wrote, so a host-level
+	// url.<base>.insteadOf rewrite does not turn a correct block into a
+	// mismatch. get-url applies those rewrites; this comparison must not.
+	origin, err := git(ctx, spec.Dest, "config", "--get", "remote.origin.url")
 	if err != nil {
 		return permanentf(err, CodeMismatch, "%s has no origin remote: %v", spec.Dest, err)
 	}

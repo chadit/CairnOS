@@ -19,11 +19,13 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// failServe reports a serve setup failure, flushes telemetry, and returns the
-// failure exit code, so the runServe wiring stays under the complexity ceiling
-// instead of repeating the print-flush-return triple at every setup step.
+// failServe reports a serve setup failure, announces it to the configured
+// notify destinations, flushes telemetry, and returns the failure exit code, so
+// the runServe wiring stays under the complexity ceiling instead of repeating
+// the same sequence at every setup step.
 func (a *App) failServe(ctx context.Context, tel *telemetry.Telemetry, stage string, err error) int {
 	a.printErrf("serve: %s: %v\n", stage, err)
+	a.notifyServeFailure(ctx, stage, err)
 	a.closeTelemetry(ctx, tel)
 
 	return ExitFailure

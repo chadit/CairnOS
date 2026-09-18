@@ -11,18 +11,30 @@ import (
 	"github.com/chadit/CairnOS/internal/notify"
 )
 
-// sourceDirtyRepeat is how long one source stays quiet after a skip line goes
-// out. A dirty tree is not news every five minutes, and twice a day is often
-// enough that nobody forgets it. The window lives in memory, so a serve restart
-// clears it and the next skipped sync posts again.
-const sourceDirtyRepeat = 12 * time.Hour
+// notifyRepeat is how long one recurring condition stays quiet after its line
+// goes out. A dirty tree or a crash-looping serve is not news every five
+// minutes, and twice a day is often enough that nobody forgets it.
+const notifyRepeat = 12 * time.Hour
 
 // unknownHostname stands in when the OS will not say. The line is worth sending
 // without it, since the channel it lands in still narrows down the host.
 const unknownHostname = "unknown-host"
 
+// hostname reports the host a notification line names, because a notification
+// channel collects lines from every box an operator runs. It is read per caller
+// rather than per line: it does not change under a running process, and a lookup
+// failure should not cost a notification.
+func hostname() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return unknownHostname
+	}
+
+	return host
+}
+
 // SourceDirtyNotifier turns skipped syncs into source_dirty lines, one per
-// source per sourceDirtyRepeat. It owns the rate limit because the fan-out has
+// source per notifyRepeat. It owns the rate limit because the fan-out has
 // none. The fan-out arrives after the runner registry, so the zero value is a
 // working no-op and SetFanout supplies it later. Serve is the only caller; the
 // export exists so the package's external tests can drive it.
@@ -34,22 +46,16 @@ type SourceDirtyNotifier struct {
 	mu       sync.Mutex
 }
 
-// NewSourceDirtyNotifier reads the hostname once rather than per line: it does
-// not change under a running process, and a lookup failure should not cost a
-// notification. now may be nil for the wall clock; a test passes its own so the
-// 12-hour window is exercised without waiting out.
+// NewSourceDirtyNotifier reads the hostname once rather than per line. now may
+// be nil for the wall clock; a test passes its own so the 12-hour window is
+// exercised without waiting out.
 func NewSourceDirtyNotifier(now func() time.Time) *SourceDirtyNotifier {
 	if now == nil {
 		now = time.Now
 	}
 
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = unknownHostname
-	}
-
 	return &SourceDirtyNotifier{
-		hostname: host,
+		hostname: hostname(),
 		now:      now,
 		notified: make(map[string]time.Time),
 	}
@@ -114,13 +120,13 @@ func (n *SourceDirtyNotifier) claim(source string) (*notify.Fanout, bool) {
 func (n *SourceDirtyNotifier) silenced(source string, now time.Time) bool {
 	last, seen := n.notified[source]
 
-	return seen && now.Sub(last) < sourceDirtyRepeat
+	return seen && now.Sub(last) < notifyRepeat
 }
 
 // sourceDirtyLine names the host, because a notification channel collects lines
 // from every box an operator runs and the source name alone does not say which
 // one needs a look.
-func sourceDirtyLine(hostname, source, dest, reason string) string {
+func sourceDirtyLine(host, source, dest, reason string) string {
 	return fmt.Sprintf("CairnOS on %s: source %q at %s left alone: %s; fix the tree or set dirty_reset = true",
-		hostname, source, dest, reason)
+		host, source, dest, reason)
 }

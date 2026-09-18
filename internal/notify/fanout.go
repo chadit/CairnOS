@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 )
 
@@ -20,10 +21,10 @@ type Poster interface {
 }
 
 // Sink is one destination plus the event names it wants, as serve declares it.
-// Events is the same six-name vocabulary config validates (held, run_failed,
-// dead_lettered, budget_denied, connectivity, source_dirty), so two sinks can
-// subscribe to different slices of it: Discord to everything, Mattermost to the
-// held alert only, say.
+// Events is the same vocabulary config validates (held, run_failed,
+// dead_lettered, budget_denied, connectivity, source_dirty, serve_failed), so
+// two sinks can subscribe to different slices of it: Discord to everything,
+// Mattermost to the held alert only, say.
 type Sink struct {
 	Poster Poster
 	Events []string
@@ -144,6 +145,39 @@ func (f *Fanout) Run(ctx context.Context) {
 			f.post(ctx, queued)
 		}
 	}
+}
+
+// Deliver posts line to the sinks that selected event on the calling goroutine
+// and reports how many accepted it, alongside every failure. Emit queues for a
+// drainer that may never run, which is no use to a caller that is about to exit;
+// a startup failure has to know the notice went out before the process dies. A
+// nil fan-out or an unselected event delivers to nobody.
+func (f *Fanout) Deliver(ctx context.Context, event, line string) (int, error) {
+	if !f.Selects(event) {
+		return 0, nil
+	}
+
+	var (
+		posted   int
+		failures []error
+	)
+
+	for idx := range f.sinks {
+		target := &f.sinks[idx]
+		if !target.selects(event) {
+			continue
+		}
+
+		if err := target.poster.Post(ctx, line); err != nil {
+			failures = append(failures, err)
+
+			continue
+		}
+
+		posted++
+	}
+
+	return posted, errors.Join(failures...)
 }
 
 // post delivers one queued line to every sink that selected its event. Each sink

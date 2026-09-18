@@ -119,7 +119,8 @@ type NotifyMattermost struct {
 	Channel string
 
 	// Events is the selected event set. Every value must be one of held,
-	// run_failed, dead_lettered, budget_denied, connectivity, or source_dirty.
+	// run_failed, dead_lettered, budget_denied, connectivity, source_dirty, or
+	// serve_failed.
 	Events []string
 }
 

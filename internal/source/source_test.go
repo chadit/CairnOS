@@ -13,6 +13,10 @@ import (
 // branchMain is the branch every fixture repository is built on.
 const branchMain = "main"
 
+// rewrittenRepoURL is the URL an insteadOf case configures and records, while
+// the rewrite sends every real lookup at the fixture's own bare repository.
+const rewrittenRepoURL = "https://example.invalid/automation.git"
+
 func TestEnsureClonesAndChecksOutBranch(t *testing.T) {
 	t.Parallel()
 
@@ -80,6 +84,31 @@ func TestEnsureRejectsForeignOrigin(t *testing.T) {
 	err := source.Ensure(t.Context(), source.GitCommand, spec, nil)
 	wantCode(t, err, source.CodeMismatch)
 	wantClass(t, err, runner.ClassPermanent)
+}
+
+// TestEnsureAcceptsOriginBehindAnInsteadOfRewrite covers a host gitconfig that
+// rewrites the configured URL to another transport. The tree records the URL the
+// operator wrote, so the block still matches and serve starts instead of
+// crash-looping on a mismatch it has no way to clear.
+func TestEnsureAcceptsOriginBehindAnInsteadOfRewrite(t *testing.T) {
+	// t.Setenv forbids t.Parallel; the git config env is process-global.
+	repo := newOrigin(t)
+	spec := specFor(t, repo, branchMain)
+
+	mustEnsure(t, spec)
+
+	git(t, spec.Dest, "remote", "set-url", "origin", rewrittenRepoURL)
+	spec.Repo = rewrittenRepoURL
+
+	writeInsteadOf(t, rewrittenRepoURL, repo.bare)
+
+	if rewritten := git(t, spec.Dest, "remote", "get-url", "origin"); rewritten != repo.bare {
+		t.Fatalf("the fixture rewrite did not take: get-url = %s, want %s", rewritten, repo.bare)
+	}
+
+	if err := source.Ensure(t.Context(), source.GitCommand, spec, nil); err != nil {
+		t.Fatalf("ensure through an insteadOf rewrite: %v", err)
+	}
 }
 
 func TestEnsureRejectsNonWorkTree(t *testing.T) {

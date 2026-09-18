@@ -156,6 +156,10 @@ type serveStores struct {
 func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stores *serveStores) int {
 	db, mem, scheds := stores.db, stores.mem, stores.scheds
 
+	// Wired before the first stage that can fail, so a startup that never
+	// reaches the bridges still announces itself to the notify destinations.
+	a.serveFail = newServeFailNotifier(cfg, dir, a.logger)
+
 	authn, err := buildAuthenticator(cfg, stores.keyStore)
 	if err != nil {
 		a.printErrf("serve: auth: %v\n", err)
@@ -262,6 +266,10 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	if !bridgesMounted {
 		return code
 	}
+
+	// Startup got past every stage that runs without a messaging identity, so a
+	// later failure is a new problem rather than the tail of a restart loop.
+	a.clearServeFailure()
 
 	attachMessagingServe(apiCfg, msgRegistry, tel)
 

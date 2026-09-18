@@ -705,8 +705,8 @@ type Notify struct {
 // re-authentication hold message byte-identical.
 type Discord struct {
 	// Events is the selected event set. Every value must be one of held,
-	// run_failed, dead_lettered, budget_denied, connectivity, or source_dirty;
-	// any other value is a configuration error.
+	// run_failed, dead_lettered, budget_denied, connectivity, source_dirty, or
+	// serve_failed; any other value is a configuration error.
 	Events []string
 }
 
@@ -874,6 +874,10 @@ const (
 	// because dirty_reset is off. The sync itself succeeds, so this is the only
 	// line an operator gets, and its producer rate-limits it per source.
 	NotifyEventSourceDirty = "source_dirty"
+	// NotifyEventServeFailed carries a serve process that could not finish
+	// starting. The supervisor restarts it every few seconds, so without this
+	// line the failure lives only in the journal on the host that is down.
+	NotifyEventServeFailed = "serve_failed"
 )
 
 // notifyEvents returns the closed vocabulary in the order the load error lists
@@ -888,6 +892,7 @@ func notifyEvents() []string {
 		NotifyEventBudgetDenied,
 		NotifyEventConnectivity,
 		NotifyEventSourceDirty,
+		NotifyEventServeFailed,
 	}
 }
 

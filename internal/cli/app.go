@@ -83,6 +83,11 @@ type App struct {
 	// the fake bw a suite stages can never hash to a published release.
 	bwPin func(goos string) (bwAssetPin, error)
 
+	// serveFail announces a serve startup that never finished. runServe builds
+	// it once it knows the config and the data directory; every other command
+	// leaves it nil, so failures elsewhere stay on stderr.
+	serveFail *serveFailNotifier
+
 	// echoNoticed keeps the visible-input warning to one line per run. The
 	// prompts ask three times and the answer is the same every time.
 	echoNoticed bool
