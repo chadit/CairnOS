@@ -64,9 +64,14 @@ func (b *builder) checkErrorWorkflow(flow *Workflow) {
 	}
 }
 
-// scheduleShorthands are the accepted cron shorthands; anything else must be
-// a 5-field cron expression.
-const cronFieldCount = 5
+// A schedule is an accepted shorthand, a 5-field cron expression, or a 6-field
+// one whose leading field is seconds. Field ranges and the scheduler's
+// fire-rate floor are checked when the schedule is added, where the cron parser
+// lives; this package stays free of that dependency.
+const (
+	cronFieldCount     = 5
+	cronSecondsFieldCt = 6
+)
 
 func (b *builder) checkSchedule(flow *Workflow) {
 	schedule := flow.Schedule
@@ -85,8 +90,10 @@ func (b *builder) checkSchedule(flow *Workflow) {
 		}
 	}
 
-	if len(strings.Fields(schedule)) != cronFieldCount {
-		b.addf(CodeInvalid, "schedule %q must be a 5-field cron expression or an @-shorthand", schedule)
+	if fields := len(strings.Fields(schedule)); fields != cronFieldCount && fields != cronSecondsFieldCt {
+		b.addf(CodeInvalid,
+			"schedule %q must be a 5-field cron expression, a 6-field one led by seconds, or an @-shorthand",
+			schedule)
 	}
 }
 

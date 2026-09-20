@@ -9,8 +9,13 @@ var (
 	ErrScheduleNotFound = errors.New("schedule not found")
 
 	// ErrBadCron reports a schedule expression that is neither a supported
-	// @-shorthand nor a parseable 5-field cron expression.
+	// @-shorthand nor a parseable 5-field or 6-field cron expression.
 	ErrBadCron = errors.New("bad cron expression")
+
+	// ErrTooFrequent reports a well-formed expression whose fires land closer
+	// together than the scheduler's floor, the mistake the optional seconds
+	// field makes easy to write.
+	ErrTooFrequent = errors.New("schedule fires too often")
 
 	// ErrNoRunner reports a Scheduler built without a Runner; a daemon that
 	// cannot fire anything is a wiring bug, caught before the loop starts.

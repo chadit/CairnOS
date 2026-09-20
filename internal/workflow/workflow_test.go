@@ -371,6 +371,24 @@ func TestParseLeavesPollNilWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestParseAcceptsSecondsSchedule covers the six-field form a sub-minute
+// cadence needs. Field ranges and the fire-rate floor belong to the scheduler,
+// so loading the file only has to stop rejecting the extra field.
+func TestParseAcceptsSecondsSchedule(t *testing.T) {
+	t.Parallel()
+
+	const src = "[workflow]\nname = \"w\"\nschedule = \"*/30 * * * * *\"\n[action.a]\nrunner = \"mock\""
+
+	flow, err := workflow.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if flow.Schedule != "*/30 * * * * *" {
+		t.Fatalf("schedule = %q, want the six-field expression unchanged", flow.Schedule)
+	}
+}
+
 func TestParseAcceptsRequires(t *testing.T) {
 	t.Parallel()
 
@@ -725,6 +743,11 @@ items = "${{ up.output }}"`,
 		{
 			name:     "bad schedule",
 			toml:     "[workflow]\nname = \"w\"\nschedule = \"@fortnightly\"\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "schedule with too many fields",
+			toml:     "[workflow]\nname = \"w\"\nschedule = \"* * * * * * *\"\n[action.a]\nrunner = \"mock\"",
 			wantCode: workflow.CodeInvalid,
 		},
 		{

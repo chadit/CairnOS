@@ -162,8 +162,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 }
 
-// pass fires every due schedule and returns how long to sleep before the
-// next pass.
+// pass fires every due schedule and returns how long to sleep before the next
+// pass: the shortest wait to any schedule's next fire, capped at pollInterval.
+// A schedule that fired this pass contributes its recomputed next fire, so a
+// sub-minute cadence is slept to exactly rather than rounded up to the poll.
 func (s *Scheduler) pass(ctx context.Context) (time.Duration, error) {
 	scheds, err := s.store.List(ctx)
 	if err != nil {
@@ -176,34 +178,34 @@ func (s *Scheduler) pass(ctx context.Context) (time.Duration, error) {
 	for idx := range scheds {
 		sched := &scheds[idx]
 
-		if sched.NextFire.After(now) {
-			if until := sched.NextFire.Sub(now); until < wait {
-				wait = until
-			}
-
-			continue
+		next := sched.NextFire
+		if !next.After(now) {
+			next = s.fire(ctx, sched, now)
 		}
 
-		s.fire(ctx, sched, now)
+		if until := next.Sub(now); until > 0 && until < wait {
+			wait = until
+		}
 	}
 
 	return wait, nil
 }
 
-// fire runs one due schedule exactly once and stamps its timestamps. A
-// next_fire that fell multiple intervals behind (the process was down) does
-// not fan out a burst: the backlog is logged and dropped, and next_fire
-// recomputes from now (.agents/spec/14-open-decisions.md, S8).
-func (s *Scheduler) fire(ctx context.Context, sched *Schedule, now time.Time) {
+// fire runs one due schedule exactly once and reports the recomputed next fire
+// so the caller can sleep straight to it; a zero time means there is none to
+// wait on. A next_fire that fell behind does not fan out a burst at any
+// cadence: the backlog is logged and dropped, and next_fire recomputes from now
+// (.agents/spec/14-open-decisions.md, S8).
+func (s *Scheduler) fire(ctx context.Context, sched *Schedule, now time.Time) time.Time {
 	leader, err := s.coord.Leader(ctx)
 	if err != nil {
 		s.logger.Error("scheduler leader check", "schedule", sched.ID, "error", err)
 
-		return
+		return time.Time{}
 	}
 
 	if !leader {
-		return
+		return time.Time{}
 	}
 
 	if missed := missedOccurrences(sched.Cron, sched.NextFire, now); missed > 0 {
@@ -219,12 +221,14 @@ func (s *Scheduler) fire(ctx context.Context, sched *Schedule, now time.Time) {
 		// loud in case a row was edited by hand.
 		s.logger.Error("scheduler next fire", "schedule", sched.ID, "error", err)
 
-		return
+		return time.Time{}
 	}
 
 	if err := s.store.MarkFired(ctx, sched.ID, now, next); err != nil {
 		s.logger.Error("scheduler mark fired", "schedule", sched.ID, "error", err)
 	}
+
+	return next
 }
 
 // fireOnce calls the runner and logs the outcome. A failing run still
@@ -242,17 +246,23 @@ func (s *Scheduler) fireOnce(ctx context.Context, sched *Schedule) {
 		"schedule", sched.ID, "workflow", sched.WorkflowName)
 }
 
-// missedOccurrences counts fire times in (nextFire, now] beyond the first
-// due one, capped at backlogCap. Zero means the schedule is merely due, not
-// behind.
+// missedOccurrences counts fire times in (nextFire, now] beyond the first due
+// one, capped at backlogCap. Zero means the schedule is merely due, not behind.
+// It parses once and walks the parsed schedule, because a sub-minute cadence
+// puts hundreds of occurrences in an hour of downtime.
 func missedOccurrences(cronExpr string, nextFire, now time.Time) int {
+	parsed, err := parseCron(cronExpr)
+	if err != nil {
+		return 0
+	}
+
 	var missed int
 
 	mark := nextFire
 
 	for missed < backlogCap {
-		next, err := NextFire(cronExpr, mark)
-		if err != nil || next.After(now) {
+		next := parsed.Next(mark)
+		if next.IsZero() || next.After(now) {
 			break
 		}
 

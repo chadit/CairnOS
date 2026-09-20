@@ -36,6 +36,11 @@ const (
 	agedReady = 5 * time.Minute
 )
 
+// pendingScheduleID is the schedule the pending-occurrence case asks about.
+// Other keys in that case are built around it so a prefix that overlaps is
+// exercised rather than assumed away.
+const pendingScheduleID = "sched-1"
+
 // queueBaseTime is the fixed clock the conformance subtests reason from. Every
 // queue method takes an explicit now, so the suite drives lease and backoff
 // decisions without sleeping.
@@ -54,6 +59,7 @@ func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.W
 		name string
 	}{
 		{name: "EnqueueIsExactlyOnce", run: testQueueEnqueueExactlyOnce},
+		{name: "OccurrencePendingTracksUnfinishedWork", run: testQueueOccurrencePending},
 		{name: "ClaimLeasesDueItems", run: testQueueClaimLeasesDueItems},
 		{name: "ClaimSkipsFutureItems", run: testQueueClaimSkipsFutureItems},
 		{name: "AckRemovesItem", run: testQueueAckRemovesItem},
@@ -101,6 +107,34 @@ func testQueueEnqueueExactlyOnce(t *testing.T, queue scheduler.WorkQueue) {
 	if stats := mustStats(t, queue, base); stats.Ready != 1 {
 		t.Errorf("ready = %d, want 1", stats.Ready)
 	}
+}
+
+// testQueueOccurrencePending pins what counts as a schedule's unfinished work:
+// its own ready and leased occurrences do, an acked one does not, and neither a
+// poll event of the same schedule nor another schedule whose id merely starts
+// with the same characters ever does.
+func testQueueOccurrencePending(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	base := queueBaseTime()
+
+	assertPending(t, queue, false, "empty queue")
+
+	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID, base), base)
+	assertPending(t, queue, true, "ready occurrence")
+
+	item := mustClaimOne(t, queue, base)
+	assertPending(t, queue, true, "leased occurrence")
+
+	if err := queue.Ack(t.Context(), item.ID); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+
+	assertPending(t, queue, false, "acked occurrence")
+
+	mustEnqueue(t, queue, scheduler.PollDedupKeyFor(pendingScheduleID, "42"), base)
+	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID+"0", base), base)
+	assertPending(t, queue, false, "poll event plus a longer schedule id")
 }
 
 func testQueueClaimLeasesDueItems(t *testing.T, queue scheduler.WorkQueue) {
@@ -491,6 +525,21 @@ func mustEnqueue(t *testing.T, queue scheduler.WorkQueue, dedup string, availabl
 	}
 
 	return inserted
+}
+
+// assertPending reads the pending-occurrence answer for the schedule under test
+// and fails when it differs from want; stage names the queue state it is read in.
+func assertPending(t *testing.T, queue scheduler.WorkQueue, want bool, stage string) {
+	t.Helper()
+
+	got, err := queue.OccurrencePending(t.Context(), pendingScheduleID)
+	if err != nil {
+		t.Fatalf("occurrence pending (%s): %v", stage, err)
+	}
+
+	if got != want {
+		t.Errorf("occurrence pending (%s) = %t, want %t", stage, got, want)
+	}
 }
 
 // mustClaimOne claims exactly one item, failing when the queue yields a

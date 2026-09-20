@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -102,10 +103,12 @@ func (m *memStore) get(t *testing.T, id string) scheduler.Schedule {
 	return sched
 }
 
-// recordRunner records every Fire call and optionally fails them all.
+// recordRunner records every Fire call, with the instant it happened so cadence
+// tests can measure the gap between fires, and optionally fails them all.
 type recordRunner struct {
 	fireErr error
 	fired   []string
+	firedAt []time.Time
 	mu      sync.Mutex
 }
 
@@ -114,8 +117,17 @@ func (r *recordRunner) Fire(_ context.Context, sched *scheduler.Schedule) error 
 	defer r.mu.Unlock()
 
 	r.fired = append(r.fired, sched.ID)
+	r.firedAt = append(r.firedAt, time.Now())
 
 	return r.fireErr
+}
+
+// times returns a copy of the instants Fire ran at.
+func (r *recordRunner) times() []time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.firedAt)
 }
 
 func (r *recordRunner) count() int {
@@ -214,7 +226,9 @@ func TestValidateCronRejectsBadExpressions(t *testing.T) {
 		{name: "unsupported shorthand", expr: "@yearly"},
 		{name: "free text", expr: "every five minutes"},
 		{name: "four fields", expr: "* * * *"},
-		{name: "six fields", expr: "* * * * * *"},
+		{name: "seven fields", expr: "* * * * * * *"},
+		{name: "seconds out of range", expr: "75 * * * * *"},
+		{name: "seconds step out of range", expr: "*/75 * * * * *"},
 		{name: "minute out of range", expr: "61 * * * *"},
 		{name: "empty", expr: ""},
 	}

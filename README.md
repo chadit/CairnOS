@@ -482,6 +482,35 @@ every action.
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.
 
+### Schedule syntax
+
+A workflow's `schedule` key takes `@hourly`, `@daily`, `@weekly`, `@monthly`, a
+5-field cron expression, or a 6-field one whose leading field is seconds:
+
+```toml
+[workflow]
+name     = "heartbeat"
+schedule = "*/30 * * * * *"   # sec min hour dom month dow: fires at :00 and :30
+```
+
+Five fields mean what they have always meant, so `*/5 * * * *` still fires at
+second zero of every fifth minute and nothing you already scheduled changes. The
+seconds field only opens the sub-minute range; a schedule that would fire more
+often than every 10 seconds is refused by `cairnos schedule add` with the rate it
+computed, because a run costs far more than a fire does.
+
+Two behaviors matter once fires get close together:
+
+- **Overlap.** While a schedule's previous run is still queued or running, the
+  next fire is skipped rather than stacked behind it. A 30-second schedule on a
+  job that sometimes takes a minute runs at half cadence instead of building a
+  backlog it can never drain.
+- **Downtime.** A schedule that fell behind while the process was down fires
+  once, not once per missed occurrence. An hour of downtime on a 30-second
+  schedule enqueues a single run and the next fire is computed from now.
+
+`cairnos schedule list` prints `LAST FIRED` and `NEXT FIRE` to the second.
+
 ### Required hosts
 
 A scheduled workflow that talks to a host behind a VPN can say so, and serve

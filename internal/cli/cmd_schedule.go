@@ -301,7 +301,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	fanoutDone := StartFanout(fanoutCtx, fanout)
 
 	monitor := newReachMonitor(fanout, a.logger)
-	enqueue := &scheduleEnqueueRunner{queue: queue, logger: a.logger}
+	enqueue := scheduler.NewSkipOverlapping(&scheduleEnqueueRunner{queue: queue, logger: a.logger}, queue, a.logger)
 	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, monitor, a.logger)
 
 	daemon := scheduler.New(scheduler.Config{

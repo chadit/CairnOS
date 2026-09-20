@@ -25,10 +25,11 @@ import (
 	"github.com/chadit/CairnOS/internal/workflow"
 )
 
-// Timing. The probe runs every minute, the finest cron cadence, so a schedule
-// waits at most one tick after the host returns. An hourly reminder keeps a
-// long outage visible without becoming a heartbeat. A dial past five seconds
-// is as good as refused for a host that answers in milliseconds.
+// Timing. The probe runs every minute, so a schedule waits at most one tick
+// after the host returns, and a sub-minute schedule skips a few more fires on
+// the way back. An hourly reminder keeps a long outage visible without becoming
+// a heartbeat. A dial past five seconds is as good as refused for a host that
+// answers in milliseconds.
 const (
 	defaultInterval = time.Minute
 	repeatAfter     = time.Hour

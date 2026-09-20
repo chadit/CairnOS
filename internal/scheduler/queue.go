@@ -9,8 +9,18 @@ import (
 // a single work item per (schedule, fire-time). Every node's cron may observe
 // the same occurrence, but the unique key lands one row, so the queue needs no
 // scheduling leader on the enqueue side (.agents/spec/14-open-decisions.md, S8).
+// The fire time keeps sub-minute precision, so two occurrences inside one
+// minute key two rows.
 func DedupKeyFor(scheduleID string, fireTime time.Time) string {
-	return scheduleID + "|" + fireTime.UTC().Format(time.RFC3339Nano)
+	return OccurrencePrefix(scheduleID) + fireTime.UTC().Format(time.RFC3339Nano)
+}
+
+// OccurrencePrefix is the dedup-key prefix every occurrence of one schedule
+// shares, which is what the overlap guard matches on to find a schedule's
+// unfinished work. A poll key carries the poll prefix ahead of the schedule id,
+// so it never matches.
+func OccurrencePrefix(scheduleID string) string {
+	return scheduleID + "|"
 }
 
 // pollDedupPrefix tags a polled event's dedup key so it can never collide with a
@@ -77,12 +87,44 @@ type QueueStats struct {
 	OldestReadyAge time.Duration
 }
 
+// OccurrenceQueue reports a schedule's unfinished work. The overlap guard takes
+// this rather than the whole queue, so it depends on the one method it reads and
+// its tests need no queue.
+type OccurrenceQueue interface {
+	// OccurrencePending reports whether the schedule has an occurrence still in
+	// the queue: ready, leased, or held. A fire that lands while the previous
+	// run is unfinished is skipped instead of stacked behind it. Dead items are
+	// finished and never count.
+	OccurrencePending(ctx context.Context, scheduleID string) (bool, error)
+}
+
+// HoldQueue is the NeedsReauth pause surface (D12): the three operations that
+// park an item for a human and let it back out again.
+type HoldQueue interface {
+	// Hold parks an item in the held state (a NeedsReauth pause), so the sweep
+	// does not redeliver it until Resume returns it to ready. holdKey records what
+	// the item waits on (the re-auth provider) for the resume probe; "" is allowed.
+	Hold(ctx context.Context, id, holdKey string) error
+
+	// Resume returns a held item to ready, available immediately, and clears its
+	// hold key.
+	Resume(ctx context.Context, id string) error
+
+	// ListHeld returns every held item with its hold key, so a resume probe can
+	// check the credential each one is waiting on (D12). An empty queue or no held
+	// items returns an empty slice, not an error.
+	ListHeld(ctx context.Context) ([]WorkItem, error)
+}
+
 // WorkQueue is the durable work-queue behind the scheduler. The SQLite backend
 // is single-node (its write lock serializes the claim); the Postgres backend
 // claims with FOR UPDATE SKIP LOCKED so several workers across nodes pull
 // disjoint items. Both satisfy the same contract, proven by one conformance
 // suite (.agents/spec/14-open-decisions.md, S8).
 type WorkQueue interface {
+	OccurrenceQueue
+	HoldQueue
+
 	// Enqueue inserts a ready item. It is exactly-once on DedupKey: a duplicate
 	// key is a no-op that reports inserted=false, so a cron fire that several
 	// nodes observe lands a single row.
@@ -101,20 +143,6 @@ type WorkQueue interface {
 	// Deliveries has reached maxDeliveries, in which case it dead-letters.
 	// Reports the resulting state.
 	Nak(ctx context.Context, id string, now time.Time, backoff time.Duration, maxDeliveries int) (WorkState, error)
-
-	// Hold parks an item in the held state (a NeedsReauth pause), so the sweep
-	// does not redeliver it until Resume returns it to ready. holdKey records what
-	// the item waits on (the re-auth provider) for the resume probe; "" is allowed.
-	Hold(ctx context.Context, id, holdKey string) error
-
-	// Resume returns a held item to ready, available immediately, and clears its
-	// hold key.
-	Resume(ctx context.Context, id string) error
-
-	// ListHeld returns every held item with its hold key, so a resume probe can
-	// check the credential each one is waiting on (D12). An empty queue or no held
-	// items returns an empty slice, not an error.
-	ListHeld(ctx context.Context) ([]WorkItem, error)
 
 	// SweepExpired reclaims leases whose LeaseUntil has passed (a crashed or
 	// stalled worker): each goes back to ready, or dead-letters once it has hit

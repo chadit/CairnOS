@@ -94,6 +94,27 @@ func (q *PostgresQueue) Enqueue(ctx context.Context, item *WorkItem) (bool, erro
 	return tag.RowsAffected() == 1, nil
 }
 
+// OccurrencePending reports whether the schedule has an unfinished occurrence
+// in the queue. It matches the dedup-key prefix with substr rather than LIKE so
+// a schedule id never needs escaping, and the queue holds only unfinished work,
+// so the scan stays small.
+func (q *PostgresQueue) OccurrencePending(ctx context.Context, scheduleID string) (bool, error) {
+	prefix := OccurrencePrefix(scheduleID)
+	unfinished := []string{string(WorkReady), string(WorkLeased), string(WorkHeld)}
+
+	var pending bool
+
+	err := q.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM work_item
+		 WHERE state = ANY($1) AND substr(dedup_key, 1, length($2)) = $2)`,
+		unfinished, prefix).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("pending occurrence for schedule %s: %w", scheduleID, err)
+	}
+
+	return pending, nil
+}
+
 // Claim leases up to limit ready, due items in one statement: the subselect
 // takes a row lock with SKIP LOCKED so concurrent claimers never wait on or
 // double-take each other's rows, and the outer UPDATE returns the leased rows.

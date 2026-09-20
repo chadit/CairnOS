@@ -113,6 +113,26 @@ func (q *SQLiteQueue) Enqueue(ctx context.Context, item *WorkItem) (bool, error)
 	return affected == 1, nil
 }
 
+// OccurrencePending reports whether the schedule has an unfinished occurrence
+// in the queue. It matches the dedup-key prefix with substr rather than LIKE so
+// a schedule id never needs escaping, and the queue holds only unfinished work,
+// so the scan stays small.
+func (q *SQLiteQueue) OccurrencePending(ctx context.Context, scheduleID string) (bool, error) {
+	prefix := OccurrencePrefix(scheduleID)
+
+	var pending bool
+
+	err := q.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM work_item
+		 WHERE state IN (?, ?, ?) AND substr(dedup_key, 1, length(?)) = ?)`,
+		string(WorkReady), string(WorkLeased), string(WorkHeld), prefix, prefix).Scan(&pending)
+	if err != nil {
+		return false, fmt.Errorf("pending occurrence for schedule %s: %w", scheduleID, err)
+	}
+
+	return pending, nil
+}
+
 // Claim leases up to limit ready, due items. It selects candidates then updates
 // them in one transaction; the SQLite write lock means no other claim runs
 // concurrently, so the selected rows are this worker's. The state='ready' guard

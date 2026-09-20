@@ -706,7 +706,7 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 
 	monitor := newReachMonitor(sched.fanout, a.logger)
 
-	enqueue := &scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}
+	enqueue := scheduler.NewSkipOverlapping(&scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}, sched.queue, a.logger)
 	pollRunner := newPollAwareRunner(enqueue, sched.queue, sched.sources, sched.pauses, monitor, a.logger)
 
 	daemon := scheduler.New(scheduler.Config{
