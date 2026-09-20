@@ -39,8 +39,9 @@ const pullPerm = 0o600
 // allowlist and would strip one.
 const bwFakeName = "bw"
 
-// bwFakeSettingsFile sits beside the symlink and carries the item fixture path,
-// for the same reason.
+// bwFakeSettingsFile sits beside the symlink and carries the item fixture, the
+// version the fake reports, and the failures a case asks it to take, for the
+// same reason.
 const bwFakeSettingsFile = "fake.json"
 
 // unreachableAsset is the release URL the staged pin carries. Nothing serves it,
@@ -48,44 +49,22 @@ const bwFakeSettingsFile = "fake.json"
 // real Bitwarden CLI from a unit test.
 const unreachableAsset = "https://127.0.0.1:1/bw.zip"
 
-// strangerDigest is a well-formed sha256 no staged binary matches, which is how
-// a case puts the host a pin behind.
-const strangerDigest = "0000000000000000000000000000000000000000000000000000000000000000"
-
-// bwDigestRecord is the suffix bwinstall records an installed digest under,
-// beside the binary it wrote.
-const bwDigestRecord = ".cairnos-sha256"
-
-// bwFakeSettings is what the fake reads out of that file.
+// bwFakeSettings is what the fake reads out of that file: the item fixture, the
+// version it claims, and the two failures a resolution case needs it to take.
 type bwFakeSettings struct {
-	ItemsFile string `json:"items_file"`
+	ItemsFile    string `json:"items_file"`
+	Version      string `json:"version"`
+	FailStatus   bool   `json:"fail_status"`
+	RefuseUnlock bool   `json:"refuse_unlock"`
 }
 
-// runFakeBW is the fake CLI. It answers status and login, and serves the item
-// fixture over HTTP for the daemon protocol.
+// runFakeBW is the fake CLI. It answers --version, status and login, and serves
+// the item fixture over HTTP for the daemon protocol.
 func runFakeBW(argv []string) int {
 	if len(argv) == 0 {
 		return 2
 	}
 
-	switch argv[0] {
-	case "status":
-		fmt.Println(`{"status":"unlocked"}`)
-
-		return 0
-	case "login":
-		fmt.Println("logged-in")
-
-		return 0
-	case "serve":
-		return runFakeServe(argv)
-	default:
-		return 2
-	}
-}
-
-// runFakeServe answers the endpoints the pull drives.
-func runFakeServe(argv []string) int {
 	settings, err := loadBWFakeSettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
@@ -93,6 +72,40 @@ func runFakeServe(argv []string) int {
 		return 3
 	}
 
+	switch argv[0] {
+	case "--version":
+		fmt.Println(settings.Version)
+
+		return 0
+	case "status":
+		return runFakeStatus(settings)
+	case "login":
+		fmt.Println("logged-in")
+
+		return 0
+	case "serve":
+		return runFakeServe(settings, argv)
+	default:
+		return 2
+	}
+}
+
+// runFakeStatus answers the first call every vault read makes, or fails the way
+// a CLI that cannot reach the server does.
+func runFakeStatus(settings bwFakeSettings) int {
+	if settings.FailStatus {
+		fmt.Fprintln(os.Stderr, "fake bw: cannot reach the server")
+
+		return 1
+	}
+
+	fmt.Println(`{"status":"unlocked"}`)
+
+	return 0
+}
+
+// runFakeServe answers the endpoints the pull drives.
+func runFakeServe(settings bwFakeSettings, argv []string) int {
 	server := &http.Server{
 		Addr:              "127.0.0.1:" + bwFlagValue(argv, "--port"),
 		Handler:           bwFakeHandler(settings),
@@ -109,10 +122,18 @@ func runFakeServe(argv []string) int {
 // bwFakeIdle bounds the fake's own header read; it never needs to be short.
 const bwFakeIdle = 30 * time.Second
 
-// bwFakeHandler serves the item fixture and answers the lifecycle endpoints.
+// bwFakeHandler serves the item fixture and answers the lifecycle endpoints. A
+// refused unlock answers with a status, which is what a wrong master password
+// looks like and what tells a caller the binary itself is fine.
 func bwFakeHandler(settings bwFakeSettings) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
+
+		if settings.RefuseUnlock && request.URL.Path == "/unlock" {
+			http.Error(writer, "invalid master password", http.StatusBadRequest)
+
+			return
+		}
 
 		if !strings.HasPrefix(request.URL.Path, "/list/object/items") {
 			_, _ = writer.Write([]byte(`{"success":true}`))
@@ -186,21 +207,39 @@ func credentialsFixture() string {
 		bitwarden.EnvMasterKey + "=mk-1\n"
 }
 
+// hostNewerVersion is what the fake claims unless a case says otherwise. It is
+// past any release this build could pin, so an ordinary case runs the bw the
+// host has rather than the fallback.
+const hostNewerVersion = "9999.12.31"
+
 // stageFakeBW symlinks this test binary as bw and writes the item fixture. It
-// returns the directory to put first on PATH, which is how `secrets pull` finds
-// it through LookPath.
-//
-// runCLI pins the release to this same binary's digest, which is what keeps
-// these cases exercising the command rather than the refusal a bw that is not
-// the pin would get.
+// returns the directory to put first on PATH, which is how the vault commands
+// find it through LookPath.
 func stageFakeBW(t *testing.T, fields map[string]string) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	stageFakeBWAt(t, dir, fields, bwFakeSettings{Version: hostNewerVersion})
+
+	return dir
+}
+
+// stageFakeBWAt stages the fake in a directory the case names, which is how a
+// case puts one copy on PATH and another in the directory CairnOS keeps its own
+// bw in. The settings carry the version and the failures; the item fixture and
+// the symlink are the same either way.
+func stageFakeBWAt(t *testing.T, dir string, fields map[string]string, settings bwFakeSettings) {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("stage %s: %v", dir, err)
+	}
+
 	items := filepath.Join(dir, "items.json")
+	settings.ItemsFile = items
 
 	writePullFile(t, items, encodeItems(t, fields))
-	writePullFile(t, filepath.Join(dir, bwFakeSettingsFile), encodeJSON(t, bwFakeSettings{ItemsFile: items}))
+	writePullFile(t, filepath.Join(dir, bwFakeSettingsFile), encodeJSON(t, settings))
 
 	self, err := os.Executable()
 	if err != nil {
@@ -210,17 +249,6 @@ func stageFakeBW(t *testing.T, fields map[string]string) string {
 	if linkErr := os.Symlink(self, filepath.Join(dir, bwFakeName)); linkErr != nil {
 		t.Fatalf("link the fake bw: %v", linkErr)
 	}
-
-	return dir
-}
-
-// stageDigestRecord writes the record an earlier install would have left beside
-// the binary it wrote, which is what separates a bw this tool owns from one it
-// must not replace.
-func stageDigestRecord(t *testing.T, binary, digest string) {
-	t.Helper()
-
-	writePullFile(t, binary+bwDigestRecord, digest+"\n")
 }
 
 // encodeItems renders the list response through encoding/json. Building it by
@@ -294,98 +322,9 @@ func TestSecretsPullWithoutABlockIsANoOp(t *testing.T) {
 	}
 }
 
-// TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH covers FR8. A bw from a
-// package manager or a hand install is not CairnOS's to replace, and a deploy
-// that quietly drove it would be running the vault through a binary nothing in
-// this repository vouches for.
-// TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH checks that the refusal
-// names both paths, since the fix is a PATH change as often as an install.
-func TestSecretsPullRefusesAnUnpinnedBWElsewhereOnPATH(t *testing.T) {
-	binDir := stageFakeBW(t, bothFields())
-	dir := pullConfig(t)
-
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runPinnedCLI(t, strangerDigest, secretsCmd, "pull", flagDirArg, dir)
-	if code != cli.ExitFailure {
-		t.Fatalf("exit = %d, want failure\nstderr: %s", code, stderr)
-	}
-
-	for _, want := range []string{filepath.Join(binDir, bwFakeName), ".local/bin"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("the refusal does not name %q:\n%s", want, stderr)
-		}
-	}
-}
-
-// TestSecretsPullRecordsTheDigestOfABWItFindsCurrent is the case the fleet is
-// actually in. Every host installed its bw before the digest record existed, so
-// the binary matches the pin and nothing beside it says who put it there. The
-// pull has to leave that record behind, because the next pin bump refuses
-// without it and an operator would have to visit every box with --force.
-func TestSecretsPullRecordsTheDigestOfABWItFindsCurrent(t *testing.T) {
-	binDir := stageFakeBW(t, bothFields())
-	dir := pullConfig(t)
-
-	record := filepath.Join(binDir, bwFakeName+bwDigestRecord)
-	if _, err := os.Stat(record); err == nil {
-		t.Fatalf("the fixture already wrote %s, so this case would prove nothing", record)
-	}
-
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir, "--bin-dir", binDir)
-	if code != cli.ExitOK {
-		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
-	}
-
-	if _, err := os.Stat(record); err != nil {
-		t.Fatalf("the pull left no digest record beside the bw it accepted: %v", err)
-	}
-
-	if !strings.Contains(stdout, pullVarOne) || !strings.Contains(stdout, pullVarTwo) {
-		t.Fatalf("the pull did not render the vault fields:\n%s", stdout)
-	}
-
-	if strings.Contains(stdout, "upgraded") {
-		t.Fatalf("a bw that was already the pin was reported as an upgrade:\n%s", stdout)
-	}
-}
-
-// TestSecretsPullUpgradesTheBWItInstalled is the other half of FR8: the binary
-// the pin moved past sits in the install directory and carries the digest an
-// earlier install recorded, so the command installs over it rather than asking
-// for --force. The staged pin points at an asset nothing serves, so the case
-// proves which branch ran by where it failed.
-func TestSecretsPullUpgradesTheBWItInstalled(t *testing.T) {
-	binDir := stageFakeBW(t, bothFields())
-	dir := pullConfig(t)
-
-	stageDigestRecord(t, filepath.Join(binDir, bwFakeName), testBinaryDigest(t))
-
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runPinnedCLI(t, strangerDigest,
-		secretsCmd, "pull", flagDirArg, dir, "--bin-dir", binDir)
-	if code != cli.ExitFailure {
-		t.Fatalf("exit = %d, want the unreachable download to fail\nstderr: %s", code, stderr)
-	}
-
-	if strings.Contains(stderr, "not the pinned release") {
-		t.Fatalf("a bw in the install directory was refused instead of upgraded:\n%s", stderr)
-	}
-
-	if !strings.Contains(stderr, unreachableAsset) {
-		t.Fatalf("the failure does not come from the install this should have started:\n%s", stderr)
-	}
-}
-
 // TestSecretsPullUsesAnUnpinnedPlatformsOwnBW covers the platforms outside the
-// two-entry pin table. There is no digest to compare against there, and before
-// the pin check existed a working bw on PATH was simply used. Refusing the
-// command instead would leave the operator no flag to get past it.
-// TestSecretsPullUsesAnUnpinnedPlatformsOwnBW checks that the bw is used and
-// the operator is told it went unchecked.
+// two-entry pin table. There is no release to fall back to there, so the bw the
+// host has is the only one, and the log says why it was taken on trust.
 func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
@@ -397,8 +336,8 @@ func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
-	if !strings.Contains(stderr, "without checking it") {
-		t.Fatalf("stderr does not say the bw went unchecked:\n%s", stderr)
+	if !strings.Contains(stderr, "no release is pinned for") {
+		t.Fatalf("the log does not say the platform is unpinned:\n%s", stderr)
 	}
 
 	if !strings.Contains(stdout, pullVarOne) {

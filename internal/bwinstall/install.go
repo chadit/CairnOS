@@ -182,7 +182,7 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 		return Result{}, recordErr
 	}
 
-	version, err := readVersion(ctx, opts)
+	version, err := ProbeVersion(ctx, opts.Dest, probeTimeout(opts))
 	if err != nil {
 		return Result{}, err
 	}
@@ -208,12 +208,11 @@ func checkSource(source string) error {
 	return nil
 }
 
-// alreadyCurrent reports the binary that was already the pinned one, writing
-// the record if it is missing. Every host installed its bw before the record
-// existed, so without this line the first bump would refuse on all of them and
-// an operator would visit each one with --force. Nothing was downloaded, so a
-// record that cannot be written is worth a line rather than failing a command
-// that did its job.
+// alreadyCurrent reports a binary that was already the pinned one, writing the
+// record when it is missing. Hosts installed their bw before the record
+// existed, and without this the first pin bump would refuse on every one of
+// them. Nothing was downloaded, so a record that cannot be written is a
+// warning.
 func alreadyCurrent(opts *Options) Result {
 	if err := recordDigest(opts); err != nil {
 		opts.log().Warn("could not record the digest of the installed binary",
@@ -223,14 +222,11 @@ func alreadyCurrent(opts *Options) Result {
 	return Result{Path: opts.Dest, Version: opts.Version}
 }
 
-// existingBinary decides what a file already at Dest means. It hashes that file
-// rather than asking it what it is, because a binary that prints the right
-// version string is no evidence: whatever can write the destination can write a
-// wrapper that prints it and forwards the vault credentials somewhere else.
-//
-// It reports whether the install has nothing left to do, and the digest of a
-// binary it may replace, which is one an earlier install wrote and the pin has
-// since moved past.
+// existingBinary decides what a file already at Dest means, reporting whether
+// the install has nothing left to do and the digest of one it may replace. It
+// hashes the file rather than asking it what it is: whatever can write the
+// destination can write a wrapper that prints the right version and forwards
+// the vault credentials elsewhere.
 func existingBinary(opts *Options) (bool, string, error) {
 	if opts.Force || !exists(opts.Dest) {
 		return false, "", nil
@@ -250,8 +246,8 @@ func existingBinary(opts *Options) (bool, string, error) {
 	}
 
 	return false, "", cairnerr.Newf(CodeExisting,
-		"%s is not the pinned version %s (sha256 %s); re-run with --force to replace it",
-		opts.Dest, opts.Version, sum)
+		"%s has sha256 %s; the pinned version %s has sha256 %s; re-run with --force to replace it",
+		opts.Dest, sum, opts.Version, opts.BinarySHA256)
 }
 
 // sidecarPath is where the digest of the installed binary is recorded, beside
@@ -261,12 +257,10 @@ func sidecarPath(dest string) string {
 }
 
 // writtenByThisTool reports whether the file at Dest carries the digest an
-// earlier install recorded beside it. This is a usability marker, not evidence:
-// anyone who can write the binary can write the record next to it. What it
-// separates is a bw an earlier install wrote, which a pin bump may replace
-// without asking, from one a package manager or a hand install left, which has
-// no record and keeps the refusal. Forging a record buys nothing, since the
-// only thing it unlocks is being overwritten by the pinned release.
+// earlier install recorded beside it. It is a usability marker, not evidence:
+// anyone who can write the binary can write the record too. It separates a bw
+// this tool wrote, which a pin bump may replace unasked, from one a package
+// manager left.
 func writtenByThisTool(opts *Options, digest string) bool {
 	path := sidecarPath(opts.Dest)
 
@@ -335,15 +329,11 @@ func EntryDigest(source io.Reader) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-// prepareDir creates the install directory and refuses one that another account
-// can write, since swapping the binary between one run and the next is exactly
-// what verifying it at install time cannot catch.
-//
-// A directory whose group is the owner's own private group is the exception.
-// Debian and Fedora hosts ship ~/.local/bin as 0775 under a group named after
-// the account and holding only that account, so the group bit there is the owner
-// under another name and adds no second writer. World-writable stays refused
-// whatever the ownership says.
+// prepareDir creates the install directory and refuses one another account can
+// write, since swapping the binary between runs is what verifying it at install
+// time cannot catch. A directory in the owner's own private group is the
+// exception: Debian and Fedora ship ~/.local/bin that way, so the group bit
+// adds no second writer. World-writable stays refused.
 func prepareDir(dir string) error {
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return cairnerr.Wrapf(err, CodeInstall, "create %s: %v", dir, err)
@@ -368,22 +358,26 @@ func prepareDir(dir string) error {
 			"tighten it to 0755 or install elsewhere with --bin-dir", dir, mode)
 }
 
-// readVersion asks the installed binary what it is, for display only. The child
-// gets a minimal environment: a host may hold the vault API key and the master
-// password in this process's environment, and a version probe has no business
-// seeing either.
-func readVersion(ctx context.Context, opts *Options) (string, error) {
-	probe, cancel := context.WithTimeout(ctx, probeTimeout(opts))
+// ProbeVersion asks a bw binary what it is. The child gets a minimal
+// environment: a host may hold the vault API key and the master password in
+// this process's environment, and a version probe has no business seeing
+// either. A zero timeout takes the package default.
+func ProbeVersion(ctx context.Context, binary string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = defaultProbeTimeout
+	}
+
+	probe, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command := exec.CommandContext(probe, opts.Dest, "--version") // #nosec G204 -- the path is the install destination
+	command := exec.CommandContext(probe, binary, "--version") // #nosec G204 -- the caller names the binary to probe
 	command.Env = probeEnv()
 	command.Stdin = nil
 	command.WaitDelay = waitDelay
 
 	out, err := command.Output()
 	if err != nil {
-		return "", cairnerr.Wrapf(err, CodeVersion, "run %s --version: %v", opts.Dest, err)
+		return "", cairnerr.Wrapf(err, CodeVersion, "run %s --version: %v", binary, err)
 	}
 
 	return strings.TrimSpace(string(out)), nil

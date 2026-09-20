@@ -9,21 +9,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
-	"github.com/chadit/CairnOS/internal/bwinstall"
 	"github.com/chadit/CairnOS/internal/config"
 )
 
 // defaultVaultItem is the item name offered when neither chezmoi nor the
 // operator names one. It matches what the workstation tooling already uses.
 const defaultVaultItem = "chezmoi"
-
-// digestPrefix is how much of a sha256 an upgrade line prints: enough to tell
-// two builds apart in a deploy log, short enough to read.
-const digestPrefix = 12
 
 // cmdSecretsAuth creates the credentials file or checks the one that is there.
 // It exists because the alternative is telling an operator to hand-write four
@@ -60,7 +54,7 @@ func (a *App) cmdSecretsAuth(ctx context.Context, args []string) int {
 	path := opts.resolve(credentialsFileFrom(&cfg), config.DefaultBitwardenCredentialsFile)
 
 	if _, statErr := os.Stat(path); statErr == nil {
-		return a.checkVault(ctx, label, path, &cfg)
+		return a.checkVault(ctx, label, path, dir, &cfg)
 	}
 
 	return a.writeCredentials(ctx, label, path, &cfg)
@@ -252,14 +246,7 @@ func renderCredentials(creds bitwarden.Credentials) []byte {
 // checkVault proves the stored credentials still open the vault, so an operator
 // finds out here rather than from a failed deploy. It prints what it found and
 // never a value.
-func (a *App) checkVault(ctx context.Context, label, path string, cfg *config.Config) int {
-	binary, err := a.ensureBitwardenBinary(ctx, label, "")
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return ExitFailure
-	}
-
+func (a *App) checkVault(ctx context.Context, label, path, home string, cfg *config.Config) int {
 	creds, err := bitwarden.LoadCredentials(path, os.Getenv)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
@@ -274,9 +261,7 @@ func (a *App) checkVault(ctx context.Context, label, path string, cfg *config.Co
 		return ExitFailure
 	}
 
-	client := &bitwarden.Client{Binary: binary, Logger: a.logger}
-
-	item, err := client.Read(ctx, creds, itemName)
+	item, err := a.readVaultItem(ctx, home, creds, itemName)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -287,103 +272,6 @@ func (a *App) checkVault(ctx context.Context, label, path string, cfg *config.Co
 		label, item.Name, countPulledFields(cfg, item))
 
 	return ExitOK
-}
-
-// ensureBitwardenBinary returns a bw the pin vouches for. One in the install
-// directory goes through the installer so the digest record exists; one
-// elsewhere is used on a digest match and refused by both paths on a mismatch.
-// That one is not CairnOS's to replace, so the refusal names both paths.
-func (a *App) ensureBitwardenBinary(ctx context.Context, label, binDir string) (string, error) {
-	dir, err := bwInstallDir(binDir)
-	if err != nil {
-		return "", err
-	}
-
-	binary, err := lookBitwardenBinary()
-	if err != nil {
-		return a.installMissingBitwarden(ctx, label, dir)
-	}
-
-	pin, err := a.bwPin(runtime.GOOS)
-	if err != nil {
-		if !errors.Is(err, errNoPinnedBitwarden) {
-			return "", err
-		}
-
-		return a.useUncheckedBitwarden(label, binary)
-	}
-
-	target := filepath.Join(dir, bwBinary)
-	if filepath.Clean(binary) == target {
-		return a.installPinnedBitwarden(ctx, label, dir)
-	}
-
-	digest, err := bwinstall.FileDigest(binary)
-	if err != nil {
-		return "", fmt.Errorf("hash the bw on PATH: %w", err)
-	}
-
-	if strings.EqualFold(digest, pin.binarySum) {
-		return binary, nil
-	}
-
-	return "", fmt.Errorf("%w: %s has sha256 %s, and the pinned %s installs to %s; "+
-		"run `cairnos secrets install-bw` and put %s ahead of it on PATH",
-		errUnpinnedBitwarden, binary, digest, bwVersion, target, dir)
-}
-
-// useUncheckedBitwarden accepts the operator's own bw on a platform this build
-// pins nothing for. Refusing a working command because CairnOS cannot check the
-// binary helps nobody, and no flag would get past it.
-func (a *App) useUncheckedBitwarden(label, binary string) (string, error) {
-	a.printErrf("%s: no pinned bw for %s; using %s without checking it\n",
-		label, runtime.GOOS, binary)
-
-	return binary, nil
-}
-
-// installMissingBitwarden installs the pinned release on a host that has none.
-// Failing with "not on PATH" would send the operator off to the README in the
-// middle of a command they asked for.
-func (a *App) installMissingBitwarden(ctx context.Context, label, dir string) (string, error) {
-	a.printOutf("%s: %s is not on PATH; installing the pinned release into %s\n", label, bwBinary, dir)
-
-	result, err := a.installBitwarden(ctx, dir, false)
-	if err != nil {
-		return "", err
-	}
-
-	a.printOutf("%s: installed %s (version %s)\n", label, result.Path, result.Version)
-
-	return result.Path, nil
-}
-
-// installPinnedBitwarden runs the non-forced install over the binary already at
-// the install target, leaving bwinstall to decide what happens there. The
-// upgrade line is printed only when something was installed, so an ordinary
-// pull reads as it always has. It runs whatever the binary hashes to, since the
-// install writes the digest record hosts from before it still lack.
-func (a *App) installPinnedBitwarden(ctx context.Context, label, dir string) (string, error) {
-	result, err := a.installBitwarden(ctx, dir, false)
-	if err != nil {
-		return "", err
-	}
-
-	if result.Installed {
-		a.printOutf("%s: upgraded %s from sha256 %s to version %s\n",
-			label, result.Path, shortDigest(result.Previous), result.Version)
-	}
-
-	return result.Path, nil
-}
-
-// shortDigest trims a digest to the head a log line carries.
-func shortDigest(digest string) string {
-	if len(digest) <= digestPrefix {
-		return digest
-	}
-
-	return digest[:digestPrefix]
 }
 
 // authItem resolves the item for the status check, tolerating a host with no

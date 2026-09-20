@@ -34,16 +34,10 @@ var (
 	errNoValueForPrompt = errors.New("no value was given and there is no default; " +
 		"set it in the environment or run this on a terminal")
 
-	// errUnpinnedBitwarden reports a bw on PATH that is neither the pinned
-	// release nor a file this tool installed, so replacing it is not CairnOS's
-	// call. The message names both paths, because the fix is a PATH change as
-	// often as it is an install.
-	errUnpinnedBitwarden = errors.New("the bw on PATH is not the pinned release")
-
-	// errNoBitwardenBinary reports a missing bw CLI, pointing at the README
-	// section that pins and installs it.
+	// errNoBitwardenBinary reports a missing bw CLI on a platform this build
+	// pins no release for, where CairnOS has nothing of its own to fall back to.
 	errNoBitwardenBinary = errors.New("the bw CLI is not on PATH; " +
-		"run `cairnos secrets install-bw` to install the pinned release")
+		"install it from your package manager or from the Bitwarden releases page")
 
 	// ErrBadInput reports a malformed or uncoercible --input flag value.
 	ErrBadInput = errors.New("bad --input value")

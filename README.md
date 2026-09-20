@@ -111,6 +111,106 @@ JSON/HTTP gateway on 8080, Prometheus metrics on 9090. Keep the ports on
 localhost or a private network (Tailscale works well) and turn auth on
 (`[auth] enabled = true`) before anything else can reach them.
 
+## Keeping a host current
+
+A host that runs CairnOS as a service and does no development has two moving
+parts, and they move for different reasons.
+
+**Workflows move on their own.** A `[source.<name>]` checkout is fetched and
+reset by whatever schedule you gave the `source` runner, so a workflow file or a
+script living in that repository reaches the host without anyone logging in.
+Push it, wait for the next sync, and it is there.
+
+**CairnOS does not.** The binary the service runs is the one someone built from
+a clone on that host. It changes when you update that clone and deploy it, and
+at no other time.
+
+### Update CairnOS before the workflow that needs it
+
+That split comes with one rule. When a change in a synced source needs a newer
+CairnOS, update the host first and let the source change land after.
+
+Say a workflow starts using the six-field cron with a seconds field:
+
+```toml
+[workflow]
+name     = "heartbeat"
+schedule = "*/30 * * * * *"
+```
+
+A CairnOS built before that field existed reads the file and rejects it. The
+stored schedule keeps firing on the cadence it was added with, the daemon loads
+the file again at every fire, and every fire fails at the load:
+
+```text
+level=ERROR msg="scheduled run failed" schedule=sch_01J... workflow=heartbeat
+  error="load /srv/automation/workflows/heartbeat.toml: 1 error(s): workflow.invalid:
+  schedule \"*/30 * * * * *\" must be a 5-field cron expression or an @-shorthand"
+```
+
+Nothing in the repository looks wrong, because nothing in it is wrong. The file
+is fine and the binary reading it is old, and it stays that way until the binary
+changes. The recovery is the deploy that should have come first:
+
+```sh
+cd ~/src/cairnos              # the clone this host builds from
+git fetch && git merge --ff-only
+make deploy                   # rebuilds when the running build is behind, then restarts
+journalctl --user -u cairnos -n 50
+```
+
+The next fire loads the same file against the new binary and runs it. No run was
+queued while it was failing, so there is no backlog to drain and nothing to
+replay by hand.
+
+### Telling whether a host is behind
+
+`scripts/deploy.sh --check` compares the build the service is running against
+the clone's HEAD. It reads the revision Go stamps into every binary, through
+`/proc`, so a file replaced on disk is not mistaken for the process in memory:
+
+```sh
+./scripts/deploy.sh --check
+I: running: 7929e3e8a1...
+I: wanted:  625fb2e4c9...
+```
+
+It exits 3 when the two differ, 0 when they match, and it pulls no secrets and
+restarts nothing, so it is safe on a host you only want to look at. `make deploy`
+prints the same two lines before it acts on them. There is no `cairnos version`
+subcommand: that stamped revision is how a running build is identified.
+
+The script drives a systemd user service. Under launchd, or for a `--system`
+unit, read the stamp out of the deployed file yourself and compare it to the
+clone:
+
+```sh
+go version -m /opt/cairnos/cairnos | grep vcs.revision
+git -C ~/src/cairnos rev-parse HEAD
+```
+
+### After you change a workflow's schedule
+
+`cairnos schedule add` copies the `schedule` key into the store, so editing the
+file afterwards leaves the stored expression where it was. Replace the entry:
+
+```sh
+cairnos schedule list
+cairnos schedule remove heartbeat     # the id from the ID column, or the workflow name
+cairnos schedule add /srv/automation/workflows/heartbeat.toml
+cairnos schedule list                 # the CRON column now reads the new expression
+```
+
+The `schedule` key is the only one this applies to. Everything else in the file
+is read fresh at each fire.
+
+### What a restart picks up
+
+`config.toml` and the environment files are read once, at startup, so a change to
+either needs a restart before the service sees it. Workflow files are read at
+every fire, so an edited action, runner or timeout is live on the next one. A new
+binary needs the restart that `make deploy` already does.
+
 ## Secrets from Bitwarden
 
 Every bot token and API key a host needs is otherwise hand-typed into its env
@@ -195,7 +295,46 @@ environment and the master password travels in a request body to a loopback
 daemon, because arguments are readable from `/proc`.
 
 You need the standalone `bw` CLI, not the npm package, since the service user has
-no node toolchain. CairnOS installs it:
+no node toolchain. Every `cairnos secrets auth` and `cairnos secrets pull` looks
+for one in this order:
+
+1. The `bw` on the host's PATH, when `bw --version` reports a version that is
+   not behind the release CairnOS pins. That binary is yours. CairnOS runs it
+   and never moves, replaces or rewrites it.
+2. The copy CairnOS keeps for itself, when there is no `bw` on PATH, when the
+   host's is older than the pin, when it prints a version nothing can compare
+   against (a suffix like `2026.8.0-beta`, or no answer at all), or when a call
+   through it fails in a way that means the binary cannot do the job.
+
+That copy lives at `~/.cairnos/tools/bw/<version>/bw`, in a `0700` directory
+CairnOS owns. It never goes on PATH, nothing links to it from a PATH directory,
+and it is called by its full path. CairnOS downloads it the first time it needs
+it, checks the archive and the binary inside it against two digests compiled
+into the build, and reuses that file afterwards. A file there that does not hash
+to the pin is downloaded again rather than run.
+
+Versions compare number by number across the dots, so `2026.9.0` is newer than
+`2026.8.0`, and `2025.12.1` is older than both. A version carrying anything but
+digits and dots counts as unreadable, which sends the call to the pinned copy.
+
+Every run says which binary it used and why:
+
+```text
+level=INFO msg="using the Bitwarden CLI" path=/usr/bin/bw version=2026.9.1 reason="the host CLI is at or past the pinned version"
+level=INFO msg="using the Bitwarden CLI" path=/home/ops/.cairnos/tools/bw/2026.8.0/bw version=2026.8.0 reason="the host CLI is older than the pinned version"
+```
+
+`cairnos secrets pull --dry-run` resolves the same way and prints the same line,
+so you can see which binary a deploy will use before it writes anything.
+
+A failure tells the two cases apart. A CLI that cannot start, cannot reach the
+server, or never answers on its own loopback port is the binary's problem, so
+the call is tried again through the pinned copy. A rejected API key or master
+password is the vault's answer and would read the same from any build, so it
+fails once and stops.
+
+If you want a `bw` of your own on PATH, CairnOS installs the pinned release
+there for you:
 
 ```sh
 cairnos secrets install-bw
@@ -205,36 +344,18 @@ It downloads the pinned release, checks its sha256 against a digest compiled
 into CairnOS, unpacks the one file the archive holds, checks that file against a
 second compiled-in digest, and installs it at `~/.local/bin/bw`. A download that
 does not match is discarded and nothing is written. `--bin-dir` installs
-somewhere else.
+somewhere else, and `--force` replaces a file already sitting at that path.
 
 Running it again is cheap: it hashes the installed file and skips the download
 when that hash is the pinned one. It never asks the binary what version it is to
 decide, because a file that prints the right version is no evidence of what it
-does with your master password.
+does with your master password. It records the digest it wrote beside the
+binary, which is how a later pin bump tells its own previous install from a `bw`
+that arrived some other way.
 
-Every install records the digest it wrote in a `bw.cairnos-sha256` file beside
-the binary, including a run that found the pinned binary already in place. The
-record marks a `bw` this tool installed, so a later pin bump replaces it without
-asking. A `bw` that arrived any other way, from a package manager or by hand,
-has no record, so it stops the run and `--force` stays the only way past it.
-The record is a marker and not a proof: anyone who can write the binary can
-write the file next to it, and all that buys them is having their binary
-replaced by the pinned one.
-
-Hosts follow the pin on their own. Both `cairnos secrets auth` and
-`cairnos secrets pull` hash the `bw` they find on PATH and compare it to the
-pin. A match is used as it is. A mismatch at `~/.local/bin/bw` is upgraded in place, with one
-line in the log naming the digest it replaced and the version it installed. A
-mismatch anywhere else stops the command and names both paths, because a `bw`
-your package manager installed is not for CairnOS to replace. Install the pinned
-release and put `~/.local/bin` first on PATH, or tell `secrets pull` where to
-look with `--bin-dir`. `make deploy` runs `secrets pull` on every run, so a
-refusal there stops the deploy with the previous unit still running. A `--system` run resolves
-`~/.local/bin` against the account it runs as, so a `bw` in another account's
-home is refused by name and `--bin-dir` is how you point at it.
-
-`cairnos secrets auth` runs the install itself when it needs `bw` and finds
-none, so on a fresh host there is usually nothing to do here.
+Nothing requires this command. The vault commands find their own `bw` either
+way, and one you install here is a host binary like any other, subject to the
+order above.
 
 Then pull:
 

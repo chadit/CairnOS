@@ -31,8 +31,7 @@ const envFilePerm = 0o600
 // cmdSecretsPull renders the configured vault fields into the service's second
 // environment file. It runs at deployment rather than at run time because most
 // of these values are read by bare os.Getenv, long before any runtime secret
-// source exists to answer for them. Its --bin-dir matches the one on
-// `secrets install-bw`, whose binary this upgrades.
+// source exists to answer for them.
 func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 	const label = "secrets pull"
 
@@ -43,8 +42,6 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 	dryRun := flags.Bool("dry-run", false, "resolve everything and report, without writing the file")
 	system := flags.Bool("system", false,
 		"write where a system-mode unit reads, under /etc/cairnos rather than the home")
-
-	binDir := flags.String("bin-dir", "", "look for and install the pinned bw here instead of ~/.local/bin")
 
 	if code, proceed := parseFlags(flags, args); !proceed {
 		return code
@@ -70,7 +67,7 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return a.reportNoVault(label, configPath)
 	}
 
-	opts := pullOptions{dir: dir, binDir: *binDir, cfg: &cfg, system: *system, dryRun: *dryRun}
+	opts := pullOptions{dir: dir, cfg: &cfg, system: *system, dryRun: *dryRun}
 
 	return a.pullBitwarden(ctx, label, cfg.Secrets.Bitwarden, opts)
 }
@@ -88,8 +85,8 @@ func resolveSecretsDir(flagValue string, system bool) (string, error) {
 	return resolveDir(flagValue)
 }
 
-// lookBitwardenBinary resolves the CLI both `secrets pull` and `secrets auth`
-// drive, so a host missing it gets the same sentence from either command.
+// lookBitwardenBinary finds the bw the host itself provides, which the resolver
+// prefers over the pinned copy whenever its version is not behind the pin.
 func lookBitwardenBinary() (string, error) {
 	binary, err := exec.LookPath(bwBinary)
 	if err != nil {
@@ -106,11 +103,6 @@ type pullOptions struct {
 	// credentials this host will want that the vault did not supply.
 	cfg *config.Config
 
-	// binDir is where the pinned bw is looked for and installed, empty for
-	// the default. It rides here rather than in a second parameter because
-	// pullBitwarden already carries this struct.
-	binDir string
-
 	dir    string
 	system bool
 	dryRun bool
@@ -121,13 +113,6 @@ type pullOptions struct {
 func (a *App) pullBitwarden(
 	ctx context.Context, label string, block *config.Bitwarden, opts pullOptions,
 ) int {
-	binary, err := a.ensureBitwardenBinary(ctx, label, opts.binDir)
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return ExitFailure
-	}
-
 	credsPath := opts.resolve(block.CredentialsFile, config.DefaultBitwardenCredentialsFile)
 
 	creds, err := bitwarden.LoadCredentials(credsPath, os.Getenv)
@@ -144,9 +129,7 @@ func (a *App) pullBitwarden(
 		return ExitFailure
 	}
 
-	client := &bitwarden.Client{Binary: binary, Logger: a.logger}
-
-	item, err := client.Read(ctx, creds, itemName)
+	item, err := a.readVaultItem(ctx, opts.dir, creds, itemName)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 

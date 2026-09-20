@@ -120,12 +120,10 @@ func bwAsset(goos string) (bwAssetPin, error) {
 	}, nil
 }
 
-// WithBitwardenPin replaces the release pin for this App and returns it for
-// chaining. Only a test build calls it: every vault command hashes the bw it
-// resolves, and a suite's fake bw is a symlink to its own test binary, which no
-// published release will ever hash to. source is the asset an install would
-// fetch, so a case meaning to reach the installer can point it at something
-// that fails loudly rather than downloading the real CLI.
+// WithBitwardenPin replaces the release pin for this App. Only a test build
+// calls it: the resolver hashes the copy it keeps for itself, and a suite
+// stages that copy as a symlink to its own test binary. source is the asset an
+// install would fetch, so a case can point it somewhere that fails loudly.
 func (a *App) WithBitwardenPin(source, binarySum string) *App {
 	pin := bwAssetPin{url: source, binarySum: binarySum}
 	a.bwPin = func(string) (bwAssetPin, error) { return pin, nil }

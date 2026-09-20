@@ -40,8 +40,11 @@ func (a *App) cmdSecrets(ctx context.Context, args []string) int {
                recovery path, and the ls key id column is the only diagnostic
                for which generation a stuck row belongs to.
   install-bw   Download the pinned Bitwarden CLI, check its sha256, and install
-               it at ~/.local/bin/bw. --bin-dir installs somewhere else,
-               --force replaces a binary that is already there.
+               it at ~/.local/bin/bw, on your PATH. --bin-dir installs somewhere
+               else, --force replaces a binary that is already there. The vault
+               commands do not need this: they use the bw the host has when it
+               is not older than the pin, and otherwise install the pinned
+               release into a directory of their own, off PATH.
   auth         Write the Bitwarden credentials file when it is missing,
                prompting for the item name and the API credentials and taking
                chezmoi's values as the defaults. When the file already exists,
