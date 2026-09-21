@@ -3,7 +3,6 @@ package a2a_test
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -376,20 +375,29 @@ func TestSendMessageKeepsAProposalWithItsPeer(t *testing.T) {
 func TestSendMessageDetachesTheTurnFromTheRequest(t *testing.T) {
 	t.Parallel()
 
-	recorder := &recordingBridge{}
+	recorder := newRecordingBridge()
 	service := a2a.NewService(nil, nil, nil, recorder)
 
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	if _, err := service.SendMessage(ctx, &a2av1.SendMessageRequest{ContextId: contextOne, Text: msgHello}); err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
+	sent := make(chan struct{})
 
+	go func() {
+		defer close(sent)
+
+		_, _ = service.SendMessage(ctx, &a2av1.SendMessageRequest{ContextId: contextOne, Text: msgHello})
+	}()
+
+	<-recorder.captured
 	cancel()
+	close(recorder.release)
 
 	if err := recorder.TurnErr(t); err != nil {
 		t.Fatalf("turn context ended with %v once the request was canceled, want it still live", err)
 	}
+
+	<-sent
 }
 
 // TestSendMessageExpiresAnUnansweredProposal proves the expiry path still runs
@@ -416,24 +424,43 @@ func TestSendMessageExpiresAnUnansweredProposal(t *testing.T) {
 	})
 }
 
-// recordingBridge is a BridgeHandler that keeps hold of the context the service
-// handed it and completes the turn at once, so a test can read that context's
-// state after the request has returned.
+// recordingBridge is a BridgeHandler that holds the turn open until the test
+// releases it, then reads the turn context. Holding it open matters: the
+// service cancels the detached context as soon as the turn reports itself over,
+// so a reading taken after that says nothing about the request.
 type recordingBridge struct {
-	// turnErr closes over the received context rather than storing it, which is
-	// what keeps a context out of a struct field (containedctx) while still
-	// letting the assertion read it later.
-	turnErr func() error
+	// captured closes once Handle holds the turn context, so the test cancels the
+	// request against a turn that is already running.
+	captured chan struct{}
 
-	// mu guards turnErr, which Handle writes on the worker goroutine.
-	mu sync.Mutex
+	// release lets the turn finish, and the test closes it only after canceling
+	// the request, which is what makes the reading below ordered rather than raced.
+	release chan struct{}
+
+	// recorded closes once err holds the reading, publishing it to the test.
+	recorded chan struct{}
+
+	// err is the turn context's state, read on the worker goroutine.
+	err error
 }
 
-// Handle records the turn's context and releases the waiting handler.
+// newRecordingBridge builds the handshake channels the turn and the test use.
+func newRecordingBridge() *recordingBridge {
+	return &recordingBridge{
+		captured: make(chan struct{}),
+		release:  make(chan struct{}),
+		recorded: make(chan struct{}),
+	}
+}
+
+// Handle waits out the request's cancellation, records how the turn's context
+// took it, then completes the turn.
 func (b *recordingBridge) Handle(ctx context.Context, inbound *bridge.Inbound) {
-	b.mu.Lock()
-	b.turnErr = ctx.Err
-	b.mu.Unlock()
+	close(b.captured)
+	<-b.release
+
+	b.err = ctx.Err()
+	close(b.recorded)
 
 	if completer, ok := inbound.Out.(bridge.TurnCompleter); ok {
 		completer.Done()
@@ -445,12 +472,12 @@ func (b *recordingBridge) Handle(ctx context.Context, inbound *bridge.Inbound) {
 func (b *recordingBridge) TurnErr(t *testing.T) error {
 	t.Helper()
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.turnErr == nil {
+	select {
+	case <-b.recorded:
+		return b.err
+	case <-time.After(turnDeadline):
 		t.Fatal("the service never handed a turn to the bridge")
-	}
 
-	return b.turnErr()
+		return nil
+	}
 }

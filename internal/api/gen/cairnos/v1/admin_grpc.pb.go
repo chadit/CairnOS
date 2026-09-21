@@ -23,9 +23,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AdminService_Health_FullMethodName       = "/cairnos.v1.AdminService/Health"
-	AdminService_ListRunners_FullMethodName  = "/cairnos.v1.AdminService/ListRunners"
-	AdminService_ResetBreaker_FullMethodName = "/cairnos.v1.AdminService/ResetBreaker"
+	AdminService_Health_FullMethodName         = "/cairnos.v1.AdminService/Health"
+	AdminService_ListRunners_FullMethodName    = "/cairnos.v1.AdminService/ListRunners"
+	AdminService_ResetBreaker_FullMethodName   = "/cairnos.v1.AdminService/ResetBreaker"
+	AdminService_RequestRestart_FullMethodName = "/cairnos.v1.AdminService/RequestRestart"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -40,6 +41,10 @@ type AdminServiceClient interface {
 	ListRunners(ctx context.Context, in *ListRunnersRequest, opts ...grpc.CallOption) (*ListRunnersResponse, error)
 	// ResetBreaker resets one runner's circuit breaker.
 	ResetBreaker(ctx context.Context, in *ResetBreakerRequest, opts ...grpc.CallOption) (*ResetBreakerResponse, error)
+	// RequestRestart puts the server into draining: no new scheduled fire is
+	// dispatched, in-flight runs finish, and the process then exits so the
+	// supervisor starts it again on the binary now on disk.
+	RequestRestart(ctx context.Context, in *RequestRestartRequest, opts ...grpc.CallOption) (*RequestRestartResponse, error)
 }
 
 type adminServiceClient struct {
@@ -80,6 +85,16 @@ func (c *adminServiceClient) ResetBreaker(ctx context.Context, in *ResetBreakerR
 	return out, nil
 }
 
+func (c *adminServiceClient) RequestRestart(ctx context.Context, in *RequestRestartRequest, opts ...grpc.CallOption) (*RequestRestartResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestRestartResponse)
+	err := c.cc.Invoke(ctx, AdminService_RequestRestart_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -92,6 +107,10 @@ type AdminServiceServer interface {
 	ListRunners(context.Context, *ListRunnersRequest) (*ListRunnersResponse, error)
 	// ResetBreaker resets one runner's circuit breaker.
 	ResetBreaker(context.Context, *ResetBreakerRequest) (*ResetBreakerResponse, error)
+	// RequestRestart puts the server into draining: no new scheduled fire is
+	// dispatched, in-flight runs finish, and the process then exits so the
+	// supervisor starts it again on the binary now on disk.
+	RequestRestart(context.Context, *RequestRestartRequest) (*RequestRestartResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -110,6 +129,9 @@ func (UnimplementedAdminServiceServer) ListRunners(context.Context, *ListRunners
 }
 func (UnimplementedAdminServiceServer) ResetBreaker(context.Context, *ResetBreakerRequest) (*ResetBreakerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetBreaker not implemented")
+}
+func (UnimplementedAdminServiceServer) RequestRestart(context.Context, *RequestRestartRequest) (*RequestRestartResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestRestart not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -186,6 +208,24 @@ func _AdminService_ResetBreaker_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_RequestRestart_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestRestartRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).RequestRestart(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_RequestRestart_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).RequestRestart(ctx, req.(*RequestRestartRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -204,6 +244,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetBreaker",
 			Handler:    _AdminService_ResetBreaker_Handler,
+		},
+		{
+			MethodName: "RequestRestart",
+			Handler:    _AdminService_RequestRestart_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

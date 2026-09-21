@@ -94,7 +94,7 @@ func (a *App) cmdMsgSend(ctx context.Context, args []string) int {
 
 	client := cairnosv1.NewMessagingServiceClient(conn)
 
-	resp, err := client.SendMessage(chatContext(ctx, opts.token), &cairnosv1.MessagingServiceSendMessageRequest{
+	resp, err := client.SendMessage(bearerContext(ctx, opts.token), &cairnosv1.MessagingServiceSendMessageRequest{
 		Identity: opts.identity,
 		To:       opts.target,
 		Text:     opts.text,
@@ -225,7 +225,7 @@ func (a *App) cmdMsgList(ctx context.Context, args []string) int {
 	defer a.closeConn(conn)
 
 	resp, err := cairnosv1.NewMessagingServiceClient(conn).
-		ListIdentities(chatContext(ctx, *token), &cairnosv1.ListIdentitiesRequest{})
+		ListIdentities(bearerContext(ctx, *token), &cairnosv1.ListIdentitiesRequest{})
 	if err != nil {
 		a.printErrf("msg list: %v\n", err)
 

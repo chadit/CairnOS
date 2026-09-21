@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
@@ -33,10 +32,6 @@ const (
 	// validateTimeout bounds the Validate round trip, which carries no caller
 	// context by the runner.Validate contract.
 	validateTimeout = 10 * time.Second
-
-	// closeGrace is how long Close waits after SIGTERM before escalating to
-	// SIGKILL on the process group.
-	closeGrace = 3 * time.Second
 
 	// socketFileName is the socket's name inside the per-plugin temp dir.
 	socketFileName = "plugin.sock"
@@ -70,6 +65,7 @@ type Plugin struct {
 	exited    chan struct{}
 	name      string
 	socketDir string
+	tree      processTree
 }
 
 // New spawns the plugin process, connects over its private unix socket, and
@@ -99,9 +95,6 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 	// The plugin's stderr shares the host's, so crash output lands in the
 	// operator's log instead of vanishing with the child.
 	cmd.Stderr = os.Stderr
-	// Setpgid gives the plugin its own process group, so Close can take down
-	// the whole tree, including children the plugin spawned, with one signal.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	plug := &Plugin{
 		name:      cfg.Name,
@@ -109,6 +102,8 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 		cmd:       cmd,
 		exited:    make(chan struct{}),
 	}
+
+	plug.configureProcessTree()
 
 	if err := cmd.Start(); err != nil {
 		_ = os.RemoveAll(socketDir)
@@ -123,6 +118,12 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 
 		close(plug.exited)
 	}()
+
+	if err := plug.adoptProcessTree(); err != nil {
+		_ = plug.Close()
+
+		return nil, err
+	}
 
 	if err := plug.connect(ctx, socketPath); err != nil {
 		_ = plug.Close()
@@ -158,10 +159,10 @@ func pluginEnv(socketPath string, passthrough []string) []string {
 	return env
 }
 
-// Close shuts the plugin down: it closes the connection, terminates the
-// process group (SIGTERM, then SIGKILL after a grace period), and removes
-// the socket directory. The registry calls it once at engine stop; it is
-// also safe after a crash, when the process is already gone.
+// Close shuts the plugin down: it closes the connection, takes the plugin's
+// whole process tree down, and removes the socket directory. The registry
+// calls it once at engine stop; it is also safe after a crash, when the
+// process is already gone.
 func (p *Plugin) Close() error {
 	var errs []error
 
@@ -467,44 +468,5 @@ func (p *Plugin) transportError(ctx context.Context, cause error) *runner.Error 
 		Code:    p.code("plugin_down"),
 		Message: "plugin process is dead or unresponsive: " + cause.Error(),
 		Cause:   cause,
-	}
-}
-
-// stopProcess terminates the plugin's process group and waits for the child
-// to be reaped. SIGTERM first for a graceful drain, SIGKILL after the grace
-// period; SIGKILL cannot be caught, so the final wait always returns.
-func (p *Plugin) stopProcess() error {
-	select {
-	case <-p.exited:
-		return nil
-	default:
-	}
-
-	pid := p.cmd.Process.Pid
-
-	// The negative pid addresses the whole process group created by Setpgid,
-	// so children the plugin spawned die with it.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			<-p.exited
-
-			return nil
-		}
-
-		return fmt.Errorf("terminate plugin process group: %w", err)
-	}
-
-	timer := time.NewTimer(closeGrace)
-	defer timer.Stop()
-
-	select {
-	case <-p.exited:
-		return nil
-	case <-timer.C:
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-
-		<-p.exited
-
-		return nil
 	}
 }

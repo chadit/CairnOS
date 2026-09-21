@@ -204,6 +204,16 @@ func (m *Manager) Cancel(ctx context.Context, runID string) bool {
 	return true
 }
 
+// InFlight counts the runs this process is executing right now, whatever
+// started them: the API, a schedule, a webhook, or chat. The drain watcher
+// polls it to decide when the process can exit without cutting a run short.
+func (m *Manager) InFlight() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.cancels)
+}
+
 // Shutdown cancels every active run so streams drain and the engine
 // finalizes each record as canceled before the process exits.
 func (m *Manager) Shutdown() {

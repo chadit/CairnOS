@@ -93,7 +93,7 @@ func TestPlanSetupSystemdUserWritesUnitEnvAndLinger(t *testing.T) {
 	for _, want := range []string{
 		`ExecStart="` + testBinary + `" serve --dir "/home/operator/.cairnos"`,
 		"EnvironmentFile=-/home/operator/.cairnos/env",
-		"Restart=on-failure",
+		"Restart=always",
 	} {
 		if !strings.Contains(unit.Content, want) {
 			t.Errorf("unit missing %q:\n%s", want, unit.Content)
@@ -164,6 +164,53 @@ func TestPlanSetupSystemdSystemCreatesAccountOnlyWhenMissing(t *testing.T) {
 		if command.Argv[0] == "useradd" {
 			t.Error("existing account must not be re-created")
 		}
+	}
+}
+
+// TestServeUnitsRestartAlwaysSoADrainedExitComesBack pins the directive a
+// drain-then-restart update depends on: `cairnos update` asks the service to
+// finish its runs and exit 0, and on-failure would leave the host stopped.
+func TestServeUnitsRestartAlwaysSoADrainedExitComesBack(t *testing.T) {
+	t.Parallel()
+
+	root := linuxHost()
+	root.EUID = 0
+
+	cases := []struct {
+		host     *service.Host
+		name     string
+		unitPath string
+		opts     service.Options
+	}{
+		{
+			name: "user", host: linuxHost(), opts: userOptions(),
+			unitPath: "/home/operator/.config/systemd/user/cairnos.service",
+		},
+		{
+			name: "system", host: root,
+			opts:     service.Options{System: true, Home: service.SystemHome, Binary: testBinary},
+			unitPath: "/etc/systemd/system/cairnos.service",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			plan, err := service.PlanSetup(testCase.host, testCase.opts)
+			if err != nil {
+				t.Fatalf("PlanSetup: %v", err)
+			}
+
+			unit := planFile(t, &plan, testCase.unitPath)
+			if !strings.Contains(unit.Content, "Restart=always") {
+				t.Errorf("serve unit must restart on a clean exit:\n%s", unit.Content)
+			}
+
+			if !strings.Contains(unit.Content, "RestartSec=2") {
+				t.Errorf("serve unit must keep its restart delay:\n%s", unit.Content)
+			}
+		})
 	}
 }
 

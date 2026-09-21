@@ -22,3 +22,7 @@ var (
 	// so the run loop never had to infer death from a broken stream.
 	ErrProcessExited = errors.New("plugin process exited before result")
 )
+
+// errNoProcessGroup reports a stop attempted before the child's process group
+// was recorded. Signaling group 0 would reach the host's own processes.
+var errNoProcessGroup = errors.New("plugin process group is unknown")

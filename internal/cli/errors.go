@@ -50,6 +50,67 @@ var (
 	// minted token is only useful if the interceptor verifies it.
 	errOAuthNeedsAuth = errors.New("oauth requires auth")
 
+	// errNoSourceCheckout reports that `cairnos update` found nothing to install
+	// and nothing to build: no release carries an asset for this platform, the
+	// directory around the running binary carries no go.mod and .git, and no
+	// --source named one that does.
+	errNoSourceCheckout = errors.New("no CairnOS release for this platform and no " +
+		"checkout to update; publish a release or pass --source <dir>")
+
+	// errNoBuildInfo reports a binary with no embedded build information, which
+	// leaves the update no module path to derive the release repository from.
+	errNoBuildInfo = errors.New("this binary carries no build information")
+
+	// errNotAGitHubModule reports a module path the release lookup cannot read
+	// an owner and repository out of, such as a fork hosted elsewhere.
+	errNotAGitHubModule = errors.New("the module path is not a github.com repository")
+
+	// errReleaseAPI reports a release API call or an asset download that
+	// answered with something other than a result or a plain "no release".
+	errReleaseAPI = errors.New("the GitHub release API answered unexpectedly")
+
+	// errNoTagRef reports a release whose tag the API does not resolve, which
+	// leaves the update no commit to compare the running build against.
+	errNoTagRef = errors.New("the release tag resolves to no commit")
+
+	// errNoChecksumsAsset reports a release that publishes this platform's
+	// binary with no checksums beside it. That is a broken release rather than
+	// a missing one, so the update stops instead of quietly building the clone.
+	errNoChecksumsAsset = errors.New("the release publishes no checksums to verify its assets against")
+
+	// errNoChecksumLine reports a checksums.txt that lists no digest for this
+	// platform's asset, so the download has nothing to be checked against.
+	errNoChecksumLine = errors.New("the release checksums list no digest for")
+
+	// errAssetDigest reports a downloaded asset whose sha256 is not the one the
+	// release publishes. Nothing is installed.
+	errAssetDigest = errors.New("the downloaded release asset does not match its published sha256")
+
+	// errAssetStamp reports a release asset whose own vcs stamp is absent,
+	// dirty, or a commit other than the one its tag names, which means the
+	// artifact and the tag are not the same code.
+	errAssetStamp = errors.New("the release asset was not built from the tagged commit")
+
+	// errNoGoToolchain reports a host with no go on PATH and none at the
+	// tarball's install prefix, where the update has nothing to build with.
+	errNoGoToolchain = errors.New("no go toolchain on PATH or at " + goFallbackPath)
+
+	// errGitCountShape reports output from `git rev-list --left-right --count`
+	// that is not the two numbers the fast-forward decision reads.
+	errGitCountShape = errors.New("unexpected git commit-count output")
+
+	// errLinkNotASymlink reports a regular file where the ~/.local/bin entry
+	// belongs. It may be an install the update never placed, so it stays.
+	errLinkNotASymlink = errors.New("refusing to replace a regular file with a symlink")
+
+	// errServiceSlowStart reports a unit that never came back on a new main
+	// process within the restart window.
+	errServiceSlowStart = errors.New("the service did not come back in time")
+
+	// errServiceStale reports a service that restarted onto a build other than
+	// the one the update produced.
+	errServiceStale = errors.New("the service came back on the wrong build")
+
 	// errFlagValue reports a flag whose value cannot work. Catching it here beats
 	// finding out from a server that started on the wrong port: --port 0 makes
 	// llama-server bind an ephemeral port while every probe still targets :0, so

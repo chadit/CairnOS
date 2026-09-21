@@ -29,6 +29,16 @@ service AdminService {
       body: "*"
     };
   }
+
+  // RequestRestart puts the server into draining: no new scheduled fire is
+  // dispatched, in-flight runs finish, and the process then exits so the
+  // supervisor starts it again on the binary now on disk.
+  rpc RequestRestart(RequestRestartRequest) returns (RequestRestartResponse) {
+    option (google.api.http) = {
+      post: "/v1/admin/restart"
+      body: "*"
+    };
+  }
 }
 
 message HealthRequest {}
@@ -58,4 +68,20 @@ message ResetBreakerResponse {
 
   // state is the breaker position after the reset: CLOSED.
   string state = 2;
+}
+
+message RequestRestartRequest {
+  // max_wait_seconds bounds the drain. Zero takes the server's own ceiling,
+  // which is what an operator who has no opinion should send.
+  int64 max_wait_seconds = 1;
+}
+
+message RequestRestartResponse {
+  // in_flight is how many runs were still running when the request landed. Zero
+  // means the process exits right away.
+  int64 in_flight = 1;
+
+  // accepted is always true: a second request while already draining reports
+  // the current state rather than failing.
+  bool accepted = 2;
 }

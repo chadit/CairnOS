@@ -284,6 +284,39 @@
         ]
       }
     },
+    "/v1/admin/restart": {
+      "post": {
+        "summary": "RequestRestart puts the server into draining: no new scheduled fire is\ndispatched, in-flight runs finish, and the process then exits so the\nsupervisor starts it again on the binary now on disk.",
+        "operationId": "AdminService_RequestRestart",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RequestRestartResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RequestRestartRequest"
+            }
+          }
+        ],
+        "tags": [
+          "AdminService"
+        ]
+      }
+    },
     "/v1/auth/revoke": {
       "post": {
         "summary": "Revoke denylists one token by jti, or every live token minted from one\naccess key by key id. Requires the admin scope.",
@@ -2806,6 +2839,30 @@
       "properties": {
         "entry": {
           "$ref": "#/definitions/v1MemoryEntry"
+        }
+      }
+    },
+    "v1RequestRestartRequest": {
+      "type": "object",
+      "properties": {
+        "maxWaitSeconds": {
+          "type": "string",
+          "format": "int64",
+          "description": "max_wait_seconds bounds the drain. Zero takes the server's own ceiling,\nwhich is what an operator who has no opinion should send."
+        }
+      }
+    },
+    "v1RequestRestartResponse": {
+      "type": "object",
+      "properties": {
+        "inFlight": {
+          "type": "string",
+          "format": "int64",
+          "description": "in_flight is how many runs were still running when the request landed. Zero\nmeans the process exits right away."
+        },
+        "accepted": {
+          "type": "boolean",
+          "description": "accepted is always true: a second request while already draining reports\nthe current state rather than failing."
         }
       }
     },

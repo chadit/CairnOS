@@ -211,6 +211,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	defer a.closeRegistry(registry)
 
 	manager := api.NewManager(logger)
+	drain := api.NewDrain()
 
 	workflowsDir := filepath.Join(dir, workflowsDirName)
 
@@ -236,6 +237,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		registry:     registry,
 		breakers:     eng,
 		manager:      manager,
+		drain:        drain,
 		workflowsDir: workflowsDir,
 		logger:       logger,
 	})
@@ -340,6 +342,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	return a.serveAndDrain(ctx, cfg, stores, logger, &serveRuntime{
 		server:   server,
 		manager:  manager,
+		drain:    drain,
 		queue:    queue,
 		bridges:  bridges,
 		registry: registry,
@@ -356,6 +359,7 @@ type serveRuntime struct {
 	server   *api.Server
 	bridges  *bridgeRuntime
 	manager  *api.Manager
+	drain    *api.Drain
 	queue    scheduler.WorkQueue
 	registry *runner.Registry
 	tel      *telemetry.Telemetry
@@ -364,10 +368,16 @@ type serveRuntime struct {
 }
 
 // serveAndDrain starts the retention sweep, hive subscribe, and chat bridge
-// background loops, prints the ready banner, serves until ctx cancels, then
-// drains every loop and flushes telemetry, returning the exit code. Split out of
-// runServe so that composition root stays under the maintainability ceiling.
+// background loops, serves until ctx cancels, then drains every loop and
+// flushes telemetry. Split out of runServe so that composition root stays under
+// the maintainability ceiling. The local cancel is what a requested restart
+// pulls, so a drain stops every loop the way a SIGTERM would.
 func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *serveStores, logger *slog.Logger, deps *serveRuntime) int {
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	go watchDrain(ctx, deps.drain, deps.manager.InFlight, stop, logger)
+
 	bridgeDone := a.startBridges(ctx, logger, deps.bridges)
 	fanoutDone := StartFanout(ctx, deps.fanout)
 
@@ -381,6 +391,7 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 	code := a.serveUntilCanceled(ctx, deps.server, &serveSchedulerDeps{
 		scheds:  stores.scheds,
 		manager: deps.manager,
+		drain:   deps.drain,
 		pauses:  stores.db,
 		queue:   deps.queue,
 		sources: buildPollSources(deps.registry),
@@ -409,6 +420,7 @@ type serveAPIDeps struct {
 	registry     *runner.Registry
 	breakers     api.BreakerAdmin
 	manager      *api.Manager
+	drain        *api.Drain
 	logger       *slog.Logger
 	workflowsDir string
 }
@@ -429,6 +441,7 @@ func newServeAPIConfig(cfg *config.Config, stores *serveStores, deps *serveAPIDe
 		Registry:     deps.registry,
 		Breakers:     deps.breakers,
 		Manager:      deps.manager,
+		Drain:        deps.drain,
 		Logger:       deps.logger,
 		BindPolicy: api.BindPolicy{
 			AuthEnabled:               cfg.Auth.Enabled,
@@ -711,7 +724,7 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 
 	daemon := scheduler.New(scheduler.Config{
 		Store:       sched.scheds,
-		Runner:      pollRunner,
+		Runner:      &drainGateRunner{inner: pollRunner, drain: sched.drain, logger: a.logger},
 		Coordinator: coord,
 		Logger:      a.logger,
 	})
@@ -760,6 +773,7 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 type serveSchedulerDeps struct {
 	scheds  scheduleStore
 	manager *api.Manager
+	drain   *api.Drain
 	pauses  api.SchedulePauseChecker
 	queue   scheduler.WorkQueue
 	sources poll.Sources

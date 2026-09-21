@@ -98,7 +98,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		// stamped scopes, since the method table grants one scope per method
 		// (.agents/spec/14-open-decisions.md, D9).
 		return auth.ScopeChatSession, false
-	case "/cairnos.v1.AdminService/ResetBreaker",
+	case "/cairnos.v1.AdminService/ResetBreaker", "/cairnos.v1.AdminService/RequestRestart",
 		"/cairnos.v1.SuggestionService/ApproveSuggestion", "/cairnos.v1.SuggestionService/RejectSuggestion",
 		"/cairnos.v1.LoginService/Revoke",
 		"/cairnos.v1.GovernanceService/GetWorkflowBudgetState", "/cairnos.v1.GovernanceService/PauseWorkflow",

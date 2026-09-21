@@ -51,13 +51,13 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 	if opts.searchSet {
 		// The one-shot stays on main's signal context: Ctrl-C should kill a
 		// non-interactive query the normal way, unlike the REPL below.
-		return a.runChatSearch(chatContext(ctx, opts.token), client, &opts)
+		return a.runChatSearch(bearerContext(ctx, opts.token), client, &opts)
 	}
 
 	// WithoutCancel detaches the conversation from main's NotifyContext:
 	// SIGINT must interrupt one turn, not the whole session, so the REPL's
 	// only exits are /quit, /exit, stdin EOF, and a scanner error.
-	callCtx := chatContext(context.WithoutCancel(ctx), opts.token)
+	callCtx := bearerContext(context.WithoutCancel(ctx), opts.token)
 
 	sessionID, personality, err := resolveSession(callCtx, client, &opts)
 	if err != nil {
@@ -188,9 +188,9 @@ func resolveSession(ctx context.Context, client chatClient, opts *chatOptions) (
 	return resp.GetSession().GetId(), resp.GetSession().GetPersonality(), nil
 }
 
-// chatContext attaches the bearer token to the outgoing call metadata when one
+// bearerContext attaches the bearer token to the outgoing call metadata when one
 // was given, so the client works against a serve running with auth.
-func chatContext(ctx context.Context, token string) context.Context {
+func bearerContext(ctx context.Context, token string) context.Context {
 	if token == "" {
 		return ctx
 	}

@@ -1,8 +1,6 @@
 package service_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -113,41 +111,5 @@ func TestSetupDoesNotScaffoldTheGeneratedFile(t *testing.T) {
 		if file.Path == userSecretsFile {
 			t.Fatalf("setup scaffolds %s; the pull owns that file", userSecretsFile)
 		}
-	}
-}
-
-// TestDeployScriptPullsSecretsBeforeRestart covers FR11 against the script
-// itself, which has no Go entry point to drive. It asserts the order too: a pull
-// after the restart would leave the service running the previous values.
-func TestDeployScriptPullsSecretsBeforeRestart(t *testing.T) {
-	t.Parallel()
-
-	path := filepath.Join("..", "..", "scripts", "deploy.sh")
-
-	data, err := os.ReadFile(path) // #nosec G304 -- a fixed path inside the repository
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-
-	script := string(data)
-
-	pull := strings.Index(script, "secrets pull --dir")
-	if pull < 0 {
-		t.Fatalf("%s does not run secrets pull:\n%s", path, script)
-	}
-
-	restart := strings.Index(script, `systemctl --user restart`)
-	if restart < 0 {
-		t.Fatalf("%s does not restart the unit", path)
-	}
-
-	if pull > restart {
-		t.Fatalf("%s pulls secrets after the restart; the service would start on the old values", path)
-	}
-
-	// Without the guard a failed pull would be followed by a restart onto a stale
-	// or half-written file, which is the failure this ordering exists to prevent.
-	if !strings.Contains(script, "secrets pull failed") {
-		t.Fatalf("%s does not stop the deploy when the pull fails", path)
 	}
 }

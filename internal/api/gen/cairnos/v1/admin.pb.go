@@ -329,6 +329,108 @@ func (x *ResetBreakerResponse) GetState() string {
 	return ""
 }
 
+type RequestRestartRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// max_wait_seconds bounds the drain. Zero takes the server's own ceiling,
+	// which is what an operator who has no opinion should send.
+	MaxWaitSeconds int64 `protobuf:"varint,1,opt,name=max_wait_seconds,json=maxWaitSeconds,proto3" json:"max_wait_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RequestRestartRequest) Reset() {
+	*x = RequestRestartRequest{}
+	mi := &file_cairnos_v1_admin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestRestartRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestRestartRequest) ProtoMessage() {}
+
+func (x *RequestRestartRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_admin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestRestartRequest.ProtoReflect.Descriptor instead.
+func (*RequestRestartRequest) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_admin_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RequestRestartRequest) GetMaxWaitSeconds() int64 {
+	if x != nil {
+		return x.MaxWaitSeconds
+	}
+	return 0
+}
+
+type RequestRestartResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// in_flight is how many runs were still running when the request landed. Zero
+	// means the process exits right away.
+	InFlight int64 `protobuf:"varint,1,opt,name=in_flight,json=inFlight,proto3" json:"in_flight,omitempty"`
+	// accepted is always true: a second request while already draining reports
+	// the current state rather than failing.
+	Accepted      bool `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestRestartResponse) Reset() {
+	*x = RequestRestartResponse{}
+	mi := &file_cairnos_v1_admin_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestRestartResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestRestartResponse) ProtoMessage() {}
+
+func (x *RequestRestartResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cairnos_v1_admin_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestRestartResponse.ProtoReflect.Descriptor instead.
+func (*RequestRestartResponse) Descriptor() ([]byte, []int) {
+	return file_cairnos_v1_admin_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RequestRestartResponse) GetInFlight() int64 {
+	if x != nil {
+		return x.InFlight
+	}
+	return 0
+}
+
+func (x *RequestRestartResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
 var File_cairnos_v1_admin_proto protoreflect.FileDescriptor
 
 const file_cairnos_v1_admin_proto_rawDesc = "" +
@@ -348,12 +450,18 @@ const file_cairnos_v1_admin_proto_rawDesc = "" +
 	"\x06runner\x18\x01 \x01(\tR\x06runner\"D\n" +
 	"\x14ResetBreakerResponse\x12\x16\n" +
 	"\x06runner\x18\x01 \x01(\tR\x06runner\x12\x14\n" +
-	"\x05state\x18\x02 \x01(\tR\x05state2\xcb\x02\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\"A\n" +
+	"\x15RequestRestartRequest\x12(\n" +
+	"\x10max_wait_seconds\x18\x01 \x01(\x03R\x0emaxWaitSeconds\"Q\n" +
+	"\x16RequestRestartResponse\x12\x1b\n" +
+	"\tin_flight\x18\x01 \x01(\x03R\binFlight\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\bR\baccepted2\xc2\x03\n" +
 	"\fAdminService\x12S\n" +
 	"\x06Health\x12\x19.cairnos.v1.HealthRequest\x1a\x1a.cairnos.v1.HealthResponse\"\x12\x82\xd3\xe4\x93\x02\f\x12\n" +
 	"/v1/health\x12c\n" +
 	"\vListRunners\x12\x1e.cairnos.v1.ListRunnersRequest\x1a\x1f.cairnos.v1.ListRunnersResponse\"\x13\x82\xd3\xe4\x93\x02\r\x12\v/v1/runners\x12\x80\x01\n" +
-	"\fResetBreaker\x12\x1f.cairnos.v1.ResetBreakerRequest\x1a .cairnos.v1.ResetBreakerResponse\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/runners/{runner}/breaker/resetBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
+	"\fResetBreaker\x12\x1f.cairnos.v1.ResetBreakerRequest\x1a .cairnos.v1.ResetBreakerResponse\"-\x82\xd3\xe4\x93\x02':\x01*\"\"/v1/runners/{runner}/breaker/reset\x12u\n" +
+	"\x0eRequestRestart\x12!.cairnos.v1.RequestRestartRequest\x1a\".cairnos.v1.RequestRestartResponse\"\x1c\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/v1/admin/restartBAZ?github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairnosv1b\x06proto3"
 
 var (
 	file_cairnos_v1_admin_proto_rawDescOnce sync.Once
@@ -367,26 +475,30 @@ func file_cairnos_v1_admin_proto_rawDescGZIP() []byte {
 	return file_cairnos_v1_admin_proto_rawDescData
 }
 
-var file_cairnos_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_cairnos_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_cairnos_v1_admin_proto_goTypes = []any{
-	(*HealthRequest)(nil),        // 0: cairnos.v1.HealthRequest
-	(*HealthResponse)(nil),       // 1: cairnos.v1.HealthResponse
-	(*ListRunnersRequest)(nil),   // 2: cairnos.v1.ListRunnersRequest
-	(*RunnerInfo)(nil),           // 3: cairnos.v1.RunnerInfo
-	(*ListRunnersResponse)(nil),  // 4: cairnos.v1.ListRunnersResponse
-	(*ResetBreakerRequest)(nil),  // 5: cairnos.v1.ResetBreakerRequest
-	(*ResetBreakerResponse)(nil), // 6: cairnos.v1.ResetBreakerResponse
+	(*HealthRequest)(nil),          // 0: cairnos.v1.HealthRequest
+	(*HealthResponse)(nil),         // 1: cairnos.v1.HealthResponse
+	(*ListRunnersRequest)(nil),     // 2: cairnos.v1.ListRunnersRequest
+	(*RunnerInfo)(nil),             // 3: cairnos.v1.RunnerInfo
+	(*ListRunnersResponse)(nil),    // 4: cairnos.v1.ListRunnersResponse
+	(*ResetBreakerRequest)(nil),    // 5: cairnos.v1.ResetBreakerRequest
+	(*ResetBreakerResponse)(nil),   // 6: cairnos.v1.ResetBreakerResponse
+	(*RequestRestartRequest)(nil),  // 7: cairnos.v1.RequestRestartRequest
+	(*RequestRestartResponse)(nil), // 8: cairnos.v1.RequestRestartResponse
 }
 var file_cairnos_v1_admin_proto_depIdxs = []int32{
 	3, // 0: cairnos.v1.ListRunnersResponse.runners:type_name -> cairnos.v1.RunnerInfo
 	0, // 1: cairnos.v1.AdminService.Health:input_type -> cairnos.v1.HealthRequest
 	2, // 2: cairnos.v1.AdminService.ListRunners:input_type -> cairnos.v1.ListRunnersRequest
 	5, // 3: cairnos.v1.AdminService.ResetBreaker:input_type -> cairnos.v1.ResetBreakerRequest
-	1, // 4: cairnos.v1.AdminService.Health:output_type -> cairnos.v1.HealthResponse
-	4, // 5: cairnos.v1.AdminService.ListRunners:output_type -> cairnos.v1.ListRunnersResponse
-	6, // 6: cairnos.v1.AdminService.ResetBreaker:output_type -> cairnos.v1.ResetBreakerResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	7, // 4: cairnos.v1.AdminService.RequestRestart:input_type -> cairnos.v1.RequestRestartRequest
+	1, // 5: cairnos.v1.AdminService.Health:output_type -> cairnos.v1.HealthResponse
+	4, // 6: cairnos.v1.AdminService.ListRunners:output_type -> cairnos.v1.ListRunnersResponse
+	6, // 7: cairnos.v1.AdminService.ResetBreaker:output_type -> cairnos.v1.ResetBreakerResponse
+	8, // 8: cairnos.v1.AdminService.RequestRestart:output_type -> cairnos.v1.RequestRestartResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -403,7 +515,7 @@ func file_cairnos_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cairnos_v1_admin_proto_rawDesc), len(file_cairnos_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

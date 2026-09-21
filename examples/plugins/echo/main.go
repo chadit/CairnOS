@@ -39,7 +39,6 @@ import (
 	"maps"
 	"os"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/chadit/CairnOS/pkg/plugin"
@@ -80,9 +79,11 @@ func (echoRunner) ExecuteStream(ctx context.Context, task *runner.Task, out chan
 	start := time.Now()
 
 	if shouldCrash(task) {
-		// SIGKILL to self simulates a hard plugin crash mid-task; the host's
-		// crash-isolation contract turns it into a transient plugin_down.
-		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		// An uncatchable kill of this process simulates a hard plugin crash
+		// mid-task; the host turns it into a transient plugin_down.
+		if self, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = self.Kill()
+		}
 	}
 
 	if err := configuredFailure(task); err != nil {

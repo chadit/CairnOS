@@ -10,18 +10,22 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, cairnos]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # The runner host has a Go toolchain, but not on the runner account's
+      # PATH. setup-go puts a known version there and reads the same go.mod
+      # the rest of CI does.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: go build ./...
       - run: go vet ./...
-      # Linux is the only platform this pipeline runs. These two compiles catch
-      # a macOS or Windows build break for the price of two builds, without
-      # paying the 10x/2x runner multipliers on every push. They prove the code
-      # compiles there, never that it behaves there.
+      # Linux is the only platform this job runs on. These two compiles catch a
+      # macOS or Windows build break for the price of two builds, no extra
+      # runner needed. They prove the code compiles there, never that it
+      # behaves there.
       - name: cross-compile darwin and windows
         run: |
           GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/cairnos
@@ -33,9 +37,9 @@ jobs:
 
   # Scoped deliberately to the plugin packages. The plugin subsystem is the one
   # part of CairnOS whose contract cannot be verified by cross-compilation: a
-  # process-tree kill either works on real Windows or it does not. Everything
-  # else stays on ubuntu-latest, so this job stays small enough that the 2x
-  # Windows multiplier costs a few minutes per run. Do not widen it.
+  # process-tree kill either works on real Windows or it does not. This is the
+  # only job on GitHub-hosted runners, and the 2x Windows multiplier is why it
+  # stays this small. Do not widen it.
   windows-plugin:
     runs-on: windows-latest
     steps:
@@ -55,7 +59,8 @@ jobs:
   # is worth checking is that the bundle still lints, tests, and builds from
   # web/src, which is the only coverage this tree has for the front end.
   web:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, cairnos]
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web
@@ -72,9 +77,13 @@ jobs:
       - run: npm run build
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, cairnos]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # The runner host has a Go toolchain, but not on the runner account's
+      # PATH. setup-go puts a known version there and reads the same go.mod
+      # the rest of CI does.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

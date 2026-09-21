@@ -94,6 +94,8 @@ type fixture struct {
 	admin        cairnosv1.AdminServiceClient
 	governance   cairnosv1.GovernanceServiceClient
 	breakers     *reliability.BreakerSet
+	manager      *api.Manager
+	drain        *api.Drain
 	httpBase     string
 }
 
@@ -170,6 +172,7 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
+	drain := api.NewDrain()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -193,6 +196,7 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 		Registry:     testRegistry(t),
 		Breakers:     &breakerAdmin{set: breakers},
 		Manager:      manager,
+		Drain:        drain,
 		Extensions:   extensions,
 		Logger:       logger,
 		// Security middleware on for the M1/M4 gateway tests: an explicit CORS
@@ -235,6 +239,8 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 		admin:        cairnosv1.NewAdminServiceClient(conn),
 		governance:   cairnosv1.NewGovernanceServiceClient(conn),
 		breakers:     breakers,
+		manager:      manager,
+		drain:        drain,
 		httpBase:     "http://" + server.HTTPAddr(),
 	}
 }

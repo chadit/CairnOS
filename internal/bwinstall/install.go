@@ -85,14 +85,6 @@ const (
 	dirPerm    = 0o750
 )
 
-// writableByOthers are the mode bits that would let another account replace the
-// installed binary between one run and the next, and writableByWorld the half of
-// them no ownership check can ever excuse.
-const (
-	writableByOthers = 0o022
-	writableByWorld  = 0o002
-)
-
 // Options is one install.
 type Options struct {
 	Client *http.Client
@@ -329,11 +321,9 @@ func EntryDigest(source io.Reader) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-// prepareDir creates the install directory and refuses one another account can
-// write, since swapping the binary between runs is what verifying it at install
-// time cannot catch. A directory in the owner's own private group is the
-// exception: Debian and Fedora ship ~/.local/bin that way, so the group bit
-// adds no second writer. World-writable stays refused.
+// prepareDir creates the install directory and hands it to the platform's own
+// judgement of whether another account could swap the binary between runs,
+// which is what verifying it at install time cannot catch.
 func prepareDir(dir string) error {
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return cairnerr.Wrapf(err, CodeInstall, "create %s: %v", dir, err)
@@ -344,18 +334,7 @@ func prepareDir(dir string) error {
 		return cairnerr.Wrapf(err, CodeBinDir, "inspect %s: %v", dir, err)
 	}
 
-	mode := info.Mode().Perm()
-	if mode&writableByOthers == 0 {
-		return nil
-	}
-
-	if mode&writableByWorld == 0 && ownedByPrivateGroup(info) {
-		return nil
-	}
-
-	return cairnerr.Newf(CodeBinDir,
-		"%s is mode %04o, which lets another account replace the binary; "+
-			"tighten it to 0755 or install elsewhere with --bin-dir", dir, mode)
+	return dirTakeoverRisk(dir, info)
 }
 
 // ProbeVersion asks a bw binary what it is. The child gets a minimal

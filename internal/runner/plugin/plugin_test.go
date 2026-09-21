@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
-	"syscall"
 	"testing"
 	"time"
 
@@ -279,8 +278,8 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 
 	plug := newEchoPlugin(t)
 
-	// Learn the pid from a clean call first; the process group id equals the
-	// pid because New starts the child with Setpgid.
+	// Learn the pid from a clean call first, so the kill below has a process
+	// tree to address.
 	pid := pluginPID(t, plug)
 
 	// An unbuffered consumer is the synchronization point. The plugin streams
@@ -302,9 +301,7 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 	// forwarding the next chunk, mid-execute and ahead of the result.
 	<-out
 
-	if killErr := syscall.Kill(-pid, syscall.SIGKILL); killErr != nil {
-		t.Fatalf("kill plugin process group %d: %v", pid, killErr)
-	}
+	killProcessTree(t, pid)
 
 	outcome := <-done
 
@@ -348,11 +345,7 @@ func TestPluginCloseTerminatesProcessAndRemovesSocketDir(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 
-	// Close reaps the child before returning, so signal 0 must fail with
-	// ESRCH immediately; no polling needed.
-	if killErr := syscall.Kill(pid, 0); !errors.Is(killErr, syscall.ESRCH) {
-		t.Fatalf("plugin process %d still findable after Close (kill err = %v)", pid, killErr)
-	}
+	requireProcessGone(t, pid)
 
 	if _, statErr := os.Stat(socketDir); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Fatalf("socket dir %q still present after Close (stat err = %v)", socketDir, statErr)

@@ -153,9 +153,7 @@ is fine and the binary reading it is old, and it stays that way until the binary
 changes. The recovery is the deploy that should have come first:
 
 ```sh
-cd ~/src/cairnos              # the clone this host builds from
-git fetch && git merge --ff-only
-make deploy                   # rebuilds when the running build is behind, then restarts
+cairnos update                # fast-forward, rebuild, pull secrets, restart on change
 journalctl --user -u cairnos -n 50
 ```
 
@@ -163,24 +161,88 @@ The next fire loads the same file against the new binary and runs it. No run was
 queued while it was failing, so there is no backlog to drain and nothing to
 replay by hand.
 
+`cairnos update` does the whole sequence in the order that matters, and it has
+two ways to get a new binary.
+
+**It looks for a GitHub release first.** The latest release is asked for the
+asset matching this host's `GOOS` and `GOARCH`, that file and the release's
+`checksums.txt` are downloaded to a temporary directory, and the sha256 is
+checked before anything else touches the file. Then the binary is written over
+the running one and the rest of the sequence carries on from there. A release
+has to carry `cairnos_<goos>_<goarch>` (with `.exe` on Windows) for your
+platform plus `checksums.txt` in `sha256sum` format. No binary for your
+platform means there is nothing to install and the clone gets built. A binary
+with no `checksums.txt` beside it is a broken release, and the update stops
+there rather than quietly building the clone instead.
+
+Two things have to agree before a release binary is installed. The tag is
+resolved to the commit it points at, following an annotated tag through its own
+object, and the asset's embedded `vcs.revision` has to be exactly that commit.
+An asset with no stamp, a `+dirty` stamp, or a different commit is refused, so a
+release built from a scratch tree or a working copy with edits in it never lands
+on a host. When the commit the service already runs is the release's commit,
+nothing is downloaded and the secrets pull still runs, because a vault value can
+move without the code moving.
+
+The repository is private right now, so the lookup needs `GITHUB_TOKEN` or
+`GH_TOKEN` in the environment. Without one the API answers 404, which reads as
+"no release" rather than as a failure, and the update takes the other path.
+
+**Otherwise it builds the clone.** It finds the clone the running binary was
+built from (the binary lives at `<clone>/bin/cairnos`, so the clone is one
+directory up), fetches and fast-forwards it, and rebuilds. This is the fallback
+when no release fits, and it is the developer path. A clone that has diverged or
+carries local commits is left exactly as it is, and the update says so and
+builds what is checked out.
+
+Either way, the new build runs its own `secrets pull` and only then does the
+service restart. Secrets before the restart is the part worth keeping straight:
+the service reads both environment files once, at startup, so a pull after the
+restart would leave the new process on the old values until the next one.
+
+**The restart lets running jobs finish.** Instead of stopping the service under
+whatever it was doing, the update asks it to drain: the scheduler stops firing,
+the runs already going carry on to their end, and only then does the process
+exit and systemd start it on the new binary. A webhook that lands mid-drain
+still runs, and the update waits for it. The wait is bounded at 15 minutes, so
+one stuck run cannot hold a deploy open; past that the process exits with the
+run still going, the same as a plain restart would. `--restart-now` skips the
+drain and restarts immediately, which is what you want when the running build
+is the thing that is broken. An older service that predates the drain endpoint
+is restarted the old way, and the update says so.
+
+Three flags skip the release lookup and go straight to the clone: `--source
+<dir>` points at a different clone, `--no-fetch` builds what is already there,
+and `--no-release` skips the lookup while still fetching. `scripts/deploy.sh`
+and `make deploy` pass `--no-fetch`, so deploying a tree you are working in is
+never replaced by whatever the last tag published.
+
+On the way out it points `~/.local/bin/cairnos` at the build it just made, so a
+login shell runs the same binary the service does. It replaces a symlink aimed
+somewhere else, refuses to touch a regular file sitting in that spot, and warns
+when `~/.local/bin` is not on your PATH. `--no-link` skips the step.
+
 ### Telling whether a host is behind
 
-`scripts/deploy.sh --check` compares the build the service is running against
-the clone's HEAD. It reads the revision Go stamps into every binary, through
-`/proc`, so a file replaced on disk is not mistaken for the process in memory:
+`cairnos update --check` compares the build the service is running against what
+an update would put there: the commit the latest release's tag points at when
+the release path applies, and the clone's HEAD otherwise. It reads the revision
+Go stamps into every binary, through `/proc`, so a file replaced on disk is not
+mistaken for the process in memory:
 
 ```sh
-./scripts/deploy.sh --check
-I: running: 7929e3e8a1...
-I: wanted:  625fb2e4c9...
+cairnos update --check
+running: 7929e3e8a1...
+wanted:  625fb2e4c9...
 ```
 
-It exits 3 when the two differ, 0 when they match, and it pulls no secrets and
-restarts nothing, so it is safe on a host you only want to look at. `make deploy`
-prints the same two lines before it acts on them. There is no `cairnos version`
-subcommand: that stamped revision is how a running build is identified.
+It exits 3 when the two differ, 0 when they match, and it fetches nothing,
+builds nothing, pulls no secrets and restarts nothing, so it is safe on a host
+you only want to look at. A full `cairnos update` prints the same two revisions
+before it acts on them. There is no `cairnos version` subcommand: that stamped
+revision is how a running build is identified.
 
-The script drives a systemd user service. Under launchd, or for a `--system`
+The check reads a systemd user service. Under launchd, or for a `--system`
 unit, read the stamp out of the deployed file yourself and compare it to the
 clone:
 
@@ -209,7 +271,7 @@ is read fresh at each fire.
 `config.toml` and the environment files are read once, at startup, so a change to
 either needs a restart before the service sees it. Workflow files are read at
 every fire, so an edited action, runner or timeout is live on the next one. A new
-binary needs the restart that `make deploy` already does.
+binary needs the restart that `cairnos update` already does.
 
 ## Secrets from Bitwarden
 
@@ -369,7 +431,7 @@ in a deploy log. A mapped field that is missing fails the whole run and writes
 nothing, so the service never starts against a half-filled file. An item with no
 `CAIRNOS_` field and no mapping table fails the same way, naming the item it
 read. With no `[secrets.bitwarden]` block the command says so and exits 0, which
-is why `make deploy` can run it on every host, on every run.
+is why `cairnos update` can run it on every host, on every run.
 
 The pull also warns about the credentials your config implies that the item does
 not carry: `CAIRNOS_BRIDGE_MATTERMOST_TOKEN` when an identity has no token by any
@@ -388,11 +450,11 @@ EnvironmentFile=-/home/you/.cairnos/secrets.env
 The first stays hand-written and yours. The second is generated whole and
 replaced on every pull, so never edit it. The generated file comes second, so it
 wins when both set the same variable. On macOS the launchd preamble sources both
-in the same order. `make deploy` pulls on every run, before it decides whether
-to restart, and stops there if the pull fails. It restarts when the binary is
-behind HEAD or when the pull changed `secrets.env`, so a rotated or renamed
+in the same order. `cairnos update` pulls on every run, before it decides
+whether to restart, and stops there if the pull fails. It restarts when the
+build moved or when the pull changed `secrets.env`, so a rotated or renamed
 vault field reaches the service without waiting for a code change. When neither
-moved it says `secrets unchanged` and leaves the running service alone.
+moved it leaves the running service alone.
 
 Warning: this host now holds Bitwarden API credentials and your master password
 on disk at 0600, which is the same trust you already place in a workstation

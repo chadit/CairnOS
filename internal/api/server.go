@@ -77,6 +77,11 @@ type Config struct {
 	// Manager owns run starts, event fan-out, and cancellation.
 	Manager *Manager
 
+	// Drain backs AdminService.RequestRestart. Nil leaves that method
+	// answering UNIMPLEMENTED, which is right for an embedder whose process
+	// lifecycle is not CairnOS's to end.
+	Drain *Drain
+
 	// Registry lists the built runners for AdminService.
 	Registry *runner.Registry
 
@@ -341,6 +346,9 @@ func (s *Server) startGRPC() {
 		store:    s.cfg.Store,
 		registry: s.cfg.Registry,
 		breakers: s.cfg.Breakers,
+		manager:  s.cfg.Manager,
+		drain:    s.cfg.Drain,
+		logger:   s.logger,
 	})
 	cairnosv1.RegisterGovernanceServiceServer(s.grpcServer, &governanceService{
 		store:         s.cfg.Store,

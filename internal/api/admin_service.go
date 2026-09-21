@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"log/slog"
+	"time"
 
 	"google.golang.org/grpc/codes"
 
@@ -27,6 +29,11 @@ type BreakerAdmin interface {
 	ResetBreaker(name string) bool
 }
 
+// DefaultDrainTimeout bounds a drain a caller gave no ceiling for. It is long
+// enough for an agent run that talks to a slow model and short enough that a
+// stuck run cannot hold an update open all afternoon.
+const DefaultDrainTimeout = 15 * time.Minute
+
 // adminService implements cairnos.v1.AdminService.
 type adminService struct {
 	cairnosv1.UnimplementedAdminServiceServer
@@ -34,6 +41,9 @@ type adminService struct {
 	store    store.Store
 	registry *runner.Registry
 	breakers BreakerAdmin
+	manager  *Manager
+	drain    *Drain
+	logger   *slog.Logger
 }
 
 // Health reports liveness by proving the store answers a query, matching
@@ -90,4 +100,46 @@ func (s *adminService) ResetBreaker(ctx context.Context, req *cairnosv1.ResetBre
 		Runner: name,
 		State:  reliability.StateClosed.String(),
 	}, nil
+}
+
+// RequestRestart flips the process into draining so `cairnos update` can swap
+// the binary without cutting a run short: the scheduler stops dispatching, the
+// runs already going finish, and the process then exits for the supervisor to
+// start again. A second request while draining reports the state rather than
+// failing, so a retry is harmless.
+func (s *adminService) RequestRestart(ctx context.Context, req *cairnosv1.RequestRestartRequest) (*cairnosv1.RequestRestartResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, canonicalStatus(err)
+	}
+
+	if s.drain == nil {
+		return nil, errorStatus(codes.Unimplemented,
+			cairnerr.New(codeUnimplemented,
+				"restart is unavailable: this server was wired without a drain, so it cannot exit on request"))
+	}
+
+	var inFlight int
+	if s.manager != nil {
+		inFlight = s.manager.InFlight()
+	}
+
+	deadline := s.drain.Request(drainWait(req.GetMaxWaitSeconds()), time.Now())
+
+	s.logger.Info("restart requested; draining",
+		"in_flight", inFlight, "deadline", deadline)
+
+	return &cairnosv1.RequestRestartResponse{
+		InFlight: int64(inFlight),
+		Accepted: true,
+	}, nil
+}
+
+// drainWait turns the request's ceiling into a duration, mapping zero and any
+// negative value onto the server default so a caller with no opinion sends 0.
+func drainWait(seconds int64) time.Duration {
+	if seconds <= 0 {
+		return DefaultDrainTimeout
+	}
+
+	return time.Duration(seconds) * time.Second
 }
