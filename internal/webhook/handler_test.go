@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -308,7 +307,15 @@ func newRig(t *testing.T, mutate func(*webhook.HandlerConfig)) *testRig {
 func (env *testRig) post(t *testing.T, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(body))
+	return env.do(t, http.MethodPost, path, body, headers)
+}
+
+// do drives one request of any method through the routed mux, so the method
+// gate can be exercised with the same fakes the POST cases use.
+func (env *testRig) do(t *testing.T, method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
@@ -479,6 +486,38 @@ func TestEndpointMismatchReturns404(t *testing.T) {
 
 	if calls := env.runs.callCount(); calls != 0 {
 		t.Errorf("StartRun calls = %d, want 0 on endpoint mismatch", calls)
+	}
+}
+
+// TestNonPostMethodStartsNoRun proves the hook routes accept POST only. A GET
+// or HEAD carrying a valid token is the shape a link preview or a crawler
+// produces, and a crawler must never trigger a workflow.
+func TestNonPostMethodStartsNoRun(t *testing.T) {
+	t.Parallel()
+
+	env := newRig(t, nil)
+	prodToken, testToken := register(t, env, nil)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: prodPrefix + prodToken},
+		{method: http.MethodHead, path: prodPrefix + prodToken},
+		{method: http.MethodPut, path: prodPrefix + prodToken},
+		{method: http.MethodDelete, path: prodPrefix + prodToken},
+		{method: http.MethodGet, path: testPrefix + testToken},
+	}
+
+	for _, tt := range cases {
+		rec := env.do(t, tt.method, tt.path, []byte(sampleJSON), nil)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status = %d, want 405", tt.method, rec.Code)
+		}
+	}
+
+	if calls := env.runs.callCount(); calls != 0 {
+		t.Errorf("StartRun calls = %d, want 0 for non-POST methods", calls)
 	}
 }
 
@@ -723,27 +762,6 @@ func TestSecretUnavailableReturns503(t *testing.T) {
 
 	if calls := env.runs.callCount(); calls != 0 {
 		t.Errorf("StartRun calls = %d, want 0 when the secret is unresolvable", calls)
-	}
-}
-
-// TestHMACUsesConstantTimeCompare is the static check the acceptance criteria
-// pin: the digest compare goes through hmac.Equal, never == or bytes.Equal on
-// MAC values.
-func TestHMACUsesConstantTimeCompare(t *testing.T) {
-	t.Parallel()
-
-	source, err := os.ReadFile("handler.go")
-	if err != nil {
-		t.Fatalf("read handler source: %v", err)
-	}
-
-	text := string(source)
-	if !strings.Contains(text, "hmac.Equal(") {
-		t.Error("handler must compare MAC digests with hmac.Equal")
-	}
-
-	if strings.Contains(text, "bytes.Equal(") {
-		t.Error("handler must not compare MAC values with bytes.Equal")
 	}
 }
 

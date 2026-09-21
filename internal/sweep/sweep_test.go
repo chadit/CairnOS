@@ -38,6 +38,16 @@ func (f *fakePruner) Prune(_ context.Context, opts store.PruneOptions) (store.Pr
 func startSweep(t *testing.T, pruner *fakePruner, ticks <-chan time.Time) (context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 
+	return startSweepLogging(t, pruner, ticks, slog.DiscardHandler)
+}
+
+// startSweepLogging is startSweep with the log destination named, for a
+// case whose outcome is the line an operator reads.
+func startSweepLogging(
+	t *testing.T, pruner *fakePruner, ticks <-chan time.Time, handler slog.Handler,
+) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 
@@ -48,7 +58,7 @@ func startSweep(t *testing.T, pruner *fakePruner, ticks <-chan time.Time) (conte
 			Store:   pruner,
 			Runs:    runsWindow,
 			Outputs: outputsWindow,
-			Logger:  slog.New(slog.DiscardHandler),
+			Logger:  slog.New(handler),
 			Ticks:   ticks,
 		})
 	}()
@@ -93,13 +103,15 @@ func TestRunPrunesOnEveryTickAndStopsOnCancel(t *testing.T) {
 }
 
 // TestRunSurvivesPruneFailures proves a failing pass logs and waits for
-// the next tick instead of ending the loop.
+// the next tick instead of ending the loop. The second pass still carries
+// the configured windows, so the loop resumes whole rather than degraded.
 func TestRunSurvivesPruneFailures(t *testing.T) {
 	t.Parallel()
 
 	pruner := &fakePruner{calls: make(chan store.PruneOptions), err: errPruneBroken}
 	ticks := make(chan time.Time)
-	cancel, done := startSweep(t, pruner, ticks)
+	records := &recordingHandler{}
+	cancel, done := startSweepLogging(t, pruner, ticks, records)
 
 	defer cancel()
 
@@ -107,13 +119,54 @@ func TestRunSurvivesPruneFailures(t *testing.T) {
 
 	<-pruner.calls
 
-	ticks <- time.Date(2026, 6, 1, 6, 0, 0, 0, time.UTC)
+	second := time.Date(2026, 6, 1, 6, 0, 0, 0, time.UTC)
+	ticks <- second
 
-	<-pruner.calls
+	opts := <-pruner.calls
+	if !opts.Now.Equal(second) || opts.RunsOlderThan != runsWindow || opts.OutputsOlderThan != outputsWindow {
+		t.Fatalf("pass after a failure ran with %+v, want the second tick and the configured windows", opts)
+	}
 
 	cancel()
 	<-done
+
+	if got := records.errors(); len(got) != 2 {
+		t.Fatalf("logged %d error lines, want one per failed pass: %v", len(got), got)
+	}
 }
+
+// recordingHandler keeps the error lines the sweep logs, so a case reads
+// what an operator would see rather than trusting a discarded logger. The
+// loop's goroutine is the only writer and reads happen after it ends.
+type recordingHandler struct {
+	errorMessages []string
+}
+
+// Enabled implements slog.Handler for every level, since the point is to
+// see the lines a level filter would hide.
+func (*recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+// Handle implements slog.Handler, keeping the error lines and dropping the
+// rest.
+//
+//nolint:gocritic // slog.Handler fixes this signature; the record cannot be a pointer
+func (h *recordingHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Level == slog.LevelError {
+		h.errorMessages = append(h.errorMessages, record.Message)
+	}
+
+	return nil
+}
+
+// WithAttrs implements slog.Handler; the sweep adds none, so the same
+// handler answers.
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+// WithGroup implements slog.Handler.
+func (h *recordingHandler) WithGroup(string) slog.Handler { return h }
+
+// errors returns the messages logged at error level.
+func (h *recordingHandler) errors() []string { return h.errorMessages }
 
 // TestRunDisabledWithoutInterval proves a zero interval and no injected
 // ticker returns immediately rather than spinning or blocking.

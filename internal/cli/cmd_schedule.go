@@ -245,7 +245,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
@@ -267,7 +267,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), mem, nil, credManager, nil,
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), mem, nil, credManager, nil,
 		a.logger, nil)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
@@ -297,7 +297,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 
 	fanoutCtx, stopFanout := context.WithCancel(ctx)
-	fanout := BuildFanout(&cfg, nil, a.logger)
+	fanout := BuildFanout(&cfg, nil, a.envLookup(), a.logger, nil)
 	fanoutDone := StartFanout(fanoutCtx, fanout)
 
 	monitor := newReachMonitor(fanout, a.logger)

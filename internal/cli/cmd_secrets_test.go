@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/secrets"
 )
 
@@ -37,23 +38,34 @@ runner = "mock"
 params = { output = "value=${{ secrets.db_password }}" }
 `
 
-// runCLIStdin drives one invocation with a captured stdin, so `secrets set`
-// reads its value from the reader rather than the process stdin. It returns the
-// exit code and stderr; no stdin-driven case asserts stdout.
-func runCLIStdin(t *testing.T, stdin string, args ...string) (int, string) {
+// runEnvCLIStdin drives one invocation with a captured stdin and a staged
+// environment, so `secrets set` reads its value from the reader and the backend
+// from the case rather than from the process. It returns the exit code and
+// stderr; no stdin-driven case asserts stdout.
+func runEnvCLIStdin(t *testing.T, env map[string]string, stdin string, args ...string) (int, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).WithStdin(strings.NewReader(stdin)).Run(t.Context(), args)
+	code := cli.New(&stdout, &stderr).
+		WithStdin(strings.NewReader(stdin)).
+		WithEnv(environ.Map(env)).
+		Run(t.Context(), args)
 
 	return code, stderr.String()
 }
 
-// freshMasterKey generates a CSPRNG master key and sets it in the environment,
-// returning it so a caller can stage a previous-key rotation window. Callers
-// must set the store backend directly (t.Setenv forbids t.Parallel, so that
-// call stays in the test body for the linter to see).
+// storeEnv is the environment a store-backed case runs under: the backend the
+// mutating subcommands require, and a fresh CSPRNG master key of its own. Each
+// case gets its own key, which is what lets them all run at once.
+func storeEnv(t *testing.T) map[string]string {
+	t.Helper()
+
+	return map[string]string{backendEnvVar: "store", masterKeyEnvVar: freshMasterKey(t)}
+}
+
+// freshMasterKey generates a CSPRNG master key, returned so a caller can stage
+// it as the primary and later as the previous key of a rotation window.
 func freshMasterKey(t *testing.T) string {
 	t.Helper()
 
@@ -62,30 +74,28 @@ func freshMasterKey(t *testing.T) string {
 		t.Fatalf("generate master key: %v", err)
 	}
 
-	t.Setenv(masterKeyEnvVar, key)
-
 	return key
 }
 
 // setStoreSecret seals storeSecretVal under storeSecretName through the CLI,
 // failing on a non-zero exit.
-func setStoreSecret(t *testing.T, dir string) {
+func setStoreSecret(t *testing.T, env map[string]string, dir string) {
 	t.Helper()
 
-	code, stderr := runCLIStdin(t, storeSecretVal, secretsCmd, setSub, storeSecretName, flagDirArg, dir)
+	code, stderr := runEnvCLIStdin(t, env, storeSecretVal, secretsCmd, setSub, storeSecretName, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets set exited %d: %s", code, stderr)
 	}
 }
 
 func TestSecretsSetGetRoundTrip(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
-	code, stdout, stderr := runCLI(t, secretsCmd, "get", storeSecretName, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, secretsCmd, "get", storeSecretName, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets get exited %d: %s", code, stderr)
 	}
@@ -97,50 +107,50 @@ func TestSecretsSetGetRoundTrip(t *testing.T) {
 }
 
 func TestSecretsSetTrimsOneTrailingNewline(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
 
 	// The piped value carries a trailing newline; exactly one is trimmed, so a
 	// get returns the value with only the single newline get itself adds.
-	code, stderr := runCLIStdin(t, storeSecretVal+"\n", secretsCmd, setSub, storeSecretName, flagDirArg, dir)
+	code, stderr := runEnvCLIStdin(t, env, storeSecretVal+"\n", secretsCmd, setSub, storeSecretName, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets set exited %d: %s", code, stderr)
 	}
 
-	_, stdout, _ := runCLI(t, secretsCmd, "get", storeSecretName, flagDirArg, dir)
+	_, stdout, _ := runEnvCLI(t, env, secretsCmd, "get", storeSecretName, flagDirArg, dir)
 	if stdout != storeSecretVal+"\n" {
 		t.Fatalf("get after set-with-newline = %q, want %q", stdout, storeSecretVal+"\n")
 	}
 }
 
 func TestSecretsRmDeletesRow(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
-	code, _, stderr := runCLI(t, secretsCmd, "rm", storeSecretName, flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, env, secretsCmd, "rm", storeSecretName, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets rm exited %d: %s", code, stderr)
 	}
 
-	code, _, _ = runCLI(t, secretsCmd, "get", storeSecretName, flagDirArg, dir)
+	code, _, _ = runEnvCLI(t, env, secretsCmd, "get", storeSecretName, flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("get after rm exited %d, want %d", code, cli.ExitFailure)
 	}
 }
 
 func TestSecretsLsShowsMetadataNeverValues(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
-	code, stdout, stderr := runCLI(t, secretsCmd, "ls", flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, secretsCmd, "ls", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets ls exited %d: %s", code, stderr)
 	}
@@ -156,16 +166,16 @@ func TestSecretsLsShowsMetadataNeverValues(t *testing.T) {
 }
 
 func TestSecretsLsMarksEnvShadowedRow(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
 	// An env var shadows the store row, so ls flags it (env wins the chain).
-	t.Setenv(secretEnvVar, envSecretVal)
+	env[secretEnvVar] = envSecretVal
 
-	code, stdout, stderr := runCLI(t, secretsCmd, "ls", flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, secretsCmd, "ls", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets ls exited %d: %s", code, stderr)
 	}
@@ -181,11 +191,12 @@ func TestSecretsLsMarksEnvShadowedRow(t *testing.T) {
 }
 
 func TestSecretsRotateReSealsUnderNewPrimary(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	oldKey := freshMasterKey(t)
-	setStoreSecret(t, dir)
+	oldKey := env[masterKeyEnvVar]
+	setStoreSecret(t, env, dir)
 
 	// Promote a new primary and keep the old key as the previous, the rotation
 	// window: reads still open by key id, and rotate re-seals the one stale row.
@@ -194,10 +205,10 @@ func TestSecretsRotateReSealsUnderNewPrimary(t *testing.T) {
 		t.Fatalf("generate new master key: %v", err)
 	}
 
-	t.Setenv(masterKeyEnvVar, newKey)
-	t.Setenv(prevKeyEnvVar, oldKey)
+	env[masterKeyEnvVar] = newKey
+	env[prevKeyEnvVar] = oldKey
 
-	code, stdout, stderr := runCLI(t, secretsCmd, "rotate", flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, secretsCmd, "rotate", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("secrets rotate exited %d: %s", code, stderr)
 	}
@@ -207,7 +218,7 @@ func TestSecretsRotateReSealsUnderNewPrimary(t *testing.T) {
 	}
 
 	// The value still opens under the new primary after rotation.
-	_, getOut, _ := runCLI(t, secretsCmd, "get", storeSecretName, flagDirArg, dir)
+	_, getOut, _ := runEnvCLI(t, env, secretsCmd, "get", storeSecretName, flagDirArg, dir)
 	if getOut != storeSecretVal+"\n" {
 		t.Fatalf("get after rotate = %q, want %q", getOut, storeSecretVal+"\n")
 	}
@@ -221,7 +232,7 @@ func TestSecretsRefuseWithoutStoreBackend(t *testing.T) {
 	// The default env backend has no store, so every mutating subcommand exits
 	// non-zero pointing at the config key rather than writing a store the engine
 	// is not reading.
-	code, stderr := runCLIStdin(t, storeSecretVal, secretsCmd, setSub, storeSecretName, flagDirArg, dir)
+	code, stderr := runEnvCLIStdin(t, nil, storeSecretVal, secretsCmd, setSub, storeSecretName, flagDirArg, dir)
 	if code == cli.ExitOK {
 		t.Fatal("secrets set succeeded without the store backend configured")
 	}
@@ -257,16 +268,16 @@ func TestSecretsKeygenPrintsFreshCsprngKey(t *testing.T) {
 }
 
 func TestSecretsNeverLogsValue(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
 	// Across ls and rotate, the sealed value must never reach stderr (the log
 	// stream). get is the one command that writes it, and only to stdout.
 	for _, sub := range []string{"ls", "rotate"} {
-		_, stdout, stderr := runCLI(t, secretsCmd, sub, flagDirArg, dir)
+		_, stdout, stderr := runEnvCLI(t, env, secretsCmd, sub, flagDirArg, dir)
 		if strings.Contains(stderr, storeSecretVal) {
 			t.Fatalf("secrets %s leaked the value to stderr:\n%s", sub, stderr)
 		}
@@ -276,25 +287,25 @@ func TestSecretsNeverLogsValue(t *testing.T) {
 		}
 	}
 
-	_, _, getErr := runCLI(t, secretsCmd, "get", storeSecretName, flagDirArg, dir)
+	_, _, getErr := runEnvCLI(t, env, secretsCmd, "get", storeSecretName, flagDirArg, dir)
 	if strings.Contains(getErr, storeSecretVal) {
 		t.Fatalf("secrets get leaked the value to stderr:\n%s", getErr)
 	}
 }
 
 func TestSecretsStoreEnvWinsAndWarnsOnShadow(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
 
 	// The store holds the rotated value; a stale env var shadows it.
-	setStoreSecret(t, dir)
-	t.Setenv(secretEnvVar, envSecretVal)
+	setStoreSecret(t, env, dir)
+	env[secretEnvVar] = envSecretVal
 
 	path := writeWorkflow(t, dir, secretEchoWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}
@@ -321,17 +332,17 @@ func TestSecretsStoreEnvWinsAndWarnsOnShadow(t *testing.T) {
 }
 
 func TestSecretsStoreOnlyValueResolves(t *testing.T) {
-	t.Setenv(backendEnvVar, "store")
+	t.Parallel()
 
+	env := storeEnv(t)
 	dir := initDir(t)
-	freshMasterKey(t)
 
 	// No env var for this secret, so the store is the only source.
-	setStoreSecret(t, dir)
+	setStoreSecret(t, env, dir)
 
 	path := writeWorkflow(t, dir, secretEchoWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}
@@ -342,14 +353,16 @@ func TestSecretsStoreOnlyValueResolves(t *testing.T) {
 }
 
 func TestSecretsEnvBackendUnchanged(t *testing.T) {
+	t.Parallel()
+
 	// The default env backend resolves only from the environment, byte-for-byte
 	// today's behavior, and opens no store (so no shadow warning fires).
-	t.Setenv(secretEnvVar, envSecretVal)
+	env := map[string]string{secretEnvVar: envSecretVal}
 
 	dir := initDir(t)
 	path := writeWorkflow(t, dir, secretEchoWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, env, runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}

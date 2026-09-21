@@ -193,7 +193,7 @@ func TestGovernanceListAuditOverGateway(t *testing.T) {
 		t.Fatalf("pause: %v", err)
 	}
 
-	code, body := httpGet(t, fix.httpBase+"/v1/governance/audit")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/governance/audit")
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/governance/audit = %d, body %s", code, body)
 	}

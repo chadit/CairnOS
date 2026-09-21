@@ -27,7 +27,7 @@ func testBridgeSessionRoundTrip(t *testing.T, openFn OpenFunc) {
 
 	db := openFn(t)
 	ctx := t.Context()
-	sessionID := newID()
+	sessionID := store.NewID()
 
 	bindBridge(t, db, transportTelegram, bridgeChatAlice, sessionID)
 
@@ -50,8 +50,8 @@ func testBridgeSessionRebindUpserts(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	ctx := t.Context()
 
-	first := newID()
-	second := newID()
+	first := store.NewID()
+	second := store.NewID()
 
 	bindBridge(t, db, transportTelegram, bridgeChatAlice, first)
 	bindBridge(t, db, transportTelegram, bridgeChatAlice, second)
@@ -95,15 +95,15 @@ func testBridgeSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeSession := newID()
-	globexSession := newID()
+	acmeSession := store.NewID()
+	globexSession := store.NewID()
 
 	// Both tenants bind the same chat key; the sessions must not collide.
 	bindBridgeIn(t, db, acmeCtx, transportTelegram, bridgeChatShared, acmeSession)
 	bindBridgeIn(t, db, globexCtx, transportTelegram, bridgeChatShared, globexSession)
 
 	// Acme binds a key globex never touches, to prove the cross-tenant miss.
-	bindBridgeIn(t, db, acmeCtx, transportTelegram, bridgeChatBob, newID())
+	bindBridgeIn(t, db, acmeCtx, transportTelegram, bridgeChatBob, store.NewID())
 
 	acmeGot, err := db.LookupBridgeSession(acmeCtx, transportTelegram, bridgeChatShared)
 	if err != nil {

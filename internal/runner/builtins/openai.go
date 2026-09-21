@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -54,16 +55,17 @@ type OpenAI struct {
 }
 
 // NewOpenAI builds the runner for a block named after the type, over an
-// injected HTTP client so tests can point it at httptest servers.
-func NewOpenAI(cfg map[string]any, client *http.Client) (*OpenAI, error) {
-	return NewOpenAIFor(OpenAIName, cfg, client)
+// injected HTTP client so tests can point it at httptest servers and an
+// injected lookup so they can supply a key without setting one process-wide.
+func NewOpenAI(cfg map[string]any, client *http.Client, lookup environ.Lookup) (*OpenAI, error) {
+	return NewOpenAIFor(OpenAIName, cfg, client, lookup)
 }
 
 // NewOpenAIFor builds the runner for a block under any name. The name decides
 // which API key it reads first, so two openai-type blocks pointed at different
 // vendors do not have to share one credential.
-func NewOpenAIFor(block string, cfg map[string]any, client *http.Client) (*OpenAI, error) {
-	decoded, err := decodeLLMConfig(cfg, OpenAIName, defaultOpenAIBaseURL, 0)
+func NewOpenAIFor(block string, cfg map[string]any, client *http.Client, lookup environ.Lookup) (*OpenAI, error) {
+	decoded, err := decodeLLMConfig(cfg, OpenAIName, defaultOpenAIBaseURL, 0, lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -77,16 +79,16 @@ func NewOpenAIFor(block string, cfg map[string]any, client *http.Client) (*OpenA
 
 // OpenAIFactory adapts NewOpenAI to the registry contract with a
 // backstopped HTTP client.
-func OpenAIFactory(cfg map[string]any) (runner.Runner, error) {
-	return OpenAIFactoryFor(OpenAIName)(cfg)
+func OpenAIFactory(lookup environ.Lookup) runner.Factory {
+	return OpenAIFactoryFor(OpenAIName, lookup)
 }
 
 // OpenAIFactoryFor is the registration for a `[runner.<name>]` block of this
 // type under another name, which is what makes CAIRNOS_RUNNER_<NAME>_API_KEY
 // reach the right runner.
-func OpenAIFactoryFor(block string) runner.Factory {
+func OpenAIFactoryFor(block string, lookup environ.Lookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return NewOpenAIFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout})
+		return NewOpenAIFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout}, lookup)
 	}
 }
 
@@ -170,7 +172,7 @@ func (o *OpenAI) run(ctx context.Context, task *runner.Task, stream chan<- runne
 // authHeaders builds the per-call auth header; the key reads at call time
 // so a rotation needs no restart.
 func (o *OpenAI) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + apiKey(o.keyEnvs)}
+	return map[string]string{"Authorization": "Bearer " + apiKey(o.cfg.env, o.keyEnvs)}
 }
 
 // payload assembles the request body for one task.

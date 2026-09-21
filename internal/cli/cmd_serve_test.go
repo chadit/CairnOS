@@ -19,6 +19,7 @@ import (
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // serveReadyMarker is the last line serve prints before blocking, giving
@@ -329,7 +330,9 @@ func bridgeServeDir(t *testing.T, cfgTOML string) string {
 // serveUntilReady boots serve in dir on a goroutine and blocks until the ready
 // marker prints or serve exits early. The returned buffers are safe to read once
 // exit is drained, since the exit send happens-after every serve write.
-func serveUntilReady(t *testing.T, dir string) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
+func serveUntilReady(
+	t *testing.T, dir string, env map[string]string,
+) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -339,7 +342,7 @@ func serveUntilReady(t *testing.T, dir string) (*signalWriter, *bytes.Buffer, ch
 	exit := make(chan int, 1)
 
 	go func() {
-		exit <- cli.New(stdout, stderr).Run(ctx, []string{serveCmd, flagDirArg, dir})
+		exit <- cli.New(stdout, stderr).WithEnv(environ.Map(env)).Run(ctx, []string{serveCmd, flagDirArg, dir})
 	}()
 
 	select {
@@ -356,12 +359,11 @@ func serveUntilReady(t *testing.T, dir string) (*signalWriter, *bytes.Buffer, ch
 // with a token and chat prints the running banner, and serve exits cleanly on
 // interrupt after draining the poll loop (acceptance 5, the started case).
 func TestServeStartsBridgeWhenEnabled(t *testing.T) {
-	// t.Setenv forbids t.Parallel; the token env is process-global.
-	t.Setenv(bridgeTokenEnv, "fake-not-a-real-token")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, bridgeEnabledWithChatTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir)
+	stdout, _, exit, cancel := serveUntilReady(t, dir, tokenEnv(bridgeTokenEnv, fakeBridgeToken))
 
 	cancel()
 
@@ -381,7 +383,7 @@ func TestServeSkipsBridgeWhenDisabled(t *testing.T) {
 
 	dir := bridgeServeDir(t, serveConfigTOML)
 
-	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 
@@ -402,12 +404,11 @@ func TestServeSkipsBridgeWhenDisabled(t *testing.T) {
 // is treated as off: one log line, no goroutine, serve runs normally. The chat
 // cross-check never fires because the token gate short-circuits first.
 func TestServeSkipsBridgeWhenTokenUnset(t *testing.T) {
-	// Force the token empty regardless of ambient env; t.Setenv forbids Parallel.
-	t.Setenv(bridgeTokenEnv, "")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, bridgeEnabledNoChatTOML)
 
-	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 
@@ -428,11 +429,11 @@ func TestServeSkipsBridgeWhenTokenUnset(t *testing.T) {
 // with a token but chat off fails serve startup with config.ErrInvalidConfig,
 // since the bridge has no agent to drive (acceptance 5).
 func TestServeFailsWhenBridgeWithoutChat(t *testing.T) {
-	t.Setenv(bridgeTokenEnv, "fake-not-a-real-token")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, bridgeEnabledNoChatTOML)
 
-	code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, tokenEnv(bridgeTokenEnv, fakeBridgeToken), serveCmd, flagDirArg, dir)
 
 	if code != cli.ExitFailure {
 		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)

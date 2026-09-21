@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +15,8 @@ import (
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/store"
@@ -27,12 +28,12 @@ const fanoutTestWorkflow = "wf"
 // fanoutCaptureServer answers every webhook POST 204 and pushes the decoded
 // content string onto the returned channel, so a test sees exactly what a
 // producer fanned out.
-func fanoutCaptureServer(t *testing.T) (*httptest.Server, chan string) {
+func fanoutCaptureServer(t *testing.T) (*nettest.Fake, chan string) {
 	t.Helper()
 
 	bodies := make(chan string, 8)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 
 		var payload struct {
@@ -44,8 +45,6 @@ func fanoutCaptureServer(t *testing.T) (*httptest.Server, chan string) {
 
 		w.WriteHeader(http.StatusNoContent)
 	}))
-
-	t.Cleanup(server.Close)
 
 	return server, bodies
 }
@@ -65,6 +64,13 @@ func drainFanout(t *testing.T, fanout *notify.Fanout) context.Context {
 	return ctx
 }
 
+// discordEnv stages the webhook URL the Discord sink is built from. It is a
+// credential, so BuildFanout reads it from the environment only, and handing one
+// over per case is what lets two cases hold different URLs at once.
+func discordEnv(webhook string) environ.Lookup {
+	return environ.Map(map[string]string{cli.NotifyDiscordWebhookEnv: webhook})
+}
+
 // assertNoSecondPost fails if a second body arrives, proving a producer emitted
 // exactly one line.
 func assertNoSecondPost(t *testing.T, bodies <-chan string) {
@@ -82,14 +88,14 @@ func assertNoSecondPost(t *testing.T, bodies <-chan string) {
 // direct Notify path, so serve keeps today's re-auth hold message
 // (.agents/spec/parity/messaging-bridge.md, decision 7, acceptance 7).
 func TestReauthOnHoldRoutesHeldByteIdentical(t *testing.T) {
-	// t.Setenv forbids t.Parallel; the webhook env is process-global.
+	t.Parallel()
+
 	server, bodies := fanoutCaptureServer(t)
-	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
 
 	cfg := config.Default()
 	logger := slog.New(slog.DiscardHandler)
 
-	fanout := cli.BuildFanout(&cfg, nil, logger)
+	fanout := cli.BuildFanout(&cfg, nil, discordEnv(server.URL), logger, server.Transport())
 	if fanout == nil {
 		t.Fatal("cli.BuildFanout returned nil with the webhook env set")
 	}
@@ -152,7 +158,7 @@ func TestWrapRunFailedFanoutEmitsOnFailedFinish(t *testing.T) {
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
 	fanout := notify.NewFanout(logger, notify.Sink{
-		Poster: notify.NewDiscordNotifier(server.URL),
+		Poster: notify.NewDiscordNotifierOver(server.URL, server.Transport()),
 		Events: []string{config.NotifyEventRunFailed},
 	})
 
@@ -212,7 +218,7 @@ func TestBudgetFanoutNotifierEmitsDeniedNotWarn(t *testing.T) {
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
 	fanout := notify.NewFanout(logger, notify.Sink{
-		Poster: notify.NewDiscordNotifier(server.URL),
+		Poster: notify.NewDiscordNotifierOver(server.URL, server.Transport()),
 		Events: []string{config.NotifyEventBudgetDenied},
 	})
 
@@ -259,7 +265,7 @@ func TestNewDeadLetterFanoutEmitsWhenSelected(t *testing.T) {
 	server, bodies := fanoutCaptureServer(t)
 	logger := slog.New(slog.DiscardHandler)
 	fanout := notify.NewFanout(logger, notify.Sink{
-		Poster: notify.NewDiscordNotifier(server.URL),
+		Poster: notify.NewDiscordNotifierOver(server.URL, server.Transport()),
 		Events: []string{config.NotifyEventDeadLettered},
 	})
 
@@ -302,7 +308,7 @@ func TestBuildFanoutSaysWhyMattermostIsSkipped(t *testing.T) {
 	cfg.Notify.Mattermost.Identity = "ops"
 	cfg.Notify.Mattermost.Channel = "#alerts"
 
-	if fanout := cli.BuildFanout(&cfg, nil, logger); fanout != nil {
+	if fanout := cli.BuildFanout(&cfg, nil, environ.Map(nil), logger, nil); fanout != nil {
 		t.Fatalf("BuildFanout with no registry returned a fan-out, want none")
 	}
 

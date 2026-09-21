@@ -67,10 +67,10 @@ func NewCLI(name string, tool CLITool, cfg map[string]any) (*CLI, error) {
 }
 
 // CLIFactory adapts one named tool to the registry contract, handing its
-// children the rendered host table. A nil hostEnv is the no-hosts case and
-// leaves the child inheriting serve's environment untouched, which is what
-// every caller outside wiring wants.
-func CLIFactory(name string, tool CLITool, hostEnv []string) runner.Factory {
+// children the rendered host table on top of inherited, the environment they
+// start from. Both nil is the no-hosts case and leaves the child inheriting
+// serve's environment untouched.
+func CLIFactory(name string, tool CLITool, hostEnv, inherited []string) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		built, err := NewCLI(name, tool, cfg)
 		if err != nil {
@@ -78,6 +78,7 @@ func CLIFactory(name string, tool CLITool, hostEnv []string) runner.Factory {
 		}
 
 		built.exec.env = hostEnv
+		built.exec.inherited = inherited
 
 		return built, nil
 	}

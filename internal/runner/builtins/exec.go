@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -58,7 +57,12 @@ const (
 type Exec struct {
 	allowActions map[string]struct{}
 	env          []string // "KEY=VALUE" entries appended to the inherited environment
-	timeout      time.Duration
+
+	// inherited is the environment children start from. Nil leaves cmd.Env
+	// unset, so the child inherits this process's environment the way it always
+	// has; wiring passes os.Environ() and a test passes a fixed slice.
+	inherited []string
+	timeout   time.Duration
 }
 
 // NewExec decodes the runner config block. An absent or empty block builds a
@@ -97,7 +101,7 @@ func ExecFactory(cfg map[string]any) (runner.Runner, error) {
 // every child the rendered host table. The entries land after the config env
 // table, though nothing can collide there: decodeExecEnv refuses a key with the
 // reserved prefix, so the rendered table is the only writer of those names.
-func ExecFactoryWithHostEnv(hostEnv []string) runner.Factory {
+func ExecFactoryWithHostEnv(hostEnv, inherited []string) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		built, err := NewExec(cfg)
 		if err != nil {
@@ -105,6 +109,7 @@ func ExecFactoryWithHostEnv(hostEnv []string) runner.Factory {
 		}
 
 		built.env = append(built.env, hostEnv...)
+		built.inherited = inherited
 
 		return built, nil
 	}
@@ -149,22 +154,26 @@ func (e *Exec) Execute(ctx context.Context, task *runner.Task) (runner.Result, e
 	runCtx, cancel := e.runContext(ctx, task)
 	defer cancel()
 
-	// #nosec G204 -- the command and its argv come from a workflow action whose
-	// name the operator listed in allow_actions. This runner has no isolation by
-	// design (see the type doc); the gate is the trust boundary.
-	cmd := exec.CommandContext(runCtx, command, execArgv(task)...)
-	cmd.Dir, _ = task.Params[keyWorkdir].(string)
+	return launchExec(runCtx, func() *exec.Cmd {
+		// #nosec G204 -- the command and its argv come from a workflow action whose
+		// name the operator listed in allow_actions. This runner has no isolation by
+		// design (see the type doc); the gate is the trust boundary.
+		cmd := exec.CommandContext(runCtx, command, execArgv(task)...)
+		cmd.Dir, _ = task.Params[keyWorkdir].(string)
 
-	cmd.Env = append(os.Environ(), e.env...)
+		if e.inherited != nil || len(e.env) > 0 {
+			cmd.Env = append(slices.Clone(e.inherited), e.env...)
+		}
 
-	// A nil Stdin hands the child /dev/null, so an absent param leaves a command
-	// that reads stdin seeing EOF straight away instead of blocking on the
-	// serve process's own terminal.
-	if text, hasStdin := task.Params[paramStdin].(string); hasStdin {
-		cmd.Stdin = strings.NewReader(text)
-	}
+		// A nil Stdin hands the child /dev/null, so an absent param leaves a command
+		// that reads stdin seeing EOF straight away instead of blocking on the
+		// serve process's own terminal.
+		if text, hasStdin := task.Params[paramStdin].(string); hasStdin {
+			cmd.Stdin = strings.NewReader(text)
+		}
 
-	return launchExec(runCtx, cmd)
+		return cmd
+	})
 }
 
 // gate is the deny-by-default check and the only control this runner has. An
@@ -194,24 +203,23 @@ func (e *Exec) runContext(ctx context.Context, task *runner.Task) (context.Conte
 }
 
 // launchExec runs the command, drains stdout under the shared 1 MiB cap, and
-// classifies the outcome.
-func launchExec(runCtx context.Context, cmd *exec.Cmd) (runner.Result, error) {
-	stderr := &tailBuffer{limit: stderrTailKeep}
-	cmd.Stderr = stderr
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeExecStart,
-			"open stdout pipe: "+err.Error())
-	}
-
+// classifies the outcome. build runs once per start attempt, since an exec.Cmd
+// cannot be restarted after a busy executable.
+func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, error) {
 	start := time.Now()
 
-	if err := cmd.Start(); err != nil {
-		return runner.Result{}, classifyExecStart(runCtx, cmd.Path, err)
+	piped, err := startPiped(runCtx, build)
+	if err != nil {
+		if errors.Is(err, errStdoutPipe) {
+			return runner.Result{}, runner.NewError(runner.ClassPermanent, codeExecStart, err.Error())
+		}
+
+		return runner.Result{}, classifyExecStart(runCtx, piped.path, err)
 	}
 
-	stdoutText, scanErr := collectStdout(runCtx, stdoutPipe, nil)
+	cmd, stderr := piped.cmd, piped.stderr
+
+	stdoutText, scanErr := collectStdout(runCtx, piped.stdout, nil)
 
 	waitErr := cmd.Wait()
 	latency := time.Since(start)

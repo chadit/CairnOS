@@ -19,6 +19,9 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/execretry"
 )
 
 // gitBinary is resolved through PATH on every call. Config load already refused
@@ -79,26 +82,50 @@ func (e *ExitError) Unwrap() error {
 	return e.Cause
 }
 
-// GitCommand is the production Git over os/exec. It returns trimmed stdout on
-// success and, on failure, an error carrying git's own stderr, which is where
-// git explains a rejected merge or an unreachable remote.
+// GitCommand is the production Git over os/exec, under this process's own
+// environment.
 func GitCommand(ctx context.Context, dir string, argv ...string) (string, error) {
+	return GitCommandWith(os.Environ())(ctx, dir, argv...)
+}
+
+// GitCommandWith is GitCommand over a supplied parent environment, which
+// decides both what the child inherits and which binary PATH resolves to, so a
+// caller can stage a stand-in without changing the real PATH.
+//
+// It returns trimmed stdout, or an error carrying the child's own stderr, where
+// it explains a rejected merge or an unreachable remote.
+func GitCommandWith(parent []string) Git {
+	return func(ctx context.Context, dir string, argv ...string) (string, error) {
+		return runGit(ctx, parent, dir, argv)
+	}
+}
+
+// runGit launches one invocation rooted at dir.
+func runGit(ctx context.Context, parent []string, dir string, argv []string) (string, error) {
 	full := append([]string{"-C", dir}, argv...)
 
-	// #nosec G204 -- argv comes from this package's own fixed command sequences
-	// and from a repo and ref the operator wrote in config.toml, both of which
-	// config load has already refused if they could pass as an option. Neither
-	// workflow nor network input reaches here.
-	cmd := exec.CommandContext(ctx, gitBinary, full...)
-
-	cmd.Env = gitEnv(os.Environ())
-	cmd.WaitDelay = waitDelay
+	binary, err := environ.LookPath(environ.Slice(parent), gitBinary)
+	if err != nil {
+		return "", fmt.Errorf("%s %s: %w", gitBinary, strings.Join(argv, " "), err)
+	}
 
 	var stderr bytes.Buffer
 
-	cmd.Stderr = &stderr
+	stdout, err := execretry.Output(ctx, func() (*exec.Cmd, error) {
+		// #nosec G204 -- argv comes from this package's own fixed command sequences
+		// and from a repo and ref the operator wrote in config.toml, both of which
+		// config load has already refused if they could pass as an option. Neither
+		// workflow nor network input reaches here.
+		cmd := exec.CommandContext(ctx, binary, full...)
 
-	stdout, err := cmd.Output()
+		cmd.Env = gitEnv(parent)
+		cmd.WaitDelay = waitDelay
+
+		stderr.Reset()
+		cmd.Stderr = &stderr
+
+		return cmd, nil
+	})
 	if err != nil {
 		return "", gitFailure(argv, stderr.String(), err)
 	}

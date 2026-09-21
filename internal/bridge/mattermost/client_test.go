@@ -6,13 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 const (
@@ -65,12 +65,12 @@ func writeJSON(t *testing.T, w http.ResponseWriter, body any) {
 
 // newTestClient points a client at server with the plain-http opt-in, which is
 // the only way to reach an httptest server.
-func newTestClient(t *testing.T, server *httptest.Server, limiter *mattermost.Bucket) *mattermost.Client {
+func newTestClient(t *testing.T, server *nettest.Server, limiter *mattermost.Bucket) *mattermost.Client {
 	t.Helper()
 
-	client, err := mattermost.NewClient(mattermost.ClientConfig{
+	client, err := mattermost.NewClientOver(mattermost.ClientConfig{
 		URL: server.URL, Token: testToken, InsecureHTTP: true, Log: quietLog(), Limiter: limiter,
-	})
+	}, server.Transport())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -84,8 +84,7 @@ func newConnectedClient(t *testing.T, mux *http.ServeMux) *mattermost.Client {
 
 	serveConnect(t, mux, "16383")
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	server := nettest.NewServer(t, mux)
 
 	client := newTestClient(t, server, nil)
 	if err := client.Connect(t.Context()); err != nil {
@@ -154,11 +153,10 @@ func TestConnectLearnsTheIdentityAndPostSize(t *testing.T) {
 	mux := http.NewServeMux()
 	serveConnect(t, mux, "16383")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth.Store(r.Header.Get("Authorization"))
 		mux.ServeHTTP(w, r)
 	}))
-	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server, nil)
 
@@ -213,8 +211,7 @@ func TestConnectFallsBackWhenThePostSizeIsUnreadable(t *testing.T) {
 				writeJSON(t, w, map[string]string{"MaxPostSize": testCase.maxPostSize})
 			})
 
-			server := httptest.NewServer(mux)
-			t.Cleanup(server.Close)
+			server := nettest.NewServer(t, mux)
 
 			client := newTestClient(t, server, nil)
 
@@ -241,8 +238,7 @@ func TestConnectReportsAFailedIdentityCall(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	server := nettest.NewServer(t, mux)
 
 	client := newTestClient(t, server, nil)
 
@@ -349,8 +345,7 @@ func TestDirectChannelSendsABareUserIDArray(t *testing.T) {
 func TestDirectChannelNeedsAConnectedIdentity(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.NewServeMux())
-	t.Cleanup(server.Close)
+	server := nettest.NewServer(t, http.NewServeMux())
 
 	client := newTestClient(t, server, nil)
 
@@ -569,8 +564,7 @@ func TestRateLimitedResponseParksTheSharedBucket(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	server := nettest.NewServer(t, mux)
 
 	client := newTestClient(t, server, bucket)
 	if err := client.Connect(t.Context()); err != nil {

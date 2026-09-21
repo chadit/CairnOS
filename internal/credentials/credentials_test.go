@@ -15,6 +15,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/credentials"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 )
 
@@ -63,10 +64,24 @@ func (f fakeResolver) Get(_ context.Context, name string) (string, error) {
 	return value, nil
 }
 
-// directClient is an unguarded client for tests not exercising the egress guard;
-// it reaches the loopback httptest servers directly.
-func directClient(_ bool) *http.Client {
-	return &http.Client{Timeout: 5 * time.Second}
+// fixtureClient hands the manager a client that answers from srv in this
+// process, for the cases not exercising the egress guard.
+func fixtureClient(srv *nettest.Fake) func(bool) *http.Client {
+	return func(_ bool) *http.Client { return srv.Client() }
+}
+
+// loopbackMintServer answers a token on a real loopback listener. Real socket
+// on purpose: the guard the case below exercises refuses at dial, and there is
+// no dial to refuse when the fixture answers in memory.
+func loopbackMintServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeToken(w, 3600)
+	}))
+	t.Cleanup(server.Close)
+
+	return server
 }
 
 // guardedNewClient hands the manager the real shared egress guard, so a loopback
@@ -108,26 +123,25 @@ func writeToken(w http.ResponseWriter, expiresIn int) {
 
 // mintServer answers every request with a token of the given expiry and counts
 // the requests it saw.
-func mintServer(t *testing.T, expiresIn int) (*httptest.Server, *atomic.Int64) {
+func mintServer(t *testing.T, expiresIn int) (*nettest.Fake, *atomic.Int64) {
 	t.Helper()
 
 	var count atomic.Int64
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		count.Add(1)
 		writeToken(w, expiresIn)
 	}))
-	t.Cleanup(srv.Close)
 
 	return srv, &count
 }
 
 // echoErrorServer reflects every secret it received back into a 401 error body,
 // standing in for a broken or hostile token endpoint.
-func echoErrorServer(t *testing.T) *httptest.Server {
+func echoErrorServer(t *testing.T) *nettest.Fake {
 	t.Helper()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received := receivedSecrets(r)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -137,7 +151,6 @@ func echoErrorServer(t *testing.T) *httptest.Server {
 			ErrorDescription: "rejected credential " + received,
 		})
 	}))
-	t.Cleanup(srv.Close)
 
 	return srv
 }
@@ -196,7 +209,7 @@ func TestClientCredentialsMintsAndCaches(t *testing.T) {
 	t.Parallel()
 
 	srv, count := mintServer(t, 3600)
-	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	for range 2 {
 		token, err := manager.Token(t.Context(), credName)
@@ -226,7 +239,7 @@ func TestRefreshTokenGrantMints(t *testing.T) {
 			RefreshTokenRef: refreshTokenRef,
 		},
 	}
-	manager := newManager(t, creds, fakeResolver{refreshTokenRef: sentinelRefresh}, directClient)
+	manager := newManager(t, creds, fakeResolver{refreshTokenRef: sentinelRefresh}, fixtureClient(srv))
 
 	token, err := manager.Token(t.Context(), credName)
 	if err != nil {
@@ -248,7 +261,7 @@ func TestStaleTokenRefreshesExactlyOncePerCall(t *testing.T) {
 	// expires_in below the library's expiry buffer makes each cached token stale,
 	// so the second call is the single refresh the first mint did not cover.
 	srv, count := mintServer(t, 1)
-	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	for range 2 {
 		if _, err := manager.Token(t.Context(), credName); err != nil {
@@ -265,7 +278,7 @@ func TestTokenEndpointErrorDropsResponseBody(t *testing.T) {
 	t.Parallel()
 
 	srv := echoErrorServer(t)
-	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	_, err := manager.Token(t.Context(), credName)
 	if !errors.Is(err, credentials.ErrTokenEndpoint) {
@@ -294,7 +307,7 @@ func TestRefreshTokenEndpointErrorDropsResponseBody(t *testing.T) {
 			RefreshTokenRef: refreshTokenRef,
 		},
 	}
-	manager := newManager(t, creds, fakeResolver{refreshTokenRef: sentinelRefresh}, directClient)
+	manager := newManager(t, creds, fakeResolver{refreshTokenRef: sentinelRefresh}, fixtureClient(srv))
 
 	_, err := manager.Token(t.Context(), credName)
 	if err == nil {
@@ -311,7 +324,7 @@ func TestMissingSecretRefFailsNewNamingRef(t *testing.T) {
 
 	srv, _ := mintServer(t, 3600)
 
-	_, err := credentials.New(t.Context(), clientCredsMap(srv.URL, false), fakeResolver{}, directClient)
+	_, err := credentials.New(t.Context(), clientCredsMap(srv.URL, false), fakeResolver{}, fixtureClient(srv))
 	if err == nil {
 		t.Fatal("New with an unresolvable ref should fail")
 	}
@@ -334,7 +347,7 @@ func TestTokenRequestsUseInjectedClient(t *testing.T) {
 	var count atomic.Int64
 
 	newClient := func(_ bool) *http.Client {
-		return &http.Client{Transport: &countingTransport{base: http.DefaultTransport, count: &count}}
+		return &http.Client{Transport: &countingTransport{base: srv.Transport(), count: &count}}
 	}
 
 	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, newClient)
@@ -351,7 +364,7 @@ func TestTokenRequestsUseInjectedClient(t *testing.T) {
 func TestGuardBlocksLoopbackUnlessAllowed(t *testing.T) {
 	t.Parallel()
 
-	srv, _ := mintServer(t, 3600)
+	srv := loopbackMintServer(t)
 	resolver := fakeResolver{clientSecretRef: sentinelSecret}
 
 	blocked := newManager(t, clientCredsMap(srv.URL, false), resolver, guardedNewClient)
@@ -375,7 +388,7 @@ func TestCanceledCallerReturnsWithoutHittingEndpoint(t *testing.T) {
 	t.Parallel()
 
 	srv, count := mintServer(t, 3600)
-	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -406,7 +419,7 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 
 	var count atomic.Int64
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		count.Add(1)
 
 		select {
@@ -417,9 +430,8 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 		<-release
 		writeToken(w, 3600)
 	}))
-	t.Cleanup(srv.Close)
 
-	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, clientCredsMap(srv.URL, false), fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	short, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
@@ -461,7 +473,9 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 func TestUnknownCredential(t *testing.T) {
 	t.Parallel()
 
-	manager, err := credentials.New(t.Context(), map[string]config.Credential{}, fakeResolver{}, directClient)
+	srv, _ := mintServer(t, 3600)
+
+	manager, err := credentials.New(t.Context(), map[string]config.Credential{}, fakeResolver{}, fixtureClient(srv))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -483,7 +497,7 @@ func TestNamesSortedCopy(t *testing.T) {
 		credBeta:  {Grant: config.GrantClientCredentials, TokenURL: srv.URL, ClientID: clientID, ClientSecretRef: clientSecretRef},
 		credAlpha: {Grant: config.GrantClientCredentials, TokenURL: srv.URL, ClientID: clientID, ClientSecretRef: clientSecretRef},
 	}
-	manager := newManager(t, creds, fakeResolver{clientSecretRef: sentinelSecret}, directClient)
+	manager := newManager(t, creds, fakeResolver{clientSecretRef: sentinelSecret}, fixtureClient(srv))
 
 	got := manager.Names()
 	if want := []string{credAlpha, credBeta}; !slices.Equal(got, want) {

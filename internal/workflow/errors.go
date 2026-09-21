@@ -9,6 +9,10 @@ var (
 	// ErrEmptyDuration reports a duration field that was present but blank.
 	ErrEmptyDuration = errors.New("empty duration")
 
+	// ErrBadDuration reports a duration string neither the day suffix nor
+	// time.ParseDuration could read.
+	ErrBadDuration = errors.New("bad duration")
+
 	// ErrBadReference reports an interpolation reference whose shape is wrong
 	// (empty, or the wrong number of parts for its kind).
 	ErrBadReference = errors.New("malformed interpolation reference")

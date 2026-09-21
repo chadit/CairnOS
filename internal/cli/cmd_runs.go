@@ -162,7 +162,7 @@ func (a *App) cmdRunsReplay(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("runs replay: %v\n", err)
 
@@ -339,7 +339,7 @@ func (a *App) cmdRunsApprove(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(mem)
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", approveLabel, err)
 

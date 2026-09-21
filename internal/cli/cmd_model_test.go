@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/localmodel"
 )
 
@@ -239,6 +240,8 @@ func TestModelStatusReportsNothingInstalled(t *testing.T) {
 func TestModelStatusSeesAnAnsweringServer(t *testing.T) {
 	t.Parallel()
 
+	// Real socket on purpose: status probes the port it was handed, so there is
+	// nothing to answer unless something is bound to it.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
@@ -398,7 +401,7 @@ func TestManualStartHintIsRunnable(t *testing.T) {
 
 	opts := cli.NewModelOptions(t.TempDir(), localmodel.DefaultModel, 9100, 3, 4096)
 
-	target, err := cli.ResolveModelTarget(opts)
+	target, err := cli.ResolveModelTarget(opts, environ.Map(nil))
 	if err != nil {
 		t.Fatalf("resolve target: %v", err)
 	}

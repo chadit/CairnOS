@@ -10,6 +10,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/notify"
 )
 
@@ -37,15 +38,16 @@ func (c *testClock) now() time.Time {
 }
 
 // sourceDirtyFanout builds a fan-out selecting only source_dirty over the
-// webhook URL the caller has already put in the environment, which is what a
-// [notify.discord] events list naming that event produces.
-func sourceDirtyFanout(t *testing.T) *notify.Fanout {
+// capture server, which is what a [notify.discord] events list naming that
+// event produces.
+func sourceDirtyFanout(t *testing.T, server *nettest.Fake) *notify.Fanout {
 	t.Helper()
 
 	cfg := config.Default()
 	cfg.Notify.Discord.Events = []string{config.NotifyEventSourceDirty}
 
-	fanout := cli.BuildFanout(&cfg, nil, slog.New(slog.DiscardHandler))
+	fanout := cli.BuildFanout(&cfg, nil, discordEnv(server.URL),
+		slog.New(slog.DiscardHandler), server.Transport())
 	if fanout == nil {
 		t.Fatal("cli.BuildFanout returned nil with the webhook env set")
 	}
@@ -81,13 +83,12 @@ func waitForSkipLine(t *testing.T, bodies <-chan string) string {
 
 // TestSourceDirtyLineNamesHostSourceAndFix covers FR9's wording: an operator
 // reading one line in a shared channel has to learn which box, which source,
-// what is wrong, and what to do about it. The webhook env is process-global, so
-// t.Setenv rules out t.Parallel here.
+// what is wrong, and what to do about it.
 func TestSourceDirtyLineNamesHostSourceAndFix(t *testing.T) {
-	server, bodies := fanoutCaptureServer(t)
-	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
+	t.Parallel()
 
-	fanout := sourceDirtyFanout(t)
+	server, bodies := fanoutCaptureServer(t)
+	fanout := sourceDirtyFanout(t, server)
 	notifier, _, ctx := startSourceNotifier(t, fanout)
 
 	notifier.SetFanout(fanout)
@@ -110,10 +111,10 @@ func TestSourceDirtyLineNamesHostSourceAndFix(t *testing.T) {
 // TestSourceDirtyNotifierHoldsItsWindow covers the rate limit FR9 asks for: a
 // tree skipped every five minutes is worth one line, not 288 a day.
 func TestSourceDirtyNotifierHoldsItsWindow(t *testing.T) {
-	server, bodies := fanoutCaptureServer(t)
-	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
+	t.Parallel()
 
-	fanout := sourceDirtyFanout(t)
+	server, bodies := fanoutCaptureServer(t)
+	fanout := sourceDirtyFanout(t, server)
 	notifier, clock, ctx := startSourceNotifier(t, fanout)
 
 	notifier.SetFanout(fanout)
@@ -138,10 +139,10 @@ func TestSourceDirtyNotifierHoldsItsWindow(t *testing.T) {
 // tree that is fixed and dirtied again inside the window is news, so the clean
 // sync in between has to clear the silence.
 func TestSourceDirtyNotifierReportsAgainAfterAGoodSync(t *testing.T) {
-	server, bodies := fanoutCaptureServer(t)
-	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
+	t.Parallel()
 
-	fanout := sourceDirtyFanout(t)
+	server, bodies := fanoutCaptureServer(t)
+	fanout := sourceDirtyFanout(t, server)
 	notifier, clock, ctx := startSourceNotifier(t, fanout)
 
 	notifier.SetFanout(fanout)
@@ -163,10 +164,10 @@ func TestSourceDirtyNotifierReportsAgainAfterAGoodSync(t *testing.T) {
 // leaves between building the registry and building the fan-out. A skip in that
 // window posts nothing, and must not spend the source's next 12 hours either.
 func TestSourceDirtyNotifierIsQuietBeforeItsFanout(t *testing.T) {
-	server, bodies := fanoutCaptureServer(t)
-	t.Setenv(cli.NotifyDiscordWebhookEnv, server.URL)
+	t.Parallel()
 
-	fanout := sourceDirtyFanout(t)
+	server, bodies := fanoutCaptureServer(t)
+	fanout := sourceDirtyFanout(t, server)
 	notifier, _, ctx := startSourceNotifier(t, fanout)
 
 	notifier.Skipped(ctx, notifySourceName, notifySourceDest, notifySkipReason)

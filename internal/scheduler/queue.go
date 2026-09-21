@@ -91,11 +91,13 @@ type QueueStats struct {
 // this rather than the whole queue, so it depends on the one method it reads and
 // its tests need no queue.
 type OccurrenceQueue interface {
-	// OccurrencePending reports whether the schedule has an occurrence still in
-	// the queue: ready, leased, or held. A fire that lands while the previous
-	// run is unfinished is skipped instead of stacked behind it. Dead items are
-	// finished and never count.
-	OccurrencePending(ctx context.Context, scheduleID string) (bool, error)
+	// OccurrencePending reports whether the schedule has an occurrence in flight
+	// at now: a ready or held item, or a leased one whose lease is live. A fire
+	// landing on an unfinished run is skipped rather than stacked.
+	//
+	// A lease past its deadline belongs to a worker that stopped renewing it, so
+	// it holds nothing back. Dead items never count.
+	OccurrencePending(ctx context.Context, scheduleID string, now time.Time) (bool, error)
 }
 
 // HoldQueue is the NeedsReauth pause surface (D12): the three operations that
@@ -134,6 +136,12 @@ type WorkQueue interface {
 	// them to leased with LeaseUntil = now + ackWait and incrementing Deliveries.
 	// An idle queue returns an empty slice, not an error.
 	Claim(ctx context.Context, now time.Time, ackWait time.Duration, limit int) ([]WorkItem, error)
+
+	// Renew pushes the lease deadline of the given leased items out to
+	// leaseUntil. It is the heartbeat a worker sends while a run is going, so
+	// the lease measures worker liveness rather than run duration. Ids no longer
+	// leased are skipped, so a renewal racing a settle is a no-op.
+	Renew(ctx context.Context, ids []string, leaseUntil time.Time) error
 
 	// Ack removes a finished item. Missing rows are not an error: a sweep may
 	// have already reclaimed a lease the worker thought it still held.

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // sourceRepoURL is the clone URL every fixture block names. Nothing dials it:
@@ -227,17 +228,24 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 
 // TestLoadSourceRequiresGitOnPath proves FR3 against an empty PATH: a host with
 // no git binary fails config load with an error naming it, instead of clearing
-// startup and failing on the first sync. It cannot run in parallel because it
-// rewrites the process environment.
+// startup and failing on the first sync.
+// emptyPath answers a PATH with nothing on it, which is how these cases stage a
+// host that has no binary to find without rewriting the process environment.
+func emptyPath(t *testing.T) environ.Lookup {
+	t.Helper()
+
+	return environ.Map(map[string]string{"PATH": t.TempDir()})
+}
+
 func TestLoadSourceRequiresGitOnPath(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Parallel()
 
 	toml := sourceTOML(
 		`repo = "`+sourceRepoURL+`"`,
 		`dest = "/opt/src/automation"`,
 	)
 
-	_, err := config.Load(writeConfig(t, toml))
+	_, err := config.LoadWith(writeConfig(t, toml), emptyPath(t))
 	if !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("load error = %v, want one wrapping ErrInvalidConfig", err)
 	}
@@ -249,12 +257,12 @@ func TestLoadSourceRequiresGitOnPath(t *testing.T) {
 }
 
 // TestLoadWithoutSourcesSkipsGitProbe proves the probe is scoped to hosts that
-// asked for a source: a config with no block loads on a host with no git at all.
-// It cannot run in parallel because it rewrites the process environment.
+// asked for a source: a config with no block loads on a host with no binary at
+// all.
 func TestLoadWithoutSourcesSkipsGitProbe(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	t.Parallel()
 
-	if _, err := config.Load(writeConfig(t, "[telemetry]\nenabled = false\n")); err != nil {
+	if _, err := config.LoadWith(writeConfig(t, "[telemetry]\nenabled = false\n"), emptyPath(t)); err != nil {
 		t.Fatalf("load with no source blocks = %v, want nil", err)
 	}
 }

@@ -7,17 +7,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bwinstall"
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // The version the fake binary reports, and the shell that reports it. A script
@@ -38,9 +40,10 @@ const (
 	sidecarPerm   = 0o600
 )
 
-// These cases do not run in parallel. Each one writes an executable and then
-// runs it, and a fork from another goroutine between the write and the exec is
-// what produces ETXTBSY. One install per process is the real shape anyway.
+// busyBudget is the total the busy retries wait: 2 + 4 + 8 + 16ms across five
+// attempts. It mirrors the unexported pair in internal/execretry, pinned here
+// as the observable floor a retrying probe cannot beat.
+const busyBudget = 30 * time.Millisecond
 
 // wrongDigest is a well-formed sha256 that matches nothing.
 const wrongDigest = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -86,37 +89,11 @@ func buildZip(t *testing.T, entries map[string]string) ([]byte, string) {
 	return body.Bytes(), hex.EncodeToString(digest[:])
 }
 
-// serveBody stands one response up on a loopback TLS-free server and returns
-// its URL. Install refuses anything but https, so the URL is rewritten to the
-// https form and the test's own client is pointed back at the plain listener,
-// which it dials whatever the URL says, so the scheme check sees https.
-func serveBody(t *testing.T, handler http.Handler) (string, *http.Client) {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-
-	client := &http.Client{
-		Transport: &rewriteTransport{target: strings.TrimPrefix(server.URL, "http://")},
-		Timeout:   30 * time.Second,
-	}
-
-	return "https://bwinstall.test/bw-linux-" + fakeVersion + ".zip", client
-}
-
-// rewriteTransport sends every request to the test server, keeping the https
-// URL the installer checked.
-type rewriteTransport struct {
-	target string
-}
-
-func (t *rewriteTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	routed := request.Clone(request.Context())
-	routed.URL.Scheme = "http"
-	routed.URL.Host = t.target
-
-	//nolint:wrapcheck // a test transport: the error goes straight back to the client
-	return http.DefaultTransport.RoundTrip(routed)
+// serveBody returns the https URL the installer checks and a client that
+// answers it from handler in this process. The fixture transport serves the
+// handler whatever the URL says, so the scheme check still sees https.
+func serveBody(handler http.Handler) (string, *http.Client) {
+	return "https://bwinstall.test/bw-linux-" + fakeVersion + ".zip", nettest.Client(handler)
 }
 
 // archiveServer serves a fixed body.
@@ -137,7 +114,7 @@ func options(t *testing.T, entries map[string]string, sum string) *bwinstall.Opt
 		sum = actual
 	}
 
-	url, client := serveBody(t, archiveServer(body))
+	url, client := serveBody(archiveServer(body))
 
 	return &bwinstall.Options{
 		URL:           url,
@@ -153,9 +130,9 @@ func options(t *testing.T, entries map[string]string, sum string) *bwinstall.Opt
 // one entry comes out, and the directory holds only the binary and its digest
 // record. The download is a temp file there, so a stopped cleanup would leave
 // the release zip beside it.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallPlacesTheVerifiedBinary(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 
 	result, err := bwinstall.Install(t.Context(), opts)
@@ -193,9 +170,9 @@ func TestInstallPlacesTheVerifiedBinary(t *testing.T) {
 // TestInstallRecordsTheDigestAtTheModeItPromises covers the record itself. It
 // sits in a personal bin directory next to the binary it vouches for, so it is
 // owner-only like the credentials file, not world-readable like the binary.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRecordsTheDigestAtTheModeItPromises(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 
 	if _, err := bwinstall.Install(t.Context(), opts); err != nil {
@@ -213,12 +190,11 @@ func TestInstallRecordsTheDigestAtTheModeItPromises(t *testing.T) {
 }
 
 // TestInstallReplacesTheBinaryItWroteBefore is the upgrade a host takes on its
-// own. The file at the destination is not the pin any more, but it is the one an
-// earlier install recorded, so nothing unknown is being overwritten and --force
-// would be asking the operator to approve this tool replacing its own work.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+// own. The file at the destination is off the pin but carries this tool's own
+// record, so --force would be asking the operator to approve replacing its work.
 func TestInstallReplacesTheBinaryItWroteBefore(t *testing.T) {
+	t.Parallel()
+
 	const olderPin = "#!/bin/sh\necho 2026.7.0\n"
 
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
@@ -245,9 +221,9 @@ func TestInstallReplacesTheBinaryItWroteBefore(t *testing.T) {
 // naming some other digest says nothing about the file that is actually there,
 // so the refusal has to stand: this is the shape a wrapper dropped over a real
 // install would take.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesABinaryTheRecordDoesNotVouchFor(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	stageBinary(t, opts.Dest, "#!/bin/sh\necho "+fakeVersion+"\n# and then something else\n")
 	stageRecord(t, opts.Dest, wrongDigest)
@@ -267,9 +243,9 @@ func TestInstallRefusesABinaryTheRecordDoesNotVouchFor(t *testing.T) {
 // TestInstallRefusesAChecksumMismatch is the case the whole package exists for:
 // a body that is not the pinned artifact must not reach the disk, whatever it
 // claims to be.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAChecksumMismatch(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, wrongDigest)
 
 	if _, err := bwinstall.Install(t.Context(), opts); err == nil {
@@ -282,9 +258,9 @@ func TestInstallRefusesAChecksumMismatch(t *testing.T) {
 // TestInstallRefusesABinaryThatIsNotThePinnedOne covers the second digest: the
 // archive is the published one, and what came out of it is not what this build
 // pinned.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesABinaryThatIsNotThePinnedOne(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	opts.BinarySHA256 = wrongDigest
 
@@ -298,9 +274,9 @@ func TestInstallRefusesABinaryThatIsNotThePinnedOne(t *testing.T) {
 // TestInstallRefusesAnArchiveWithATraversalEntry covers the shape that would
 // write outside the install directory. The entry is refused for the same reason
 // any other unexpected name is: the pinned release holds one file called bw.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnArchiveWithATraversalEntry(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{"../../bw": fakeScript}, "")
 
 	_, err := bwinstall.Install(t.Context(), opts)
@@ -323,10 +299,10 @@ func TestInstallRefusesAnArchiveWithATraversalEntry(t *testing.T) {
 // TestInstallRefusesAnOversizedDownload pins the cap that stops a redirected or
 // hostile response from writing until the disk fills. The body is plain bytes,
 // since the size check fires while the response is still being read.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnOversizedDownload(t *testing.T) {
-	url, client := serveBody(t, archiveServer(bytes.Repeat([]byte("a"), 4096)))
+	t.Parallel()
+
+	url, client := serveBody(archiveServer(bytes.Repeat([]byte("a"), 4096)))
 
 	opts := &bwinstall.Options{
 		URL:             url,
@@ -354,9 +330,9 @@ func TestInstallRefusesAnOversizedDownload(t *testing.T) {
 // and its digest matches, so only the decompressed size can stop this, which is
 // the zip-bomb shape. The empty directory also proves the binary is assembled
 // elsewhere and renamed in.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnOversizedEntry(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: strings.Repeat("a", 8192)}, "")
 	opts.MaxBinaryBytes = 512
 
@@ -375,10 +351,10 @@ func TestInstallRefusesAnOversizedEntry(t *testing.T) {
 // TestInstallRefusesANonOKResponse covers a release host answering with an
 // error page. Without the status check the body would flow into the digest
 // comparison and fail there, which reports the wrong problem.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesANonOKResponse(t *testing.T) {
-	url, client := serveBody(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	t.Parallel()
+
+	url, client := serveBody(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		http.Error(writer, "gone", http.StatusInternalServerError)
 	}))
 
@@ -405,9 +381,9 @@ func TestInstallRefusesANonOKResponse(t *testing.T) {
 
 // TestInstallRefusesAPlainHTTPSource keeps the package's promise true for the
 // next call site: nothing authenticates where bytes from an http URL came from.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAPlainHTTPSource(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	opts.URL = "http://bwinstall.test/bw.zip"
 
@@ -419,9 +395,9 @@ func TestInstallRefusesAPlainHTTPSource(t *testing.T) {
 // TestInstallStopsAProbeThatHangs pins the probe's timeout. A bw that never
 // answers --version would otherwise hold the install open with nothing on
 // screen.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallStopsAProbeThatHangs(t *testing.T) {
+	t.Parallel()
+
 	const sleeper = "#!/bin/sh\nsleep 120\n"
 
 	opts := options(t, map[string]string{entryName: sleeper}, "")
@@ -441,19 +417,21 @@ func TestInstallStopsAProbeThatHangs(t *testing.T) {
 
 // TestInstallLeavesTheProbeWithoutVaultCredentials covers the child's
 // environment. `secrets auth` reads the vault API key and master password from
-// this process when a host injects them, and a version probe has no business
-// seeing either. The staged fake reports the marker, so its output says what the
-// probe was handed.
-//
-// No paralleltest directive: t.Setenv already rules the case out of parallel.
+// the environment serve runs under, and a version probe has no business seeing
+// either. The staged fake echoes the marker, so its output says what it got.
 func TestInstallLeavesTheProbeWithoutVaultCredentials(t *testing.T) {
-	const marker = "BW_PROBE_MARKER"
+	t.Parallel()
 
-	t.Setenv(marker, "should-not-reach-the-child")
+	const marker = "BW_PROBE_MARKER"
 
 	reporter := "#!/bin/sh\necho \"${" + marker + ":-" + fakeVersion + "}\"\n"
 
 	opts := options(t, map[string]string{entryName: reporter}, "")
+	opts.Env = environ.Map(map[string]string{
+		"PATH": os.Getenv("PATH"),
+		"HOME": os.Getenv("HOME"),
+		marker: "should-not-reach-the-child",
+	})
 
 	result, err := bwinstall.Install(t.Context(), opts)
 	if err != nil {
@@ -465,14 +443,12 @@ func TestInstallLeavesTheProbeWithoutVaultCredentials(t *testing.T) {
 	}
 }
 
-// TestInstallLeavesAMatchingBinaryAlone keeps a re-run cheap, and does it by
-// hashing the file rather than asking it what it is. The record still gets
-// written: every host installed its bw before the record existed, and this skip
-// is the path an ordinary re-run takes, so it is the one chance to bootstrap
-// one before the pin next moves.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
+// TestInstallLeavesAMatchingBinaryAlone keeps a re-run cheap by hashing the
+// file rather than asking it what it is. The record still gets written: hosts
+// predate it, and an ordinary re-run is the one chance to bootstrap one.
 func TestInstallLeavesAMatchingBinaryAlone(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	stageBinary(t, opts.Dest, fakeScript)
 
@@ -494,9 +470,9 @@ func TestInstallLeavesAMatchingBinaryAlone(t *testing.T) {
 // hashes the file. A wrapper that answers --version with the pinned string and
 // forwards everything else would otherwise be left in place forever, holding
 // the vault API key and the master password every time the CLI runs.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAnImpostorThatPrintsTheRightVersion(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	stageBinary(t, opts.Dest, "#!/bin/sh\necho "+fakeVersion+"\n# and then something else\n")
 
@@ -516,9 +492,9 @@ func TestInstallRefusesAnImpostorThatPrintsTheRightVersion(t *testing.T) {
 
 // TestInstallReplacesOnForce is what --force is for: the operator said to take
 // the pinned release over whatever is there.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallReplacesOnForce(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 	opts.Force = true
 
@@ -537,9 +513,9 @@ func TestInstallReplacesOnForce(t *testing.T) {
 // TestInstallRefusesAWorldWritableBinDir covers the directory the binary lands
 // in. Verifying the artifact at install time proves nothing if anyone else can
 // swap it afterwards.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallRefusesAWorldWritableBinDir(t *testing.T) {
+	t.Parallel()
+
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
 
 	dir := filepath.Dir(opts.Dest)
@@ -561,9 +537,9 @@ func TestInstallRefusesAWorldWritableBinDir(t *testing.T) {
 // ~/.local/bin arrives as 0775 owned by a group named after the account and
 // holding only that account, so refusing the group bit there would fail the
 // install on every default host while protecting nothing.
-//
-//nolint:paralleltest // writes an executable then runs it; a concurrent fork trips ETXTBSY (Go issue 22315)
 func TestInstallAcceptsAUserPrivateGroupBinDir(t *testing.T) {
+	t.Parallel()
+
 	requirePrivateGroup(t)
 
 	opts := options(t, map[string]string{entryName: fakeScript}, "")
@@ -580,6 +556,35 @@ func TestInstallAcceptsAUserPrivateGroupBinDir(t *testing.T) {
 
 	if !result.Installed {
 		t.Fatalf("install wrote nothing into %s, want the pinned binary", dir)
+	}
+}
+
+// TestProbeVersionRetriesABusyBinary proves the probe is wired to the shared
+// busy-executable retry. A write handle open anywhere on the host makes execve
+// report ETXTBSY, which is what a concurrent fork does to the binary this tool
+// just wrote (Go issue 22315). Held open for the whole call, the probe spends
+// its retries and still reports the kernel's own answer.
+func TestProbeVersionRetriesABusyBinary(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), entryName)
+	stageBinary(t, path, fakeScript)
+
+	busy, err := os.OpenFile(path, os.O_WRONLY, installPerm) // #nosec G304 -- the path is built by the test
+	if err != nil {
+		t.Fatalf("hold the staged binary open for writing: %v", err)
+	}
+
+	t.Cleanup(func() { _ = busy.Close() })
+
+	started := time.Now()
+
+	if _, err := bwinstall.ProbeVersion(t.Context(), path, time.Second); !errors.Is(err, syscall.ETXTBSY) {
+		t.Fatalf("probe error = %v, want a busy binary", err)
+	}
+
+	if elapsed := time.Since(started); elapsed < busyBudget {
+		t.Fatalf("the probe gave up after %s, want at least %s of retries", elapsed, busyBudget)
 	}
 }
 

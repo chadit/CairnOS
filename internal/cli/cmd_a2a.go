@@ -52,14 +52,14 @@ func (a *App) cmdA2ACard(args []string) int {
 		return code
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("a2a card: %v\n", err)
 
 		return ExitFailure
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), a.envLookup())
 	if err != nil {
 		a.printErrf("a2a card: load config: %v\n", err)
 
@@ -103,7 +103,7 @@ func indentJSON(data []byte) string {
 // through the same priority order serve uses, so the printed card matches what
 // the running node would publish.
 func (a *App) buildCard(cfg *config.Config) (*a2a.Card, error) {
-	signingKey, _, err := a2a.ResolveSigningKey(cfg.A2A.CardSigningKeyFile, reusableAuthKey(cfg), a.logger)
+	signingKey, _, err := a2a.ResolveSigningKey(cfg.A2A.CardSigningKeyFile, reusableAuthKey(cfg, a.envLookup()), a.logger)
 	if err != nil {
 		return nil, fmt.Errorf("resolve card signing key: %w", err)
 	}

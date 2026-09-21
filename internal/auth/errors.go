@@ -29,6 +29,16 @@ var (
 	// algorithm, wrong issuer or audience, or missing required claims.
 	ErrTokenInvalid = errors.New("token invalid")
 
+	// ErrJTIMissing reports a token with no jti claim while require_jti is
+	// on. It wraps alongside ErrTokenInvalid so the API layer still answers
+	// one code while callers and tests can name the claim that was absent.
+	ErrJTIMissing = errors.New("token is missing the jti claim")
+
+	// ErrSubjectMissing reports a token with no sub claim, which leaves the
+	// request with no principal to authorize. It wraps alongside
+	// ErrTokenInvalid for the same reason as ErrJTIMissing.
+	ErrSubjectMissing = errors.New("token is missing the sub claim")
+
 	// ErrTokenExpired reports a token past its exp; it maps to the
 	// canonical auth.token_expired code at the API layer.
 	ErrTokenExpired = errors.New("token expired")

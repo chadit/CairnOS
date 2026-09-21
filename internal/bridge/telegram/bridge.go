@@ -195,16 +195,16 @@ type origin struct {
 func (b *Bridge) dispatch(ctx context.Context, update *Update) {
 	from, routable := route(update)
 	if !routable {
-		b.metrics.Update(transportName, identityName, bridge.OutcomeError)
 		b.log.DebugContext(ctx, "dropping unroutable telegram update", "update_id", update.UpdateID)
+		b.metrics.Update(transportName, identityName, bridge.OutcomeError)
 
 		return
 	}
 
 	grant, allowed := b.users[from.sender]
 	if !allowed {
-		b.metrics.Update(transportName, identityName, bridge.OutcomeUnauthorized)
 		b.log.DebugContext(ctx, "dropping update from unauthorized sender", "user_id", from.sender)
+		b.metrics.Update(transportName, identityName, bridge.OutcomeUnauthorized)
 
 		return
 	}
@@ -218,12 +218,12 @@ func (b *Bridge) dispatch(ctx context.Context, update *Update) {
 	item, built := b.toInbound(update, from, grant)
 	if !built {
 		// A tap whose callback_data does not parse never reaches the core, and the
-		// core is what counts an accepted update. Count it here so updates_total
-		// still means one row per allowlisted update, the way it did when one
-		// worker-side call counted every routed update.
-		b.metrics.Update(transportName, identityName, bridge.OutcomeHandled)
+		// core is what counts an accepted update, so this branch counts it instead.
+		// The count comes last: it is the only signal another goroutine can observe,
+		// so counting after the log is what makes the count mean the drop is done.
 		b.log.WarnContext(ctx, "bridge bad callback",
 			"error", errf(CodeBadCallback, "callback data %q", update.CallbackQuery.Data))
+		b.metrics.Update(transportName, identityName, bridge.OutcomeHandled)
 
 		return
 	}

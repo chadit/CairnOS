@@ -87,7 +87,7 @@ func TestServeA2ASendMessageNeedsChat(t *testing.T) {
 
 	dir := bridgeServeDir(t, a2aNoChatTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir)
+	stdout, _, exit, cancel := serveUntilReady(t, dir, nil)
 
 	grpcAddr := outputAddr(t, stdout, grpcAddrPattern, "gRPC")
 
@@ -111,11 +111,11 @@ func TestServeA2ASendMessageNeedsChat(t *testing.T) {
 // signed at bundle build, so an identity registered after that would publish an
 // empty channel list.
 func TestServeA2ACardCarriesChannels(t *testing.T) {
-	t.Setenv(mattermostTokenEnv, "fake-not-a-real-token")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, a2aWithIdentityTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir)
+	stdout, _, exit, cancel := serveUntilReady(t, dir, tokenEnv(mattermostTokenEnv, fakeBridgeToken))
 
 	httpAddr := outputAddr(t, stdout, httpAddrPattern, "HTTP")
 	channels := fetchCardChannels(t, "http://"+httpAddr+a2aCardPath)

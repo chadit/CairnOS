@@ -20,6 +20,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/credentials"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/reliability"
@@ -99,13 +100,14 @@ const (
 )
 
 // resolveDir picks the CairnOS home: the --dir flag when set, ~/.cairnos
-// otherwise.
-func resolveDir(flagValue string) (string, error) {
+// otherwise. The home comes from the injected environment, so a case can point
+// one command at a staged directory without moving the whole process.
+func resolveDir(flagValue string, lookup environ.Lookup) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
 
-	home, err := os.UserHomeDir()
+	home, err := homeDir(lookup)
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
@@ -144,8 +146,8 @@ func ensureDataDir(path string) error {
 // DSN (credentials from CAIRNOS_STORE_DSN). ctx bounds the postgres connect;
 // sqlite opens a file and ignores it. The returned store.Store keeps callers
 // backend-agnostic.
-func openStore(ctx context.Context, dir string) (store.Store, config.Config, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openStore(ctx context.Context, dir string, lookup environ.Lookup) (store.Store, config.Config, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, cfg, fmt.Errorf("load config: %w", err)
 	}
@@ -186,8 +188,8 @@ type memoryStore interface {
 // footprint, disjoint tables); on postgres it shares the run store's
 // database (different tables in the same Postgres database, reached through
 // the same CAIRNOS_STORE_DSN).
-func openMemory(ctx context.Context, dir string) (memoryStore, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openMemory(ctx context.Context, dir string, lookup environ.Lookup) (memoryStore, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -225,8 +227,8 @@ type vaultStore interface {
 // openVault opens the vault store on the configured backend, sharing the run
 // store's database the same way openMemory does: disjoint document and link
 // tables in the one sqlite file, or in the one Postgres database.
-func openVault(ctx context.Context, dir string) (vaultStore, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openVault(ctx context.Context, dir string, lookup environ.Lookup) (vaultStore, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -259,8 +261,10 @@ func openVault(ctx context.Context, dir string) (vaultStore, error) {
 // Postgres database, and wraps it in the sealer built from environment key
 // material. A missing or malformed master key (secrets.LoadKeys) fails here,
 // not at first resolve; those errors name env vars only, never key bytes.
-func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secrets.Store, error) {
-	primary, previous, err := secrets.LoadKeys(os.Getenv)
+func openSecretsStore(
+	ctx context.Context, dir string, cfg *config.Config, lookup environ.Lookup,
+) (secrets.Store, error) {
+	primary, previous, err := secrets.LoadKeys(lookup.Get)
 	if err != nil {
 		return nil, fmt.Errorf("load secrets keys: %w", err)
 	}
@@ -300,17 +304,17 @@ func openSecretsStore(ctx context.Context, dir string, cfg *config.Config) (secr
 // secret an env var shadows, since a stale variable can mask a rotated value.
 func (a *App) buildSecretSource(ctx context.Context, dir string, cfg *config.Config) (secrets.Source, func() error, error) {
 	if cfg.Secrets.Backend != config.SecretsBackendStore {
-		return secrets.NewEnv(), func() error { return nil }, nil
+		return secrets.NewEnvWith(a.envLookup()), func() error { return nil }, nil
 	}
 
-	secretStore, err := openSecretsStore(ctx, dir, cfg)
+	secretStore, err := openSecretsStore(ctx, dir, cfg, a.envLookup())
 	if err != nil {
 		return nil, nil, err
 	}
 
 	a.warnSecretsShadowedByEnv(ctx, secretStore)
 
-	return secrets.Chain(secrets.NewEnv(), secretStore), secretStore.Close, nil
+	return secrets.Chain(secrets.NewEnvWith(a.envLookup()), secretStore), secretStore.Close, nil
 }
 
 // warnSecretsShadowedByEnv logs one startup warning naming the store secrets an
@@ -329,7 +333,7 @@ func (a *App) warnSecretsShadowedByEnv(ctx context.Context, secretStore secrets.
 		names[idx] = metas[idx].Name
 	}
 
-	if shadowed := secrets.ShadowedByEnv(names, os.LookupEnv); len(shadowed) > 0 {
+	if shadowed := secrets.ShadowedByEnv(names, a.envLookup()); len(shadowed) > 0 {
 		a.logger.Warn("store secrets shadowed by environment variables; env wins, so a stale variable can mask a rotated store value",
 			"secrets", shadowed)
 	}
@@ -387,14 +391,14 @@ func (a *App) openVaultAt(ctx context.Context, label, dirFlagValue string) (vaul
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	vaultDB, err := openVault(ctx, dir)
+	vaultDB, err := openVault(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -414,8 +418,8 @@ type rulesStore interface {
 // openRules opens the rules store on the configured backend, sharing the run
 // store's database the same way openMemory does: a disjoint language_rules
 // table in the one sqlite file, or in the one Postgres database.
-func openRules(ctx context.Context, dir string) (rulesStore, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openRules(ctx context.Context, dir string, lookup environ.Lookup) (rulesStore, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -451,14 +455,14 @@ func (a *App) openRulesAt(ctx context.Context, label, dirFlagValue string) (rule
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	svc, err := openRules(ctx, dir)
+	svc, err := openRules(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -479,8 +483,8 @@ type scheduleStore interface {
 // openSchedules opens the schedule store on the configured backend, sharing
 // the run store's database the same way openMemory does: a disjoint
 // schedules table in the one sqlite file, or in the one Postgres database.
-func openSchedules(ctx context.Context, dir string) (scheduleStore, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openSchedules(ctx context.Context, dir string, lookup environ.Lookup) (scheduleStore, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -514,8 +518,8 @@ func openSchedules(ctx context.Context, dir string) (scheduleStore, error) {
 // through a schedule store opened only for its pool: PostgresWebhooks borrows
 // that pool and its own Close is a no-op, so the closer closes the schedule
 // store.
-func openWebhooks(ctx context.Context, dir string) (webhook.Store, func() error, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openWebhooks(ctx context.Context, dir string, lookup environ.Lookup) (webhook.Store, func() error, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load config: %w", err)
 	}
@@ -566,14 +570,14 @@ func (a *App) openWebhooksAt(ctx context.Context, label, dirFlagValue string) (w
 		return nil, nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, nil, ExitFailure, false
 	}
 
-	hooks, closeHooks, err := openWebhooks(ctx, dir)
+	hooks, closeHooks, err := openWebhooks(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -639,14 +643,14 @@ func (a *App) openStoreAt(ctx context.Context, label, dirFlagValue string) (stor
 		return nil, config.Config{}, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, config.Config{}, ExitFailure, false
 	}
 
-	db, cfg, err := openStore(ctx, dir)
+	db, cfg, err := openStore(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -660,14 +664,14 @@ func (a *App) openStoreAt(ctx context.Context, label, dirFlagValue string) (stor
 // reporting failures on stderr. It is the config-only spine of subcommands
 // that read settings without opening a store (hive status).
 func (a *App) loadConfigAt(dirFlagValue, label string) (config.Config, int, bool) {
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return config.Config{}, ExitFailure, false
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -685,14 +689,14 @@ func (a *App) openMemoryAt(ctx context.Context, label, dirFlagValue string) (mem
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	mem, err := openMemory(ctx, dir)
+	mem, err := openMemory(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -714,8 +718,8 @@ type authStore interface {
 // configured backend, sharing the run store's database the same way
 // openMemory does: disjoint auth tables in the one sqlite file, or in the one
 // Postgres database.
-func openAuth(ctx context.Context, dir string) (authStore, config.Config, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openAuth(ctx context.Context, dir string, lookup environ.Lookup) (authStore, config.Config, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, cfg, fmt.Errorf("load config: %w", err)
 	}
@@ -755,8 +759,8 @@ type tenancyStore interface {
 // configured backend, sharing the run store's database the same way openAuth
 // does: disjoint tenancy tables in the one sqlite file, or in the one Postgres
 // database. Opening seeds the default workspace.
-func openTenancy(ctx context.Context, dir string) (tenancyStore, error) {
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+func openTenancy(ctx context.Context, dir string, lookup environ.Lookup) (tenancyStore, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -792,14 +796,14 @@ func (a *App) openTenancyAt(ctx context.Context, label, dirFlagValue string) (te
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	tenants, err := openTenancy(ctx, dir)
+	tenants, err := openTenancy(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -818,14 +822,14 @@ func (a *App) openAuthAt(ctx context.Context, label, dirFlagValue string) (authS
 		return nil, config.Config{}, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, config.Config{}, ExitFailure, false
 	}
 
-	keyStore, cfg, err := openAuth(ctx, dir)
+	keyStore, cfg, err := openAuth(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -843,14 +847,14 @@ func (a *App) openSchedulesAt(ctx context.Context, label, dirFlagValue string) (
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	scheds, err := openSchedules(ctx, dir)
+	scheds, err := openSchedules(ctx, dir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -906,6 +910,7 @@ func newServeRegistry(
 	ctx context.Context,
 	cfg *config.Config,
 	sources []sourcesync.Spec,
+	env environ.Lookup,
 	mem memory.Store,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
@@ -914,7 +919,7 @@ func newServeRegistry(
 ) (*runner.Registry, *SourceDirtyNotifier, error) {
 	notifier := NewSourceDirtyNotifier(nil)
 
-	registry, err := newRegistry(ctx, cfg.Runners, sources, hostenv.Render(cfg.Hosts), mem,
+	registry, err := newRegistry(ctx, cfg.Runners, sources, hostenv.Render(cfg.Hosts), env, mem,
 		rulesSvc, credLookup, msgSender, logger, notifier)
 	if err != nil {
 		return nil, nil, err
@@ -935,6 +940,7 @@ func newRegistry(
 	runnerCfgs map[string]map[string]any,
 	sources []sourcesync.Spec,
 	hostEnv []string,
+	env environ.Lookup,
 	mem memory.Store,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
@@ -945,12 +951,12 @@ func newRegistry(
 	registry := runner.NewRegistry()
 
 	for name, tool := range builtins.CLIDefaults() {
-		if err := registry.Register(name, builtins.CLIFactory(name, tool, hostEnv)); err != nil {
+		if err := registry.Register(name, builtins.CLIFactory(name, tool, hostEnv, os.Environ())); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", name, err)
 		}
 	}
 
-	for _, builtin := range fixedBuiltins(sources, hostEnv, rulesSvc, credLookup, msgSender, logger, sourceObs) {
+	for _, builtin := range fixedBuiltins(sources, hostEnv, env, rulesSvc, credLookup, msgSender, logger, sourceObs) {
 		if err := registry.Register(builtin.name, builtin.factory); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", builtin.name, err)
 		}
@@ -962,7 +968,7 @@ func newRegistry(
 		}
 	}
 
-	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, credLookup); err != nil {
+	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, env, credLookup); err != nil {
 		return nil, err
 	}
 
@@ -998,6 +1004,7 @@ type builtinRunner struct {
 func fixedBuiltins(
 	sources []sourcesync.Spec,
 	hostEnv []string,
+	env environ.Lookup,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
 	msgSender builtins.MessageSender,
@@ -1007,17 +1014,17 @@ func fixedBuiltins(
 	return []builtinRunner{
 		{name: builtins.MockName, factory: builtins.MockFactory},
 		{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{})},
-		{name: builtins.EmailName, factory: builtins.EmailFactory},
+		{name: builtins.EmailName, factory: builtins.EmailFactory(env)},
 		{name: builtins.WebhookName, factory: builtins.WebhookFactory},
 		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
 		{name: builtins.CodeName, factory: builtins.CodeFactory},
 		{name: builtins.LanguageRulesName, factory: languageRulesFactory(rulesSvc)},
-		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory},
-		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory},
-		{name: builtins.GitHubName, factory: builtins.GitHubFactory},
+		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory(env)},
+		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory(env)},
+		{name: builtins.GitHubName, factory: builtins.GitHubFactory(env)},
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
-		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv)},
+		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ())},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
 		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
 	}
@@ -1036,13 +1043,19 @@ func alreadyRegisteredAsBuiltin(name, kind string) bool {
 // (Phase 1b), "mcp_client" for a per-name MCP client, and "openai" or
 // "anthropic" for a chat-completions runner under its own name. Blocks with no
 // type, or another value, stay plain config for the built-in of that name.
-func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, runnerCfgs map[string]map[string]any, credLookup builtins.TokenLookup) error {
+func registerConfiguredRunners(
+	ctx context.Context,
+	registry *runner.Registry,
+	runnerCfgs map[string]map[string]any,
+	env environ.Lookup,
+	credLookup builtins.TokenLookup,
+) error {
 	for _, name := range slices.Sorted(maps.Keys(runnerCfgs)) {
 		kind, _ := runnerCfgs[name]["type"].(string)
 
 		switch kind {
 		case "plugin":
-			if err := registry.Register(name, plugin.Factory(ctx, name)); err != nil {
+			if err := registry.Register(name, plugin.Factory(ctx, name, env)); err != nil {
 				return fmt.Errorf("register plugin runner %q: %w", name, err)
 			}
 		case builtins.MCPClientName:
@@ -1058,7 +1071,7 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 				continue
 			}
 
-			if err := registry.Register(name, namedLLMFactory(kind, name)); err != nil {
+			if err := registry.Register(name, namedLLMFactory(kind, name, env)); err != nil {
 				return fmt.Errorf("register %s runner %q: %w", kind, name, err)
 			}
 		}
@@ -1071,12 +1084,12 @@ func registerConfiguredRunners(ctx context.Context, registry *runner.Registry, r
 // a name of its own. The name is threaded into the factory because it decides
 // which API key the runner reads. A local server reached this way is an openai
 // block with a base_url.
-func namedLLMFactory(kind, name string) runner.Factory {
+func namedLLMFactory(kind, name string, env environ.Lookup) runner.Factory {
 	if kind == builtins.AnthropicName {
-		return builtins.AnthropicFactoryFor(name)
+		return builtins.AnthropicFactoryFor(name, env)
 	}
 
-	return builtins.OpenAIFactoryFor(name)
+	return builtins.OpenAIFactoryFor(name, env)
 }
 
 // closeRegistry shuts every built runner down, logging instead of failing:

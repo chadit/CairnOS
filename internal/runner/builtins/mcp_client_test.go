@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -33,11 +33,11 @@ type echoArgs struct {
 	Text string `json:"text" jsonschema:"the text to echo back"`
 }
 
-// newMCPServerURL hosts an in-process MCP server with one echo tool behind
-// an httptest streamable HTTP endpoint and returns its URL.
-func newMCPServerURL(t *testing.T) string {
-	t.Helper()
-
+// newMCPHandler builds an in-process MCP server with one echo tool behind a
+// streamable HTTP endpoint. egress_test.go puts it on a real loopback listener
+// because the guard it exercises works at dial; everything else here serves it
+// in memory.
+func newMCPHandler() http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: "cairnos-test", Version: "0.0.1"}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{Name: echoTool, Description: echoDesc},
@@ -47,26 +47,37 @@ func newMCPServerURL(t *testing.T) string {
 			}, nil, nil
 		})
 
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
-	httpServer := httptest.NewServer(handler)
-	t.Cleanup(httpServer.Close)
-
-	return httpServer.URL
+	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 }
 
-func newMCPClient(t *testing.T, url, tool string) *builtins.MCPClient {
+// newMCPServer serves the echo tool over an in-memory listener. The streamable
+// transport holds a response open while it writes, so this path needs a real
+// server rather than a recorder.
+func newMCPServer(t *testing.T) *nettest.Server {
 	t.Helper()
 
-	// The httptest endpoint is loopback, which the egress guard refuses by
-	// default; these tests exercise the client, not the guard, so they opt
-	// in. The guard's own cases live in egress_test.go.
-	client, err := builtins.NewMCPClient(map[string]any{serverURLKey: url, toolKey: tool, allowPrivateKey: true})
+	return nettest.NewServer(t, newMCPHandler())
+}
+
+// newMCPClient points the runner at server through the fixture transport, so
+// the request never leaves the process. The guard the default transport
+// carries has its own cases in egress_test.go.
+func newMCPClient(t *testing.T, server *nettest.Server, tool string) *builtins.MCPClient {
+	t.Helper()
+
+	cfg := map[string]any{serverURLKey: server.URL, toolKey: tool}
+
+	client, err := builtins.NewMCPClientOver(cfg, nil, server.Transport())
 	if err != nil {
 		t.Fatalf("new mcp client: %v", err)
 	}
 
 	return client
 }
+
+// errNoRoute is what the unreachable fixture transport fails with, standing in
+// for a dial that never completed.
+var errNoRoute = errors.New("fixture transport reached no host")
 
 func mcpTask(params map[string]any) *runner.Task {
 	return &runner.Task{RunID: testRunID, ActionName: actionMCP, Params: params, Resolved: true}
@@ -138,7 +149,7 @@ func TestMCPClientFactoryForPropagatesConfigErrors(t *testing.T) {
 func TestMCPClientCallsRemoteTool(t *testing.T) {
 	t.Parallel()
 
-	client := newMCPClient(t, newMCPServerURL(t), echoTool)
+	client := newMCPClient(t, newMCPServer(t), echoTool)
 
 	result, err := client.Execute(t.Context(), mcpTask(map[string]any{textKey: echoInput}))
 	if err != nil {
@@ -157,7 +168,7 @@ func TestMCPClientCallsRemoteTool(t *testing.T) {
 func TestMCPClientDescribeTranslatesSchema(t *testing.T) {
 	t.Parallel()
 
-	client := newMCPClient(t, newMCPServerURL(t), echoTool)
+	client := newMCPClient(t, newMCPServer(t), echoTool)
 
 	spec := client.Describe()
 
@@ -184,7 +195,7 @@ func TestMCPClientDescribeTranslatesSchema(t *testing.T) {
 func TestMCPClientUnknownToolIsInvalidParams(t *testing.T) {
 	t.Parallel()
 
-	client := newMCPClient(t, newMCPServerURL(t), "ghost")
+	client := newMCPClient(t, newMCPServer(t), "ghost")
 
 	_, err := client.Execute(t.Context(), mcpTask(map[string]any{textKey: echoInput}))
 
@@ -201,7 +212,7 @@ func TestMCPClientUnknownToolIsInvalidParams(t *testing.T) {
 func TestMCPClientBadArgumentsIsPermanentToolError(t *testing.T) {
 	t.Parallel()
 
-	client := newMCPClient(t, newMCPServerURL(t), echoTool)
+	client := newMCPClient(t, newMCPServer(t), echoTool)
 
 	// The schema wants a string; an integer fails the server-side argument
 	// validation, which the SDK reports as a tool error result.
@@ -220,16 +231,16 @@ func TestMCPClientBadArgumentsIsPermanentToolError(t *testing.T) {
 func TestMCPClientUnreachableServerIsTransient(t *testing.T) {
 	t.Parallel()
 
-	// Closing the server before the call makes the endpoint refuse
-	// connections, the transport-failure case.
-	deadServer := httptest.NewServer(http.NotFoundHandler())
-	url := deadServer.URL
+	// A transport that never reaches the host is the transport-failure case,
+	// and it needs no port that has to stay closed.
+	cfg := map[string]any{serverURLKey: nettest.BaseURL, toolKey: echoTool}
 
-	deadServer.Close()
+	client, err := builtins.NewMCPClientOver(cfg, nil, nettest.Unreachable(errNoRoute))
+	if err != nil {
+		t.Fatalf("new mcp client: %v", err)
+	}
 
-	client := newMCPClient(t, url, echoTool)
-
-	_, err := client.Execute(t.Context(), mcpTask(map[string]any{textKey: echoInput}))
+	_, err = client.Execute(t.Context(), mcpTask(map[string]any{textKey: echoInput}))
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
 	if !isClassified {
@@ -303,22 +314,13 @@ func TestMCPClientRejectsNonBoolAllowPrivateTargets(t *testing.T) {
 	}
 }
 
-// newMCPServerCapturingAuth hosts the same echo MCP server as newMCPServerURL
-// behind an outer handler that asserts every request carries the wanted
-// Authorization header, so the bearer round-tripper is proven end to end.
-func newMCPServerCapturingAuth(t *testing.T, want string) string {
+// newMCPServerCapturingAuth serves the same echo MCP server behind an outer
+// handler that asserts every request carries the wanted Authorization header,
+// so the bearer round-tripper is proven end to end.
+func newMCPServerCapturingAuth(t *testing.T, want string) *nettest.Server {
 	t.Helper()
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "cairnos-test", Version: "0.0.1"}, nil)
-
-	mcp.AddTool(server, &mcp.Tool{Name: echoTool, Description: echoDesc},
-		func(_ context.Context, _ *mcp.CallToolRequest, args echoArgs) (*mcp.CallToolResult, any, error) {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "echo: " + args.Text}},
-			}, nil, nil
-		})
-
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	inner := newMCPHandler()
 
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(authHeader); got != want {
@@ -328,10 +330,7 @@ func newMCPServerCapturingAuth(t *testing.T, want string) string {
 		inner.ServeHTTP(w, r)
 	})
 
-	httpServer := httptest.NewServer(guarded)
-	t.Cleanup(httpServer.Close)
-
-	return httpServer.URL
+	return nettest.NewServer(t, guarded)
 }
 
 // TestMCPClientCredentialSendsBearer proves the streamable HTTP transport
@@ -339,15 +338,14 @@ func newMCPServerCapturingAuth(t *testing.T, want string) string {
 func TestMCPClientCredentialSendsBearer(t *testing.T) {
 	t.Parallel()
 
-	url := newMCPServerCapturingAuth(t, bearerPrefix+credToken)
+	server := newMCPServerCapturingAuth(t, bearerPrefix+credToken)
 	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
 
-	client, err := builtins.NewMCPClientWithCredentials(map[string]any{
-		serverURLKey:    url,
-		toolKey:         echoTool,
-		credentialKey:   credName,
-		allowPrivateKey: true,
-	}, lookup)
+	client, err := builtins.NewMCPClientOver(map[string]any{
+		serverURLKey:  server.URL,
+		toolKey:       echoTool,
+		credentialKey: credName,
+	}, lookup, server.Transport())
 	if err != nil {
 		t.Fatalf("new mcp client: %v", err)
 	}

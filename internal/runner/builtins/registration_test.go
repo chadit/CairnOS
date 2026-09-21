@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -18,19 +19,19 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 	registry := runner.NewRegistry()
 
 	for name, tool := range builtins.CLIDefaults() {
-		if err := registry.Register(name, builtins.CLIFactory(name, tool, nil)); err != nil {
+		if err := registry.Register(name, builtins.CLIFactory(name, tool, nil, nil)); err != nil {
 			t.Fatalf("register %s: %v", name, err)
 		}
 	}
 
 	factories := map[string]runner.Factory{
-		builtins.EmailName:         builtins.EmailFactory,
+		builtins.EmailName:         builtins.EmailFactory(environ.Map(nil)),
 		builtins.WebhookName:       builtins.WebhookFactory,
 		builtins.CodeName:          builtins.CodeFactory,
 		builtins.LanguageRulesName: builtins.LanguageRulesFactory,
-		builtins.OpenAIName:        builtins.OpenAIFactory,
-		builtins.AnthropicName:     builtins.AnthropicFactory,
-		builtins.GitHubName:        builtins.GitHubFactory,
+		builtins.OpenAIName:        builtins.OpenAIFactory(environ.Map(nil)),
+		builtins.AnthropicName:     builtins.AnthropicFactory(environ.Map(nil)),
+		builtins.GitHubName:        builtins.GitHubFactory(environ.Map(nil)),
 		builtins.MCPClientName:     builtins.MCPClientFactory,
 		builtins.SandboxExecName:   builtins.SandboxExecFactory,
 		builtins.ExecName:          builtins.ExecFactory,

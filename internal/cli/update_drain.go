@@ -77,7 +77,7 @@ func (a *App) restartHooksFor(install service.Install, home string) restartHooks
 // and exit, and reports how many were still going. The ceiling is left to the
 // server so the two sides cannot disagree about when to give up.
 func (a *App) requestDrain(ctx context.Context, home string) (int, error) {
-	cfg, err := config.Load(filepath.Join(home, configFileName))
+	cfg, err := config.LoadWith(filepath.Join(home, configFileName), a.envLookup())
 	if err != nil {
 		return 0, fmt.Errorf("load the config in %s: %w", home, err)
 	}
@@ -112,13 +112,13 @@ func (a *App) drainToken(ctx context.Context, home string, cfg *config.Config) (
 		return "", nil
 	}
 
-	keyStore, _, err := openAuth(ctx, home)
+	keyStore, _, err := openAuth(ctx, home, a.envLookup())
 	if err != nil {
 		return "", fmt.Errorf("open the auth store in %s: %w", home, err)
 	}
 	defer a.closeStore(keyStore)
 
-	authn, err := buildAuthenticator(cfg, keyStore)
+	authn, err := buildAuthenticator(cfg, keyStore, a.envLookup())
 	if err != nil {
 		return "", err
 	}

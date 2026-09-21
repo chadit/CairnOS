@@ -12,7 +12,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // Process exit codes: success, a failed or canceled run (or an unhealthy
@@ -91,10 +93,21 @@ type App struct {
 	// the fake bw a suite stages can never hash to a published release.
 	bwPin func(goos string) (bwAssetPin, error)
 
+	// bwClock measures the wait for `bw serve` to answer. Nil is the machine's
+	// clock, which is what a deploy waits on; a suite hands over one it drives
+	// so a busy host cannot expire a budget the daemon met.
+	bwClock bitwarden.Clock
+
 	// serveFail announces a serve startup that never finished. runServe builds
 	// it once it knows the config and the data directory; every other command
 	// leaves it nil, so failures elsewhere stay on stderr.
 	serveFail *serveFailNotifier
+
+	// env answers the environment variables the commands read. New sets it to
+	// the real process environment; tests hand over a fixed set through WithEnv
+	// so two cases can disagree about a variable at the same time. A zero-valued
+	// App still reads the process environment, which envLookup supplies.
+	env environ.Lookup
 
 	// echoNoticed keeps the visible-input warning to one line per run. The
 	// prompts ask three times and the answer is the same every time.
@@ -110,7 +123,27 @@ func New(stdout, stderr io.Writer) *App {
 		stdin:  os.Stdin,
 		logger: slog.New(slog.NewTextHandler(stderr, nil)),
 		bwPin:  bwAsset,
+		env:    environ.OS(),
 	}
+}
+
+// WithEnv sets the environment the commands read, so a test can stage variables
+// without rewriting the process environment and can therefore run in parallel.
+// It returns the App for chaining.
+func (a *App) WithEnv(env environ.Lookup) *App {
+	a.env = env
+
+	return a
+}
+
+// WithBitwardenClock sets the clock the wait for `bw serve` measures its budget
+// on, and returns the App for chaining. Only a test build calls it: production
+// waits on the machine's clock, and a suite drives its own so a loaded host
+// cannot fail a wait the daemon answered.
+func (a *App) WithBitwardenClock(clock bitwarden.Clock) *App {
+	a.bwClock = clock
+
+	return a
 }
 
 // WithStdin sets the reader the interactive chat REPL reads lines from, so a
@@ -236,6 +269,16 @@ func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string
 
 		return ExitUsage
 	}
+}
+
+// envLookup answers with the App's environment, falling back to the process one
+// so an App built without New behaves the way a direct os.Getenv would.
+func (a *App) envLookup() environ.Lookup {
+	if a.env == nil {
+		return environ.OS()
+	}
+
+	return a.env
 }
 
 // printOutf writes user-facing output, logging a broken stdout instead of

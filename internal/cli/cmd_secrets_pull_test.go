@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -44,6 +45,13 @@ const bwFakeName = "bw"
 // same reason.
 const bwFakeSettingsFile = "fake.json"
 
+// bwReadyPolls is how many polls the wait for `bw serve` lasts here. A child
+// normally binds within two, so this is ample room on a busy host, and it is
+// finite: a daemon that answers neither way ends the wait instead of hanging the
+// run. Nothing longer helps, because a host dropping loopback traffic keeps
+// dropping it for minutes.
+const bwReadyPolls = 120
+
 // unreachableAsset is the release URL the staged pin carries. Nothing serves it,
 // so a case that reaches the installer fails there instead of downloading the
 // real Bitwarden CLI from a unit test.
@@ -65,6 +73,13 @@ func runFakeBW(argv []string) int {
 		return 2
 	}
 
+	// serve is dispatched before the settings read so the listener binds first.
+	// Everything after the bind is invisible to the caller's readiness probe,
+	// which is what keeps that wait off a stopwatch.
+	if argv[0] == "serve" {
+		return runFakeServe(argv)
+	}
+
 	settings, err := loadBWFakeSettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
@@ -83,8 +98,6 @@ func runFakeBW(argv []string) int {
 		fmt.Println("logged-in")
 
 		return 0
-	case "serve":
-		return runFakeServe(settings, argv)
 	default:
 		return 2
 	}
@@ -104,15 +117,28 @@ func runFakeStatus(settings bwFakeSettings) int {
 	return 0
 }
 
-// runFakeServe answers the endpoints the pull drives.
-func runFakeServe(settings bwFakeSettings, argv []string) int {
-	server := &http.Server{
-		Addr:              "127.0.0.1:" + bwFlagValue(argv, "--port"),
-		Handler:           bwFakeHandler(settings),
-		ReadHeaderTimeout: bwFakeIdle,
+// runFakeServe binds a real port because this runs in a re-executed child
+// process standing in for `bw serve`, which the pull reaches over TCP. It then
+// answers the endpoints the pull drives.
+func runFakeServe(argv []string) int {
+	//nolint:noctx // this runs in the re-executed fake process, which has no context to cancel
+	listener, err := net.Listen("tcp", "127.0.0.1:"+bwFlagValue(argv, "--port"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
+
+		return 1
 	}
 
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	settings, err := loadBWFakeSettings()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
+
+		return 3
+	}
+
+	server := &http.Server{Handler: bwFakeHandler(settings), ReadHeaderTimeout: bwFakeIdle}
+
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return 1
 	}
 
@@ -298,11 +324,6 @@ func bothFields() map[string]string {
 	return map[string]string{pullFieldOne: pullValueOne, pullFieldTwo: pullValueTwo}
 }
 
-// pathWith puts dir ahead of the real PATH.
-func pathWith(dir string) string {
-	return dir + string(os.PathListSeparator) + os.Getenv("PATH")
-}
-
 // TestSecretsPullWithoutABlockIsANoOp covers FR3, the case every host without a
 // vault takes. Deploy runs this unconditionally, so a non-zero exit here would
 // stop all of them.
@@ -326,12 +347,12 @@ func TestSecretsPullWithoutABlockIsANoOp(t *testing.T) {
 // two-entry pin table. There is no release to fall back to there, so the bw the
 // host has is the only one, and the log says why it was taken on trust.
 func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runUnpinnedCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, stdout, stderr := runUnpinnedEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -348,12 +369,12 @@ func TestSecretsPullUsesAnUnpinnedPlatformsOwnBW(t *testing.T) {
 // TestSecretsPullWritesTheEnvFile covers the rendered file and the line the
 // pull prints. The variable names belong in a deploy log; the values never do.
 func TestSecretsPullWritesTheEnvFile(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -392,24 +413,67 @@ func TestSecretsPullWritesTheEnvFile(t *testing.T) {
 // TestSecretsPullIsByteStable proves two runs against an unchanged vault produce
 // identical files, so a diff in the deployed file always means something moved.
 func TestSecretsPullIsByteStable(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
 	path := filepath.Join(dir, "secrets.env")
-	first := runPullAndRead(t, dir, path)
+	first := runPullAndRead(t, binDir, dir, path)
 
-	if second := runPullAndRead(t, dir, path); second != first {
+	if second := runPullAndRead(t, binDir, dir, path); second != first {
 		t.Fatalf("two pulls differ:\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
 
-// runPullAndRead runs one successful pull and returns the rendered file.
-func runPullAndRead(t *testing.T, dir, path string) string {
+// TestSecretsPullFollowsAChangedVaultValue is the other half of byte stability.
+// Identical bytes are only worth pinning if a moved value moves them: a pull
+// that rendered the previous value would leave the service on a rotated secret
+// it can no longer use.
+func TestSecretsPullFollowsAChangedVaultValue(t *testing.T) {
+	t.Parallel()
+
+	binDir := stageFakeBW(t, bothFields())
+	dir := pullConfig(t)
+
+	path := filepath.Join(dir, "secrets.env")
+	before := runPullAndRead(t, binDir, dir, path)
+
+	const rotatedValue = "rotated-token-value"
+
+	restageBWFields(t, binDir, map[string]string{
+		pullFieldOne: rotatedValue,
+		pullFieldTwo: pullValueTwo,
+	})
+
+	after := runPullAndRead(t, binDir, dir, path)
+	if after == before {
+		t.Fatalf("the rotated value did not change the file:\n%s", after)
+	}
+
+	if !strings.Contains(after, pullVarOne+"='"+rotatedValue+"'") {
+		t.Fatalf("the file does not carry the rotated value:\n%s", after)
+	}
+
+	if strings.Contains(after, pullVarOne+"='"+pullValueOne+"'") {
+		t.Fatalf("the file still carries the previous value:\n%s", after)
+	}
+}
+
+// restageBWFields rewrites the item fixture a staged fake already serves, which
+// is how a case moves a vault value between two pulls. The symlink and the
+// settings file stay as they were.
+func restageBWFields(t *testing.T, dir string, fields map[string]string) {
 	t.Helper()
 
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	writePullFile(t, filepath.Join(dir, "items.json"), encodeItems(t, fields))
+}
+
+// runPullAndRead runs one successful pull and returns the rendered file.
+func runPullAndRead(t *testing.T, binDir, dir, path string) string {
+	t.Helper()
+
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -425,12 +489,12 @@ func runPullAndRead(t *testing.T, dir, path string) string {
 // TestSecretsPullDryRunWritesNothing covers FR8: an operator checks the mapping
 // against the vault before a deploy touches the file the service reads.
 func TestSecretsPullDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir, "--dry-run")
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir, "--dry-run")
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -447,12 +511,12 @@ func TestSecretsPullDryRunWritesNothing(t *testing.T) {
 // TestSecretsPullNamesEveryMissingField covers FR6 end to end: the run fails,
 // names everything to add, and leaves no file behind for the service to read.
 func TestSecretsPullNamesEveryMissingField(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{pullFieldOne: pullValueOne})
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure", code)
 	}
@@ -471,16 +535,16 @@ func TestSecretsPullNamesEveryMissingField(t *testing.T) {
 // cleanup path this test is about actually runs; a failure earlier in the pull
 // would never enter writeFileAtomic and the test would prove nothing.
 func TestSecretsPullLeavesNoTempFileBehind(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfig(t)
-
-	t.Setenv("PATH", pathWith(binDir))
 
 	if err := os.Mkdir(filepath.Join(dir, "secrets.env"), 0o750); err != nil {
 		t.Fatalf("stage a directory where the file goes: %v", err)
 	}
 
-	if code, _, _ := runCLI(t, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, _ := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir); code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure when the rename cannot land", code)
 	}
 
@@ -502,6 +566,8 @@ func TestSecretsPullLeavesNoTempFileBehind(t *testing.T) {
 // quoted. This sources the file the way that preamble does and compares what the
 // shell made of it.
 func TestSecretsPullQuotesValuesForBothReaders(t *testing.T) {
+	t.Parallel()
+
 	hostile := map[string]string{
 		pullFieldOne: "two words $(touch /tmp/pwned) `id` done",
 		pullFieldTwo: "it's got a quote and a \\backslash",
@@ -510,9 +576,7 @@ func TestSecretsPullQuotesValuesForBothReaders(t *testing.T) {
 	binDir := stageFakeBW(t, hostile)
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	if code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
+	if code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
@@ -553,15 +617,15 @@ func sourceEnvFile(t *testing.T, path string) map[string]string {
 // can carry: both parse line by line, so the remainder would be read as a second
 // assignment.
 func TestSecretsPullRefusesAValueWithANewline(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{
 		pullFieldOne: "first line\nsecond line",
 		pullFieldTwo: pullValueTwo,
 	})
 	dir := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure", code)
 	}
@@ -579,13 +643,11 @@ func TestSecretsPullRefusesAValueWithANewline(t *testing.T) {
 // unit loads /etc/cairnos, never the home, so a pull resolving against the home
 // would write a file nothing reads, and the dash on the unit line keeps that
 // silent. It is a dry run, so nothing under /etc is touched.
-//
-//nolint:paralleltest // t.Setenv rewrites PATH for the whole process
 func TestSecretsPullTargetsWhereTheUnitReads(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, bothFields())
 	dir := pullConfigWithCredentials(t)
-
-	t.Setenv("PATH", pathWith(binDir))
 
 	cases := []struct {
 		name string
@@ -598,9 +660,11 @@ func TestSecretsPullTargetsWhereTheUnitReads(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			argv := append([]string{secretsCmd, "pull", flagDirArg, dir, "--dry-run"}, testCase.args...)
 
-			code, stdout, stderr := runCLI(t, argv...)
+			code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), argv...)
 			if code != cli.ExitOK {
 				t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 			}
@@ -663,6 +727,8 @@ func writeBitwardenConfig(t *testing.T, body string) string {
 // config from listing the same string twice. A field named for a human is left
 // alone, because nothing says what variable it would fill.
 func TestSecretsPullInfersFieldsNamedLikeVariables(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{
 		inferredVar: inferredValue,
 		humanField:  humanValue,
@@ -670,9 +736,7 @@ func TestSecretsPullInfersFieldsNamedLikeVariables(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, "[secrets.bitwarden]\nitem = \""+pullItem+"\"\n")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -696,6 +760,8 @@ func TestSecretsPullInfersFieldsNamedLikeVariables(t *testing.T) {
 // operator who wrote a mapping meant it, so the table beats the field that
 // happens to share the variable's name.
 func TestSecretsPullPrefersTheMappedField(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{
 		inferredVar: inferredValue,
 		humanField:  humanValue,
@@ -704,9 +770,7 @@ func TestSecretsPullPrefersTheMappedField(t *testing.T) {
 	dir := writeBitwardenConfig(t, "[secrets.bitwarden]\nitem = \""+pullItem+"\"\n\n"+
 		"[secrets.bitwarden.fields]\n"+inferredVar+" = \""+humanField+"\"\n")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	if code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
+	if code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
@@ -721,13 +785,13 @@ func TestSecretsPullPrefersTheMappedField(t *testing.T) {
 // item with no variable-named field and no table is a configuration the pull
 // cannot act on, and the message has to name the item that was read.
 func TestSecretsPullFailsWhenTheItemCarriesNothing(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{humanField: humanValue})
 
 	dir := writeBitwardenConfig(t, "[secrets.bitwarden]\nitem = \""+pullItem+"\"\n")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure", code)
 	}
@@ -740,6 +804,8 @@ func TestSecretsPullFailsWhenTheItemCarriesNothing(t *testing.T) {
 // TestSecretsPullTakesTheItemFromTheCredentialsFile covers FR18: a host that
 // ran `secrets auth` and never edited config.toml still pulls.
 func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
 	dir := t.TempDir()
@@ -747,9 +813,7 @@ func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 	writePullFile(t, filepath.Join(dir, "bitwarden.env"),
 		bitwarden.EnvItem+"="+pullItem+"\n"+credentialsFixture())
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	if code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
+	if code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
@@ -765,6 +829,8 @@ func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 // beside the generated one. The warning names the shared default an operator
 // should add, with the override mentioned separately.
 func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
 	body := "[secrets.bitwarden]\nitem = \"" + pullItem + "\"\n\n" +
@@ -774,9 +840,7 @@ func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, body)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -796,6 +860,8 @@ func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 // under a block name of its own. The variable named is the one that runner
 // reads first, which is what an operator has to add to the item.
 func TestSecretsPullWarnsWithTheRunnerBlockName(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
 	body := "[secrets.bitwarden]\nitem = \"" + pullItem + "\"\n\n" +
@@ -803,9 +869,7 @@ func TestSecretsPullWarnsWithTheRunnerBlockName(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, body)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -820,6 +884,8 @@ func TestSecretsPullWarnsWithTheRunnerBlockName(t *testing.T) {
 // per-identity name needs no change, so warning about the shared default would
 // send the operator to add a second copy of a token they have.
 func TestSecretsPullIsQuietWhenTheItemCarriesTheIdentityToken(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{"CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN": "token-value"})
 
 	body := "[secrets.bitwarden]\nitem = \"" + pullItem + "\"\n\n" +
@@ -828,9 +894,7 @@ func TestSecretsPullIsQuietWhenTheItemCarriesTheIdentityToken(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, body)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -846,6 +910,8 @@ func TestSecretsPullIsQuietWhenTheItemCarriesTheIdentityToken(t *testing.T) {
 // nothing falls back from, so an override sentence would tell the operator about
 // a name this config never reads.
 func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
 	body := "[secrets.bitwarden]\nitem = \"" + pullItem + "\"\n\n" +
@@ -855,9 +921,7 @@ func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, body)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -875,6 +939,8 @@ func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
 // pointed at a server on this side of the network reads no key, so warning about
 // one would train an operator to ignore the warnings that matter.
 func TestSecretsPullIsQuietAboutALocalRunner(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{inferredVar: inferredValue})
 
 	body := "[secrets.bitwarden]\nitem = \"" + pullItem + "\"\n\n" +
@@ -882,9 +948,7 @@ func TestSecretsPullIsQuietAboutALocalRunner(t *testing.T) {
 
 	dir := writeBitwardenConfig(t, body)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -913,6 +977,8 @@ func runPullRead(t *testing.T, path string) string {
 // its half is pinned as exact bytes. A single-quoted run is taken literally, so
 // a plain value comes back with the wrap removed.
 func TestSecretsPullRendersTheBytesSystemdParses(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		value string
@@ -928,12 +994,12 @@ func TestSecretsPullRendersTheBytesSystemdParses(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			binDir := stageFakeBW(t, map[string]string{cairnosOneVar: testCase.value})
 			dir := writeBitwardenConfig(t, "[secrets.bitwarden]\nitem = \""+pullItem+"\"\n")
 
-			t.Setenv("PATH", pathWith(binDir))
-
-			if code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
+			if code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
 				t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 			}
 
@@ -951,12 +1017,13 @@ func TestSecretsPullRendersTheBytesSystemdParses(t *testing.T) {
 // 0, so a deploy reports success having written nothing. The user home is staged
 // with a block too, so a fallback there fails on missing credentials.
 func TestSecretsPullSystemModeReadsTheSystemConfig(t *testing.T) {
+	t.Parallel()
+
 	if _, err := os.Stat(systemConfigPath); err == nil {
 		t.Skipf("%s exists on this host, so its contents would decide the case", systemConfigPath)
 	}
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 
 	userDir := filepath.Join(home, ".cairnos")
 	if err := os.MkdirAll(userDir, 0o750); err != nil {
@@ -966,13 +1033,57 @@ func TestSecretsPullSystemModeReadsTheSystemConfig(t *testing.T) {
 	writePullFile(t, filepath.Join(userDir, "config.toml"),
 		"[secrets.bitwarden]\nitem = \""+pullItem+"\"\n")
 
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", "--system")
+	code, stdout, stderr := runEnvCLI(t, map[string]string{cli.HomeEnvName(): home},
+		secretsCmd, "pull", "--system")
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 
-	if !strings.Contains(stdout, systemConfigPath) {
-		t.Fatalf("the run did not read %s:\n%s", systemConfigPath, stdout)
+	// The whole line, because stdout also carries the user home's path in the
+	// failure this case is written against, and the path alone would match it.
+	want := "secrets pull: no [secrets.bitwarden] block in " + systemConfigPath + ", nothing to do\n"
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout does not carry %q:\n%s", want, stdout)
+	}
+}
+
+// TestSecretsPullReportsATargetItCannotWrite covers the deploy that would
+// otherwise look done. The rendered file goes through a temp file in the target
+// directory, so a directory the unit owns and this user does not has to end the
+// pull nonzero rather than exit clean having written nothing.
+func TestSecretsPullReportsATargetItCannotWrite(t *testing.T) {
+	t.Parallel()
+
+	requireNotRoot(t)
+
+	binDir := stageFakeBW(t, bothFields())
+	dir := t.TempDir()
+	sealed := filepath.Join(dir, "sealed")
+
+	if err := os.Mkdir(sealed, 0o500); err != nil {
+		t.Fatalf("seal the target directory: %v", err)
+	}
+
+	target := filepath.Join(sealed, "secrets.env")
+
+	writePullFile(t, filepath.Join(dir, "config.toml"),
+		"[secrets.bitwarden]\nitem = \""+pullItem+"\"\n"+
+			"env_file = \""+target+"\"\n\n"+
+			"[secrets.bitwarden.fields]\n"+
+			pullVarOne+" = \""+pullFieldOne+"\"\n")
+	writePullFile(t, filepath.Join(dir, "bitwarden.env"), credentialsFixture())
+
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want a failure\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	if !strings.Contains(stderr, sealed) {
+		t.Fatalf("the failure does not name the directory it could not write:\n%s", stderr)
+	}
+
+	if _, err := os.Lstat(target); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a failed pull left something at %s (stat error %v)", target, err)
 	}
 }
 

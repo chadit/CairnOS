@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/mcp"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 func TestNewRegistryClientRejectsEmptyURL(t *testing.T) {
@@ -29,7 +29,7 @@ func TestRegistryPublishPostsRecord(t *testing.T) {
 		gotBody mcp.ServerEntry
 	)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 
@@ -39,7 +39,6 @@ func TestRegistryPublishPostsRecord(t *testing.T) {
 
 		w.WriteHeader(http.StatusCreated)
 	}))
-	t.Cleanup(server.Close)
 
 	client, err := mcp.NewRegistryClient(server.URL, "secret-token", server.Client())
 	if err != nil {
@@ -73,12 +72,11 @@ func TestRegistryPublishOmitsAuthHeaderWithoutToken(t *testing.T) {
 
 	var hadAuth bool
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, hadAuth = r.Header["Authorization"]
 
 		w.WriteHeader(http.StatusOK)
 	}))
-	t.Cleanup(server.Close)
 
 	client, err := mcp.NewRegistryClient(server.URL, "", server.Client())
 	if err != nil {
@@ -98,11 +96,10 @@ func TestRegistryPublishOmitsAuthHeaderWithoutToken(t *testing.T) {
 func TestRegistryPublishSurfacesStatusError(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, "token rejected")
 	}))
-	t.Cleanup(server.Close)
 
 	client, err := mcp.NewRegistryClient(server.URL, "bad", server.Client())
 	if err != nil {
@@ -133,7 +130,7 @@ func TestRegistryPublishSurfacesStatusError(t *testing.T) {
 func TestRegistryListDecodesServers(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/servers" {
 			t.Errorf("list path = %q, want /servers", r.URL.Path)
 		}
@@ -141,7 +138,6 @@ func TestRegistryListDecodesServers(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"servers":[{"name":"peer","endpoint":"https://peer/mcp","tools":[{"name":"do_thing","description":"d"}]}]}`)
 	}))
-	t.Cleanup(server.Close)
 
 	client, err := mcp.NewRegistryClient(server.URL, "", server.Client())
 	if err != nil {

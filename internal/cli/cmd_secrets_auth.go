@@ -36,14 +36,14 @@ func (a *App) cmdSecretsAuth(ctx context.Context, args []string) int {
 		return code
 	}
 
-	dir, err := resolveSecretsDir(*dirFlag, *system)
+	dir, err := resolveSecretsDir(*dirFlag, *system, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return ExitFailure
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -75,7 +75,7 @@ func credentialsFileFrom(cfg *config.Config) string {
 // already in the process environment is taken from there without asking, so a
 // host that injects one of these does not have it typed in twice.
 func (a *App) writeCredentials(ctx context.Context, label, path string, cfg *config.Config) int {
-	defaults := readChezmoiDefaults(a.logger)
+	defaults := readChezmoiDefaults(a.envLookup(), a.logger)
 
 	if defaults.itemName != "" || defaults.hasSecrets() {
 		a.printOutf("%s: chezmoi config found; press Enter to accept its values\n", label)
@@ -179,7 +179,7 @@ type askOptions struct {
 // fails naming the variable rather than blocking on a pipe that will never
 // produce a line.
 func (a *App) ask(ctx context.Context, reader *bufio.Reader, opts askOptions) (string, error) {
-	if value := strings.TrimSpace(os.Getenv(opts.variable)); value != "" {
+	if value := strings.TrimSpace(a.envLookup().Get(opts.variable)); value != "" {
 		a.printOutf("  %s: taken from the environment\n", opts.variable)
 
 		return value, nil
@@ -247,7 +247,7 @@ func renderCredentials(creds bitwarden.Credentials) []byte {
 // finds out here rather than from a failed deploy. It prints what it found and
 // never a value.
 func (a *App) checkVault(ctx context.Context, label, path, home string, cfg *config.Config) int {
-	creds, err := bitwarden.LoadCredentials(path, os.Getenv)
+	creds, err := bitwarden.LoadCredentials(path, a.envLookup().Get)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 

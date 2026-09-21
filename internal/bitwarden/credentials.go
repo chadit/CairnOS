@@ -114,12 +114,11 @@ func checkComplete(creds Credentials, path string) error {
 }
 
 // readCredentialsFile parses the KEY=VALUE file, refusing one anybody but its
-// owner can read. An absent file returns nothing and no error, leaving the
-// environment as the only source.
+// owner can read. An absent file returns nothing and no error.
 //
 // The mode is read off the descriptor, not the path: checking a path and then
 // opening it are two resolutions, and anything that can write the directory
-// could swap the file in between.
+// could swap the file between them.
 func readCredentialsFile(path string) (map[string]string, error) {
 	file, err := os.Open(path) // #nosec G304 -- the path comes from the operator's own config
 	if errors.Is(err, fs.ErrNotExist) {

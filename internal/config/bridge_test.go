@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // telegramUserID is the sample allowlist key the bridge tests bind and assert
@@ -126,12 +127,16 @@ events = ["held", "run_failed"]
 }
 
 func TestLoadBridgeEnvOverridesBeatFile(t *testing.T) {
-	t.Setenv("CAIRNOS_BRIDGE_TELEGRAM_ENABLED", "true")
-	t.Setenv("CAIRNOS_BRIDGE_TELEGRAM_POLL_TIMEOUT", "20s")
-	t.Setenv("CAIRNOS_BRIDGE_TELEGRAM_SEND_TIMEOUT", "3s")
-	t.Setenv("CAIRNOS_BRIDGE_TELEGRAM_CONFIRM_TTL", "2m")
-	t.Setenv("CAIRNOS_BRIDGE_TELEGRAM_VERBOSE", "true")
-	t.Setenv("CAIRNOS_NOTIFY_DISCORD_EVENTS", "run_failed, budget_denied")
+	t.Parallel()
+
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_BRIDGE_TELEGRAM_ENABLED":      envOn,
+		"CAIRNOS_BRIDGE_TELEGRAM_POLL_TIMEOUT": "20s",
+		"CAIRNOS_BRIDGE_TELEGRAM_SEND_TIMEOUT": "3s",
+		"CAIRNOS_BRIDGE_TELEGRAM_CONFIRM_TTL":  "2m",
+		"CAIRNOS_BRIDGE_TELEGRAM_VERBOSE":      envOn,
+		"CAIRNOS_NOTIFY_DISCORD_EVENTS":        "run_failed, budget_denied",
+	})
 
 	// The file carries different values and one allowlisted user so the enabled
 	// config still validates; the environment must then win over every key it sets.
@@ -150,7 +155,7 @@ workspace = "default"
 events = ["held"]
 `
 
-	cfg, err := config.Load(writeConfig(t, fileTOML))
+	cfg, err := config.LoadWith(writeConfig(t, fileTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

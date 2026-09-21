@@ -467,15 +467,19 @@ func TestExecRejectsAMissingWorkdir(t *testing.T) {
 // runner: the child sees the serve user's own environment, with the config
 // table layered on top.
 func TestExecPassesConfigEnvAndKeepsInheritedEnv(t *testing.T) {
-	// No t.Parallel: t.Setenv forbids it.
-	t.Setenv(hostEnvName, "from-host")
+	t.Parallel()
 
 	shim := writeShim(t, t.TempDir(), "printenv",
 		`printf '%s|%s\n' "$`+hostEnvName+`" "$`+cfgEnvName+`"`)
 
 	cfg := execConfig(map[string]any{envKey: map[string]any{cfgEnvName: "from-config"}})
 
-	result, err := newExec(t, cfg).Execute(t.Context(), execTask(map[string]any{cmdKey: shim}))
+	built, err := builtins.ExecFactoryWithHostEnv(nil, []string{hostEnvName + "=from-host"})(cfg)
+	if err != nil {
+		t.Fatalf("build exec: %v", err)
+	}
+
+	result, err := built.Execute(t.Context(), execTask(map[string]any{cmdKey: shim}))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

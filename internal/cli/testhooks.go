@@ -3,11 +3,19 @@ package cli
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/reach"
 	"github.com/chadit/CairnOS/internal/scheduler"
 )
+
+// HomeEnvName is the variable the commands resolve a home directory from. It
+// differs per platform the way os.UserHomeDir does, so a test stages this key
+// rather than hard-coding HOME.
+func HomeEnvName() string {
+	return homeEnvKey()
+}
 
 // ConfigFileName is the config file name WriteConfigBlock edits.
 const ConfigFileName = configFileName
@@ -66,6 +74,11 @@ func NewQueueRunnerAdapter(fire inputsRunner, monitor *reach.Monitor) *QueueRunn
 	return &QueueRunnerAdapter{fire: fire, reach: monitor}
 }
 
+// ErrNoSourceCheckout is the refusal a directory carrying no go.mod or no .git
+// gets from UpdateSourceDir, exported so a case names the sentinel rather than
+// matching the message text.
+var ErrNoSourceCheckout = errNoSourceCheckout
+
 // UpdateSourceDir resolves the checkout `cairnos update` builds from, given a
 // --source override and the path of the running binary. A test passes a staged
 // layout where the real command passes its own executable.
@@ -89,7 +102,7 @@ func UpdateLink(binary, linkDir string) error {
 // is how a test pins the pull-before-restart order without a vault or a unit.
 // The revision reads around the steps stay real, so dir must be a checkout.
 func (a *App) RunUpdateSteps(ctx context.Context, dir, home string, steps UpdateSteps) error {
-	return a.applyUpdate(ctx, dir, updateOptions{home: home, link: true}, steps)
+	return a.applyUpdate(ctx, dir, &updateOptions{home: home, link: true}, steps)
 }
 
 // UpdateRun names one invocation's inputs for a test: the release API to ask,
@@ -97,6 +110,11 @@ func (a *App) RunUpdateSteps(ctx context.Context, dir, home string, steps Update
 // two resolved fields are why this exists, since a test must never reach
 // api.github.com or overwrite the test binary.
 type UpdateRun struct {
+	// Transport carries the release lookup and the asset download. A test
+	// passes one that answers from a handler in process, so the case needs no
+	// listening socket and cannot be failed by the host's network stack.
+	Transport http.RoundTripper
+
 	APIBase    string
 	Executable string
 	Home       string
@@ -108,12 +126,13 @@ type UpdateRun struct {
 
 // DriveUpdate runs the whole release-or-source decision against staged inputs
 // and substituted steps, and returns the exit code the command would.
-func (a *App) DriveUpdate(ctx context.Context, run UpdateRun, steps UpdateSteps) (int, error) {
-	return a.runUpdate(ctx, updateOptions{
+func (a *App) DriveUpdate(ctx context.Context, run *UpdateRun, steps UpdateSteps) (int, error) {
+	return a.runUpdate(ctx, &updateOptions{
 		source:     run.Source,
 		home:       run.Home,
 		executable: run.Executable,
 		apiBase:    run.APIBase,
+		transport:  run.Transport,
 		check:      run.Check,
 		fetch:      !run.NoFetch,
 		link:       true,

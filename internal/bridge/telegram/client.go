@@ -112,12 +112,25 @@ type client struct {
 
 // NewClient builds the Bot API client behind the BotAPI interface. baseURL is
 // DefaultBaseURL on every production call; it is a parameter only so the
-// client's own suite can point at an httptest server (doc.go). sendTimeout
-// bounds each non-poll call via its context, while the http.Client's Timeout is
-// the long-poll ceiling that stops a hung connection.
+// client's own suite can point somewhere else (doc.go). sendTimeout bounds each
+// non-poll call via its context, while the http.Client's Timeout is the
+// long-poll ceiling that stops a hung connection.
 func NewClient(token, baseURL string, sendTimeout, pollTimeout time.Duration) BotAPI {
+	return NewClientOver(token, baseURL, sendTimeout, pollTimeout, nil)
+}
+
+// NewClientOver is NewClient over a caller-supplied round tripper. A nil
+// transport takes the shared default, which is every production call. The
+// suite passes a handler-backed tripper so its round trips open no socket: a
+// loopback dial can land on an ephemeral port whose conntrack entries from an
+// earlier listener have not aged out, and the SYN comes back EHOSTUNREACH.
+func NewClientOver(
+	token, baseURL string,
+	sendTimeout, pollTimeout time.Duration,
+	transport http.RoundTripper,
+) BotAPI {
 	return &client{
-		http:    &http.Client{Timeout: pollTimeout + pollDeadlineMargin},
+		http:    &http.Client{Timeout: pollTimeout + pollDeadlineMargin, Transport: transport},
 		token:   token,
 		baseURL: baseURL,
 		timeout: sendTimeout,

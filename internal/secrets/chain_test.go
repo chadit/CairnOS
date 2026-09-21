@@ -6,8 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/secrets"
 )
+
+// envSource is the env half of a shadowing chain, holding the one variable the
+// case is about. The value is staged here rather than exported so the two
+// shadow cases can run beside each other.
+func envSource(value string) *secrets.Env {
+	return secrets.NewEnvWith(environ.Map(map[string]string{secrets.EnvPrefix + "DB_PASSWORD": value}))
+}
 
 const (
 	staleEnvValue     = "stale-env-value"
@@ -95,17 +103,55 @@ func TestChainAllMissWrapsNotFound(t *testing.T) {
 	}
 }
 
+// TestChainWithNoSourcesMisses covers the wiring that built a chain out of
+// nothing: every lookup has to miss with ErrNotFound rather than return an
+// empty value a caller would spend as a credential.
+func TestChainWithNoSourcesMisses(t *testing.T) {
+	t.Parallel()
+
+	value, err := secrets.Chain().Get(t.Context(), testName)
+	if !errors.Is(err, secrets.ErrNotFound) {
+		t.Fatalf("empty-chain error = %v, want ErrNotFound", err)
+	}
+
+	if value != "" {
+		t.Errorf("empty-chain value = %q, want no value", value)
+	}
+}
+
+// TestChainEnvSetToNothingStillShadows is the hazard below at its quietest. An
+// operator who exported the variable empty reads it as unset, but env answers
+// for the name, so the store is never asked and the empty string is served.
+func TestChainEnvSetToNothingStillShadows(t *testing.T) {
+	t.Parallel()
+
+	rotatedStore := &fakeSource{values: map[string]string{testName: rotatedStoreValue}}
+
+	value, err := secrets.Chain(envSource(""), rotatedStore).Get(t.Context(), testName)
+	if err != nil {
+		t.Fatalf("chain get: %v", err)
+	}
+
+	if value != "" {
+		t.Fatalf("chain value = %q, want the empty env value", value)
+	}
+
+	if rotatedStore.calls != 0 {
+		t.Errorf("store consulted %d times though an empty env var shadowed it, want 0", rotatedStore.calls)
+	}
+}
+
 // TestChainEnvShadowsStore is the security-council amendment 1 hazard: env stays
 // first, so a stale env var silently shadows a rotated store value. A rotation
 // can look done while the old secret is still served. The chain resolution here
 // proves the hazard; the wiring surfaces it (startup warning) and the CLI marks
 // it in ls, both in a later slice.
 func TestChainEnvShadowsStore(t *testing.T) {
-	t.Setenv(secrets.EnvPrefix+"DB_PASSWORD", staleEnvValue)
+	t.Parallel()
 
 	rotatedStore := &fakeSource{values: map[string]string{testName: rotatedStoreValue}}
 
-	value, err := secrets.Chain(secrets.NewEnv(), rotatedStore).Get(t.Context(), testName)
+	value, err := secrets.Chain(envSource(staleEnvValue), rotatedStore).Get(t.Context(), testName)
 	if err != nil {
 		t.Fatalf("chain get: %v", err)
 	}

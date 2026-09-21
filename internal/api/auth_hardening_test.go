@@ -12,7 +12,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"github.com/chadit/CairnOS/internal/api"
@@ -108,10 +107,12 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
+	transport := newMemTransport()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
 	server := api.NewServer(&api.Config{
+		Transport:     transport,
 		GRPCAddr:      loopbackEphemeral,
 		HTTPAddr:      loopbackEphemeral,
 		WorkflowsDir:  workflowsDir,
@@ -139,12 +140,7 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 		}
 	})
 
-	conn, err := grpc.NewClient(server.GRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial grpc: %v", err)
-	}
-
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := transport.dialGRPC(t, server.GRPCAddr())
 
 	return &hardeningFixture{
 		login:     cairnosv1.NewLoginServiceClient(conn),
@@ -186,8 +182,11 @@ func (f *hardeningFixture) token(t *testing.T, scopes ...string) string {
 }
 
 // TestLoginConcurrencyCapShedsLoad is the M1 concurrency fix: with a
-// single-slot derivation pool, firing many simultaneous logins forces at least
-// one to RESOURCE_EXHAUSTED instead of every one pinning argon2id memory.
+// single-slot derivation pool, firing many simultaneous logins splits the
+// callers into logins that got a working token and overflow refused with
+// RESOURCE_EXHAUSTED, with nothing landing anywhere else. The split point is
+// scheduling-dependent, so the test pins the two outcomes and their total
+// rather than a fixed count.
 func TestLoginConcurrencyCapShedsLoad(t *testing.T) {
 	t.Parallel()
 
@@ -203,22 +202,41 @@ func TestLoginConcurrencyCapShedsLoad(t *testing.T) {
 
 	var (
 		wg        sync.WaitGroup
+		issued    atomic.Int64
 		exhausted atomic.Int64
+		other     atomic.Int64
 	)
 
 	for range callers {
 		wg.Go(func() {
-			_, err := fix.login.Login(t.Context(), &cairnosv1.LoginRequest{Key: plaintext})
-			if status.Code(err) == codes.ResourceExhausted {
+			resp, err := fix.login.Login(t.Context(), &cairnosv1.LoginRequest{Key: plaintext})
+
+			switch {
+			case err == nil && resp.GetToken() != "":
+				issued.Add(1)
+			case status.Code(err) == codes.ResourceExhausted && canonicalCode(t, err) == wireTooManyLogins:
 				exhausted.Add(1)
+			default:
+				other.Add(1)
+
+				t.Errorf("login answered neither a token nor %s: %v", wireTooManyLogins, err)
 			}
 		})
 	}
 
 	wg.Wait()
 
+	if issued.Load() == 0 {
+		t.Errorf("%d concurrent logins issued no token; the cap must shed load, not refuse everyone", callers)
+	}
+
 	if exhausted.Load() == 0 {
-		t.Fatalf("%d concurrent logins against a 1-slot pool, want at least one ResourceExhausted", callers)
+		t.Errorf("%d concurrent logins against a 1-slot pool, want at least one ResourceExhausted", callers)
+	}
+
+	if total := issued.Load() + exhausted.Load(); total != callers {
+		t.Errorf("tokens %d + refusals %d = %d, want %d callers accounted for (%d landed elsewhere)",
+			issued.Load(), exhausted.Load(), total, callers, other.Load())
 	}
 }
 

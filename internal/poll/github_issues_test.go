@@ -3,12 +3,13 @@ package poll_test
 import (
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 )
@@ -22,10 +23,10 @@ const issuesBody = `[
 	{"number": 8, "title": "a pr", "body": "code", "html_url": "https://github.test/o/r/pull/8", "created_at": "2026-06-25T00:00:00Z", "user": {"login": "octocat"}, "pull_request": {"url": "https://github.test/pulls/8"}}
 ]`
 
-func newIssuesSource(t *testing.T, server *httptest.Server) *poll.GitHubIssues {
+func newIssuesSource(t *testing.T, server *nettest.Fake) *poll.GitHubIssues {
 	t.Helper()
 
-	hub, err := builtins.NewGitHub(map[string]any{"base_url": server.URL}, server.Client())
+	hub, err := builtins.NewGitHub(map[string]any{"base_url": server.URL}, server.Client(), environ.Map(nil))
 	if err != nil {
 		t.Fatalf("new github: %v", err)
 	}
@@ -38,12 +39,11 @@ func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 
 	queries := make(chan string, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery
 
 		_, _ = io.WriteString(w, issuesBody)
 	}))
-	defer server.Close()
 
 	const cursor = "2026-06-15T00:00:00Z"
 
@@ -82,12 +82,11 @@ func TestGitHubIssuesPollEmptyCursorNoBackfill(t *testing.T) {
 
 	var hits atomic.Int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 
 		_, _ = io.WriteString(w, issuesBody)
 	}))
-	defer server.Close()
 
 	events, next, err := newIssuesSource(t, server).Poll(t.Context(),
 		map[string]any{"repo": "octocat/hello-world"}, "")

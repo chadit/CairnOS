@@ -34,22 +34,25 @@ const localModelReply = `{
 	"usage": {"prompt_tokens": 3, "completion_tokens": 2}
 }`
 
-// openaiKeyEnvName is the variable a hosted call would need and a local one
-// must not.
-const openaiKeyEnvName = "CAIRNOS_RUNNER_OPENAI_API_KEY" // #nosec G101 -- variable name, not a credential
+// noKeyEnv is an environment carrying no API key at all, which is the state a
+// local model server runs under. It is staged rather than unset on the process,
+// so a developer's own key can never answer for one of these cases.
+func noKeyEnv() map[string]string {
+	return nil
+}
 
 // TestRunExecutesLocalModelRunnerWithoutAnAPIKey proves the whole local-model
 // path: the [runner.local] block registers under its own name, the openai
 // runner reaches the loopback server through base_url, and no hosted API key
 // is needed for a server that wants none.
 func TestRunExecutesLocalModelRunnerWithoutAnAPIKey(t *testing.T) {
-	t.Setenv(openaiKeyEnvName, "")
+	t.Parallel()
 
 	dir := initDir(t)
 	appendLocalModelBlock(t, dir, localModelServer(t))
 	path := writeWorkflow(t, dir, localModelWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}
@@ -78,10 +81,12 @@ func TestRunExecutesLocalModelRunnerWithoutAnAPIKey(t *testing.T) {
 // TestLocalModelBlockSendsTheConfiguredModel proves the block's model string
 // reaches the server, which is how one llama-server names what it loaded.
 func TestLocalModelBlockSendsTheConfiguredModel(t *testing.T) {
-	t.Setenv(openaiKeyEnvName, "")
+	t.Parallel()
 
 	var seen string
 
+	// Real socket on purpose: the workflow run builds its runner clients from
+	// config, so base_url has to be one something can dial.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := make([]byte, r.ContentLength)
 		_, _ = r.Body.Read(body)
@@ -95,7 +100,7 @@ func TestLocalModelBlockSendsTheConfiguredModel(t *testing.T) {
 	appendLocalModelBlock(t, dir, server.URL)
 	path := writeWorkflow(t, dir, localModelWorkflow)
 
-	if code, _, stderr := runCLI(t, runCmd, path, flagDirArg, dir); code != cli.ExitOK {
+	if code, _, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir); code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}
 
@@ -104,7 +109,8 @@ func TestLocalModelBlockSendsTheConfiguredModel(t *testing.T) {
 	}
 }
 
-// localModelServer stands in for llama-server on loopback.
+// localModelServer stands in for llama-server on loopback. Real socket on
+// purpose, for the same reason the case above opens one.
 func localModelServer(t *testing.T) string {
 	t.Helper()
 
@@ -154,13 +160,13 @@ params = { prompt = "hello" }
 // holds: a [runner.openai] block that also sets type = "openai" configures the
 // runner already registered under that name rather than failing at wiring.
 func TestRunOpenAINamedBlockConfiguresBuiltin(t *testing.T) {
-	t.Setenv(openaiKeyEnvName, "")
+	t.Parallel()
 
 	dir := initDir(t)
 	appendOpenAIBlock(t, dir, localModelServer(t))
 	path := writeWorkflow(t, dir, openaiBuiltinWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"sync"
 
@@ -114,7 +113,7 @@ func (a *App) buildTelegramBridge(
 		return nil, ExitOK, true
 	}
 
-	token := os.Getenv(bridgeTelegramTokenEnv)
+	token := a.envLookup().Get(bridgeTelegramTokenEnv)
 	if token == "" {
 		deps.logger.Info("telegram bridge disabled: token env unset", "env", bridgeTelegramTokenEnv)
 

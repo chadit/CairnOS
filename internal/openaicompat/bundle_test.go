@@ -3,10 +3,10 @@ package openaicompat_test
 import (
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/chat"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/openaicompat"
 )
 
@@ -41,8 +41,7 @@ func TestExtensionRouteBeatsGatewayCatchAll(t *testing.T) {
 		root.HandleFunc(pattern, handler)
 	}
 
-	server := httptest.NewServer(root)
-	t.Cleanup(server.Close)
+	server := nettest.New(root)
 
 	// The completions POST reaches the adapter, which answers a full completion,
 	// not the gateway marker.
@@ -59,7 +58,7 @@ func TestExtensionRouteBeatsGatewayCatchAll(t *testing.T) {
 
 	// Every other chat path falls through to the gateway stub: the adapter did
 	// not shadow the gateway.
-	if got := getBody(t, server.URL+"/v1/chat/sessions"); got != gatewayMarker {
+	if got := getBody(t, server, "/v1/chat/sessions"); got != gatewayMarker {
 		t.Errorf("sessions route body = %q, want the gateway marker", got)
 	}
 }

@@ -25,7 +25,7 @@ func TestGatewaySetsSecurityHeaders(t *testing.T) {
 		t.Fatalf("build request: %v", err)
 	}
 
-	resp, err := newHTTPClient().Do(req)
+	resp, err := fix.transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("GET /routes: %v", err)
 	}
@@ -76,7 +76,7 @@ func corsHeaderForOrigin(t *testing.T, fix *fixture, origin string) string {
 
 	req.Header.Set("Origin", origin)
 
-	resp, err := newHTTPClient().Do(req)
+	resp, err := fix.transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("GET /routes: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestGatewayRejectsOverLimitBody(t *testing.T) {
 	oversized := `{"inputs":{"pad":"` +
 		strings.Repeat("x", testMaxBodyBytes*2) + `"}}`
 
-	resp := httpPost(t, fix.httpBase+"/v1/workflows/hello/runs", oversized)
+	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", oversized)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {

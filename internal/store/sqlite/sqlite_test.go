@@ -1,7 +1,9 @@
 package sqlite_test
 
 import (
+	"bytes"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -287,6 +289,39 @@ func seedPreParentRun(t *testing.T, path string) {
 		preParentRunID, "alpha", "hash", string(store.RunSucceeded), "cli", preParentStamp)
 	if err != nil {
 		t.Fatalf("seed pre-upgrade run: %v", err)
+	}
+}
+
+// TestOpenRejectsUnreadableDatabase proves Open reports a file it cannot read
+// as a database instead of returning a store whose every query fails later.
+// Truncated and garbage files are what a half-finished copy or a filled disk
+// leaves behind, and both must fail at startup where an operator sees it.
+func TestOpenRejectsUnreadableDatabase(t *testing.T) {
+	t.Parallel()
+
+	// A valid header followed by nothing is the truncation case; the arbitrary
+	// bytes are the "this was never a database" case.
+	cases := map[string][]byte{
+		"truncated": []byte("SQLite format 3\x00"),
+		"garbage":   bytes.Repeat([]byte("not a database"), 64),
+	}
+
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "state.db")
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				t.Fatalf("write %s database file: %v", name, err)
+			}
+
+			db, err := sqlite.Open(path)
+			if err == nil {
+				_ = db.Close()
+
+				t.Fatalf("Open on a %s database file returned no error", name)
+			}
+		})
 	}
 }
 

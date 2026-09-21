@@ -46,6 +46,8 @@ func startTipServer(t *testing.T) string {
 		CostBucket: "20%",
 	}
 
+	// Real socket on purpose: the command runs the whole CLI, which builds its
+	// hive client from config with no seam a test can hand a transport to.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusAccepted)

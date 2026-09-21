@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -67,12 +66,12 @@ func stageImposterBW(t *testing.T, home, marker string) {
 	}
 }
 
-// emptyPath makes PATH a directory holding nothing, so a case about a host with
-// no bw is not answered by one this machine happens to have.
-func emptyPath(t *testing.T) {
+// emptyPath is an environment whose PATH holds nothing, so a case about a host
+// with no bw is not answered by one this machine happens to have.
+func emptyPath(t *testing.T) map[string]string {
 	t.Helper()
 
-	t.Setenv("PATH", t.TempDir())
+	return pathEnv(t.TempDir())
 }
 
 // dirListing returns the names in a directory, which is how a case shows that
@@ -118,12 +117,12 @@ func linkState(t *testing.T, path string) string {
 // its own package-managed bw is in. Refusing that binary or replacing it with an
 // older pinned build is what this resolution order exists to stop.
 func TestSecretsPullRunsTheHostCLIWhenItIsNotBehindThePin(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageHostBW(t, bothFields(), hostNewerVersion)
 	home := pullConfig(t)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -145,6 +144,8 @@ func TestSecretsPullRunsTheHostCLIWhenItIsNotBehindThePin(t *testing.T) {
 // Components compare as numbers, a missing trailing one counts as zero, and
 // anything that does not parse is treated as no answer at all.
 func TestBitwardenVersionDecidesWhichCLIRuns(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		version  string
@@ -161,13 +162,13 @@ func TestBitwardenVersionDecidesWhichCLIRuns(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			binDir := stageHostBW(t, bothFields(), testCase.version)
 			home := pullConfig(t)
 			pinned := stagePinnedBW(t, home, bothFields())
 
-			t.Setenv("PATH", pathWith(binDir))
-
-			code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+			code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
 			if code != cli.ExitOK {
 				t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 			}
@@ -185,6 +186,8 @@ func TestBitwardenVersionDecidesWhichCLIRuns(t *testing.T) {
 // was written for. The operator's bw stays exactly where and what it was, and
 // the older version is worked around rather than overwritten.
 func TestSecretsPullLeavesAnOlderHostCLIAlone(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageHostBW(t, bothFields(), "1970.1.1")
 	home := pullConfig(t)
 	pinned := stagePinnedBW(t, home, bothFields())
@@ -193,9 +196,7 @@ func TestSecretsPullLeavesAnOlderHostCLIAlone(t *testing.T) {
 	before := linkState(t, hostBinary)
 	staged := dirListing(t, binDir)
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -220,14 +221,12 @@ func TestSecretsPullLeavesAnOlderHostCLIAlone(t *testing.T) {
 // TestSecretsPullInstallsThePinnedCopyWhenTheHostHasNone covers a fresh box.
 // The release this build pins is unreachable in a test, so the failure it
 // arrives at is the proof that an install was started at all.
-//
-//nolint:paralleltest // emptyPath rewrites PATH for the whole process
 func TestSecretsPullInstallsThePinnedCopyWhenTheHostHasNone(t *testing.T) {
+	t.Parallel()
+
 	home := pullConfig(t)
 
-	emptyPath(t)
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, _, stderr := runEnvCLI(t, emptyPath(t), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want the unreachable download to fail\nstderr: %s", code, stderr)
 	}
@@ -247,10 +246,13 @@ func TestSecretsPullInstallsThePinnedCopyWhenTheHostHasNone(t *testing.T) {
 }
 
 // TestSecretsPullKeepsThePinnedCopyOffPATH is what makes the pinned copy
-// CairnOS's own rather than a second bw the operator now has to know about.
-// The directory is staged wide open, so the mode check is about what the
-// command does and not about what the fixture made.
+// CairnOS's own rather than a second bw the operator has to know about. The
+// pull runs it by absolute path and leaves PATH alone. The directory is staged
+// wide open, so the mode check is about what the command does rather than what
+// the fixture made.
 func TestSecretsPullKeepsThePinnedCopyOffPATH(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageHostBW(t, bothFields(), "1970.1.1")
 	home := pullConfig(t)
 	pinned := stagePinnedBW(t, home, bothFields())
@@ -260,10 +262,15 @@ func TestSecretsPullKeepsThePinnedCopyOffPATH(t *testing.T) {
 		t.Fatalf("loosen the staged directory: %v", err)
 	}
 
-	t.Setenv("PATH", pathWith(binDir))
+	pathBefore := os.Getenv("PATH")
 
-	if code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home); code != cli.ExitOK {
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
+	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
+	}
+
+	if !strings.Contains(stderr, pinned) {
+		t.Fatalf("the log does not name the pinned copy as the one used:\n%s", stderr)
 	}
 
 	info, err := os.Stat(dir)
@@ -275,28 +282,23 @@ func TestSecretsPullKeepsThePinnedCopyOffPATH(t *testing.T) {
 		t.Fatalf("the directory is mode %04o, want %04o", info.Mode().Perm(), toolsDirPerm)
 	}
 
-	if slices.Contains(filepath.SplitList(os.Getenv("PATH")), dir) {
-		t.Fatalf("%s ended up on PATH", dir)
-	}
-
-	if found, lookErr := exec.LookPath(bwFakeName); lookErr == nil && found == pinned {
-		t.Fatalf("the pinned copy answers to the bare name %q", bwFakeName)
+	if after := os.Getenv("PATH"); after != pathBefore {
+		t.Fatalf("the pull rewrote PATH to %q, was %q", after, pathBefore)
 	}
 }
 
 // TestSecretsPullRefetchesAPinnedCopyThatDoesNotMatch covers the file in
 // CairnOS's own directory going wrong. Running it would mean handing the vault
 // credentials to whatever is there, so it is replaced rather than trusted.
-//
-//nolint:paralleltest // emptyPath rewrites PATH for the whole process
 func TestSecretsPullRefetchesAPinnedCopyThatDoesNotMatch(t *testing.T) {
+	t.Parallel()
+
 	home := pullConfig(t)
 	marker := filepath.Join(home, "the-imposter-ran")
 
 	stageImposterBW(t, home, marker)
-	emptyPath(t)
 
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, _, stderr := runEnvCLI(t, emptyPath(t), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want the unreachable download to fail\nstderr: %s", code, stderr)
 	}
@@ -314,15 +316,15 @@ func TestSecretsPullRefetchesAPinnedCopyThatDoesNotMatch(t *testing.T) {
 // host bw that is new enough and still cannot do the job. The first call proves
 // it, and the pinned copy finishes the pull rather than failing the deploy.
 func TestSecretsPullRetriesThroughThePinnedCopyWhenTheHostCLICannotRun(t *testing.T) {
+	t.Parallel()
+
 	binDir := t.TempDir()
 	stageFakeBWAt(t, binDir, bothFields(), bwFakeSettings{Version: hostNewerVersion, FailStatus: true})
 
 	home := pullConfig(t)
 	pinned := stagePinnedBW(t, home, bothFields())
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want the retry to carry the pull\nstderr: %s", code, stderr)
 	}
@@ -345,15 +347,15 @@ func TestSecretsPullRetriesThroughThePinnedCopyWhenTheHostCLICannotRun(t *testin
 // build, so a second attempt would cost a deploy another daemon for the same
 // answer. The pinned copy here would succeed, so the failure is the assertion.
 func TestSecretsPullDoesNotRetryWhenTheVaultRefusesTheCredentials(t *testing.T) {
+	t.Parallel()
+
 	binDir := t.TempDir()
 	stageFakeBWAt(t, binDir, bothFields(), bwFakeSettings{Version: hostNewerVersion, RefuseUnlock: true})
 
 	home := pullConfig(t)
 	pinned := stagePinnedBW(t, home, bothFields())
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, home)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, home)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want the refused unlock to fail\nstderr: %s", code, stderr)
 	}

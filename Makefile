@@ -22,7 +22,7 @@ help: ## List available targets
 build: proto ## Build the cairnos binary into bin/
 	go build -o $(BINARY) ./cmd/cairnos
 
-deploy: ## Rebuild and restart the cairnos user service when it is not running HEAD
+deploy: build ## Build, then let `cairnos update --no-fetch` pull secrets and restart on change
 	./scripts/deploy.sh
 
 test: proto test-unit test-integration ## Run unit then integration tests with the race detector

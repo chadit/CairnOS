@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -37,16 +38,22 @@ func remoteConfig() map[string]any {
 	return map[string]any{"model": "a-model", "base_url": "https://api.z.ai/v1"}
 }
 
-// validateNamed builds one named runner of each type and validates a task,
-// returning the runner's own error so a case can read the message it carries.
-func validateNamed(t *testing.T, kind string) *runner.Error {
+// noKeys is the environment of a host that set neither variable.
+func noKeys() environ.Lookup {
+	return environ.Map(nil)
+}
+
+// validateNamed builds one named runner of each type over lookup and validates
+// a task, returning the runner's own error so a case can read the message it
+// carries.
+func validateNamed(t *testing.T, kind string, lookup environ.Lookup) *runner.Error {
 	t.Helper()
 
 	task := askTask()
 	client := &http.Client{Timeout: time.Second}
 
 	if kind == builtins.AnthropicName {
-		llm, err := builtins.NewAnthropicFor(namedBlock, remoteConfig(), client)
+		llm, err := builtins.NewAnthropicFor(namedBlock, remoteConfig(), client, lookup)
 		if err != nil {
 			t.Fatalf("new anthropic: %v", err)
 		}
@@ -54,7 +61,7 @@ func validateNamed(t *testing.T, kind string) *runner.Error {
 		return classified(t, llm.Validate(task))
 	}
 
-	llm, err := builtins.NewOpenAIFor(namedBlock, remoteConfig(), client)
+	llm, err := builtins.NewOpenAIFor(namedBlock, remoteConfig(), client, lookup)
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -82,14 +89,16 @@ func classified(t *testing.T, err error) *runner.Error {
 // TestNamedRunnerReadsItsOwnKey covers the first branch of the resolution
 // order: a block with a name of its own carries its own credential, so two
 // blocks of one type can point at two vendors.
-//
-// t.Setenv keeps these out of parallel on its own.
 func TestNamedRunnerReadsItsOwnKey(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range []string{builtins.OpenAIName, builtins.AnthropicName} {
 		t.Run(kind, func(t *testing.T) {
-			t.Setenv(namedKeyEnv, namedKeyValue)
+			t.Parallel()
 
-			if err := validateNamed(t, kind); err != nil {
+			lookup := keyEnv(namedKeyEnv, namedKeyValue)
+
+			if err := validateNamed(t, kind, lookup); err != nil {
 				t.Fatalf("validate: %v", err)
 			}
 		})
@@ -98,9 +107,9 @@ func TestNamedRunnerReadsItsOwnKey(t *testing.T) {
 
 // TestNamedRunnerFallsBackToTheTypeKey covers the second branch: a host that
 // only ever set the per-type variable keeps working after a block gains a name.
-//
-// t.Setenv keeps these out of parallel on its own.
 func TestNamedRunnerFallsBackToTheTypeKey(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		kind   string
 		keyEnv string
@@ -111,10 +120,11 @@ func TestNamedRunnerFallsBackToTheTypeKey(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.kind, func(t *testing.T) {
-			t.Setenv(namedKeyEnv, "")
-			t.Setenv(testCase.keyEnv, typeKeyValue)
+			t.Parallel()
 
-			if err := validateNamed(t, testCase.kind); err != nil {
+			lookup := keyEnv(testCase.keyEnv, typeKeyValue)
+
+			if err := validateNamed(t, testCase.kind, lookup); err != nil {
 				t.Fatalf("validate: %v", err)
 			}
 		})
@@ -124,9 +134,9 @@ func TestNamedRunnerFallsBackToTheTypeKey(t *testing.T) {
 // TestNamedRunnerNamesBothKeysWhenNeitherIsSet is what an operator reads when
 // the run stops. Naming only one of the two would send them to set a variable
 // they may not have meant to use.
-//
-// t.Setenv keeps these out of parallel on its own.
 func TestNamedRunnerNamesBothKeysWhenNeitherIsSet(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		kind   string
 		keyEnv string
@@ -137,10 +147,9 @@ func TestNamedRunnerNamesBothKeysWhenNeitherIsSet(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.kind, func(t *testing.T) {
-			t.Setenv(namedKeyEnv, "")
-			t.Setenv(testCase.keyEnv, "")
+			t.Parallel()
 
-			err := validateNamed(t, testCase.kind)
+			err := validateNamed(t, testCase.kind, noKeys())
 			if err == nil {
 				t.Fatal("validate accepted a remote endpoint with no key set")
 			}
@@ -157,16 +166,13 @@ func TestNamedRunnerNamesBothKeysWhenNeitherIsSet(t *testing.T) {
 // TestLocalNamedRunnerNeedsNoKey keeps the local-model path working: a server
 // on this side of the network wants no credential, and the name a block carries
 // does not change that.
-//
-// t.Setenv keeps these out of parallel on its own.
 func TestLocalNamedRunnerNeedsNoKey(t *testing.T) {
-	t.Setenv(namedKeyEnv, "")
-	t.Setenv(builtins.OpenAIKeyEnv, "")
+	t.Parallel()
 
 	llm, err := builtins.NewOpenAIFor("local", map[string]any{
 		"model":    "a-model",
 		"base_url": "http://127.0.0.1:8089/v1",
-	}, &http.Client{Timeout: time.Second})
+	}, &http.Client{Timeout: time.Second}, noKeys())
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -180,9 +186,9 @@ func TestLocalNamedRunnerNeedsNoKey(t *testing.T) {
 // [runner.openai] block with no key. Both rules produce one variable, so the
 // message says "the" and not "one of the", which would read as a list with one
 // thing in it.
-//
-// t.Setenv keeps this out of parallel on its own.
 func TestTypeNamedRunnerNamesOneKey(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		kind   string
 		keyEnv string
@@ -193,9 +199,9 @@ func TestTypeNamedRunnerNamesOneKey(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.kind, func(t *testing.T) {
-			t.Setenv(testCase.keyEnv, "")
+			t.Parallel()
 
-			err := classified(t, validateTypeNamed(t, testCase.kind))
+			err := classified(t, validateTypeNamed(t, testCase.kind, noKeys()))
 			if err == nil {
 				t.Fatal("validate accepted a remote endpoint with no key set")
 			}
@@ -210,14 +216,14 @@ func TestTypeNamedRunnerNamesOneKey(t *testing.T) {
 
 // validateTypeNamed builds the runner the way a block named after its type is
 // built, which is what collapses the key list to one name.
-func validateTypeNamed(t *testing.T, kind string) error {
+func validateTypeNamed(t *testing.T, kind string, lookup environ.Lookup) error {
 	t.Helper()
 
 	task := askTask()
 	client := &http.Client{Timeout: time.Second}
 
 	if kind == builtins.AnthropicName {
-		llm, err := builtins.NewAnthropic(remoteConfig(), client)
+		llm, err := builtins.NewAnthropic(remoteConfig(), client, lookup)
 		if err != nil {
 			t.Fatalf("new anthropic: %v", err)
 		}
@@ -226,7 +232,7 @@ func validateTypeNamed(t *testing.T, kind string) error {
 		return llm.Validate(task)
 	}
 
-	llm, err := builtins.NewOpenAI(remoteConfig(), client)
+	llm, err := builtins.NewOpenAI(remoteConfig(), client, lookup)
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}

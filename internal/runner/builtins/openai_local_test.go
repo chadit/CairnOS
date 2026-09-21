@@ -3,10 +3,10 @@ package builtins_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -25,6 +25,8 @@ const localBaseURL = "http://127.0.0.1:8089/v1"
 // neither loopback nor RFC 1918. The typo row is why the rule keys on the
 // address rather than on differing from the vendor default.
 func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		baseURL string
@@ -43,12 +45,12 @@ func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv(builtins.OpenAIKeyEnv, "")
+			t.Parallel()
 
 			llm, err := builtins.NewOpenAI(map[string]any{
 				modelKey:   localModelName,
 				baseURLKey: testCase.baseURL,
-			}, &http.Client{Timeout: time.Second})
+			}, &http.Client{Timeout: time.Second}, openAIKey(""))
 			if err != nil {
 				t.Fatalf("new openai: %v", err)
 			}
@@ -69,9 +71,9 @@ func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 // simply go away: a block with no base_url still reaches api.openai.com, and a
 // call there without a key is a permanent failure worth catching early.
 func TestOpenAIValidateStillRequiresAPIKeyForTheHostedAPI(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, "")
+	t.Parallel()
 
-	llm, err := builtins.NewOpenAI(map[string]any{modelKey: testModel}, &http.Client{Timeout: time.Second})
+	llm, err := builtins.NewOpenAI(map[string]any{modelKey: testModel}, &http.Client{Timeout: time.Second}, openAIKey(""))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -90,21 +92,23 @@ func TestOpenAIValidateStillRequiresAPIKeyForTheHostedAPI(t *testing.T) {
 // block's model string reaches the server as the request model, which is what
 // lets one llama-server name the model it loaded.
 func TestOpenAISendsTheConfiguredModelToALocalServer(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, "")
+	t.Parallel()
 
 	var gotModel string
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The runner drops the API-key requirement only for a loopback base_url, so
+	// the block names one. Nothing dials it: the fixture client answers from
+	// this handler.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotModel = decodeRequestModel(t, r)
 
 		_, _ = w.Write([]byte(openaiSuccessBody))
-	}))
-	defer server.Close()
+	})
 
 	llm, err := builtins.NewOpenAI(map[string]any{
 		modelKey:   localModelName,
-		baseURLKey: server.URL,
-	}, server.Client())
+		baseURLKey: localBaseURL,
+	}, nettest.Client(handler), openAIKey(""))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}

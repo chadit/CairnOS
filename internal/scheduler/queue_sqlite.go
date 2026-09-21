@@ -113,19 +113,24 @@ func (q *SQLiteQueue) Enqueue(ctx context.Context, item *WorkItem) (bool, error)
 	return affected == 1, nil
 }
 
-// OccurrencePending reports whether the schedule has an unfinished occurrence
-// in the queue. It matches the dedup-key prefix with substr rather than LIKE so
-// a schedule id never needs escaping, and the queue holds only unfinished work,
-// so the scan stays small.
-func (q *SQLiteQueue) OccurrencePending(ctx context.Context, scheduleID string) (bool, error) {
+// OccurrencePending reports whether the schedule has an unfinished occurrence.
+// It matches the dedup-key prefix with substr rather than LIKE so a schedule id
+// never needs escaping.
+//
+// A leased row counts only while its lease is live: a lease nobody renewed
+// outlived the worker that took it, so counting it would let one killed process
+// block the schedule.
+func (q *SQLiteQueue) OccurrencePending(ctx context.Context, scheduleID string, now time.Time) (bool, error) {
 	prefix := OccurrencePrefix(scheduleID)
 
 	var pending bool
 
 	err := q.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM work_item
-		 WHERE state IN (?, ?, ?) AND substr(dedup_key, 1, length(?)) = ?)`,
-		string(WorkReady), string(WorkLeased), string(WorkHeld), prefix, prefix).Scan(&pending)
+		 WHERE substr(dedup_key, 1, length(?)) = ?
+		   AND (state IN (?, ?) OR (state = ? AND lease_until > ?)))`,
+		prefix, prefix,
+		string(WorkReady), string(WorkHeld), string(WorkLeased), storedTime(now)).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("pending occurrence for schedule %s: %w", scheduleID, err)
 	}
@@ -181,25 +186,55 @@ func (q *SQLiteQueue) Claim(ctx context.Context, now time.Time, ackWait time.Dur
 // leaseClaimed marks the selected items leased in one UPDATE with an IN list, so
 // a prefetch of N rows costs one statement rather than N.
 func leaseClaimed(ctx context.Context, tx *sql.Tx, items []WorkItem, leaseUntil time.Time) error {
-	placeholders := make([]string, len(items))
 	args := make([]any, 0, len(items)+3)
 	args = append(args, string(WorkLeased), storedTime(leaseUntil), string(WorkReady))
 
 	for idx := range items {
-		placeholders[idx] = "?"
 		args = append(args, items[idx].ID)
 	}
 
-	// #nosec G202 -- placeholders is a comma-joined run of "?" generated from the
+	// #nosec G202 -- the id list is a comma-joined run of "?" generated from the
 	// item count; every value, the states and ids alike, binds as a parameter.
 	query := "UPDATE work_item SET state = ?, lease_until = ?, deliveries = deliveries + 1 WHERE state = ? AND id IN (" +
-		strings.Join(placeholders, ",") + ")"
+		idPlaceholders(len(items)) + ")"
 
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("claim lease: %w", err)
 	}
 
 	return nil
+}
+
+// Renew pushes the lease deadline of the given leased items out, the heartbeat
+// a worker sends while its runs are still going. An item that already settled
+// no longer matches the leased guard, so a renewal racing a settle quietly does
+// nothing.
+func (q *SQLiteQueue) Renew(ctx context.Context, ids []string, leaseUntil time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, storedTime(leaseUntil), string(WorkLeased))
+
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	// #nosec G202 -- the id list is a comma-joined run of "?" generated from the
+	// id count; every value, the state and ids alike, binds as a parameter.
+	query := "UPDATE work_item SET lease_until = ? WHERE state = ? AND id IN (" + idPlaceholders(len(ids)) + ")"
+
+	if _, err := q.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("renew %d work item leases: %w", len(ids), err)
+	}
+
+	return nil
+}
+
+// idPlaceholders builds the comma-joined run of "?" an IN list of n ids needs.
+func idPlaceholders(count int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 
 // Ack removes a finished item. A missing row is not an error: a lease sweep may

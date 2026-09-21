@@ -115,6 +115,14 @@ type Client struct {
 // NewClient validates the config and builds a client. It performs no I/O; the
 // identity and the server's limits are learned by Connect.
 func NewClient(cfg ClientConfig) (*Client, error) {
+	return NewClientOver(cfg, nil)
+}
+
+// NewClientOver is NewClient over a caller-supplied round tripper, which
+// carries both the REST calls and the socket upgrade. A nil transport keeps
+// the default one; a test hands over an in-memory transport so its suite opens
+// no loopback socket.
+func NewClientOver(cfg ClientConfig, transport http.RoundTripper) (*Client, error) {
 	base, err := parseServerURL(cfg.URL, cfg.InsecureHTTP)
 	if err != nil {
 		return nil, err
@@ -147,11 +155,12 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		http: &http.Client{
 			Timeout:       timeout,
 			CheckRedirect: refuseRedirect,
+			Transport:     transport,
 		},
 		// The upgrade client's Timeout bounds the handshake only: coder/websocket
 		// turns it into a dial-scoped context deadline on a clone whose own
 		// Timeout is zero, so the long-lived connection is unaffected.
-		wsHTTP:    &http.Client{Timeout: timeout},
+		wsHTTP:    &http.Client{Timeout: timeout, Transport: transport},
 		limiter:   cfg.Limiter,
 		log:       log,
 		users:     newUserCache(userCacheSize),

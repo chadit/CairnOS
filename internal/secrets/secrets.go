@@ -30,8 +30,9 @@ package secrets
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // EnvPrefix is the environment namespace for secret values: the workflow
@@ -41,12 +42,20 @@ const EnvPrefix = "CAIRNOS_SECRET_"
 // Env reads secrets from prefixed environment variables. It satisfies the
 // engine's SecretSource interface structurally.
 type Env struct {
+	lookup environ.Lookup
 	prefix string
 }
 
-// NewEnv builds the environment source with the standard prefix.
+// NewEnv builds the environment source over this process's own environment.
 func NewEnv() *Env {
-	return &Env{prefix: EnvPrefix}
+	return NewEnvWith(environ.OS())
+}
+
+// NewEnvWith builds the environment source over a supplied one. Taking the
+// lookup lets a caller hand this source a fixed set instead of exporting a
+// credential every other part of the process could then read.
+func NewEnvWith(lookup environ.Lookup) *Env {
+	return &Env{prefix: EnvPrefix, lookup: lookup}
 }
 
 // Get resolves one secret name. Names are uppercased and dashes/dots become
@@ -62,7 +71,7 @@ func (e *Env) Get(ctx context.Context, name string) (string, error) {
 	normalized := strings.ToUpper(name)
 	normalized = strings.NewReplacer("-", "_", ".", "_").Replace(normalized)
 
-	value, found := os.LookupEnv(e.prefix + normalized)
+	value, found := e.lookup(e.prefix + normalized)
 	if !found {
 		return "", fmt.Errorf("%w: %s (set %s%s)", ErrNotFound, name, e.prefix, normalized)
 	}

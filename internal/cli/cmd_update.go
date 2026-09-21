@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/execretry"
 	"github.com/chadit/CairnOS/internal/service"
 	"github.com/chadit/CairnOS/internal/source"
 )
@@ -86,14 +89,20 @@ const procExeFormat = "/proc/%d/exe"
 // are resolved rather than parsed: a test names the binary to replace and the
 // server to ask, where the command names its own image and api.github.com.
 type updateOptions struct {
+	// transport carries the release lookup and the asset download. Nil is the
+	// default one, so a deploy opens real sockets; a test passes one that
+	// answers in process, which keeps the suite off the host's network stack.
+	transport http.RoundTripper
+
 	source     string
 	home       string
 	executable string
 	apiBase    string
-	check      bool
-	fetch      bool
-	link       bool
-	release    bool
+
+	check   bool
+	fetch   bool
+	link    bool
+	release bool
 
 	// restartNow skips the drain and restarts the service the moment the new
 	// binary is in place, which is what an operator wants when the running
@@ -151,7 +160,7 @@ func (a *App) cmdUpdate(ctx context.Context, args []string) int {
 		return code
 	}
 
-	home, err := resolveDir(*dirFlag)
+	home, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printCmdErr(label, err)
 
@@ -176,7 +185,7 @@ func (a *App) cmdUpdate(ctx context.Context, args []string) int {
 		restartNow: *restartNowFlag,
 	}
 
-	code, err := a.runUpdate(ctx, opts, a.defaultSteps(&opts))
+	code, err := a.runUpdate(ctx, &opts, a.defaultSteps(&opts))
 	if err != nil {
 		a.printCmdErr(label, err)
 
@@ -189,7 +198,7 @@ func (a *App) cmdUpdate(ctx context.Context, args []string) int {
 // runUpdate picks between the release and the source path and then either
 // reports or applies. A release wins when one exists for this platform, since
 // installing a published build beats rebuilding the same commit on the host.
-func (a *App) runUpdate(ctx context.Context, opts updateOptions, steps UpdateSteps) (int, error) {
+func (a *App) runUpdate(ctx context.Context, opts *updateOptions, steps UpdateSteps) (int, error) {
 	build, found, err := a.findRelease(ctx, opts)
 	if err != nil {
 		return ExitFailure, err
@@ -205,7 +214,7 @@ func (a *App) runUpdate(ctx context.Context, opts updateOptions, steps UpdateSte
 // runRelease reports or installs the release. The wanted revision is the commit
 // its tag points at, which is what the stamp in the running process is compared
 // against.
-func (a *App) runRelease(ctx context.Context, build *releaseBuild, opts updateOptions, steps UpdateSteps) (int, error) {
+func (a *App) runRelease(ctx context.Context, build *releaseBuild, opts *updateOptions, steps UpdateSteps) (int, error) {
 	a.logger.Info("update: latest release", "tag", build.tag, "asset", build.assetName)
 
 	if opts.check {
@@ -218,7 +227,7 @@ func (a *App) runRelease(ctx context.Context, build *releaseBuild, opts updateOp
 // runSource is the fallback and the developer path: fast-forward the checkout
 // the running binary was built from and rebuild it. --check stops at the
 // report, which is what makes it safe on a host somebody only wants to look at.
-func (a *App) runSource(ctx context.Context, opts updateOptions, steps UpdateSteps) (int, error) {
+func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSteps) (int, error) {
 	dir, err := discoverSource(opts.source, opts.executable)
 	if err != nil {
 		return ExitFailure, err
@@ -243,7 +252,7 @@ func (a *App) runSource(ctx context.Context, opts updateOptions, steps UpdateSte
 // restart and link the source path does. A release whose commit the service
 // already runs installs nothing and still pulls, because a vault value can move
 // without the code moving.
-func (a *App) applyRelease(ctx context.Context, build *releaseBuild, opts updateOptions, steps UpdateSteps) error {
+func (a *App) applyRelease(ctx context.Context, build *releaseBuild, opts *updateOptions, steps UpdateSteps) error {
 	running := a.runningRevision(ctx)
 
 	a.logger.Info("update: revisions", "running", displayRevision(running), "wanted", build.revision)
@@ -275,7 +284,7 @@ func (a *App) applyRelease(ctx context.Context, build *releaseBuild, opts update
 // installRelease downloads the asset into a staging directory, checks it
 // against the published sha256 and its own build stamp, and only then replaces
 // the running binary.
-func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts updateOptions, steps UpdateSteps) error {
+func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts *updateOptions, steps UpdateSteps) error {
 	dir, err := os.MkdirTemp("", "cairnos-update-")
 	if err != nil {
 		return fmt.Errorf("create a staging directory: %w", err)
@@ -283,7 +292,7 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts upda
 
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	staged, err := a.releaseClient(opts.apiBase).stageAsset(ctx, build, dir)
+	staged, err := a.releaseClient(opts.apiBase, opts.transport).stageAsset(ctx, build, dir)
 	if err != nil {
 		return err
 	}
@@ -301,7 +310,7 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts upda
 // two steps --check shares with it. The pull sits before the restart because
 // the service reads both environment files once, at startup: pulling after
 // would leave the new process running on the previous values (FR11).
-func (a *App) applyUpdate(ctx context.Context, dir string, opts updateOptions, steps UpdateSteps) error {
+func (a *App) applyUpdate(ctx context.Context, dir string, opts *updateOptions, steps UpdateSteps) error {
 	running := a.runningRevision(ctx)
 
 	wanted, err := wantedRevision(ctx, dir)
@@ -629,11 +638,11 @@ func unitMainPID(ctx context.Context, install service.Install) int {
 func (a *App) buildBinary(ctx context.Context, dir string) error {
 	a.logger.Info("update: building", "dir", dir, "binary", updateBinaryRel)
 
-	if makeBin, err := exec.LookPath("make"); err == nil {
+	if makeBin, err := environ.LookPath(a.envLookup(), "make"); err == nil {
 		return runInDir(ctx, dir, makeBin, "--no-print-directory", "build")
 	}
 
-	goBin, err := lookGoToolchain()
+	goBin, err := lookGoToolchain(a.envLookup())
 	if err != nil {
 		return err
 	}
@@ -647,8 +656,8 @@ func (a *App) buildBinary(ctx context.Context, dir string) error {
 
 // lookGoToolchain finds go on PATH and falls back to the tarball's install
 // prefix, which a systemd user session's PATH often omits.
-func lookGoToolchain() (string, error) {
-	if path, err := exec.LookPath("go"); err == nil {
+func lookGoToolchain(lookup environ.Lookup) (string, error) {
+	if path, err := environ.LookPath(lookup, "go"); err == nil {
 		return path, nil
 	}
 
@@ -662,13 +671,15 @@ func lookGoToolchain() (string, error) {
 // runInDir runs one build or pull command inside dir and folds the command's
 // own output into the failure, so a broken build says what broke.
 func runInDir(ctx context.Context, dir, name string, args ...string) error {
-	// #nosec G204 -- name is make, the go toolchain, or the binary this command
-	// just built, and every argument is compiled in. No workflow, config, or
-	// network input reaches here.
-	command := exec.CommandContext(ctx, name, args...)
-	command.Dir = dir
+	output, err := execretry.CombinedOutput(ctx, func() (*exec.Cmd, error) {
+		// #nosec G204 -- name is make, the go toolchain, or the binary this command
+		// just built, and every argument is compiled in. No workflow, config, or
+		// network input reaches here.
+		command := exec.CommandContext(ctx, name, args...)
+		command.Dir = dir
 
-	output, err := command.CombinedOutput()
+		return command, nil
+	})
 	if err != nil {
 		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(string(output)))
 	}
@@ -817,7 +828,7 @@ func (a *App) linkBinary(binary string) error {
 		return nil
 	}
 
-	home, err := os.UserHomeDir()
+	home, err := homeDir(a.envLookup())
 	if err != nil {
 		return fmt.Errorf("resolve home directory: %w", err)
 	}
@@ -830,7 +841,7 @@ func (a *App) linkBinary(binary string) error {
 
 	a.logger.Info("update: linked", "link", filepath.Join(dir, linkName), "target", binary)
 
-	if !onPath(dir, os.Getenv("PATH")) {
+	if !onPath(dir, a.envLookup().Get("PATH")) {
 		a.logger.Warn("update: the link directory is not on PATH", "dir", dir)
 	}
 

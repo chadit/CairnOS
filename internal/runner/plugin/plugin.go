@@ -20,6 +20,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	pluginv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/plugin/v1"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/execretry"
 	sdk "github.com/chadit/CairnOS/pkg/plugin"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -39,18 +41,31 @@ const (
 
 // Config configures one plugin-backed runner.
 type Config struct {
-	// Command is the argv that launches the plugin process.
-	Command []string
+	// Env answers the passthrough variables and PATH. Nil reads this process's
+	// environment, so a caller that fills only Command behaves as it always has.
+	Env environ.Lookup
 
 	// Name overrides the runner name used in Name() and error codes. Empty
 	// means the name the plugin reports in its Describe handshake.
 	Name string
+
+	// Command is the argv that launches the plugin process.
+	Command []string
 
 	// EnvPassthrough names host environment variables to forward to the plugin
 	// process on top of the minimal base env (spec L2). Empty hands the child
 	// only PATH and the socket variable, so a plugin never receives the host's
 	// tokens, DSNs, or signing keys unless the operator listed the variable.
 	EnvPassthrough []string
+}
+
+// env resolves the lookup the child's environment is built from.
+func (c Config) env() environ.Lookup {
+	if c.Env != nil {
+		return c.Env
+	}
+
+	return environ.OS()
 }
 
 // Plugin is one out-of-process runner: a child process this type spawned at
@@ -83,33 +98,40 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 
 	socketPath := filepath.Join(socketDir, socketFileName)
 
-	// WithoutCancel keeps the construction context's values while detaching
-	// its cancellation: the plugin's lifetime belongs to Close, not to
-	// whatever deadline the caller built the runner under.
-	//
-	// #nosec G204 -- the argv comes from the operator's own [runner.<name>]
-	// config block, not from workflow params or network input.
-	cmd := exec.CommandContext(context.WithoutCancel(ctx), cfg.Command[0], cfg.Command[1:]...)
-
-	cmd.Env = pluginEnv(socketPath, cfg.EnvPassthrough)
-	// The plugin's stderr shares the host's, so crash output lands in the
-	// operator's log instead of vanishing with the child.
-	cmd.Stderr = os.Stderr
-
 	plug := &Plugin{
 		name:      cfg.Name,
 		socketDir: socketDir,
-		cmd:       cmd,
 		exited:    make(chan struct{}),
 	}
 
-	plug.configureProcessTree()
+	// A fresh command per attempt covers a plugin binary the operator has only
+	// now built: execve refuses while another fork holds its write descriptor.
+	cmd, err := execretry.Start(ctx, func() (*exec.Cmd, error) {
+		// WithoutCancel keeps the construction context's values while detaching
+		// its cancellation: the plugin's lifetime belongs to Close, not to
+		// whatever deadline the caller built the runner under.
+		//
+		// #nosec G204 -- the argv comes from the operator's own [runner.<name>]
+		// config block, not from workflow params or network input.
+		built := exec.CommandContext(context.WithoutCancel(ctx), cfg.Command[0], cfg.Command[1:]...)
 
-	if err := cmd.Start(); err != nil {
+		built.Env = pluginEnv(cfg.env(), socketPath, cfg.EnvPassthrough)
+		// The plugin's stderr shares the host's, so crash output lands in the
+		// operator's log instead of vanishing with the child.
+		built.Stderr = os.Stderr
+
+		plug.cmd = built
+		plug.configureProcessTree()
+
+		return built, nil
+	})
+	if err != nil {
 		_ = os.RemoveAll(socketDir)
 
 		return nil, fmt.Errorf("start plugin %q: %w", cfg.Command[0], err)
 	}
+
+	plug.cmd = cmd
 
 	go func() {
 		// Wait reaps the child no matter how it ends; the closed channel is
@@ -138,23 +160,15 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 // host's full os.Environ (spec L2). The base is the socket variable plus PATH,
 // so the child can find its own interpreter. Everything else arrives only when
 // the operator named it, by exact name, in env_passthrough.
-func pluginEnv(socketPath string, passthrough []string) []string {
+func pluginEnv(lookup environ.Lookup, socketPath string, passthrough []string) []string {
 	// Cap holds the passthrough names plus the two fixed base entries (the
 	// socket variable and PATH), so the slice never reallocates.
 	const baseEnvEntries = 2
 
 	env := make([]string, 0, len(passthrough)+baseEnvEntries)
 	env = append(env, sdk.SocketEnv+"="+socketPath)
-
-	if path, ok := os.LookupEnv("PATH"); ok {
-		env = append(env, "PATH="+path)
-	}
-
-	for _, name := range passthrough {
-		if value, ok := os.LookupEnv(name); ok {
-			env = append(env, name+"="+value)
-		}
-	}
+	env = append(env, environ.Environ(lookup, "PATH")...)
+	env = append(env, environ.Environ(lookup, passthrough...)...)
 
 	return env
 }

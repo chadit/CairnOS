@@ -110,11 +110,11 @@ func (a *Authenticator) parse(token string) (*Claims, error) {
 	}
 
 	if a.cfg.RequireJTI && claims.ID == "" {
-		return nil, fmt.Errorf("%w: missing required jti claim", ErrTokenInvalid)
+		return nil, fmt.Errorf("%w: %w", ErrTokenInvalid, ErrJTIMissing)
 	}
 
 	if claims.Subject == "" {
-		return nil, fmt.Errorf("%w: missing sub claim", ErrTokenInvalid)
+		return nil, fmt.Errorf("%w: %w", ErrTokenInvalid, ErrSubjectMissing)
 	}
 
 	return claims, nil

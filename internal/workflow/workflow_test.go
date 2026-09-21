@@ -537,6 +537,19 @@ func codesOf(t *testing.T, err error) []string {
 	return codes
 }
 
+// retryAction wraps one retry table in the smallest workflow that carries it,
+// so a case shows only the fields it is about.
+func retryAction(retryBody string) string {
+	return "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\n[action.a.retry]\n" + retryBody + "\n"
+}
+
+// agentAction wraps extra agent keys in an otherwise valid agent action, so a
+// case's own field is the only thing the validator can object to.
+func agentAction(extra string) string {
+	return "[workflow]\nname = \"w\"\n[action.a]\nkind = \"agent\"\ndriver = \"mock\"\n" +
+		"goal = \"g\"\ntools = []\nbudget_usd = 1.0\n" + extra + "\n"
+}
+
 func TestParseRejectsRuleViolations(t *testing.T) {
 	t.Parallel()
 
@@ -916,9 +929,136 @@ func TestParseAccumulatesEveryError(t *testing.T) {
 
 	codes := codesOf(t, err)
 
-	const wantAtLeast = 3
-	if len(codes) < wantAtLeast {
-		t.Fatalf("got %d errors (%v), want at least %d", len(codes), codes, wantAtLeast)
+	for _, want := range []string{workflow.CodeBadName, workflow.CodeUnknownDependency, workflow.CodeBadForeach} {
+		if !slices.Contains(codes, want) {
+			t.Errorf("codes = %v, missing %s; one pass must report every problem, not stop at the first", codes, want)
+		}
+	}
+}
+
+// TestParseRejectsBadRetry covers the retry table's numeric rules one field at
+// a time. Each of these used to parse clean and change what the engine did at
+// run time: no retries, a backwards wait, or a cap that swallowed the base.
+func TestParseRejectsBadRetry(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		retry    string
+		wantCode string
+	}{
+		{
+			name:     "max_attempts below one",
+			retry:    "max_attempts = 0\nbase_delay = \"1s\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "max_attempts negative",
+			retry:    "max_attempts = -2\nbase_delay = \"1s\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "base_delay negative",
+			retry:    "max_attempts = 3\nbase_delay = \"-1s\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "max_delay negative",
+			retry:    "max_attempts = 3\nbase_delay = \"1s\"\nmax_delay = \"-30s\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "max_delay below base_delay",
+			retry:    "max_attempts = 3\nbase_delay = \"30s\"\nmax_delay = \"1s\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "base_delay is not a duration",
+			retry:    "max_attempts = 3\nbase_delay = \"soon\"",
+			wantCode: workflow.CodeBadDuration,
+		},
+		{
+			name:     "max_delay is not a duration",
+			retry:    "max_attempts = 3\nbase_delay = \"1s\"\nmax_delay = \"later\"",
+			wantCode: workflow.CodeBadDuration,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := workflow.Parse([]byte(retryAction(tt.retry)))
+			if err == nil {
+				t.Fatal("parse succeeded, want a retry error")
+			}
+
+			if codes := codesOf(t, err); !slices.Contains(codes, tt.wantCode) {
+				t.Fatalf("codes = %v, want %s present", codes, tt.wantCode)
+			}
+		})
+	}
+}
+
+// TestParseAcceptsWellFormedRetry pins the boundary the rules above sit on: an
+// uncapped policy leaves max_delay unset, and one attempt is a legal (if
+// pointless) policy, so neither may be swept up by the numeric checks.
+func TestParseAcceptsWellFormedRetry(t *testing.T) {
+	t.Parallel()
+
+	for _, retry := range []string{
+		"max_attempts = 1\nbase_delay = \"1s\"",
+		"max_attempts = 3\nbase_delay = \"1s\"",
+		"max_attempts = 3\nbase_delay = \"1s\"\nmax_delay = \"30s\"",
+		"max_attempts = 3\nbase_delay = \"30s\"\nmax_delay = \"30s\"",
+	} {
+		flow, err := workflow.Parse([]byte(retryAction(retry)))
+		if err != nil {
+			t.Fatalf("retry %q rejected: %v", retry, err)
+		}
+
+		if flow.Actions["a"].Retry == nil {
+			t.Fatalf("retry %q parsed but the action carries no policy", retry)
+		}
+	}
+}
+
+// TestParseRejectsBadInputAndAgentNumbers covers two fields whose bad values
+// change behavior quietly: an input type nothing can coerce, and an agent
+// iteration ceiling below zero.
+func TestParseRejectsBadInputAndAgentNumbers(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		toml     string
+		wantCode string
+	}{
+		{
+			name:     "unknown input type",
+			toml:     "[workflow]\nname = \"w\"\n[workflow.inputs.n]\ntype = \"decimal\"\n[action.a]\nrunner = \"mock\"",
+			wantCode: workflow.CodeInvalid,
+		},
+		{
+			name:     "negative max_iterations",
+			toml:     agentAction("max_iterations = -1"),
+			wantCode: workflow.CodeAgentFields,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := workflow.Parse([]byte(tt.toml))
+			if err == nil {
+				t.Fatal("parse succeeded, want a validation error")
+			}
+
+			if codes := codesOf(t, err); !slices.Contains(codes, tt.wantCode) {
+				t.Fatalf("codes = %v, want %s present", codes, tt.wantCode)
+			}
+		})
 	}
 }
 

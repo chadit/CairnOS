@@ -10,6 +10,12 @@ var (
 	// either because it was never created or because retention pruned it.
 	ErrRunNotFound = errors.New("run not found")
 
+	// ErrRunExists reports a CreateRun against an id that already has a row.
+	// Both backends map their driver's duplicate-key violation onto it, so a
+	// caller retrying a create can tell "someone already claimed this id"
+	// from a database that is actually broken.
+	ErrRunExists = errors.New("run already exists")
+
 	// ErrSuggestionNotFound reports an operation against a suggestion id
 	// that has no row, either never saved or already pruned.
 	ErrSuggestionNotFound = errors.New("suggestion not found")

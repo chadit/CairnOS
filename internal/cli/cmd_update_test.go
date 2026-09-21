@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,10 @@ const (
 	flagSourceArg  = "--source"
 	updateLinkName = "cairnos"
 )
+
+// errPullBroken stands in for any failure the secrets pull can end in: a vault
+// that will not unlock, a bw that cannot run, a file the pull cannot write.
+var errPullBroken = errors.New("secrets pull broke")
 
 func TestUpdateSourceDiscovery(t *testing.T) {
 	t.Parallel()
@@ -59,8 +64,10 @@ func TestUpdateSourceDiscovery(t *testing.T) {
 
 		bare := t.TempDir()
 
-		if _, err := cli.UpdateSourceDir(bare, executable); err == nil {
-			t.Fatal("UpdateSourceDir() accepted a directory with no go.mod and .git")
+		// The sentinel is the assertion: a bare non-nil would also pass on a
+		// stat failure, which is a different answer for the operator.
+		if _, err := cli.UpdateSourceDir(bare, executable); !errors.Is(err, cli.ErrNoSourceCheckout) {
+			t.Fatalf("UpdateSourceDir() error = %v, want ErrNoSourceCheckout", err)
 		}
 	})
 }
@@ -157,17 +164,17 @@ func TestUpdateRunsSecretsPullBeforeRestart(t *testing.T) {
 
 	steps := cli.UpdateSteps{
 		Build: func(context.Context, string) error {
-			order = append(order, "build")
+			order = append(order, stepBuild)
 
 			return nil
 		},
 		Pull: func(context.Context, string, string) (bool, error) {
-			order = append(order, "pull")
+			order = append(order, stepPull)
 
 			return true, nil
 		},
 		Restart: func(_ context.Context, _, secretsMoved bool, _ string) error {
-			order = append(order, "restart")
+			order = append(order, stepRestart)
 
 			if !secretsMoved {
 				t.Error("the restart did not see the pull's answer")
@@ -176,7 +183,7 @@ func TestUpdateRunsSecretsPullBeforeRestart(t *testing.T) {
 			return nil
 		},
 		Link: func(string) error {
-			order = append(order, "link")
+			order = append(order, stepLink)
 
 			return nil
 		},
@@ -187,9 +194,56 @@ func TestUpdateRunsSecretsPullBeforeRestart(t *testing.T) {
 		t.Fatalf("RunUpdateSteps() error = %v", err)
 	}
 
-	want := []string{"build", "pull", "restart", "link"}
+	want := []string{stepBuild, stepPull, stepRestart, stepLink}
 	if !slices.Equal(order, want) {
 		t.Fatalf("step order = %v, want %v", order, want)
+	}
+}
+
+// TestUpdateStopsWhenTheSecretsPullFails is the other half of FR11. A pull that
+// failed left the generated file at whatever it was, so restarting would put
+// the service on values nobody checked and the link would advertise the build
+// that runs them. The failure has to reach the operator instead.
+func TestUpdateStopsWhenTheSecretsPullFails(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	work, _ := stageClonePair(t)
+
+	var order []string
+
+	steps := cli.UpdateSteps{
+		Build: func(context.Context, string) error {
+			order = append(order, stepBuild)
+
+			return nil
+		},
+		Pull: func(context.Context, string, string) (bool, error) {
+			order = append(order, stepPull)
+
+			return false, errPullBroken
+		},
+		Restart: func(context.Context, bool, bool, string) error {
+			order = append(order, stepRestart)
+
+			return nil
+		},
+		Link: func(string) error {
+			order = append(order, stepLink)
+
+			return nil
+		},
+	}
+
+	err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
+		RunUpdateSteps(t.Context(), work, t.TempDir(), steps)
+	if !errors.Is(err, errPullBroken) {
+		t.Fatalf("RunUpdateSteps() error = %v, want the pull's failure", err)
+	}
+
+	want := []string{stepBuild, stepPull}
+	if !slices.Equal(order, want) {
+		t.Fatalf("step order = %v, want %v with nothing after the failed pull", order, want)
 	}
 }
 
@@ -249,6 +303,55 @@ func TestUpdateLink(t *testing.T) {
 			t.Errorf("the file was rewritten: %q", content)
 		}
 	})
+
+	t.Run("replaces a link whose target is gone", func(t *testing.T) {
+		t.Parallel()
+
+		linkDir := t.TempDir()
+		link := filepath.Join(linkDir, updateLinkName)
+
+		// A dangling link is what a previous install leaves behind when its
+		// checkout is deleted. Lstat sees it, os.Stat would not.
+		if err := os.Symlink(filepath.Join(linkDir, "deleted-checkout", "bin", updateLinkName), link); err != nil {
+			t.Fatalf("stage the dangling link: %v", err)
+		}
+
+		if err := cli.UpdateLink(binary, linkDir); err != nil {
+			t.Fatalf("UpdateLink() error = %v", err)
+		}
+
+		assertLinkTarget(t, link, binary)
+	})
+
+	t.Run("a link directory that cannot be created is reported", func(t *testing.T) {
+		t.Parallel()
+		requireNotRoot(t)
+
+		parent := t.TempDir()
+		if err := os.Chmod(parent, 0o500); err != nil {
+			t.Fatalf("seal the parent directory: %v", err)
+		}
+
+		linkDir := filepath.Join(parent, ".local", "bin")
+
+		if err := cli.UpdateLink(binary, linkDir); err == nil {
+			t.Fatal("UpdateLink() reported success with nowhere to put the link")
+		}
+
+		if _, err := os.Lstat(filepath.Join(linkDir, updateLinkName)); err == nil {
+			t.Fatal("a link exists under a directory that could not be created")
+		}
+	})
+}
+
+// requireNotRoot skips a case whose whole subject is a permission refusal, since
+// root is not refused and the case would assert nothing.
+func requireNotRoot(t *testing.T) {
+	t.Helper()
+
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, so an unwritable directory is still writable")
+	}
 }
 
 // requireGit skips a case that needs the real binary, since the fast-forward

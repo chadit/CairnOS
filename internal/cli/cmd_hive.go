@@ -70,7 +70,7 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("hive subscribe: %v\n", err)
 
@@ -146,7 +146,7 @@ func (a *App) cmdHivePublish(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(db)
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("hive publish: %v\n", err)
 

@@ -16,6 +16,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // The GitHub REST endpoints the release lookup reads and the headers that pick
@@ -110,16 +112,18 @@ type releaseClient struct {
 }
 
 // releaseClient builds the lookup and download client, aimed at the public API
-// unless an override names another base.
-func (a *App) releaseClient(base string) *releaseClient {
+// unless an override names another base. A nil transport is the default one, so
+// production opens real sockets; a test passes one that answers in process and
+// never touches the network stack.
+func (a *App) releaseClient(base string, transport http.RoundTripper) *releaseClient {
 	if base == "" {
 		base = releaseAPIBase
 	}
 
 	return &releaseClient{
 		base:   base,
-		token:  releaseToken(),
-		http:   &http.Client{Timeout: releaseTimeout},
+		token:  releaseToken(a.envLookup()),
+		http:   &http.Client{Timeout: releaseTimeout, Transport: transport},
 		logger: a.logger,
 	}
 }
@@ -127,7 +131,7 @@ func (a *App) releaseClient(base string) *releaseClient {
 // findRelease answers with the release to install when one exists for this
 // platform. --no-fetch, --source and --no-release each mean the source path
 // only, so a developer deploying the tree in front of them is never clobbered.
-func (a *App) findRelease(ctx context.Context, opts updateOptions) (releaseBuild, bool, error) {
+func (a *App) findRelease(ctx context.Context, opts *updateOptions) (releaseBuild, bool, error) {
 	if !opts.fetch || opts.source != "" || !opts.release {
 		return releaseBuild{}, false, nil
 	}
@@ -139,7 +143,7 @@ func (a *App) findRelease(ctx context.Context, opts updateOptions) (releaseBuild
 		return releaseBuild{}, false, nil
 	}
 
-	return a.releaseClient(opts.apiBase).latestRelease(ctx, owner, repo)
+	return a.releaseClient(opts.apiBase, opts.transport).latestRelease(ctx, owner, repo)
 }
 
 // moduleSlug reads owner and repository out of the module path the running
@@ -172,9 +176,9 @@ func releaseAssetName(goos, goarch string) string {
 // releaseToken reads the token the API calls authenticate with. The repository
 // is private, so without one every lookup answers 404 and the update builds the
 // checkout instead.
-func releaseToken() string {
+func releaseToken(lookup environ.Lookup) string {
 	for _, key := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		if value := strings.TrimSpace(lookup.Get(key)); value != "" {
 			return value
 		}
 	}

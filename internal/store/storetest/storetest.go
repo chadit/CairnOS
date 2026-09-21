@@ -17,8 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/pkg/runner"
@@ -80,12 +78,6 @@ const (
 // database. Returning the interface keeps the suite backend-agnostic.
 type OpenFunc func(t *testing.T) store.Store
 
-// newID returns a ULID, the id shape both backends use, so the suite stays
-// independent of either backend's NewID.
-func newID() string {
-	return ulid.Make().String()
-}
-
 // RunConformance runs the full store.Store behavioral suite against the
 // store openFn hands out. Each named subtest opens its own store, so they
 // are independent and the caller may run the suite under t.Parallel.
@@ -96,8 +88,9 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 		run  func(t *testing.T, openFn OpenFunc)
 		name string
 	}{
-		{name: "SatisfiesInterface", run: testSatisfiesInterface},
 		{name: "RunActionRoundTrip", run: testRunActionRoundTrip},
+		{name: "CreateRunRejectsDuplicateID", run: testCreateRunRejectsDuplicateID},
+		{name: "UpsertActionResultRejectsUnknownRun", run: testUpsertActionResultRejectsUnknownRun},
 		{name: "ParentRunIDRoundTrip", run: testParentRunIDRoundTrip},
 		{name: "UpdateRunStatusStampsTimestamps", run: testUpdateRunStatusStampsTimestamps},
 		{name: "RunNotFound", run: testRunNotFound},
@@ -198,13 +191,60 @@ func seedSuggestion(t *testing.T, db store.Store, id string, status store.Sugges
 	}
 }
 
-func testSatisfiesInterface(t *testing.T, openFn OpenFunc) {
+// testCreateRunRejectsDuplicateID proves a second create on a taken id is
+// refused with a sentinel the caller can act on, rather than silently
+// replacing a run that may already be executing.
+func testCreateRunRejectsDuplicateID(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
 	db := openFn(t)
+	runID := store.NewID()
+	created := time.Date(2026, 6, 1, 12, 30, 15, microFixtureNS, time.UTC)
 
-	if _, err := db.ListRuns(t.Context(), store.ListFilter{}); err != nil {
-		t.Fatalf("list runs through interface: %v", err)
+	createRun(t, db, runID, workflowAlpha, store.RunPending, created)
+
+	err := db.CreateRun(t.Context(), &store.Run{
+		ID:           runID,
+		WorkflowName: workflowBeta,
+		WorkflowHash: hashFixture,
+		Status:       store.RunRunning,
+		Trigger:      triggerCLI,
+		CreatedAt:    created,
+	})
+	if !errors.Is(err, store.ErrRunExists) {
+		t.Fatalf("second CreateRun on %s: error = %v, want ErrRunExists", runID, err)
+	}
+
+	// The refusal must leave the original row untouched, so a losing creator
+	// cannot rewrite the winner's workflow or status.
+	got, getErr := db.GetRun(t.Context(), runID)
+	if getErr != nil {
+		t.Fatalf("get run %s: %v", runID, getErr)
+	}
+
+	if got.WorkflowName != workflowAlpha || got.Status != store.RunPending {
+		t.Fatalf("run after refused create = (%s, %s), want (%s, %s)",
+			got.WorkflowName, got.Status, workflowAlpha, store.RunPending)
+	}
+}
+
+// testUpsertActionResultRejectsUnknownRun proves an action write naming a run
+// nothing created is refused instead of stranding an orphan row that no run
+// query will ever return.
+func testUpsertActionResultRejectsUnknownRun(t *testing.T, openFn OpenFunc) {
+	t.Helper()
+
+	db := openFn(t)
+	missingRun := store.NewID()
+
+	err := db.UpsertActionResult(t.Context(), &store.ActionResult{
+		RunID:      missingRun,
+		ActionName: actionFetch,
+		Runner:     runnerMock,
+		Status:     store.ActionSucceeded,
+	})
+	if !errors.Is(err, store.ErrRunNotFound) {
+		t.Fatalf("UpsertActionResult for unknown run %s: error = %v, want ErrRunNotFound", missingRun, err)
 	}
 }
 
@@ -219,7 +259,7 @@ func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
 	// sub-microsecond fidelity that sqlite would keep but Postgres would
 	// truncate. Real timestamps come from time.Now and round-trip fine.
 	created := time.Date(2026, 6, 1, 12, 30, 15, microFixtureNS, time.UTC)
-	runID := newID()
+	runID := store.NewID()
 	inputs := map[string]any{"ticker": "GME", "count": float64(inputCount)}
 
 	err := db.CreateRun(ctx, &store.Run{
@@ -338,8 +378,8 @@ func testParentRunIDRoundTrip(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	ctx := t.Context()
 
-	parentID := newID()
-	childID := newID()
+	parentID := store.NewID()
+	childID := store.NewID()
 	created := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 	createRun(t, db, parentID, workflowAlpha, store.RunFailed, created)
@@ -381,7 +421,7 @@ func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
 
 	db := openFn(t)
 	ctx := t.Context()
-	runID := newID()
+	runID := store.NewID()
 
 	createRun(t, db, runID, workflowAlpha, store.RunPending, time.Now())
 
@@ -538,8 +578,8 @@ func testWorkspaceIsolatesRunsAndActions(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeRun := newID()
-	globexRun := newID()
+	acmeRun := store.NewID()
+	globexRun := store.NewID()
 
 	createRunIn(t, db, acmeCtx, acmeRun, base)
 	createRunIn(t, db, globexCtx, globexRun, base.Add(time.Hour))
@@ -596,8 +636,8 @@ func testSpendSinceIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeRun := newID()
-	globexRun := newID()
+	acmeRun := store.NewID()
+	globexRun := store.NewID()
 
 	createRunIn(t, db, acmeCtx, acmeRun, base)
 	createRunIn(t, db, globexCtx, globexRun, base)
@@ -921,7 +961,7 @@ func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
 
 	db := openFn(t)
 	ctx := t.Context()
-	runID := newID()
+	runID := store.NewID()
 
 	createRun(t, db, runID, workflowAlpha, store.RunRunning, time.Now())
 
@@ -1013,7 +1053,7 @@ func testConcurrentUpsertActionResult(t *testing.T, openFn OpenFunc) {
 
 	db := openFn(t)
 	ctx := t.Context()
-	runID := newID()
+	runID := store.NewID()
 
 	createRun(t, db, runID, workflowAlpha, store.RunRunning, time.Now())
 
@@ -1068,7 +1108,7 @@ func testSuggestionRoundTrip(t *testing.T, openFn OpenFunc) {
 	created := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 
 	want := &store.Suggestion{
-		ID:        newID(),
+		ID:        store.NewID(),
 		Kind:      store.SuggestionParamTuning,
 		Target:    suggestionTarget,
 		Rationale: suggestionRationale,
@@ -1129,7 +1169,7 @@ func testSaveSuggestionDefaults(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 
 	suggestion := &store.Suggestion{
-		ID:        newID(),
+		ID:        store.NewID(),
 		Kind:      store.SuggestionCaching,
 		Target:    suggestionTarget,
 		Rationale: suggestionRationale,
@@ -1304,8 +1344,8 @@ func testSuggestionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeID := newID()
-	globexID := newID()
+	acmeID := store.NewID()
+	globexID := store.NewID()
 
 	saveSuggestionIn(t, db, acmeCtx, acmeID, created)
 	saveSuggestionIn(t, db, globexCtx, globexID, created.Add(time.Hour))
@@ -1381,7 +1421,7 @@ func testAgentStepsIsolateByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeRun := newID()
+	acmeRun := store.NewID()
 	createRunIn(t, db, acmeCtx, acmeRun, base)
 
 	err := db.AppendAgentStep(acmeCtx, &store.AgentStep{

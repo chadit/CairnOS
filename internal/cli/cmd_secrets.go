@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -107,14 +106,14 @@ func (a *App) openSecretsAt(ctx context.Context, label, dirFlagValue string) (se
 		return nil, ExitFailure, false
 	}
 
-	dir, err := resolveDir(dirFlagValue)
+	dir, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, ExitFailure, false
 	}
 
-	cfg, err := config.Load(filepath.Join(dir, configFileName))
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -128,7 +127,7 @@ func (a *App) openSecretsAt(ctx context.Context, label, dirFlagValue string) (se
 		return nil, ExitFailure, false
 	}
 
-	secretStore, err := openSecretsStore(ctx, dir, &cfg)
+	secretStore, err := openSecretsStore(ctx, dir, &cfg, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -295,7 +294,7 @@ func (a *App) cmdSecretsLs(ctx context.Context, args []string) int {
 	}
 
 	shadowed := make(map[string]bool, len(names))
-	for _, name := range secrets.ShadowedByEnv(names, os.LookupEnv) {
+	for _, name := range secrets.ShadowedByEnv(names, a.envLookup()) {
 		shadowed[name] = true
 	}
 

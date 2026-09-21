@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/store"
@@ -104,7 +105,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 
 		tuneCfg.Runners = registry
 
-		if comparator := replayComparator(cfg.Tuning.EmbeddingModel, cfg.Tuning.EquivalenceThreshold, cfg.Runners); comparator != nil {
+		if comparator := replayComparator(cfg.Tuning.EmbeddingModel, cfg.Tuning.EquivalenceThreshold, cfg.Runners, a.envLookup()); comparator != nil {
 			tuneCfg.Comparator = comparator
 		}
 	}
@@ -147,7 +148,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 // opens no secret source, so a workflow binding a credential to a runner fails
 // here at BuildAll, the same signal a missing credential gives elsewhere.
 func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.Registry, error) {
-	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), nil, nil, nil, nil,
+	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), nil, nil, nil, nil,
 		a.logger, nil)
 }
 
@@ -155,12 +156,17 @@ func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.R
 // empty embedding model returns nil, so the tuning engine keeps its exact-match
 // default; a configured model returns the embedding-similarity comparator (R1),
 // reusing the openai runner's base URL and API key.
-func replayComparator(model string, threshold float64, runners map[string]map[string]any) tuning.Comparator {
+func replayComparator(
+	model string,
+	threshold float64,
+	runners map[string]map[string]any,
+	env environ.Lookup,
+) tuning.Comparator {
 	if model == "" {
 		return nil
 	}
 
-	embedder := builtins.NewOpenAIEmbedder(model, openaiBaseURL(runners), nil)
+	embedder := builtins.NewOpenAIEmbedder(model, openaiBaseURL(runners), nil, env)
 
 	return tuning.NewEmbeddingComparator(embedder, threshold)
 }
@@ -184,7 +190,7 @@ func openaiBaseURL(runners map[string]map[string]any) string {
 // file gone, outputs pruned); Replay then records a skipped marker on the
 // suggestion rather than pretending the check ran.
 func (a *App) replaySuggestions(ctx context.Context, engine *tuning.Engine, db store.Store, dirFlagValue string, sampleLimit int, suggestions []*store.Suggestion) int {
-	home, err := resolveDir(dirFlagValue)
+	home, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("suggestions scan: %v\n", err)
 

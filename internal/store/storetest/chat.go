@@ -46,7 +46,7 @@ func testChatSessionRoundTrip(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 	created := time.Date(2026, 6, 11, 9, 0, 0, microFixtureNS, time.UTC)
 
-	sessionID := newID()
+	sessionID := store.NewID()
 
 	err := db.CreateSession(ctx, &store.ChatSession{
 		ID:          sessionID,
@@ -118,7 +118,7 @@ func testChatSessionSeedsSystemRole(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 	created := time.Date(2026, 6, 13, 9, 0, 0, microFixtureNS, time.UTC)
 
-	sessionID := newID()
+	sessionID := store.NewID()
 	seedSession(t, db, sessionID, personalityAssistant, created)
 
 	appendMessage(t, db, sessionID, store.ChatRoleSystem, chatSystemFraming)
@@ -181,8 +181,8 @@ func testChatSessionListNewestFirst(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 	base := time.Date(2026, 6, 11, 8, 0, 0, 0, time.UTC)
 
-	older := newID()
-	newer := newID()
+	older := store.NewID()
+	newer := store.NewID()
 
 	seedSession(t, db, older, personalityAssistant, base)
 	seedSession(t, db, newer, personalityOps, base.Add(time.Hour))
@@ -226,8 +226,8 @@ func testChatSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeSession := newID()
-	globexSession := newID()
+	acmeSession := store.NewID()
+	globexSession := store.NewID()
 
 	createSessionIn(t, db, acmeCtx, acmeSession, base)
 	createSessionIn(t, db, globexCtx, globexSession, base.Add(time.Hour))
@@ -355,8 +355,8 @@ func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeSession := newID()
-	globexSession := newID()
+	acmeSession := store.NewID()
+	globexSession := store.NewID()
 
 	createSessionIn(t, db, acmeCtx, acmeSession, base)
 	createSessionIn(t, db, globexCtx, globexSession, base)
@@ -389,7 +389,7 @@ func testChatSearchTreatsQuerySyntaxLiterally(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	base := time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC)
 
-	sessionID := newID()
+	sessionID := store.NewID()
 	seedSession(t, db, sessionID, personalityAssistant, base)
 
 	appendMessage(t, db, sessionID, store.ChatRoleUser, chatSearchQuoted)
@@ -412,7 +412,7 @@ func testChatSearchEmptyTextReturnsNothing(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	base := time.Date(2026, 6, 12, 8, 0, 0, 0, time.UTC)
 
-	sessionID := newID()
+	sessionID := store.NewID()
 	seedSession(t, db, sessionID, personalityAssistant, base)
 	appendMessage(t, db, sessionID, store.ChatRoleUser, chatSearchWeak)
 
@@ -438,8 +438,8 @@ func seedChatSearchCorpus(t *testing.T, db store.Store) (string, string) {
 
 	base := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
 
-	sessionA := newID()
-	sessionB := newID()
+	sessionA := store.NewID()
+	sessionB := store.NewID()
 
 	seedSession(t, db, sessionA, personalityAssistant, base)
 	seedSession(t, db, sessionB, personalityAssistant, base)

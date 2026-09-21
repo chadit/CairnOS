@@ -5,10 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -50,7 +50,7 @@ func TestWebhookClassifiesStatusCodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
 					w.Header().Set("Retry-After", tt.retryAfter)
 				}
@@ -58,7 +58,6 @@ func TestWebhookClassifiesStatusCodes(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, "ack")
 			}))
-			defer server.Close()
 
 			hook, err := builtins.NewWebhook(nil, server.Client())
 			if err != nil {
@@ -100,7 +99,7 @@ func TestWebhookMarshalsStructuredBodyAndUsesConfigURL(t *testing.T) {
 
 	received := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil &&
@@ -110,7 +109,6 @@ func TestWebhookMarshalsStructuredBodyAndUsesConfigURL(t *testing.T) {
 
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
 
 	hook, err := builtins.NewWebhook(map[string]any{urlKey: server.URL}, server.Client())
 	if err != nil {

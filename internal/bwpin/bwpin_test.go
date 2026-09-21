@@ -9,7 +9,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/bwpin"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // The version already pinned in the fixture file, the one the fake feed is
@@ -219,7 +219,7 @@ func encode(value any) string {
 func serveRelease(t *testing.T, pages map[string]string, archive []byte) bwpin.Config {
 	t.Helper()
 
-	return pointAt(t, releaseHandler(pages, archive))
+	return pointAt(releaseHandler(pages, archive))
 }
 
 // serveDowngrade answers the feed normally and sends every asset request to a
@@ -227,7 +227,7 @@ func serveRelease(t *testing.T, pages map[string]string, archive []byte) bwpin.C
 func serveDowngrade(t *testing.T, pages map[string]string) bwpin.Config {
 	t.Helper()
 
-	return pointAt(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	return pointAt(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, downloadPrefix) {
 			http.Redirect(writer, request, plaintextAsset, http.StatusFound)
 
@@ -238,19 +238,13 @@ func serveDowngrade(t *testing.T, pages map[string]string) bwpin.Config {
 	}))
 }
 
-// pointAt stands a handler up on one loopback server and returns a bwpin.Config aimed
-// at it. The tool refuses anything but https, so the URLs keep that scheme and
-// the client dials the listener whatever the URL says.
-func pointAt(t *testing.T, handler http.Handler) bwpin.Config {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-
-	client := &http.Client{Transport: &rewriteTransport{target: strings.TrimPrefix(server.URL, "http://")}}
-
+// pointAt returns a bwpin.Config whose client answers from handler in this
+// process. The tool refuses anything but https, and the fixture transport
+// serves the handler whatever the URL says, so the scheme check still sees
+// https.
+func pointAt(handler http.Handler) bwpin.Config {
 	return bwpin.Config{
-		Client:   client,
+		Client:   nettest.Client(handler),
 		Logger:   quietLogger(),
 		API:      "https://bwpin.test",
 		Download: "https://bwpin.test/download",
@@ -283,21 +277,6 @@ func feedHandler(pages map[string]string) http.Handler {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(body))
 	})
-}
-
-// rewriteTransport sends every request to the test server while the URL the
-// tool checked keeps its https scheme.
-type rewriteTransport struct {
-	target string
-}
-
-func (t *rewriteTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	routed := request.Clone(request.Context())
-	routed.URL.Scheme = "http"
-	routed.URL.Host = t.target
-
-	//nolint:wrapcheck // a test transport: the error goes straight back to the client
-	return http.DefaultTransport.RoundTrip(routed)
 }
 
 // countingClient wraps a client and counts asset fetches, which is how a case

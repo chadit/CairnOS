@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/service"
 )
 
@@ -73,7 +74,7 @@ func (a *App) cmdServiceSetup(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	opts, err := serviceOptions(*systemFlag, *dirFlag)
+	opts, err := serviceOptions(*systemFlag, *dirFlag, a.envLookup())
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -213,7 +214,7 @@ func (a *App) cmdServiceUninstall(ctx context.Context, args []string) int {
 // serviceOptions resolves the home and binary the unit will reference. The
 // system-mode home defaults to the doc-11 layout instead of the invoking
 // root's own dotdir, which would tie a machine service to a human account.
-func serviceOptions(system bool, dirFlag string) (service.Options, error) {
+func serviceOptions(system bool, dirFlag string, lookup environ.Lookup) (service.Options, error) {
 	home := dirFlag
 
 	if home == "" && system {
@@ -221,7 +222,7 @@ func serviceOptions(system bool, dirFlag string) (service.Options, error) {
 	}
 
 	if !system {
-		resolved, err := resolveDir(dirFlag)
+		resolved, err := resolveDir(dirFlag, lookup)
 		if err != nil {
 			return service.Options{}, err
 		}

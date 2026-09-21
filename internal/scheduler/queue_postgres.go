@@ -94,20 +94,24 @@ func (q *PostgresQueue) Enqueue(ctx context.Context, item *WorkItem) (bool, erro
 	return tag.RowsAffected() == 1, nil
 }
 
-// OccurrencePending reports whether the schedule has an unfinished occurrence
-// in the queue. It matches the dedup-key prefix with substr rather than LIKE so
-// a schedule id never needs escaping, and the queue holds only unfinished work,
-// so the scan stays small.
-func (q *PostgresQueue) OccurrencePending(ctx context.Context, scheduleID string) (bool, error) {
+// OccurrencePending reports whether the schedule has an unfinished occurrence.
+// It matches the dedup-key prefix with substr rather than LIKE so a schedule id
+// never needs escaping.
+//
+// A leased row counts only while its lease is live: a lease nobody renewed
+// outlived the worker that took it, so counting it would let one killed process
+// block the schedule.
+func (q *PostgresQueue) OccurrencePending(ctx context.Context, scheduleID string, now time.Time) (bool, error) {
 	prefix := OccurrencePrefix(scheduleID)
-	unfinished := []string{string(WorkReady), string(WorkLeased), string(WorkHeld)}
+	waiting := []string{string(WorkReady), string(WorkHeld)}
 
 	var pending bool
 
 	err := q.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM work_item
-		 WHERE state = ANY($1) AND substr(dedup_key, 1, length($2)) = $2)`,
-		unfinished, prefix).Scan(&pending)
+		 WHERE substr(dedup_key, 1, length($1)) = $1
+		   AND (state = ANY($2) OR (state = $3 AND lease_until > $4)))`,
+		prefix, waiting, string(WorkLeased), now.UTC()).Scan(&pending)
 	if err != nil {
 		return false, fmt.Errorf("pending occurrence for schedule %s: %w", scheduleID, err)
 	}
@@ -135,6 +139,25 @@ func (q *PostgresQueue) Claim(ctx context.Context, now time.Time, ackWait time.D
 	}
 
 	return scanPGWorkItems(rows)
+}
+
+// Renew pushes the lease deadline of the given leased items out, the heartbeat
+// a worker sends while its runs are still going. An item that already settled
+// no longer matches the leased guard, so a renewal racing a settle quietly does
+// nothing.
+func (q *PostgresQueue) Renew(ctx context.Context, ids []string, leaseUntil time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	_, err := q.pool.Exec(ctx,
+		"UPDATE work_item SET lease_until = $1 WHERE state = $2 AND id = ANY($3)",
+		leaseUntil.UTC(), string(WorkLeased), ids)
+	if err != nil {
+		return fmt.Errorf("renew %d work item leases: %w", len(ids), err)
+	}
+
+	return nil
 }
 
 // Ack removes a finished item. A missing row is not an error.

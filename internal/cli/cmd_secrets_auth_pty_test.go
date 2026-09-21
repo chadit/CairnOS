@@ -16,6 +16,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // promptWait bounds how long a case waits for one prompt to reach the terminal.
@@ -51,20 +52,19 @@ const terminalTranscriptSize = 4096
 //
 // The repo carries no pty module, so the pair is opened by hand, which makes
 // this case Linux-only.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthHidesTypingAndRestoresTheTerminal(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	master, slave := openPTY(t)
 	dir := t.TempDir()
+	env := emptyHome(t)
 
 	before := readTermios(t, slave)
 	if before.Lflag&unix.ECHO == 0 {
 		t.Fatal("the fresh terminal already has echo off, so this proves nothing")
 	}
 
-	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+	seen := answerAuthPrompts(t, master, slave, dir, env, [promptCount]string{
 		authTypedItem + "\n",
 		authTypedID + "\n",
 		authTypedSecret + "\n",
@@ -103,15 +103,14 @@ func assertTerminalTranscript(t *testing.T, transcript string) {
 // TestSecretsAuthShowsOneStarPerTypedCharacter proves a hidden prompt shows how
 // much arrived, which is what a mis-paste is otherwise invisible to. The item
 // name is not a secret, so the terminal echoes that one instead.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthShowsOneStarPerTypedCharacter(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	master, slave := openPTY(t)
 	dir := t.TempDir()
+	env := emptyHome(t)
 
-	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+	seen := answerAuthPrompts(t, master, slave, dir, env, [promptCount]string{
 		authTypedItem + "\n",
 		authTypedID + "\n",
 		authTypedSecret + "\n",
@@ -145,15 +144,14 @@ func TestSecretsAuthShowsOneStarPerTypedCharacter(t *testing.T) {
 
 // TestSecretsAuthBackspaceTakesBackACharacter types both erase bytes, since a
 // terminal sends one or the other.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthBackspaceTakesBackACharacter(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	master, slave := openPTY(t)
 	dir := t.TempDir()
+	env := emptyHome(t)
 
-	seen := answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+	seen := answerAuthPrompts(t, master, slave, dir, env, [promptCount]string{
 		authTypedItem + "\n",
 		authTypedID + "X" + string(rune(keyDelete)) + "\n",
 		authTypedSecret + "Y" + string(rune(keyBackspace)) + "\n",
@@ -178,15 +176,14 @@ func TestSecretsAuthBackspaceTakesBackACharacter(t *testing.T) {
 
 // TestSecretsAuthStripsAPastedCarriageReturn checks a CRLF paste: the second
 // byte would otherwise answer the next prompt with an empty line.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthStripsAPastedCarriageReturn(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	master, slave := openPTY(t)
 	dir := t.TempDir()
+	env := emptyHome(t)
 
-	answerAuthPrompts(t, master, slave, dir, [promptCount]string{
+	answerAuthPrompts(t, master, slave, dir, env, [promptCount]string{
 		authTypedItem + "\n",
 		authTypedID + "\r\n",
 		authTypedSecret + "\n",
@@ -235,7 +232,9 @@ func visibleStars(t *testing.T, transcript, prompt, next string) int {
 // once its prompt lands: typing ahead would buffer it while echo was still on.
 // The command owns both ends of the conversation, writing its prompts to the
 // terminal the way it would for an operator sitting at one.
-func answerAuthPrompts(t *testing.T, master, slave *os.File, dir string, typed [promptCount]string) *terminalWatch {
+func answerAuthPrompts(
+	t *testing.T, master, slave *os.File, dir string, env map[string]string, typed [promptCount]string,
+) *terminalWatch {
 	t.Helper()
 
 	seen := watchTerminal(t, master, slave)
@@ -243,7 +242,7 @@ func answerAuthPrompts(t *testing.T, master, slave *os.File, dir string, typed [
 	finished := make(chan int, 1)
 
 	go func() {
-		finished <- cli.New(slave, io.Discard).WithStdin(slave).
+		finished <- cli.New(slave, io.Discard).WithStdin(slave).WithEnv(environ.Map(env)).
 			Run(t.Context(), []string{secretsCmd, authSubcmd, flagDirArg, dir})
 	}()
 

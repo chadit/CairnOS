@@ -44,6 +44,13 @@ depends_on = ["signoff"]
 params     = { output = "sent" }
 `
 
+// The two parallel gates twoGateTOML declares, named by the tests that decide
+// them one at a time.
+const (
+	actionSignA = "sign_a"
+	actionSignB = "sign_b"
+)
+
 // twoGateTOML parks on two parallel approvals, making the omitted-name
 // request ambiguous.
 const twoGateTOML = `
@@ -239,6 +246,85 @@ func TestApproveRunUnknownRunNotFound(t *testing.T) {
 	}
 }
 
+// TestApproveRunUnknownActionNotFound proves a decision aimed at an action
+// that is not a pending gate is refused as not-found, so a typo in the name
+// cannot read as a server fault and cannot settle some other gate.
+func TestApproveRunUnknownActionNotFound(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+	writeWorkflow(t, fix.workflowsDir, "gated.toml", gatedTOML)
+
+	runID := parkHeldRun(t, fix, "gated")
+
+	_, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId:      runID,
+		ActionName: "no-such-gate",
+		Approve:    true,
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("approve of an unknown action code = %v (%v), want NotFound", status.Code(err), err)
+	}
+
+	// The real gate is untouched, so the run is still parked on it.
+	pending, err := fix.db.ListPendingApprovals(t.Context(), runID)
+	if err != nil {
+		t.Fatalf("list pending approvals: %v", err)
+	}
+
+	if len(pending) != 1 || pending[0].ActionName != "signoff" {
+		t.Fatalf("pending gates after the bad name = %+v, want signoff still pending", pending)
+	}
+}
+
+// TestApproveRunRefusesDecidedGate proves a second decision on a gate that is
+// already settled is refused, so a retry cannot overwrite the first decision's
+// actor and comment while the run parks on its next gate.
+func TestApproveRunRefusesDecidedGate(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+	writeWorkflow(t, fix.workflowsDir, "twogate.toml", twoGateTOML)
+
+	runID := parkHeldRun(t, fix, "twogate")
+
+	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId:      runID,
+		ActionName: actionSignA,
+		Approve:    true,
+	}); err != nil {
+		t.Fatalf("approve sign_a: %v", err)
+	}
+
+	// sign_a settles during the resume, and the run then re-parks on sign_b.
+	// Reading sign_a first keeps a stale held from passing for the second park.
+	waitApproveFor(t, "run re-parking on sign_b", func() bool {
+		if actionStatus(getRun(t, fix, runID), actionSignA) != statusSucceeded {
+			return false
+		}
+
+		return getRun(t, fix, runID).GetRun().GetStatus() == statusHeld
+	})
+
+	_, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId:      runID,
+		ActionName: actionSignA,
+		Approve:    false,
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("second decision on sign_a code = %v (%v), want NotFound", status.Code(err), err)
+	}
+
+	decided, err := fix.db.GetApproval(t.Context(), runID, actionSignA)
+	if err != nil {
+		t.Fatalf("get sign_a approval: %v", err)
+	}
+
+	if decided.Status != store.ApprovalApproved {
+		t.Fatalf("sign_a status = %q, want the first decision %q to stand", decided.Status, store.ApprovalApproved)
+	}
+}
+
 // TestApproveRunAmbiguousRequiresName parks a run holding two pending gates,
 // proves the omitted-name request is refused listing both, then decides each
 // gate by name through the re-park to completion.
@@ -255,13 +341,13 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 		t.Fatalf("ambiguous approve code = %v (%v), want FailedPrecondition", status.Code(err), err)
 	}
 
-	if msg := status.Convert(err).Message(); !strings.Contains(msg, "sign_a") || !strings.Contains(msg, "sign_b") {
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, actionSignA) || !strings.Contains(msg, actionSignB) {
 		t.Fatalf("ambiguous refusal does not list the pending gates: %s", msg)
 	}
 
 	if _, approveRunErr := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
 		RunId:      runID,
-		ActionName: "sign_a",
+		ActionName: actionSignA,
 		Approve:    true,
 	}); approveRunErr != nil {
 		t.Fatalf("approve sign_a: %v", approveRunErr)
@@ -273,7 +359,7 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 	// rows and can pair a stale held with a settled sign_a, so these stay two
 	// ordered reads.
 	waitApproveFor(t, "run re-parking on sign_b", func() bool {
-		if actionStatus(getRun(t, fix, runID), "sign_a") != statusSucceeded {
+		if actionStatus(getRun(t, fix, runID), actionSignA) != statusSucceeded {
 			return false
 		}
 
@@ -285,13 +371,13 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 		t.Fatalf("list pending approvals: %v", err)
 	}
 
-	if len(pending) != 1 || pending[0].ActionName != "sign_b" {
+	if len(pending) != 1 || pending[0].ActionName != actionSignB {
 		t.Fatalf("pending gates after deciding sign_a = %+v, want only sign_b", pending)
 	}
 
 	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
 		RunId:      runID,
-		ActionName: "sign_b",
+		ActionName: actionSignB,
 		Approve:    true,
 	}); err != nil {
 		t.Fatalf("approve sign_b: %v", err)

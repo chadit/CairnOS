@@ -36,9 +36,15 @@ type DiscordNotifier struct {
 // NewDiscordNotifier builds a notifier that posts to webhookURL with a bounded
 // per-request timeout.
 func NewDiscordNotifier(webhookURL string) *DiscordNotifier {
+	return NewDiscordNotifierOver(webhookURL, nil)
+}
+
+// NewDiscordNotifierOver is NewDiscordNotifier over a caller-supplied round
+// tripper. A nil transport keeps the default one.
+func NewDiscordNotifierOver(webhookURL string, transport http.RoundTripper) *DiscordNotifier {
 	return &DiscordNotifier{
 		webhookURL: webhookURL,
-		http:       &http.Client{Timeout: notifyTimeout},
+		http:       &http.Client{Timeout: notifyTimeout, Transport: transport},
 	}
 }
 

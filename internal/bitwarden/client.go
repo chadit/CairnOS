@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/execretry"
 )
 
 // Canonical codes, one per step, so a failure says which round trip broke
@@ -69,9 +71,19 @@ const noInteraction = "BW_NOINTERACTION=true"
 // forwarded when set so an operator who moved that directory keeps working.
 const appDataDirEnv = "BITWARDENCLI_APPDATA_DIR"
 
-// probeTimeout bounds one readiness probe, short enough that several fit inside
-// readyTimeout.
-const probeTimeout = 2 * time.Second
+// probeTimeout bounds one readiness probe. It is short because the failure it
+// has to survive is a loopback SYN the host drops on a recycled port: the dial
+// never answers, and only a new one from a fresh source port does.
+const probeTimeout = 750 * time.Millisecond
+
+// serveAttempts bounds how many ports one start will try. The port is released
+// before the child binds it, so a busy host can lose it in between, and nothing
+// but another port helps.
+const serveAttempts = 3
+
+// stderrTail bounds how much of a dead child's stderr an error carries: a bind
+// refusal is one line, and a chatty daemon must not push a log into a message.
+const stderrTail = 512
 
 // Client drives one `bw serve` daemon for the life of a single Fields call. It
 // holds no state between calls: the vault session lives only in the daemon's
@@ -82,6 +94,15 @@ type Client struct {
 	// here carries a value.
 	Logger *slog.Logger
 
+	// Env answers the few variables a bw child is given. Nil reads the real
+	// process environment.
+	Env environ.Lookup
+
+	// Clock measures the readiness budget. Nil reads the machine's clock. A
+	// caller that drives its own clock decides when the budget runs out, so a
+	// loaded host cannot expire a wait the daemon met.
+	Clock Clock
+
 	// Binary is the bw executable, resolved by the caller through LookPath.
 	Binary string
 
@@ -89,6 +110,22 @@ type Client struct {
 	// DefaultTimeout.
 	Timeout time.Duration
 }
+
+// Clock is how the readiness wait measures its budget, so waiting is an
+// observable event rather than a bet on how fast this host starts a process.
+type Clock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+}
+
+// realClock reads the machine's clock, which is what a deploy waits on.
+type realClock struct{}
+
+// Now answers with the current instant.
+func (realClock) Now() time.Time { return time.Now() }
+
+// After answers with a channel that fires once d has passed.
+func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 // item is the part of a vault item this package reads. Everything else the
 // search returns is ignored rather than modeled.
@@ -131,12 +168,12 @@ func (c *Client) Fields(
 }
 
 // Read opens the vault, returns every custom field on the item, and closes it
-// again. The daemon is started and killed inside this call, and the vault is
-// locked on every exit path including a failure part way through.
+// again. The vault is locked on every exit path, including a failure part way
+// through.
 //
 // It returns the whole item because a caller may be inferring which fields it
-// wants from their names, and paying the daemon's whole lifecycle twice to ask
-// two questions about one item would be the only alternative.
+// wants from their names, and the alternative is paying the daemon's whole
+// lifecycle twice for one item.
 func (c *Client) Read(
 	ctx context.Context, creds Credentials, itemName string,
 ) (Item, error) {
@@ -144,7 +181,7 @@ func (c *Client) Read(
 		return Item{}, err
 	}
 
-	daemon, err := c.startServe(ctx)
+	daemon, err := c.serveReady(ctx)
 	if err != nil {
 		return Item{}, err
 	}
@@ -153,10 +190,6 @@ func (c *Client) Read(
 	// locked even when ctx is already canceled, which is exactly the path where
 	// leaving it open would matter most.
 	defer daemon.close(c.Logger) //nolint:contextcheck // cleanup must outlive a canceled ctx
-
-	if readyErr := daemon.waitReady(ctx); readyErr != nil {
-		return Item{}, readyErr
-	}
 
 	if unlockErr := daemon.unlock(ctx, creds, c.timeout()); unlockErr != nil {
 		return Item{}, unlockErr
@@ -175,6 +208,15 @@ func (c *Client) Read(
 	}
 
 	return Item{Name: found.Name, Fields: byName}, nil
+}
+
+// clock resolves the readiness wait's view of time.
+func (c *Client) clock() Clock {
+	if c.Clock == nil {
+		return realClock{}
+	}
+
+	return c.Clock
 }
 
 // timeout resolves the per-call bound.
@@ -201,17 +243,15 @@ func (c *Client) ensureAuthenticated(ctx context.Context, creds Credentials) err
 
 	logStep(c.Logger, "bitwarden login")
 
-	cmd, cancel := c.command(ctx, "login", "--apikey", "--raw")
-	defer cancel()
-
 	// The API key is the one thing added to the child environment, and only for
 	// the login call: the serve daemon never needs it.
-	cmd.Env = append(cmd.Env,
-		EnvClientID+"="+creds.ClientID,
-		EnvClientSecret+"="+creds.ClientSecret,
-	)
+	runCtx, build, cancel := c.command(ctx, []string{
+		EnvClientID + "=" + creds.ClientID,
+		EnvClientSecret + "=" + creds.ClientSecret,
+	}, "login", "--apikey", "--raw")
+	defer cancel()
 
-	if _, runErr := run(cmd); runErr != nil {
+	if _, runErr := run(runCtx, build); runErr != nil {
 		return cairnerr.Wrapf(runErr, CodeLogin,
 			"bw login failed; check %s and %s", EnvClientID, EnvClientSecret)
 	}
@@ -223,10 +263,10 @@ func (c *Client) ensureAuthenticated(ctx context.Context, creds Credentials) err
 // reported rather than guessed at, since guessing would either skip a needed
 // login or repeat one that already happened.
 func (c *Client) status(ctx context.Context) (string, error) {
-	cmd, cancel := c.command(ctx, "status")
+	runCtx, build, cancel := c.command(ctx, nil, "status")
 	defer cancel()
 
-	out, err := run(cmd)
+	out, err := run(runCtx, build)
 	if err != nil {
 		return "", cairnerr.Wrapf(err, CodeStatus, "bw status failed: %v", err)
 	}
@@ -242,50 +282,57 @@ func (c *Client) status(ctx context.Context) (string, error) {
 	return parsed.Status, nil
 }
 
-// command builds one bw invocation with prompting disabled, no stdin, and a
-// deadline, so a subcommand doing network work cannot hang a deploy between the
-// build and the restart. The caller runs it and then calls the returned cancel.
+// command builds bw invocations with prompting disabled, no stdin, and a
+// deadline, so network work cannot hang a deploy. It returns a builder so a
+// caller can retry a bw the installer just wrote; extra lands on top of the
+// child environment.
 //
-// The child environment is built rather than inherited. LoadCredentials accepts
-// the master password from this process's environment, and an inherited copy
-// would sit in a long-lived daemon's /proc entry for the life of the pull.
-func (c *Client) command(ctx context.Context, argv ...string) (*exec.Cmd, context.CancelFunc) {
+// That environment is built, not inherited: an inherited copy would leak the
+// master password through /proc.
+func (c *Client) command(ctx context.Context, extra []string, argv ...string,
+) (context.Context, execretry.Build, context.CancelFunc) {
 	runCtx, cancel := context.WithTimeout(ctx, c.timeout())
 
-	// #nosec G204 -- argv is this package's own fixed subcommands; the operator's
-	// values travel in the environment and in request bodies, never here.
-	cmd := exec.CommandContext(runCtx, c.Binary, argv...)
+	return runCtx, func() (*exec.Cmd, error) {
+		// #nosec G204 -- argv is this package's own fixed subcommands; the operator's
+		// values travel in the environment and in request bodies, never here.
+		cmd := exec.CommandContext(runCtx, c.Binary, argv...)
 
-	cmd.Env = childEnv()
-	cmd.Stdin = nil
-	cmd.WaitDelay = waitDelay
+		cmd.Env = append(childEnv(c.Env), extra...)
+		cmd.Stdin = nil
+		cmd.WaitDelay = waitDelay
 
-	return cmd, cancel
+		return cmd, nil
+	}, cancel
 }
 
 // childEnv is the minimum bw needs: a PATH to find its own helpers, a HOME and
 // the app-data override that decide where its stored login lives, and the
 // no-prompt flag. Everything else this process holds stays here.
-func childEnv() []string {
-	env := []string{noInteraction}
-
-	for _, name := range []string{"PATH", "HOME", appDataDirEnv} {
-		if value, found := os.LookupEnv(name); found {
-			env = append(env, name+"="+value)
-		}
+func childEnv(lookup environ.Lookup) []string {
+	if lookup == nil {
+		lookup = environ.OS()
 	}
 
-	return env
+	return append([]string{noInteraction}, environ.Environ(lookup, "PATH", "HOME", appDataDirEnv)...)
 }
 
 // run collects stdout and returns stderr inside the error, which is safe: bw
 // writes diagnostics there, and no value this package sends travels in argv.
-func run(cmd *exec.Cmd) (string, error) {
+func run(ctx context.Context, build execretry.Build) (string, error) {
 	var stderr bytes.Buffer
 
-	cmd.Stderr = &stderr
+	stdout, err := execretry.Output(ctx, func() (*exec.Cmd, error) {
+		cmd, buildErr := build()
+		if buildErr != nil {
+			return nil, buildErr
+		}
 
-	stdout, err := cmd.Output()
+		stderr.Reset()
+		cmd.Stderr = &stderr
+
+		return cmd, nil
+	})
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
@@ -353,6 +400,60 @@ func freePort(ctx context.Context) (int, error) {
 	return addr.Port, nil
 }
 
+// serveReady starts the daemon and waits for it to answer, moving to another
+// port when the one it had turns out unusable. The port is released before the
+// child binds it, so another process can take it, and a port the host stops
+// carrying traffic for leaves the child up but unreachable.
+func (c *Client) serveReady(ctx context.Context) (*daemon, error) {
+	var (
+		lastErr error
+		causes  []string
+	)
+
+	for attempt := 1; attempt <= serveAttempts; attempt++ {
+		started, startErr := c.startServe(ctx)
+		if startErr != nil {
+			return nil, startErr
+		}
+
+		readyErr := started.waitReady(ctx)
+		if readyErr == nil {
+			return started, nil
+		}
+
+		// The old child is stopped and reaped before the next one starts, so no
+		// failed attempt leaves a process behind holding a port.
+		started.close(c.Logger) //nolint:contextcheck // cleanup must outlive a canceled ctx
+
+		cause, retryable := serveRetryCause(readyErr)
+		if !retryable {
+			return nil, readyErr
+		}
+
+		lastErr = readyErr
+		causes = append(causes, readyErr.Error())
+
+		logStep(c.Logger, "bitwarden serve was not reachable; trying another port",
+			"port", started.port, "cause", cause, "attempt", attempt)
+	}
+
+	return nil, cairnerr.Wrapf(lastErr, CodeReady, "bw serve did not come up in %d starts: %s",
+		serveAttempts, strings.Join(causes, "; "))
+}
+
+// serveRetryCause names why a start failed and reports whether another port can
+// fix it. A canceled caller cannot, so it ends the read where it happened.
+func serveRetryCause(err error) (string, bool) {
+	switch {
+	case errors.Is(err, errServeExited):
+		return "exited", true
+	case errors.Is(err, errServeSilent):
+		return "silent", true
+	default:
+		return "", false
+	}
+}
+
 // startServe launches the daemon bound to loopback only, so nothing off the host
 // can reach an unlocked vault.
 func (c *Client) startServe(ctx context.Context) (*daemon, error) {
@@ -365,16 +466,24 @@ func (c *Client) startServe(ctx context.Context) (*daemon, error) {
 	// the unlock, sync and list that follow, each of which carries its own bound.
 	serveCtx, cancel := context.WithCancel(ctx)
 
-	// #nosec G204 -- argv is this package's own fixed subcommand and a port it
-	// chose itself.
-	cmd := exec.CommandContext(serveCtx, c.Binary,
-		"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port))
+	var stderr bytes.Buffer
 
-	cmd.Env = childEnv()
-	cmd.Stdin = nil
-	cmd.WaitDelay = waitDelay
+	cmd, startErr := execretry.Start(ctx, func() (*exec.Cmd, error) {
+		// #nosec G204 -- argv is this package's own fixed subcommand and a port it
+		// chose itself.
+		built := exec.CommandContext(serveCtx, c.Binary,
+			"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port))
 
-	if startErr := cmd.Start(); startErr != nil {
+		built.Env = childEnv(c.Env)
+		built.Stdin = nil
+		built.WaitDelay = waitDelay
+
+		stderr.Reset()
+		built.Stderr = &stderr
+
+		return built, nil
+	})
+	if startErr != nil {
 		cancel()
 
 		return nil, cairnerr.Wrapf(startErr, CodeServe, "start bw serve: %v", startErr)
@@ -382,21 +491,57 @@ func (c *Client) startServe(ctx context.Context) (*daemon, error) {
 
 	logStep(c.Logger, "bitwarden serve started", "port", port)
 
+	exited := make(chan struct{})
+
+	// One reaper rather than a Wait on the way out: waitReady watches this
+	// channel, so a child that dies during startup ends the wait at once
+	// instead of leaving the readiness budget to run out on a dead process.
+	go func() {
+		defer close(exited)
+
+		_ = cmd.Wait()
+	}()
+
 	return &daemon{
 		base:    "http://127.0.0.1:" + strconv.Itoa(port),
 		cmd:     cmd,
 		cancel:  cancel,
-		client:  &http.Client{Timeout: c.timeout()},
+		exited:  exited,
+		clock:   c.clock(),
+		client:  newDaemonClient(c.timeout()),
+		stderr:  &stderr,
+		port:    port,
 		timeout: c.timeout(),
 	}, nil
 }
 
+// newDaemonClient gives one daemon its own connection pool. The default
+// transport is shared across this process and keyed by address alone, so a
+// daemon on a recycled loopback port can be handed a connection the last one
+// left there. Keep-alives stay off so every request dials again, and a bare
+// transport keeps a proxy variable off a loopback call.
+func newDaemonClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
+}
+
 // daemon is one running bw serve process and the HTTP client that talks to it.
 type daemon struct {
-	cmd     *exec.Cmd
-	cancel  context.CancelFunc
-	client  *http.Client
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+	exited chan struct{}
+	clock  Clock
+	client *http.Client
+
+	// stderr collects what the child wrote, so a start that failed says why.
+	// Reading it is safe only once exited is closed: until Wait returns, the
+	// copy into it is still running.
+	stderr *bytes.Buffer
+
 	base    string
+	port    int
 	timeout time.Duration
 }
 
@@ -404,28 +549,52 @@ type daemon struct {
 // success or failure, so an interrupted pull never leaves an unlocked vault
 // listening on loopback.
 func (d *daemon) close(logger *slog.Logger) {
+	d.lock(logger)
+	d.cancel()
+
+	<-d.exited
+}
+
+// lock closes the vault, skipping the call when the child is already gone: a
+// dead daemon holds nothing open, and the failed POST would report a lock
+// problem where there is none.
+func (d *daemon) lock(logger *slog.Logger) {
+	select {
+	case <-d.exited:
+		return
+	default:
+	}
+
 	lockCtx, cancelLock := context.WithTimeout(context.WithoutCancel(context.Background()), lockTimeout)
 	defer cancelLock()
 
 	if _, err := d.post(lockCtx, "/lock", nil); err != nil {
 		logStep(logger, "bitwarden lock failed; the daemon is being killed anyway")
 	}
-
-	d.cancel()
-
-	_ = d.cmd.Wait()
 }
 
-// waitReady polls until the daemon answers, which is the only signal bw gives
-// that its HTTP listener is up.
-func (d *daemon) waitReady(ctx context.Context) error {
-	deadline := time.Now().Add(readyTimeout)
+// stderrTail returns the end of what the child wrote, which is where a bind
+// refusal lands. Call it only once exited is closed.
+func (d *daemon) stderrTail() string {
+	text := strings.TrimSpace(d.stderr.String())
+	if len(text) <= stderrTail {
+		return text
+	}
 
-	for time.Now().Before(deadline) {
-		// Each probe gets its own short bound. freePort hands back a port it has
-		// already released, so something else can be listening and simply never
-		// answer; without this the client timeout (a minute by default) would
-		// outlast the whole readiness budget this loop exists to enforce.
+	return text[len(text)-stderrTail:]
+}
+
+// waitReady blocks until the daemon answers, which is the only signal bw gives
+// that its listener is up. The child exiting ends it too, because no length of
+// budget rescues a daemon that is already gone. Its two failures carry sentinels
+// because serveReady answers both by starting over on another port.
+func (d *daemon) waitReady(ctx context.Context) error {
+	deadline := d.clock.Now().Add(readyTimeout)
+
+	for d.clock.Now().Before(deadline) {
+		// Each probe gets its own short bound, so a dial the host drops costs one
+		// attempt rather than the whole budget: the next one leaves from a fresh
+		// source port and gets through.
 		if d.probe(ctx) == nil {
 			return nil
 		}
@@ -433,11 +602,13 @@ func (d *daemon) waitReady(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return cairnerr.Wrapf(ctx.Err(), CodeReady, "canceled while waiting for bw serve: %v", ctx.Err())
-		case <-time.After(readyInterval):
+		case <-d.exited:
+			return fmt.Errorf("%w on port %d: %s", errServeExited, d.port, d.stderrTail())
+		case <-d.clock.After(readyInterval):
 		}
 	}
 
-	return cairnerr.Newf(CodeReady, "bw serve did not answer within %s", readyTimeout)
+	return fmt.Errorf("%w on port %d within %s", errServeSilent, d.port, readyTimeout)
 }
 
 // unlock opens the vault. The master key travels in the request body because

@@ -264,8 +264,42 @@ func (b *builder) checkAction(flow *Workflow, action *Action) {
 	}
 
 	b.checkCondition(action)
+	b.checkRetry(action)
 	b.checkForeach(flow, action)
 	b.checkActionRefs(flow, action)
+}
+
+// checkRetry enforces the retry table's numeric rules. The parser only proves
+// the fields have the right shape, so without these an author who asked for
+// retries can get one attempt (max_attempts below one), a backoff that waits
+// backwards (a negative delay), or every wait truncated to a cap below the
+// stated base (max_delay under base_delay), all silently.
+func (b *builder) checkRetry(action *Action) {
+	if action.Retry == nil {
+		return
+	}
+
+	if action.Retry.MaxAttempts < 1 {
+		b.addf(CodeInvalid, "action %q retry.max_attempts must be at least 1, got %d",
+			action.Name, action.Retry.MaxAttempts)
+	}
+
+	if action.Retry.BaseDelay < 0 {
+		b.addf(CodeInvalid, "action %q retry.base_delay cannot be negative, got %s",
+			action.Name, action.Retry.BaseDelay)
+	}
+
+	if action.Retry.MaxDelay < 0 {
+		b.addf(CodeInvalid, "action %q retry.max_delay cannot be negative, got %s",
+			action.Name, action.Retry.MaxDelay)
+	}
+
+	// A zero max_delay means uncapped, so the ordering rule only applies to a
+	// cap the file actually set.
+	if action.Retry.MaxDelay > 0 && action.Retry.MaxDelay < action.Retry.BaseDelay {
+		b.addf(CodeInvalid, "action %q retry.max_delay %s is below retry.base_delay %s, so every wait would be capped at the smaller value",
+			action.Name, action.Retry.MaxDelay, action.Retry.BaseDelay)
+	}
 }
 
 // checkWorkflowAction enforces the workflow-call kind's rules: it names a child

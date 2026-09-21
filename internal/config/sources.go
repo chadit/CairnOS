@@ -3,11 +3,12 @@ package config
 import (
 	"fmt"
 	"maps"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // Source TOML keys. The parser matches against these and rejects anything else,
@@ -131,12 +132,12 @@ func sourceBool(entry sourceEntry) (bool, error) {
 	return flag, nil
 }
 
-// validateSources checks every parsed source and, when any exist, that the git
-// binary they all shell out to is on PATH. homeDir is the config file's own
-// directory, the CairnOS home no synced tree may land inside, so a source
-// declared in a scaffold cannot sync over it. Names are walked sorted so the
-// first invalid block is reported reproducibly.
-func validateSources(sources map[string]Source, homeDir string) error {
+// validateSources checks every parsed source and, when any exist, that the
+// binary they all shell out to sits on the PATH lookup answers. homeDir is the
+// config file's own directory, the home no synced tree may land inside, so a
+// source declared in a scaffold cannot sync over it. Names are walked sorted so
+// the first invalid block reports reproducibly.
+func validateSources(sources map[string]Source, homeDir string, lookup environ.Lookup) error {
 	if len(sources) == 0 {
 		return nil
 	}
@@ -148,7 +149,7 @@ func validateSources(sources map[string]Source, homeDir string) error {
 		}
 	}
 
-	if _, err := exec.LookPath(gitBinary); err != nil {
+	if _, err := environ.LookPath(lookup, gitBinary); err != nil {
 		return fmt.Errorf("%w: a [source.<name>] block needs the %s binary on PATH: %w",
 			ErrInvalidConfig, gitBinary, err)
 	}

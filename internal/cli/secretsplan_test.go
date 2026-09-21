@@ -13,9 +13,9 @@ import (
 // identity reads first. The three values differ in length so a case can tell
 // which source a token came from without printing one.
 const (
-	botIdentity   = "toolkit"
-	botUsername   = "toolkit-agent"
-	botTokenVar   = "CAIRNOS_BRIDGE_MATTERMOST_TOOLKIT_TOKEN"
+	botIdentity   = "helper"
+	botUsername   = "helper-agent"
+	botTokenVar   = "CAIRNOS_BRIDGE_MATTERMOST_HELPER_TOKEN"
 	botValue      = "bot-token-value"
 	explicitValue = "explicit-token-value"
 )
@@ -55,12 +55,12 @@ func renderedLength(t *testing.T, rendered, name string) int {
 // operator keeps one token per bot on the item under the bot's own Mattermost
 // username, and no mapping says which variable that fills.
 func TestSecretsPullRendersAFieldNamedAfterABot(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{botUsername: botValue})
 	dir := botConfig(t, "")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -79,12 +79,12 @@ func TestSecretsPullRendersAFieldNamedAfterABot(t *testing.T) {
 // honest: a variable the pull would write has to appear in the report an
 // operator reads before letting it write.
 func TestSecretsPullListsAnInferredBotTokenOnADryRun(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{botUsername: botValue})
 	dir := botConfig(t, "")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir, "--dry-run")
+	code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir, "--dry-run")
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -103,6 +103,8 @@ func TestSecretsPullListsAnInferredBotTokenOnADryRun(t *testing.T) {
 // name that says which bot it belongs to, and a mapping the operator wrote
 // beats both.
 func TestSecretsPullResolvesABotTokenMostSpecificFirst(t *testing.T) {
+	t.Parallel()
+
 	mapping := "\n[secrets.bitwarden.fields]\n" + botTokenVar + " = \"" + humanField + "\"\n"
 
 	cases := []struct {
@@ -138,12 +140,12 @@ func TestSecretsPullResolvesABotTokenMostSpecificFirst(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			binDir := stageFakeBW(t, testCase.fields)
 			dir := botConfig(t, testCase.extra)
 
-			t.Setenv("PATH", pathWith(binDir))
-
-			code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+			code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 			if code != cli.ExitOK {
 				t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 			}
@@ -161,12 +163,12 @@ func TestSecretsPullResolvesABotTokenMostSpecificFirst(t *testing.T) {
 // half: an identity the item covers under the bot's name needs no change, so
 // warning would send the operator to add a second copy of a token they have.
 func TestSecretsPullIsQuietWhenOnlyTheUsernameFieldCarriesTheToken(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{botUsername: botValue})
 	dir := botConfig(t, "")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -180,6 +182,8 @@ func TestSecretsPullIsQuietWhenOnlyTheUsernameFieldCarriesTheToken(t *testing.T)
 // blank would look configured in the generated file and behave as if it were
 // not, so it counts as absent and the warning still names what to add.
 func TestSecretsPullWarnsWhenTheBotFieldIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{
 		botUsername: "",
 		inferredVar: inferredValue,
@@ -187,9 +191,7 @@ func TestSecretsPullWarnsWhenTheBotFieldIsEmpty(t *testing.T) {
 
 	dir := botConfig(t, "")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -203,14 +205,14 @@ func TestSecretsPullWarnsWhenTheBotFieldIsEmpty(t *testing.T) {
 // covers only the bots the item names. A second identity nothing on the item
 // matches is still reported.
 func TestSecretsPullWarnsForAnIdentityWithNoFieldOfItsOwn(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{botUsername: botValue})
 
 	dir := botConfig(t, "\n[bridge.mattermost.identity.ops]\n"+
 		"username = \"ops-agent\"\nworkspace = \"default\"\n")
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runCLI(t, secretsCmd, "pull", flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, pathEnv(binDir), secretsCmd, "pull", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}

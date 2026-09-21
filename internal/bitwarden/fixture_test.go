@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -35,24 +37,43 @@ const (
 // so a stalled test cannot leave the child holding its port forever.
 const headerTimeout = 30 * time.Second
 
+// The three fixture files, all beside the symlink under fixed names that both
+// sides derive, so the settings carry no path the fake could resolve for itself.
+// items.json is the list endpoint's body; the other two are the records a case
+// reads back.
+const (
+	fakeItemsFileName = "items.json"
+	fakeArgvFileName  = "argv.txt"
+	fakeCallsFileName = "calls.txt"
+)
+
 // fakeSettings is the fake's whole configuration, written next to the symlink.
 type fakeSettings struct {
 	// Status is what `bw status` reports; empty means unlocked.
 	Status string `json:"status"`
 
-	// ItemsFile holds the JSON body the list endpoint returns.
-	ItemsFile string `json:"items_file"`
+	// BusyPort is a port the case holds open, and BusyServes how many serve
+	// invocations bind it instead of the port they were given. That is the shape
+	// of a child whose port went to something else before it got there.
+	BusyPort   int `json:"busy_port"`
+	BusyServes int `json:"busy_serves"`
 
-	// ArgvFile and CallsFile are the two records a case reads back.
-	ArgvFile  string `json:"argv_file"`
-	CallsFile string `json:"calls_file"`
-
-	// NoServe makes `bw serve` stay up without binding, the shape of a daemon
-	// that never becomes ready.
-	NoServe bool `json:"no_serve"`
+	// SilentServes is how many serve invocations stay up without ever binding or
+	// answering, the shape of a daemon whose port stopped carrying traffic.
+	SilentServes int `json:"silent_serves"`
 
 	// LoginFails makes `bw login` exit non-zero.
 	LoginFails bool `json:"login_fails"`
+
+	// StallFirstProbe leaves the first request unanswered until the caller gives
+	// up, the shape of a loopback dial this host drops.
+	StallFirstProbe bool `json:"stall_first_probe"`
+}
+
+// fakeDirFile resolves one fixture beside the symlink this process was launched
+// through, which is the only directory the fake can find on its own.
+func fakeDirFile(name string) string {
+	return filepath.Join(filepath.Dir(os.Args[0]), name)
 }
 
 // IsFakeInvocation reports whether this process was launched as the fake CLI.
@@ -65,6 +86,16 @@ func isFakeInvocation() bool {
 // the rest of the package and depends on no interpreter, so nothing skips on a
 // host that happens to lack one. It returns the process exit code.
 func runFakeBW(argv []string) int {
+	if len(argv) == 0 {
+		return 2
+	}
+
+	// serve runs its own settings read, because what it does with them decides
+	// whether it ever binds.
+	if argv[0] == "serve" {
+		return runFakeServe(argv)
+	}
+
 	settings, err := loadFakeSettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
@@ -72,19 +103,13 @@ func runFakeBW(argv []string) int {
 		return 3
 	}
 
-	appendLine(settings.ArgvFile, strings.Join(argv, " "))
-
-	if len(argv) == 0 {
-		return 2
-	}
+	appendLine(fakeDirFile(fakeArgvFileName), strings.Join(argv, " "))
 
 	switch argv[0] {
 	case "status":
 		return reportStatus(settings)
 	case "login":
 		return reportLogin(settings)
-	case "serve":
-		return runFakeServe(settings, argv)
 	default:
 		fmt.Fprintf(os.Stderr, "unexpected subcommand: %s\n", argv[0])
 
@@ -95,7 +120,7 @@ func runFakeBW(argv []string) int {
 // loadFakeSettings reads the settings beside the symlink this process was
 // launched through.
 func loadFakeSettings() (fakeSettings, error) {
-	path := filepath.Join(filepath.Dir(os.Args[0]), fakeSettingsFile)
+	path := fakeDirFile(fakeSettingsFile)
 
 	raw, err := os.ReadFile(path) // #nosec G304 -- a fixture path beside the fake
 	if err != nil {
@@ -135,22 +160,43 @@ func reportLogin(settings fakeSettings) int {
 	return 0
 }
 
-// runFakeServe answers the endpoints the client drives, recording every path so
-// a case can assert that /lock ran even on a failure.
-func runFakeServe(settings fakeSettings, argv []string) int {
-	if settings.NoServe {
-		// Never listen and never exit on our own: the client's readiness
-		// deadline is what must end this wait, and its cancel kills the child.
+// runFakeServe binds a real port because this runs in a re-executed child
+// process standing in for `bw serve`, which the client reaches over TCP. It
+// records every path it answers, so a case can assert that /lock ran even on a
+// failure. Nothing here has to hurry: the client's probe decides when this
+// daemon is up.
+func runFakeServe(argv []string) int {
+	settings, err := loadFakeSettings()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
+
+		return 3
+	}
+
+	attempt := serveAttempt(fakeDirFile(fakeArgvFileName))
+	appendLine(fakeDirFile(fakeArgvFileName), strings.Join(argv, " "))
+
+	if attempt <= settings.BusyServes {
+		return refuseBind(settings.BusyPort)
+	}
+
+	if attempt <= settings.BusyServes+settings.SilentServes {
+		// Up, holding no port, and never answering: the client's budget is what
+		// must end its wait, and its cancel is what kills this process.
 		select {}
 	}
 
-	server := &http.Server{
-		Addr:              "127.0.0.1:" + flagValue(argv, "--port"),
-		Handler:           fakeHandler(settings),
-		ReadHeaderTimeout: headerTimeout,
+	//nolint:noctx // this runs in the re-executed fake process, which has no context to cancel
+	listener, err := net.Listen("tcp", "127.0.0.1:"+flagValue(argv, "--port"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
+
+		return 1
 	}
 
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	server := &http.Server{Handler: fakeHandler(settings), ReadHeaderTimeout: headerTimeout}
+
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
 
 		return 1
@@ -159,14 +205,76 @@ func runFakeServe(settings fakeSettings, argv []string) int {
 	return 0
 }
 
+// serveAttempt counts the serve invocations already recorded, so the fake knows
+// which try this is. The client starts them one at a time and every case has its
+// own record, so a plain count is enough.
+func serveAttempt(argvFile string) int {
+	raw, err := os.ReadFile(argvFile) // #nosec G304 -- a fixture path beside the fake
+	if err != nil {
+		return 1
+	}
+
+	count := 1
+
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if strings.HasPrefix(line, "serve ") {
+			count++
+		}
+	}
+
+	return count
+}
+
+// refuseBind reproduces the race the client retries around: the port this child
+// was given went to something else on the way here. Binding a port the case
+// holds open puts the kernel's own refusal on stderr, which is what the client
+// has to report.
+func refuseBind(port int) int {
+	//nolint:noctx // this runs in the re-executed fake process, which has no context to cancel
+	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
+
+		return 1
+	}
+
+	_ = listener.Close()
+
+	fmt.Fprintf(os.Stderr, "fake serve: port %d was free after all\n", port)
+
+	return 1
+}
+
+// stallCap is the backstop for a client disconnect this process never notices.
+// A passing run never waits for it: the probe's own timeout ends the request
+// first.
+const stallCap = 5 * time.Second
+
+// stall leaves one request unanswered until the caller gives up, which is what a
+// dial the host drops costs the client.
+func stall(request *http.Request) {
+	select {
+	case <-request.Context().Done():
+	case <-time.After(stallCap):
+	}
+}
+
 // fakeHandler answers one request, recording the path and, for a body, the key
 // names only: a failing test must never print a value.
 func fakeHandler(settings fakeSettings) http.Handler {
+	var stalled atomic.Bool
+
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		appendLine(settings.CallsFile, request.URL.Path)
+		if settings.StallFirstProbe && stalled.CompareAndSwap(false, true) {
+			stall(request)
+
+			return
+		}
+
+		appendLine(fakeDirFile(fakeCallsFileName), request.URL.Path)
 
 		if request.Method == http.MethodPost {
-			appendLine(settings.CallsFile, "body:"+strings.Join(bodyKeys(request), ","))
+			appendLine(fakeDirFile(fakeCallsFileName), "body:"+strings.Join(bodyKeys(request), ","))
 		}
 
 		writer.Header().Set("Content-Type", "application/json")
@@ -177,7 +285,7 @@ func fakeHandler(settings fakeSettings) http.Handler {
 			return
 		}
 
-		items, err := os.ReadFile(settings.ItemsFile) // #nosec G304 -- a fixture path
+		items, err := os.ReadFile(fakeDirFile(fakeItemsFileName)) // #nosec G304 -- a fixture path
 		if err != nil {
 			http.Error(writer, "no items fixture", http.StatusInternalServerError)
 
@@ -216,13 +324,10 @@ func flagValue(argv []string, name string) string {
 	return ""
 }
 
-// appendLine records one line, ignoring an unset path so a case that asked for
-// no record simply gets none.
+// appendLine records one line. A write that fails is dropped, because this runs
+// in a child process with no way to report anything: the case reading the record
+// back is what notices the gap.
 func appendLine(path, line string) {
-	if path == "" {
-		return
-	}
-
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fixtureFilePerm) // #nosec G304 -- a fixture path
 	if err != nil {
 		return
@@ -254,11 +359,7 @@ func stageFakeBW(t *testing.T, itemsJSON string, settings fakeSettings) fakeBW {
 		calls:  filepath.Join(dir, "calls.txt"),
 	}
 
-	settings.ItemsFile = filepath.Join(dir, "items.json")
-	settings.ArgvFile = fake.argv
-	settings.CallsFile = fake.calls
-
-	writeFixture(t, settings.ItemsFile, itemsJSON, fixtureFilePerm)
+	writeFixture(t, filepath.Join(dir, fakeItemsFileName), itemsJSON, fixtureFilePerm)
 	writeFixture(t, filepath.Join(dir, fakeSettingsFile), encodeSettings(t, settings), fixtureFilePerm)
 	linkTestBinary(t, fake.binary)
 
@@ -333,10 +434,10 @@ func listening(ctx context.Context, port string) bool {
 	return true
 }
 
-// servePort reads the port the fake was told to listen on out of its argv
-// record, so a case can check that port afterwards.
-func servePort(t *testing.T, argvRecord string) string {
-	t.Helper()
+// servePorts lists the ports the fake was told to listen on, in the order it was
+// started, so a case can see a start move to another port.
+func servePorts(argvRecord string) []string {
+	var ports []string
 
 	for line := range strings.SplitSeq(argvRecord, "\n") {
 		if !strings.HasPrefix(line, "serve ") {
@@ -344,13 +445,46 @@ func servePort(t *testing.T, argvRecord string) string {
 		}
 
 		if port := flagValue(strings.Fields(line), "--port"); port != "" {
-			return port
+			ports = append(ports, port)
 		}
 	}
 
-	t.Fatalf("no serve invocation in the argv record:\n%s", argvRecord)
+	return ports
+}
 
-	return ""
+// servePort is the last port the fake was given, which is the daemon a case
+// checks after the call returned.
+func servePort(t *testing.T, argvRecord string) string {
+	t.Helper()
+
+	ports := servePorts(argvRecord)
+	if len(ports) == 0 {
+		t.Fatalf("no serve invocation in the argv record:\n%s", argvRecord)
+	}
+
+	return ports[len(ports)-1]
+}
+
+// occupiedPort holds a loopback port open for as long as the case runs, so the
+// fake has something to fail against.
+func occupiedPort(t *testing.T) int {
+	t.Helper()
+
+	var config net.ListenConfig
+
+	listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold a loopback port: %v", err)
+	}
+
+	t.Cleanup(func() { _ = listener.Close() })
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("the held listener reported no TCP port")
+	}
+
+	return addr.Port
 }
 
 // itemsJSON renders the list response for one item with the given fields, in the

@@ -393,7 +393,7 @@ func TestPluginEngineEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	registry := runner.NewRegistry()
-	if registerErr := registry.Register(echoName, plugin.Factory(t.Context(), echoName)); registerErr != nil {
+	if registerErr := registry.Register(echoName, plugin.Factory(t.Context(), echoName, hostEnv())); registerErr != nil {
 		t.Fatalf("register plugin factory: %v", registerErr)
 	}
 

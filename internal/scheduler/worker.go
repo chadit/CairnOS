@@ -20,6 +20,14 @@ const (
 	defaultWorkerPoll    = 2 * time.Second
 )
 
+// Lease heartbeat. The worker renews three times per lease, so two lost beats
+// still leave a live run holding its item. The floor keeps a test's tiny lease
+// from handing time.NewTicker a zero period.
+const (
+	renewsPerLease   = 3
+	minRenewInterval = time.Millisecond
+)
+
 // QueueRunner executes one claimed work item. The worker acks the item when Run
 // returns nil and naks it (backoff or dead-letter) when Run returns an error, so
 // a runner reports failure by returning rather than by touching the queue.
@@ -76,7 +84,8 @@ type WorkerConfig struct {
 
 	// HoldKey derives what a held item is waiting on (the re-auth provider) from
 	// the run error, stored on the item so a resume probe knows which credential
-	// to check. nil or "" stores no key; the scheduler does not interpret it (D12).
+	// to check. The scheduler does not interpret it (D12). A nil HoldKey, or one
+	// returning "", means the error cannot be held: it settles as a failure.
 	HoldKey func(error) string
 
 	// Holdable reports whether a run error means the job should be held for a
@@ -112,6 +121,7 @@ type Worker struct {
 	holdKey       func(error) string
 	holdable      func(error) bool
 	logger        *slog.Logger
+	leases        *leaseSet
 	ackWait       time.Duration
 	pollInterval  time.Duration
 	maxAge        time.Duration
@@ -120,6 +130,42 @@ type Worker struct {
 	backoff       time.Duration
 	prefetch      int
 	concurrency   int
+}
+
+// leaseSet is the ids this worker is running right now, which is what the
+// heartbeat renews. Every method is safe from any goroutine.
+type leaseSet struct {
+	ids map[string]struct{}
+	mu  sync.Mutex
+}
+
+// add records an item as running under this worker's lease.
+func (s *leaseSet) add(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ids[id] = struct{}{}
+}
+
+// remove drops a settled item so its lease stops being renewed.
+func (s *leaseSet) remove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.ids, id)
+}
+
+// snapshot copies the running ids, so the renewal query runs outside the lock.
+func (s *leaseSet) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ids := make([]string, 0, len(s.ids))
+	for id := range s.ids {
+		ids = append(ids, id)
+	}
+
+	return ids
 }
 
 // NewWorker builds a Worker, filling WorkerConfig defaults.
@@ -147,6 +193,7 @@ func NewWorker(cfg *WorkerConfig) *Worker {
 		pollInterval:  orDefaultDuration(cfg.PollInterval, defaultWorkerPoll),
 		clock:         clock,
 		logger:        logger,
+		leases:        &leaseSet{ids: map[string]struct{}{}},
 		metrics:       cfg.Metrics,
 		holdable:      cfg.Holdable,
 		holdKey:       cfg.HoldKey,
@@ -172,6 +219,10 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	wg.Go(func() {
 		w.sweepLoop(ctx)
+	})
+
+	wg.Go(func() {
+		w.renewLoop(ctx)
 	})
 
 	w.claimLoop(ctx)
@@ -243,6 +294,11 @@ func (w *Worker) claimBatch(ctx context.Context, sem <-chan struct{}) []WorkItem
 // settle uses a detached, short context so it still records the outcome when the
 // worker is shutting down and ctx is already canceled.
 func (w *Worker) process(ctx context.Context, item *WorkItem) {
+	// Held across the settle, not just the run: the item is this worker's until
+	// the ack or nak lands, and a lease that lapses in between reads as abandoned.
+	w.leases.add(item.ID)
+	defer w.leases.remove(item.ID)
+
 	runErr := w.runner.Run(ctx, item)
 
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.ackWait)
@@ -276,6 +332,17 @@ func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 	var holdKey string
 	if w.holdKey != nil {
 		holdKey = w.holdKey(runErr)
+	}
+
+	// Nothing can probe a hold that names no credential, so it would sit held
+	// forever and keep its schedule's overlap guard shut. Fail it like any other
+	// failure instead; the error names the tool that was not recognized.
+	if holdKey == "" {
+		w.logger.Warn("hold key unresolved, failing work item instead of holding",
+			"item", item.ID, "dedup", item.DedupKey, "error", runErr)
+		w.settleFailure(ctx, item, runErr)
+
+		return
 	}
 
 	if err := w.queue.Hold(ctx, item.ID, holdKey); err != nil {
@@ -336,6 +403,43 @@ func (w *Worker) settleFailure(ctx context.Context, item *WorkItem, runErr error
 		"backoff", w.backoff, "error", runErr)
 }
 
+// renewLoop keeps the leases of this worker's in-flight items alive until ctx
+// cancels. It is what makes the lease a liveness signal rather than a guess at
+// how long a run takes: a long run holds its item, and a worker that dies stops
+// beating, so its items fall free on the next deadline.
+func (w *Worker) renewLoop(ctx context.Context) {
+	ticker := time.NewTicker(w.renewInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.renewOnce(ctx)
+		}
+	}
+}
+
+// renewInterval is the heartbeat period, a share of the lease rather than a
+// fixed span, so tuning ack_wait tunes both ends together.
+func (w *Worker) renewInterval() time.Duration {
+	return max(w.ackWait/renewsPerLease, minRenewInterval)
+}
+
+// renewOnce pushes out the leases this worker still holds. A failure is logged
+// and left to the next beat, which still lands well inside the lease.
+func (w *Worker) renewOnce(ctx context.Context) {
+	ids := w.leases.snapshot()
+	if len(ids) == 0 {
+		return
+	}
+
+	if err := w.queue.Renew(ctx, ids, w.clock().Add(w.ackWait)); err != nil {
+		w.logger.Error("worker renew leases", "items", len(ids), "error", err)
+	}
+}
+
 // sweepLoop reclaims expired leases and purges aged dead items on a timer until
 // ctx cancels.
 func (w *Worker) sweepLoop(ctx context.Context) {
@@ -379,13 +483,9 @@ func (w *Worker) sweepOnce(ctx context.Context) {
 
 // resumeHeld returns held items to ready once their credential is valid again, so
 // a re-authenticated tool's jobs flow without a human touching the queue (D12). A
-// probe or resume error is logged and the item is left held for the next sweep; a
-// nil probe disables auto-resume entirely.
+// nil probe disables auto-resume, but the keyless release below still runs: a row
+// no probe can name is stuck otherwise.
 func (w *Worker) resumeHeld(ctx context.Context, now time.Time) {
-	if w.resumeProbe == nil {
-		return
-	}
-
 	held, err := w.queue.ListHeld(ctx)
 	if err != nil {
 		w.logger.Error("worker list held", "error", err)
@@ -395,22 +495,45 @@ func (w *Worker) resumeHeld(ctx context.Context, now time.Time) {
 
 	for idx := range held {
 		item := held[idx]
-		if item.HoldKey == "" || !w.resumeProbe(item.HoldKey, now) {
-			continue
+
+		switch {
+		case item.HoldKey == "":
+			w.releaseKeyless(ctx, &item)
+		case w.resumeProbe != nil && w.resumeProbe(item.HoldKey, now):
+			w.resumeItem(ctx, &item)
 		}
+	}
+}
 
-		if resumeErr := w.queue.Resume(ctx, item.ID); resumeErr != nil {
-			w.logger.Error("worker resume", "item", item.ID, "error", resumeErr)
+// releaseKeyless returns a keyless held item to ready so a host upgraded past the
+// keyless hold heals itself. The retry either succeeds or settles as a failure,
+// which the overlap guard reads as finished either way.
+func (w *Worker) releaseKeyless(ctx context.Context, item *WorkItem) {
+	if err := w.queue.Resume(ctx, item.ID); err != nil {
+		w.logger.Error("worker release keyless hold", "item", item.ID, "error", err)
 
-			continue
-		}
+		return
+	}
 
-		w.logger.Info("held work item resumed after re-authentication",
-			"item", item.ID, "dedup", item.DedupKey, "provider", item.HoldKey)
+	w.logger.Warn("released held work item that names no credential",
+		"item", item.ID, "dedup", item.DedupKey)
+}
 
-		if w.metrics != nil {
-			w.metrics.ItemResumed()
-		}
+// resumeItem returns one held item to ready after its probe reported the
+// credential valid. A resume error is logged and the item is left for the next
+// sweep.
+func (w *Worker) resumeItem(ctx context.Context, item *WorkItem) {
+	if err := w.queue.Resume(ctx, item.ID); err != nil {
+		w.logger.Error("worker resume", "item", item.ID, "error", err)
+
+		return
+	}
+
+	w.logger.Info("held work item resumed after re-authentication",
+		"item", item.ID, "dedup", item.DedupKey, "provider", item.HoldKey)
+
+	if w.metrics != nil {
+		w.metrics.ItemResumed()
 	}
 }
 

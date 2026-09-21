@@ -294,27 +294,43 @@ func TestVerifyRejectsBadTokens(t *testing.T) {
 		t.Fatalf("craft EdDSA token: %v", err)
 	}
 
+	// The unmutated claim set verifies, so every rejection below is caused by
+	// the one field that case broke and cannot be a signature or baseline
+	// failure wearing the same sentinel.
+	if _, err := authn.Verify(t.Context(), craftHS256(t, registeredClaims(clock))); err != nil {
+		t.Fatalf("baseline crafted token must verify, got %v", err)
+	}
+
+	// cause is the specific reason the rejection must carry, so a case cannot
+	// pass on somebody else's failure. The parser supplies it for the claims
+	// the jwt library validates, auth's own sentinels for the rest.
 	cases := []struct {
+		cause error
 		name  string
 		token string
 	}{
-		{name: "garbage", token: "not-a-token"},
-		{name: caseEmpty, token: ""},
-		{name: "alg none", token: noneToken},
-		{name: "alg EdDSA under HS256 config", token: edToken},
-		{name: "missing jti", token: craftHS256(t, noJTI)},
-		{name: "missing exp", token: craftHS256(t, noExp)},
-		{name: "missing sub", token: craftHS256(t, noSub)},
-		{name: "wrong issuer", token: craftHS256(t, wrongIssuer)},
-		{name: "wrong audience", token: craftHS256(t, wrongAudience)},
+		{name: "garbage", token: "not-a-token", cause: jwt.ErrTokenMalformed},
+		{name: caseEmpty, token: "", cause: jwt.ErrTokenMalformed},
+		{name: "alg none", token: noneToken, cause: jwt.ErrTokenSignatureInvalid},
+		{name: "alg EdDSA under HS256 config", token: edToken, cause: jwt.ErrTokenSignatureInvalid},
+		{name: "missing exp", token: craftHS256(t, noExp), cause: jwt.ErrTokenRequiredClaimMissing},
+		{name: "wrong issuer", token: craftHS256(t, wrongIssuer), cause: jwt.ErrTokenInvalidIssuer},
+		{name: "wrong audience", token: craftHS256(t, wrongAudience), cause: jwt.ErrTokenInvalidAudience},
+		{name: "missing jti", token: craftHS256(t, noJTI), cause: auth.ErrJTIMissing},
+		{name: "missing sub", token: craftHS256(t, noSub), cause: auth.ErrSubjectMissing},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := authn.Verify(t.Context(), tt.token); !errors.Is(err, auth.ErrTokenInvalid) {
+			_, err := authn.Verify(t.Context(), tt.token)
+			if !errors.Is(err, auth.ErrTokenInvalid) {
 				t.Fatalf("Verify error = %v, want ErrTokenInvalid", err)
+			}
+
+			if !errors.Is(err, tt.cause) {
+				t.Fatalf("Verify error = %v, want cause %v", err, tt.cause)
 			}
 		})
 	}

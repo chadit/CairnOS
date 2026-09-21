@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // The recorded frames under testdata.
@@ -69,10 +69,10 @@ func loadFixtures(t *testing.T, names []string) [][]byte {
 // newSocketServer replays frames over one WebSocket connection. abrupt drops
 // the connection without a close handshake, which is what a server restart
 // looks like to the reader.
-func newSocketServer(t *testing.T, frames [][]byte, abrupt bool) *httptest.Server {
+func newSocketServer(t *testing.T, frames [][]byte, abrupt bool) *nettest.Server {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testToken {
 			w.WriteHeader(http.StatusUnauthorized)
 
@@ -94,8 +94,6 @@ func newSocketServer(t *testing.T, frames [][]byte, abrupt bool) *httptest.Serve
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}
 	}))
-
-	t.Cleanup(server.Close)
 
 	return server
 }
@@ -271,10 +269,9 @@ func TestListenReturnsOnAMidStreamDrop(t *testing.T) {
 func TestListenRefusesAServerThatRejectsTheToken(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
-	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server, nil)
 
@@ -295,7 +292,7 @@ func TestListenStopsWhenTheContextEnds(t *testing.T) {
 
 	// A server that accepts the upgrade and then says nothing, so only the
 	// context can end the read.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -305,7 +302,6 @@ func TestListenStopsWhenTheContextEnds(t *testing.T) {
 
 		<-r.Context().Done()
 	}))
-	t.Cleanup(server.Close)
 
 	client := newTestClient(t, server, nil)
 
@@ -408,10 +404,10 @@ func postedFixtures() []string {
 // coder/websocket replies to a ping from inside Read, so a handler that never
 // reads is exactly what a NAT table dropping an idle flow looks like: the socket
 // is still open and nothing will ever come back.
-func newDeafServer(t *testing.T) *httptest.Server {
+func newDeafServer(t *testing.T) *nettest.Server {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -421,8 +417,6 @@ func newDeafServer(t *testing.T) *httptest.Server {
 
 		<-r.Context().Done()
 	}))
-
-	t.Cleanup(server.Close)
 
 	return server
 }
@@ -436,13 +430,13 @@ func TestListenFailsWhenTheSocketStopsAnsweringPings(t *testing.T) {
 
 	server := newDeafServer(t)
 
-	client, err := mattermost.NewClient(mattermost.ClientConfig{
+	client, err := mattermost.NewClientOver(mattermost.ClientConfig{
 		URL:               server.URL,
 		Token:             testToken,
 		InsecureHTTP:      true,
 		Log:               quietLog(),
 		KeepaliveInterval: 30 * time.Millisecond,
-	})
+	}, server.Transport())
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

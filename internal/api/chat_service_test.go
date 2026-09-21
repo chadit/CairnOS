@@ -16,7 +16,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	"github.com/chadit/CairnOS/internal/api"
@@ -75,8 +74,9 @@ var errScriptedExecute = errors.New("scripted chat driver only runs through Exec
 // chatFixture is a running server with a chat agent wired over a scripted
 // driver, plus the gRPC client and HTTP base for the gateway.
 type chatFixture struct {
-	chat     cairnosv1.ChatServiceClient
-	httpBase string
+	chat      cairnosv1.ChatServiceClient
+	transport *memTransport
+	httpBase  string
 }
 
 // startChatServer boots a server whose chat agent uses the given scripted
@@ -97,6 +97,7 @@ func startChatServer(t *testing.T, driver *scriptedChatDriver) *chatFixture {
 	}
 
 	db := openChatStore(t, dir)
+	transport := newMemTransport()
 	manager := api.NewManager(slog.New(slog.DiscardHandler))
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -113,6 +114,7 @@ func startChatServer(t *testing.T, driver *scriptedChatDriver) *chatFixture {
 	})
 
 	server := api.NewServer(&api.Config{
+		Transport:    transport,
 		GRPCAddr:     loopbackEphemeral,
 		HTTPAddr:     loopbackEphemeral,
 		WorkflowsDir: workflowsDir,
@@ -124,11 +126,12 @@ func startChatServer(t *testing.T, driver *scriptedChatDriver) *chatFixture {
 
 	startAndCleanup(t, server)
 
-	conn := dialChat(t, server.GRPCAddr())
+	conn := transport.dialGRPC(t, server.GRPCAddr())
 
 	return &chatFixture{
-		chat:     cairnosv1.NewChatServiceClient(conn),
-		httpBase: "http://" + server.HTTPAddr(),
+		chat:      cairnosv1.NewChatServiceClient(conn),
+		transport: transport,
+		httpBase:  "http://" + server.HTTPAddr(),
 	}
 }
 
@@ -162,20 +165,6 @@ func startAndCleanup(t *testing.T, server *api.Server) {
 			t.Errorf("shutdown server: %v", err)
 		}
 	})
-}
-
-// dialChat dials the gRPC listener over loopback.
-func dialChat(t *testing.T, addr string) *grpc.ClientConn {
-	t.Helper()
-
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial grpc: %v", err)
-	}
-
-	t.Cleanup(func() { _ = conn.Close() })
-
-	return conn
 }
 
 // finalTurn builds a driver turn answering with text.
@@ -303,9 +292,7 @@ func TestChatSendMessageStreamsOverGateway(t *testing.T) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: shutdownTimeout}
-
-	resp, err := client.Do(req)
+	resp, err := fix.transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("post message: %v", err)
 	}
@@ -556,7 +543,7 @@ func TestChatSearchMessagesOverGateway(t *testing.T) {
 	sessionID := session.GetSession().GetId()
 	completeChatTurn(t, fix.chat, sessionID, "where is the beacon")
 
-	code, body := httpGet(t, fix.httpBase+"/v1/chat/search?text=beacon")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/chat/search?text=beacon")
 	if code != http.StatusOK {
 		t.Fatalf("status = %d (%s), want 200", code, body)
 	}
@@ -606,7 +593,7 @@ func TestChatSearchEmptyTextRejected(t *testing.T) {
 	_, err := fix.chat.SearchMessages(t.Context(), &cairnosv1.SearchMessagesRequest{Text: "   "})
 	wantGRPCCode(t, err, codes.InvalidArgument)
 
-	code, body := httpGet(t, fix.httpBase+"/v1/chat/search")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/chat/search")
 	if code != http.StatusBadRequest {
 		t.Fatalf("status = %d (%s), want 400", code, body)
 	}

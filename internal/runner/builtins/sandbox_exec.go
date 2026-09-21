@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -117,19 +118,25 @@ type SandboxExec struct {
 	statSocket func(string) bool
 
 	allowActions map[string]struct{}
-	getenv       func(string) string
-	image        string
-	workdir      string
-	runtime      string
-	runtimeCfg   string // "", "podman", or "docker": operator detection override
-	memory       string
-	mounts       []string // normalized "host:ctr:mode", validated at construction
-	pidsLimit    int64
-	cpus         float64
-	timeout      time.Duration
-	detectOnce   sync.Once
-	harden       bool
-	network      bool
+
+	// env answers DOCKER_HOST and supplies the PATH the default lookPath
+	// searches, so detection depends on injected values rather than on
+	// whatever the process environment happens to hold.
+	env environ.Lookup
+
+	image      string
+	workdir    string
+	runtime    string
+	runtimeBin string // the resolved path detection found, what launch runs
+	runtimeCfg string // "", "podman", or "docker": operator detection override
+	memory     string
+	mounts     []string // normalized "host:ctr:mode", validated at construction
+	pidsLimit  int64
+	cpus       float64
+	timeout    time.Duration
+	detectOnce sync.Once
+	harden     bool
+	network    bool
 }
 
 // SandboxProbe supplies the host-environment lookups runtime detection needs.
@@ -138,7 +145,7 @@ type SandboxExec struct {
 // runtime installed. A nil field falls back to the real lookup.
 type SandboxProbe struct {
 	LookPath   func(string) (string, error)
-	Getenv     func(string) string
+	Env        environ.Lookup
 	StatSocket func(string) bool
 }
 
@@ -495,20 +502,24 @@ func (*SandboxExec) Describe() runner.ToolSpec {
 // available. The result is memoized per instance; Execute calls it internally,
 // and it is the introspection point the detection tests read.
 func (s *SandboxExec) Runtime() (string, error) {
-	return s.detectRuntime()
+	name, _, err := s.detectRuntime()
+
+	return name, err
 }
 
 // applyProbe wires the detection hooks, falling back to the real os/exec calls
 // for any field the probe leaves nil.
 func (s *SandboxExec) applyProbe(probe SandboxProbe) {
-	s.lookPath = probe.LookPath
-	if s.lookPath == nil {
-		s.lookPath = exec.LookPath
+	s.env = probe.Env
+	if s.env == nil {
+		s.env = environ.OS()
 	}
 
-	s.getenv = probe.Getenv
-	if s.getenv == nil {
-		s.getenv = os.Getenv
+	s.lookPath = probe.LookPath
+	if s.lookPath == nil {
+		// Resolving through s.env rather than exec.LookPath is what lets a test
+		// stage a stub binary on its own PATH without touching the process one.
+		s.lookPath = func(file string) (string, error) { return environ.LookPath(s.env, file) }
 	}
 
 	s.statSocket = probe.StatSocket
@@ -537,7 +548,7 @@ func (s *SandboxExec) run(ctx context.Context, task *runner.Task, stream chan<- 
 		return runner.Result{}, err
 	}
 
-	runtimeName, err := s.detectRuntime()
+	runtimeName, runtimeBin, err := s.detectRuntime()
 	if err != nil {
 		return runner.Result{}, err
 	}
@@ -572,7 +583,7 @@ func (s *SandboxExec) run(ctx context.Context, task *runner.Task, stream chan<- 
 	runCtx, cancel := s.runContext(ctx, task)
 	defer cancel()
 
-	return s.launch(ctx, runCtx, runtimeName, name, argv, stream)
+	return s.launch(ctx, runCtx, &launchArgs{runtime: runtimeName, binary: runtimeBin, container: name}, argv, stream)
 }
 
 // runContext derives the effective deadline: Task.Deadline when set, else
@@ -592,37 +603,35 @@ func (s *SandboxExec) runContext(ctx context.Context, task *runner.Task) (contex
 // kill path runs after Wait when the run context died, since killing the client
 // process does not stop the container.
 func (s *SandboxExec) launch(parent, runCtx context.Context,
-	runtimeName, name string, argv []string, stream chan<- runner.Chunk,
+	target *launchArgs, argv []string, stream chan<- runner.Chunk,
 ) (runner.Result, error) {
-	// #nosec G204 -- the runtime binary and argv skeleton come from operator
-	// config and this package's code; the only task-supplied value is the
-	// command string, which runs via `sh -c` inside the locked-down container
-	// (network-off, caps dropped, read-only rootfs, resource-capped), never in a
-	// host shell. The container is the trust boundary.
-	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
-
-	stderr := &tailBuffer{limit: stderrTailKeep}
-	cmd.Stderr = stderr
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart,
-			"open stdout pipe: "+err.Error())
-	}
-
 	start := time.Now()
 
-	if err := cmd.Start(); err != nil {
+	piped, err := startPiped(runCtx, func() *exec.Cmd {
+		// #nosec G204 -- the runtime binary and argv skeleton come from operator
+		// config and this package's code; the only task-supplied value is the
+		// command string, which runs via `sh -c` inside the locked-down container
+		// (network-off, caps dropped, read-only rootfs, resource-capped), never in a
+		// host shell. The container is the trust boundary.
+		return exec.CommandContext(runCtx, target.binary, argv[1:]...)
+	})
+	if err != nil {
+		if errors.Is(err, errStdoutPipe) {
+			return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart, err.Error())
+		}
+
 		return runner.Result{}, s.classifyStart(runCtx, err)
 	}
 
-	stdoutText, scanErr := collectStdout(runCtx, stdoutPipe, stream)
+	cmd, stderr := piped.cmd, piped.stderr
+
+	stdoutText, scanErr := collectStdout(runCtx, piped.stdout, stream)
 
 	waitErr := cmd.Wait()
 	latency := time.Since(start)
 
 	if runCtx.Err() != nil {
-		s.killContainer(parent, runtimeName, name)
+		s.killContainer(parent, target)
 	}
 
 	if waitErr != nil {
@@ -640,7 +649,7 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 		Meta: map[string]string{
 			metaExitCode:   strconv.Itoa(cmd.ProcessState.ExitCode()),
 			metaStderrTail: stderr.Text(),
-			cfgKeyRuntime:  runtimeName,
+			cfgKeyRuntime:  target.runtime,
 			cfgKeyImage:    s.image,
 		},
 	}, nil
@@ -651,14 +660,22 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 // context, and ignores errors: --rm handles removal and an already-gone
 // container is not a failure. runtimeName comes from detection and name is
 // sanitized, so a hostile RunID cannot steer the kill argv.
-func (*SandboxExec) killContainer(parent context.Context, runtimeName, name string) {
+func (*SandboxExec) killContainer(parent context.Context, target *launchArgs) {
 	killCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), sandboxKillTimeout)
 	defer cancel()
 
-	// #nosec G204 -- runtimeName is a detection-resolved constant and name is
-	// this package's sanitized container name; both are single argv elements, so
-	// no shell parsing occurs.
-	_ = exec.CommandContext(killCtx, runtimeName, "kill", name).Run()
+	// #nosec G204 -- the binary is the path detection resolved and the container
+	// name is this package's sanitized one; both are single argv elements, so no
+	// shell parsing occurs.
+	_ = exec.CommandContext(killCtx, target.binary, "kill", target.container).Run()
+}
+
+// launchArgs names the resolved runtime one run uses: the reported name, the
+// binary both the run and its kill fallback execute, and the container name.
+type launchArgs struct {
+	runtime   string
+	binary    string
+	container string
 }
 
 // classifyStart maps a launch failure. A missing runtime binary is permanent
@@ -708,55 +725,60 @@ func (*SandboxExec) classifyWait(runCtx context.Context, waitErr error, exitCode
 // detectRuntime resolves which container CLI to shell out to, memoized per
 // instance. No package-level cache (judge item 2): two instances detect
 // independently.
-func (s *SandboxExec) detectRuntime() (string, error) {
+func (s *SandboxExec) detectRuntime() (string, string, error) {
 	s.detectOnce.Do(func() {
-		s.runtime, s.detectErr = s.resolveRuntime()
+		s.runtime, s.runtimeBin, s.detectErr = s.resolveRuntime()
 	})
 
-	return s.runtime, s.detectErr
+	return s.runtime, s.runtimeBin, s.detectErr
 }
 
 // resolveRuntime mirrors scripts/integration.sh resolve_runtime precedence:
 // config override, DOCKER_HOST (with docker on PATH), the docker-socket probe
 // (with docker on PATH), podman on PATH, docker on PATH. Nothing found is a
 // permanent no_runtime, reported at Execute only.
-func (s *SandboxExec) resolveRuntime() (string, error) {
+//
+// It answers with the name and the resolved path, so launching cannot land on a
+// different binary than detection approved.
+func (s *SandboxExec) resolveRuntime() (string, string, error) {
 	if s.runtimeCfg != "" {
-		if _, err := s.lookPath(s.runtimeCfg); err != nil {
-			return "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
+		path, err := s.lookPath(s.runtimeCfg)
+		if err != nil {
+			return "", "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
 				"configured runtime "+s.runtimeCfg+" not found on PATH")
 		}
 
-		return s.runtimeCfg, nil
+		return s.runtimeCfg, path, nil
 	}
 
-	dockerOnPath := s.onPath(runtimeDocker)
+	dockerPath, dockerOnPath := s.onPath(runtimeDocker)
 
-	if s.getenv("DOCKER_HOST") != "" && dockerOnPath {
-		return runtimeDocker, nil
+	if s.env.Get("DOCKER_HOST") != "" && dockerOnPath {
+		return runtimeDocker, dockerPath, nil
 	}
 
 	if s.statSocket(dockerSocketPath) && dockerOnPath {
-		return runtimeDocker, nil
+		return runtimeDocker, dockerPath, nil
 	}
 
-	if s.onPath(runtimePodman) {
-		return runtimePodman, nil
+	if podmanPath, found := s.onPath(runtimePodman); found {
+		return runtimePodman, podmanPath, nil
 	}
 
 	if dockerOnPath {
-		return runtimeDocker, nil
+		return runtimeDocker, dockerPath, nil
 	}
 
-	return "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
+	return "", "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
 		"no container runtime found: install podman or docker")
 }
 
-// onPath reports whether binary resolves through the instance's lookPath hook.
-func (s *SandboxExec) onPath(binary string) bool {
-	_, err := s.lookPath(binary)
+// onPath resolves binary through the instance's lookPath hook, reporting the
+// path it found and whether the search succeeded.
+func (s *SandboxExec) onPath(binary string) (string, bool) {
+	path, err := s.lookPath(binary)
 
-	return err == nil
+	return path, err == nil
 }
 
 // runArgs carries the pure inputs to buildRunArgv. A struct keeps the builder

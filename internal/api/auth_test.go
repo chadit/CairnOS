@@ -19,7 +19,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -93,6 +92,7 @@ type authFixture struct {
 	chat       cairnosv1.ChatServiceClient
 	governance cairnosv1.GovernanceServiceClient
 	conn       *grpc.ClientConn
+	transport  *memTransport
 	authStore  *auth.SQLite
 	clock      *authClock
 	httpBase   string
@@ -170,6 +170,7 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
+	transport := newMemTransport()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -186,6 +187,7 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 	})
 
 	server := api.NewServer(&api.Config{
+		Transport:    transport,
 		GRPCAddr:     loopbackEphemeral,
 		HTTPAddr:     loopbackEphemeral,
 		WorkflowsDir: workflowsDir,
@@ -212,14 +214,10 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 		}
 	})
 
-	conn, err := grpc.NewClient(server.GRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial grpc: %v", err)
-	}
-
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := transport.dialGRPC(t, server.GRPCAddr())
 
 	return &authFixture{
+		transport:  transport,
 		workflow:   cairnosv1.NewWorkflowServiceClient(conn),
 		memory:     cairnosv1.NewMemoryServiceClient(conn),
 		admin:      cairnosv1.NewAdminServiceClient(conn),
@@ -749,7 +747,7 @@ func TestRevokeValidatesItsTarget(t *testing.T) {
 
 // httpDo sends one gateway request with an optional bearer token and
 // returns status code plus body.
-func httpDo(t *testing.T, method, url, body, token string) (int, []byte) {
+func httpDo(t *testing.T, transport *memTransport, method, url, body, token string) (int, []byte) {
 	t.Helper()
 
 	var reader io.Reader = http.NoBody
@@ -769,7 +767,7 @@ func httpDo(t *testing.T, method, url, body, token string) (int, []byte) {
 		req.Header.Set("Authorization", bearerPrefix+token)
 	}
 
-	resp, err := newHTTPClient().Do(req)
+	resp, err := transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
@@ -812,13 +810,13 @@ func TestGatewayBearerFlow(t *testing.T) {
 	_, plaintext := fix.seedKey(t, []string{auth.ScopeReadRun})
 
 	// Health stays open over HTTP too.
-	healthStatus, _ := httpDo(t, http.MethodGet, fix.httpBase+"/v1/health", "", "")
+	healthStatus, _ := httpDo(t, fix.transport, http.MethodGet, fix.httpBase+"/v1/health", "", "")
 	if healthStatus != http.StatusOK {
 		t.Fatalf("tokenless /v1/health = %d, want 200", healthStatus)
 	}
 
 	// A bad key answers 401 with the canonical envelope.
-	badStatus, badBody := httpDo(t, http.MethodPost, fix.httpBase+"/v1/login", `{"key":"nope"}`, "")
+	badStatus, badBody := httpDo(t, fix.transport, http.MethodPost, fix.httpBase+"/v1/login", `{"key":"nope"}`, "")
 	if badStatus != http.StatusUnauthorized {
 		t.Fatalf("bad login = %d, want 401", badStatus)
 	}
@@ -833,7 +831,7 @@ func TestGatewayBearerFlow(t *testing.T) {
 		t.Fatalf("marshal login body: %v", err)
 	}
 
-	okStatus, okBody := httpDo(t, http.MethodPost, fix.httpBase+"/v1/login", string(loginBody), "")
+	okStatus, okBody := httpDo(t, fix.transport, http.MethodPost, fix.httpBase+"/v1/login", string(loginBody), "")
 	if okStatus != http.StatusOK {
 		t.Fatalf("login = %d (%s), want 200", okStatus, okBody)
 	}
@@ -846,13 +844,13 @@ func TestGatewayBearerFlow(t *testing.T) {
 		t.Fatalf("decode login response: %v", err)
 	}
 
-	runsStatus, _ := httpDo(t, http.MethodGet, fix.httpBase+"/v1/runs", "", loginResp.Token)
+	runsStatus, _ := httpDo(t, fix.transport, http.MethodGet, fix.httpBase+"/v1/runs", "", loginResp.Token)
 	if runsStatus != http.StatusOK {
 		t.Fatalf("authed /v1/runs = %d, want 200", runsStatus)
 	}
 
 	// Without the header the same route answers 401.
-	noneStatus, noneBody := httpDo(t, http.MethodGet, fix.httpBase+"/v1/runs", "", "")
+	noneStatus, noneBody := httpDo(t, fix.transport, http.MethodGet, fix.httpBase+"/v1/runs", "", "")
 	if noneStatus != http.StatusUnauthorized {
 		t.Fatalf("tokenless /v1/runs = %d, want 401", noneStatus)
 	}
@@ -862,7 +860,7 @@ func TestGatewayBearerFlow(t *testing.T) {
 	}
 
 	// A scope the token does not hold answers 403 with auth.forbidden.
-	cancelStatus, cancelBody := httpDo(t, http.MethodPost, fix.httpBase+"/v1/runs/none/cancel", "{}", loginResp.Token)
+	cancelStatus, cancelBody := httpDo(t, fix.transport, http.MethodPost, fix.httpBase+"/v1/runs/none/cancel", "{}", loginResp.Token)
 	if cancelStatus != http.StatusForbidden {
 		t.Fatalf("out-of-scope cancel = %d, want 403", cancelStatus)
 	}

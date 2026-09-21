@@ -8,11 +8,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/hive"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
@@ -318,7 +318,7 @@ func TestRotatingSealerFromSecretResolvesBothKeys(t *testing.T) {
 // caller-supplied raw subscribe body, so a sealed-path test can assert what
 // bytes left the node and feed back arbitrary envelopes.
 type sealedMock struct {
-	server   *httptest.Server
+	server   *nettest.Fake
 	postBody []byte
 	getBody  []byte
 	posts    int
@@ -332,8 +332,7 @@ func newSealedMock(t *testing.T) *sealedMock {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/tips", mock.handle)
 
-	mock.server = httptest.NewServer(mux)
-	t.Cleanup(mock.server.Close)
+	mock.server = nettest.New(mux)
 
 	return mock
 }

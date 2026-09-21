@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/execretry"
 )
 
 // Canonical codes, one per step, so a failure says which part of the install
@@ -89,6 +91,11 @@ const (
 type Options struct {
 	Client *http.Client
 	Logger *slog.Logger
+
+	// Env answers the variables the version probe forwards to its child. Nil
+	// reads this process's environment, so a caller that fills only the install
+	// fields behaves as it always has.
+	Env environ.Lookup
 
 	// URL is the release asset to fetch, and ArchiveSHA256 its expected digest
 	// in hex. They travel together because verifying a different artifact than
@@ -174,7 +181,7 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 		return Result{}, recordErr
 	}
 
-	version, err := ProbeVersion(ctx, opts.Dest, probeTimeout(opts))
+	version, err := runVersionProbe(ctx, opts.env(), opts.Dest, probeTimeout(opts))
 	if err != nil {
 		return Result{}, err
 	}
@@ -337,11 +344,16 @@ func prepareDir(dir string) error {
 	return dirTakeoverRisk(dir, info)
 }
 
-// ProbeVersion asks a bw binary what it is. The child gets a minimal
-// environment: a host may hold the vault API key and the master password in
-// this process's environment, and a version probe has no business seeing
-// either. A zero timeout takes the package default.
+// ProbeVersion asks a binary what it is, under this process's environment.
 func ProbeVersion(ctx context.Context, binary string, timeout time.Duration) (string, error) {
+	return runVersionProbe(ctx, environ.OS(), binary, timeout)
+}
+
+// runVersionProbe is ProbeVersion over an injected lookup. The child gets a
+// minimal environment: a host may hold the vault API key and the master
+// password here, and a version probe has no business seeing either. A zero
+// timeout takes the package default.
+func runVersionProbe(ctx context.Context, lookup environ.Lookup, binary string, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = defaultProbeTimeout
 	}
@@ -349,12 +361,14 @@ func ProbeVersion(ctx context.Context, binary string, timeout time.Duration) (st
 	probe, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command := exec.CommandContext(probe, binary, "--version") // #nosec G204 -- the caller names the binary to probe
-	command.Env = probeEnv()
-	command.Stdin = nil
-	command.WaitDelay = waitDelay
+	out, err := execretry.Output(probe, func() (*exec.Cmd, error) {
+		command := exec.CommandContext(probe, binary, "--version") // #nosec G204 -- the caller names the binary to probe
+		command.Env = probeEnv(lookup)
+		command.Stdin = nil
+		command.WaitDelay = waitDelay
 
-	out, err := command.Output()
+		return command, nil
+	})
 	if err != nil {
 		return "", cairnerr.Wrapf(err, CodeVersion, "run %s --version: %v", binary, err)
 	}
@@ -365,16 +379,8 @@ func ProbeVersion(ctx context.Context, binary string, timeout time.Duration) (st
 // probeEnv is the child's whole environment. It mirrors the allowlist the
 // Bitwarden client builds for its own children, minus the vault variables,
 // which a version probe never needs.
-func probeEnv() []string {
-	var env []string
-
-	for _, name := range []string{"PATH", "HOME"} {
-		if value, found := os.LookupEnv(name); found {
-			env = append(env, name+"="+value)
-		}
-	}
-
-	return env
+func probeEnv(lookup environ.Lookup) []string {
+	return environ.Environ(lookup, "PATH", "HOME")
 }
 
 // download fetches the archive into a temp file beside the destination and
@@ -579,6 +585,13 @@ func fill(temp *os.File, source io.Reader, opts *Options) (err error) {
 		return cairnerr.Wrapf(err, CodeInstall, "set the mode of %s: %v", temp.Name(), err)
 	}
 
+	// The probe execs this file a moment from now. Flushing here means the exec
+	// reads what the digest above was taken over, not a page cache the host has
+	// not committed yet.
+	if err := temp.Sync(); err != nil {
+		return cairnerr.Wrapf(err, CodeInstall, "flush %s: %v", temp.Name(), err)
+	}
+
 	return nil
 }
 
@@ -616,6 +629,15 @@ func (o *Options) log() *slog.Logger {
 	}
 
 	return slog.Default()
+}
+
+// env resolves the lookup the version probe reads.
+func (o *Options) env() environ.Lookup {
+	if o.Env != nil {
+		return o.Env
+	}
+
+	return environ.OS()
 }
 
 // timeout resolves the download budget.

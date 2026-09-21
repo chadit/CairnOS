@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -73,11 +73,11 @@ const anthropicToolUseBody = `{
 }`
 
 func TestOpenAIExecuteWithToolsParsesToolCall(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -86,9 +86,8 @@ func TestOpenAIExecuteWithToolsParsesToolCall(t *testing.T) {
 
 		_, _ = io.WriteString(w, openaiToolCallBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -139,14 +138,13 @@ func assertOpenAIToolRequest(t *testing.T, request map[string]any) {
 }
 
 func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, openaiSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -168,11 +166,11 @@ func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
 }
 
 func TestAnthropicExecuteWithToolsParsesToolUse(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -181,9 +179,8 @@ func TestAnthropicExecuteWithToolsParsesToolUse(t *testing.T) {
 
 		_, _ = io.WriteString(w, anthropicToolUseBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -228,14 +225,13 @@ func assertAnthropicToolRequest(t *testing.T, request map[string]any) {
 }
 
 func TestAnthropicExecuteWithToolsReturnsFinalText(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, anthropicSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}

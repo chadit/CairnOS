@@ -4,21 +4,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/hive"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// fakeHive is an httptest server standing in for the central hive service so
+// fakeHive is an in-process server standing in for the central hive service so
 // the client is exercised end to end without a real network or a real hive.
 // It records the last publish body and the last subscribe categories so a test
 // can prove what (and whether) the client sent.
 type fakeHive struct {
-	server         *httptest.Server
+	server         *nettest.Fake
 	tips           []hive.Tip
 	lastPublish    *publishCapture
 	lastCategories []string
@@ -43,8 +43,7 @@ func newFakeHive(t *testing.T, tips []hive.Tip) *fakeHive {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/tips", mock.handle)
 
-	mock.server = httptest.NewServer(mux)
-	t.Cleanup(mock.server.Close)
+	mock.server = nettest.New(mux)
 
 	return mock
 }

@@ -269,6 +269,7 @@ func TestWorkerOnDeadLetterSkippedOnHold(t *testing.T) {
 		Logger:        discardLogger(),
 		Metrics:       metrics,
 		Holdable:      func(err error) bool { return errors.Is(err, reauthErr) },
+		HoldKey:       func(error) string { return testHoldKey },
 		OnDeadLetter: func(_ context.Context, item *scheduler.WorkItem, _ error) {
 			deadLettered <- item.DedupKey
 		},
@@ -361,6 +362,144 @@ func TestWorkerHoldsHoldableError(t *testing.T) {
 
 	if len(listed) != 1 || listed[0].HoldKey != testHoldKey {
 		t.Errorf("ListHeld = %+v, want one item with hold key codex", listed)
+	}
+}
+
+// TestWorkerFailsHoldableErrorWithoutHoldKey pins the keyless-hold guard: a
+// re-auth failure from a tool no probe knows names no credential, so holding it
+// would park the occurrence forever and leave the overlap guard shut.
+func TestWorkerFailsHoldableErrorWithoutHoldKey(t *testing.T) {
+	t.Parallel()
+
+	queue := openWorkerQueue(t)
+	metrics := newSignalMetrics()
+
+	const scheduleID = "unknown-tool-sched"
+
+	dedup := scheduler.DedupKeyFor(scheduleID, time.Now())
+	if _, err := queue.Enqueue(t.Context(), &scheduler.WorkItem{
+		DedupKey: dedup,
+		Payload:  []byte(`{"workflow":"x"}`),
+	}); err != nil {
+		t.Fatalf("enqueue occurrence: %v", err)
+	}
+
+	reauthErr := errors.New("needs reauth: gizmo")
+	runner := &recordingQueueRunner{failWith: reauthErr}
+
+	// heldNotice catches any OnHold call, so the test proves the worker never
+	// parked the item behind the operator's back.
+	heldNotice := make(chan string, 1)
+
+	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
+		Queue:         queue,
+		Runner:        runner,
+		Concurrency:   1,
+		Prefetch:      1,
+		Backoff:       time.Millisecond,
+		MaxDeliveries: 1,
+		PollInterval:  2 * time.Millisecond,
+		SweepInterval: time.Hour,
+		Logger:        discardLogger(),
+		Metrics:       metrics,
+		Holdable:      func(err error) bool { return errors.Is(err, reauthErr) },
+		HoldKey:       func(error) string { return "" },
+		OnHold: func(_ context.Context, item *scheduler.WorkItem, _ error) {
+			heldNotice <- item.DedupKey
+		},
+	})
+
+	stop := runWorker(t, worker)
+	defer stop()
+
+	select {
+	case <-metrics.deadLetter:
+	case <-metrics.held:
+		t.Fatal("worker held an item whose hold key is empty")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the dead-letter")
+	}
+
+	select {
+	case key := <-heldNotice:
+		t.Fatalf("OnHold fired for %q; a keyless hold is a failure, not a hold", key)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	stats, err := queue.Stats(t.Context(), time.Now())
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+
+	if stats.Held != 0 || stats.Dead != 1 {
+		t.Errorf("stats = %+v, want zero held and one dead", stats)
+	}
+
+	// The whole point: a dead occurrence is finished, so the next fire is free to
+	// start rather than being skipped by the overlap guard forever.
+	pending, err := queue.OccurrencePending(t.Context(), scheduleID, time.Now())
+	if err != nil {
+		t.Fatalf("occurrence pending: %v", err)
+	}
+
+	if pending {
+		t.Error("occurrence still reads as pending after the item dead-lettered")
+	}
+}
+
+// TestWorkerReleasesKeylessHeldItem covers the upgrade path: a host that ran an
+// older build can already hold a keyless row, and the sweep has to let it go even
+// with auto-resume off.
+func TestWorkerReleasesKeylessHeldItem(t *testing.T) {
+	t.Parallel()
+
+	queue := openWorkerQueue(t)
+	metrics := newSignalMetrics()
+
+	enqueueWorkerItem(t, queue, 0)
+
+	claimed, err := queue.Claim(t.Context(), time.Now(), time.Minute, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("seed claim: got %d items, err %v", len(claimed), err)
+	}
+
+	if holdErr := queue.Hold(t.Context(), claimed[0].ID, ""); holdErr != nil {
+		t.Fatalf("seed keyless hold: %v", holdErr)
+	}
+
+	runner := &recordingQueueRunner{}
+	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
+		Queue:         queue,
+		Runner:        runner,
+		Concurrency:   1,
+		Prefetch:      1,
+		PollInterval:  2 * time.Millisecond,
+		SweepInterval: 5 * time.Millisecond,
+		Logger:        discardLogger(),
+		Metrics:       metrics,
+	})
+
+	stop := runWorker(t, worker)
+	defer stop()
+
+	// A run signal can only arrive if the sweep released the keyless hold and the
+	// worker then claimed and acked the item; no resume probe is wired.
+	select {
+	case ok := <-metrics.runs:
+		if !ok {
+			t.Error("released item naked, want acked")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the released item to run")
+	}
+
+	stats, err := queue.Stats(t.Context(), time.Now())
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+
+	if stats.Held != 0 {
+		t.Errorf("stats = %+v, want nothing left held", stats)
 	}
 }
 
@@ -469,4 +608,104 @@ func runWorker(t *testing.T, worker *scheduler.Worker) func() {
 // discardLogger is a slog logger that drops output, keeping test logs quiet.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
+}
+
+// Heartbeat fixtures. The lease is short enough that the worker beats several
+// times inside the test's patience, and the poll is a quarter of it so a
+// renewal is never missed between reads.
+const (
+	heartbeatSchedule = "heartbeat-sched"
+	heartbeatLease    = 100 * time.Millisecond
+	heartbeatPoll     = heartbeatLease / 4
+	heartbeatPatience = 5 * time.Second
+)
+
+// blockingQueueRunner holds its item until the test releases it or the worker
+// stops, so a case can read the queue while a run is genuinely in flight.
+type blockingQueueRunner struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingQueueRunner) Run(ctx context.Context, _ *scheduler.WorkItem) error {
+	r.started <- struct{}{}
+
+	select {
+	case <-r.release:
+	case <-ctx.Done():
+	}
+
+	return nil
+}
+
+// TestWorkerRenewsLeasesWhileRunning pins the heartbeat. A run outlasting
+// ack_wait keeps hold of its item, so the overlap guard still reads the
+// occurrence as in flight rather than letting a second one start on top of it.
+func TestWorkerRenewsLeasesWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	queue := openWorkerQueue(t)
+
+	if _, err := queue.Enqueue(t.Context(), &scheduler.WorkItem{
+		DedupKey: scheduler.DedupKeyFor(heartbeatSchedule, time.Now()),
+		Payload:  []byte(`{"workflow":"x"}`),
+	}); err != nil {
+		t.Fatalf("enqueue occurrence: %v", err)
+	}
+
+	runner := &blockingQueueRunner{started: make(chan struct{}, 1), release: make(chan struct{})}
+	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
+		Queue:         queue,
+		Runner:        runner,
+		AckWait:       heartbeatLease,
+		PollInterval:  5 * time.Millisecond,
+		SweepInterval: time.Hour,
+		Logger:        discardLogger(),
+	})
+
+	stop := runWorker(t, worker)
+
+	defer func() {
+		close(runner.release)
+		stop()
+	}()
+
+	select {
+	case <-runner.started:
+	case <-time.After(heartbeatPatience):
+		t.Fatal("timed out waiting for the run to start")
+	}
+
+	// Nothing the claim did reaches past this instant, so an occurrence that
+	// counts here is one whose lease a heartbeat pushed out.
+	awaitRenewedLease(t, queue, time.Now().Add(heartbeatLease))
+}
+
+// awaitRenewedLease waits for the occurrence to count as in flight at an
+// instant the original lease could never cover, and fails when no heartbeat
+// ever gets it there.
+func awaitRenewedLease(t *testing.T, queue scheduler.WorkQueue, pastClaimLease time.Time) {
+	t.Helper()
+
+	ticker := time.NewTicker(heartbeatPoll)
+	defer ticker.Stop()
+
+	giveUp := time.After(heartbeatPatience)
+
+	for {
+		pending, err := queue.OccurrencePending(t.Context(), heartbeatSchedule, pastClaimLease)
+		if err != nil {
+			t.Fatalf("occurrence pending: %v", err)
+		}
+
+		if pending {
+			return
+		}
+
+		select {
+		case <-ticker.C:
+		case <-giveUp:
+			t.Fatal("the run's lease was never renewed past the deadline its claim set")
+		}
+	}
 }

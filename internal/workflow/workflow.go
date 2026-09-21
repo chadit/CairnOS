@@ -12,7 +12,6 @@ import (
 const (
 	CodeInvalid           = "workflow.invalid"
 	CodeBadName           = "workflow.bad_name"
-	CodeDuplicateAction   = "workflow.duplicate_action"
 	CodeUnknownDependency = "workflow.unknown_dependency"
 	CodeCycleDetected     = "workflow.cycle_detected"
 	CodeBadReference      = "workflow.bad_reference"

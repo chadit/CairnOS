@@ -28,7 +28,7 @@ func testApprovalRoundTrip(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 	created := time.Date(2026, 6, 20, 9, 0, 0, microFixtureNS, time.UTC)
 
-	runID := newID()
+	runID := store.NewID()
 	createRun(t, db, runID, workflowAlpha, store.RunHeld, created)
 
 	err := db.CreateApproval(ctx, &store.Approval{
@@ -117,7 +117,7 @@ func testApprovalDecideOnce(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	ctx := t.Context()
 
-	runID := newID()
+	runID := store.NewID()
 	createRun(t, db, runID, workflowAlpha, store.RunHeld, time.Now())
 	seedApproval(t, db, ctx, runID, actionFetch)
 
@@ -150,7 +150,7 @@ func testApprovalListPending(t *testing.T, openFn OpenFunc) {
 	db := openFn(t)
 	ctx := t.Context()
 
-	runID := newID()
+	runID := store.NewID()
 	createRun(t, db, runID, workflowAlpha, store.RunHeld, time.Now())
 
 	// actionBrain sorts before actionFetch, so the listing proves the order.
@@ -197,7 +197,7 @@ func testApprovalIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	acmeCtx := store.ContextWithWorkspace(t.Context(), workspaceAcme)
 	globexCtx := store.ContextWithWorkspace(t.Context(), workspaceGlobex)
 
-	acmeRun := newID()
+	acmeRun := store.NewID()
 	createRunIn(t, db, acmeCtx, acmeRun, base)
 	seedApproval(t, db, acmeCtx, acmeRun, actionFetch)
 
@@ -240,7 +240,7 @@ func testApprovalHeldSurvivesReconcile(t *testing.T, openFn OpenFunc) {
 	ctx := t.Context()
 	now := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
 
-	runID := newID()
+	runID := store.NewID()
 	createRun(t, db, runID, workflowAlpha, store.RunHeld, now)
 
 	waiting := &store.ActionResult{

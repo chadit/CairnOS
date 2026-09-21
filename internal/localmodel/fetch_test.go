@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/localmodel"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // artifactName labels the fixture artifact in progress output and errors.
@@ -60,12 +60,11 @@ func TestFetchSkipsVerifiedFileWithoutDownloading(t *testing.T) {
 
 	var hits int
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
 
 		_, _ = w.Write(payload)
 	}))
-	defer server.Close()
 
 	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload)}
 
@@ -139,10 +138,9 @@ func TestFetchOfflineReportsCorruptCache(t *testing.T) {
 func TestFetchReportsBadStatus(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "gone", http.StatusNotFound)
 	}))
-	defer server.Close()
 
 	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(nil)}
 
@@ -153,13 +151,12 @@ func TestFetchReportsBadStatus(t *testing.T) {
 }
 
 // serveBytes answers every request with the same payload.
-func serveBytes(t *testing.T, payload []byte) *httptest.Server {
+func serveBytes(t *testing.T, payload []byte) *nettest.Fake {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(payload)
 	}))
-	t.Cleanup(server.Close)
 
 	return server
 }

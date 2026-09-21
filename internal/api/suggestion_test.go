@@ -133,7 +133,7 @@ func TestSuggestionGatewayRoutes(t *testing.T) {
 	fix := startServer(t)
 	id := seedSuggestion(t, fix)
 
-	code, body := httpGet(t, fix.httpBase+"/v1/suggestions?status="+statusOpenLiteral)
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/suggestions?status="+statusOpenLiteral)
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/suggestions = %d: %s", code, body)
 	}
@@ -154,7 +154,7 @@ func TestSuggestionGatewayRoutes(t *testing.T) {
 		t.Fatalf("gateway listed %+v, want the seeded suggestion", listed.Suggestions)
 	}
 
-	resp := httpPost(t, fix.httpBase+"/v1/suggestions/"+id+"/approve", "{}")
+	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/suggestions/"+id+"/approve", "{}")
 	defer func() { _ = resp.Body.Close() }()
 
 	approveBody, err := io.ReadAll(resp.Body)

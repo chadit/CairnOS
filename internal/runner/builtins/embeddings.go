@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -30,7 +30,13 @@ const embeddingsCodePrefix = OpenAIName + ".embeddings"
 // The base URL is operator-configured, so a plain client suffices without the
 // SSRF egress guard.
 type OpenAIEmbedder struct {
-	client  *http.Client
+	client *http.Client
+
+	// env answers the API-key variable, injected for the same reason the chat
+	// runner injects it: a test supplies a key without setting one for the
+	// whole process.
+	env environ.Lookup
+
 	model   string
 	baseURL string
 }
@@ -38,7 +44,7 @@ type OpenAIEmbedder struct {
 // NewOpenAIEmbedder builds an embedder over an injected HTTP client so tests
 // point it at an httptest server. An empty model or base URL falls back to the
 // hosted defaults; a nil client gets the shared LLM timeout.
-func NewOpenAIEmbedder(model, baseURL string, client *http.Client) *OpenAIEmbedder {
+func NewOpenAIEmbedder(model, baseURL string, client *http.Client, lookup environ.Lookup) *OpenAIEmbedder {
 	if model == "" {
 		model = defaultEmbeddingModel
 	}
@@ -51,7 +57,7 @@ func NewOpenAIEmbedder(model, baseURL string, client *http.Client) *OpenAIEmbedd
 		client = &http.Client{Timeout: defaultLLMTimeout}
 	}
 
-	return &OpenAIEmbedder{model: model, baseURL: baseURL, client: client}
+	return &OpenAIEmbedder{model: model, baseURL: baseURL, client: client, env: lookup}
 }
 
 // Embed returns the embedding vector for text. The API key reads at call time
@@ -71,8 +77,8 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 
 // authHeaders builds the per-call auth header from the same env var the openai
 // chat runner reads.
-func (*OpenAIEmbedder) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + os.Getenv(OpenAIKeyEnv)}
+func (e *OpenAIEmbedder) authHeaders() map[string]string {
+	return map[string]string{"Authorization": "Bearer " + e.env.Get(OpenAIKeyEnv)}
 }
 
 // decodeEmbedding reads one embeddings response and returns the first vector,

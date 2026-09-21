@@ -5,11 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -42,10 +43,10 @@ func githubTask(params map[string]any) *runner.Task {
 	return &runner.Task{RunID: testRunID, ActionName: actionWatch, Params: params, Resolved: true}
 }
 
-func newGitHub(t *testing.T, server *httptest.Server) *builtins.GitHub {
+func newGitHub(t *testing.T, server *nettest.Fake) *builtins.GitHub {
 	t.Helper()
 
-	hub, err := builtins.NewGitHub(map[string]any{baseURLKey: server.URL}, server.Client())
+	hub, err := builtins.NewGitHub(map[string]any{baseURLKey: server.URL}, server.Client(), environ.Map(nil))
 	if err != nil {
 		t.Fatalf("new github: %v", err)
 	}
@@ -58,12 +59,11 @@ func TestGitHubListsReleases(t *testing.T) {
 
 	paths := make(chan string, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths <- r.URL.Path + "?" + r.URL.RawQuery
 
 		_, _ = io.WriteString(w, githubReleasesBody)
 	}))
-	defer server.Close()
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 		opKey:    opReleases,
@@ -95,7 +95,7 @@ func TestGitHubCreatesIssue(t *testing.T) {
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil &&
@@ -106,7 +106,6 @@ func TestGitHubCreatesIssue(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, githubIssueBody)
 	}))
-	defer server.Close()
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 		opKey:    opNewIssue,
@@ -150,12 +149,11 @@ func TestGitHubListsIssues(t *testing.T) {
 
 	queries := make(chan string, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery
 
 		_, _ = io.WriteString(w, githubIssuesBody)
 	}))
-	defer server.Close()
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 		opKey:    opListIssues,
@@ -196,10 +194,9 @@ func TestGitHubListsIssues(t *testing.T) {
 func TestGitHubListsIssuesEmptySinceKeepsAll(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, githubIssuesBody)
 	}))
-	defer server.Close()
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 		opKey:   opListIssues,
@@ -253,14 +250,13 @@ func TestGitHubClassifiesStatusCodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				for key, value := range tt.headers {
 					w.Header().Set(key, value)
 				}
 
 				w.WriteHeader(tt.status)
 			}))
-			defer server.Close()
 
 			_, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 				opKey: opReleases, repoKey: testRepo,
@@ -313,7 +309,7 @@ func TestGitHubValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			hub, err := builtins.NewGitHub(nil, &http.Client{Timeout: time.Second})
+			hub, err := builtins.NewGitHub(nil, &http.Client{Timeout: time.Second}, environ.Map(nil))
 			if err != nil {
 				t.Fatalf("new github: %v", err)
 			}

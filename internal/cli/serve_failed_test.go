@@ -79,6 +79,8 @@ func fakeMattermost(t *testing.T) (string, chan string) {
 		writeMattermostJSON(t, w, map[string]string{"id": "p1", "channel_id": notifyChannelID})
 	})
 
+	// Real socket on purpose: serve builds its Mattermost client from config,
+	// so the notify URL has to be one something can dial.
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -131,15 +133,15 @@ func awaitPost(t *testing.T, posts <-chan string) string {
 // posture: a startup failure announces itself, the same failure on the next
 // restart stays quiet, and a different failure gets through at once.
 func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
-	// t.Setenv forbids t.Parallel; the token env is process-global.
-	t.Setenv(mattermostTokenEnv, "fake-not-a-real-token")
+	t.Parallel()
 
+	env := withSourcePath(tokenEnv(mattermostTokenEnv, fakeBridgeToken))
 	serverURL, posts := fakeMattermost(t)
 	dir := t.TempDir()
 
 	serveFailedDir(t, dir, serverURL, t.TempDir())
 
-	if code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, stderr := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
 		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
 	}
 
@@ -150,7 +152,7 @@ func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
 		}
 	}
 
-	if code, _, _ := runCLI(t, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, _ := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
 		t.Fatalf("the second start exit = %d, want failure", code)
 	}
 
@@ -160,7 +162,7 @@ func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
 	// holding no longer applies.
 	serveFailedDir(t, dir, serverURL, t.TempDir())
 
-	if code, _, _ := runCLI(t, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, _ := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
 		t.Fatalf("the third start exit = %d, want failure", code)
 	}
 
@@ -183,7 +185,7 @@ func TestServeStartClearsTheFailureWindow(t *testing.T) {
 		t.Fatalf("seed the failure state: %v", err)
 	}
 
-	_, _, exit, cancel := serveUntilReady(t, dir)
+	_, _, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 

@@ -50,7 +50,7 @@ func (s *Store) CreateRun(ctx context.Context, run *store.Run) error {
 		run.ID, run.WorkflowName, run.WorkflowHash, workspace, string(run.Status), inputs, run.Trigger,
 		runErr, formatTime(createdAt), formatTime(run.StartedAt), formatTime(run.FinishedAt), run.ParentRunID)
 	if err != nil {
-		return fmt.Errorf("insert run %s: %w", run.ID, err)
+		return duplicateRunErr(run.ID, err)
 	}
 
 	return nil

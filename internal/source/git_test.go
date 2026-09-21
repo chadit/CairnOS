@@ -40,23 +40,38 @@ const returnBound = 20 * time.Second
 // stubPerm is the mode the stand-in script needs to be launched.
 const stubPerm = 0o700
 
-// TestGitCommandRunsNonInteractively proves the production command cannot stop
-// on a credential prompt: a real prompt would hang the clone at serve start or a
-// sync inside a scheduled run. It replaces git on PATH, so it stays sequential:
-// Go finishes every non-parallel case before it resumes the parallel ones, which
-// keeps the stand-in out of their way.
-func TestGitCommandRunsNonInteractively(t *testing.T) {
+// stageStubGit writes one stand-in script into a fresh directory and returns a
+// source.Git whose PATH is that directory plus searchPath. Handing the
+// environment over is what replaces t.Setenv, so nothing a case stages reaches
+// the rest of the process. Call it before t.Parallel: a fork racing the open
+// write fd fails with ETXTBSY.
+func stageStubGit(t *testing.T, script, searchPath string, extra ...string) source.Git {
+	t.Helper()
+
 	binDir := t.TempDir()
 
 	stub := filepath.Join(binDir, "git")
-	if err := os.WriteFile(stub, []byte(stubGitScript), stubPerm); err != nil {
+	if err := os.WriteFile(stub, []byte(script), stubPerm); err != nil {
 		t.Fatalf("write stub git: %v", err)
 	}
 
-	t.Setenv("PATH", binDir)
-	t.Setenv("GIT_TERMINAL_PROMPT", "1")
+	search := binDir
+	if searchPath != "" {
+		search += string(os.PathListSeparator) + searchPath
+	}
 
-	out, err := source.GitCommand(t.Context(), "/some/checkout", "fetch", "origin")
+	return source.GitCommandWith(append([]string{"PATH=" + search}, extra...))
+}
+
+// TestGitCommandRunsNonInteractively proves the production command cannot stop
+// on a credential prompt: a real prompt would hang the clone at serve start or a
+// sync inside a scheduled run.
+func TestGitCommandRunsNonInteractively(t *testing.T) {
+	runGit := stageStubGit(t, stubGitScript, "", "GIT_TERMINAL_PROMPT=1")
+
+	t.Parallel()
+
+	out, err := runGit(t.Context(), "/some/checkout", "fetch", "origin")
 	if err != nil {
 		t.Fatalf("GitCommand: %v", err)
 	}
@@ -77,17 +92,11 @@ func TestGitCommandRunsNonInteractively(t *testing.T) {
 // TestGitCommandKeepsOperatorSSHCommand proves the batch-mode default yields to
 // an operator who has already said how this host reaches its remotes.
 func TestGitCommandKeepsOperatorSSHCommand(t *testing.T) {
-	binDir := t.TempDir()
+	runGit := stageStubGit(t, stubGitScript, "", "GIT_SSH_COMMAND=ssh -i /etc/cairnos/deploy_key")
 
-	stub := filepath.Join(binDir, "git")
-	if err := os.WriteFile(stub, []byte(stubGitScript), stubPerm); err != nil {
-		t.Fatalf("write stub git: %v", err)
-	}
+	t.Parallel()
 
-	t.Setenv("PATH", binDir)
-	t.Setenv("GIT_SSH_COMMAND", "ssh -i /etc/cairnos/deploy_key")
-
-	out, err := source.GitCommand(t.Context(), "/some/checkout", "fetch", "origin")
+	out, err := runGit(t.Context(), "/some/checkout", "fetch", "origin")
 	if err != nil {
 		t.Fatalf("GitCommand: %v", err)
 	}
@@ -102,17 +111,12 @@ func TestGitCommandKeepsOperatorSSHCommand(t *testing.T) {
 // so without a WaitDelay the call never returns and the runner's per-source lock
 // stays held for the life of the process.
 func TestGitCommandReturnsAfterKillWithOrphanHoldingPipes(t *testing.T) {
-	binDir := t.TempDir()
+	// The real search path rides along because the script needs sleep to
+	// resolve. Without it both sleeps fail instantly, no orphan holds the pipes,
+	// and the case passes while proving nothing.
+	runGit := stageStubGit(t, orphanGitScript, os.Getenv("PATH"))
 
-	stub := filepath.Join(binDir, "git")
-	if err := os.WriteFile(stub, []byte(orphanGitScript), stubPerm); err != nil {
-		t.Fatalf("write stub git: %v", err)
-	}
-
-	// The stand-in goes in front of the real PATH rather than replacing it: the
-	// script needs sleep to resolve, and without it both sleeps fail instantly,
-	// no orphan holds the pipes, and the case passes while proving nothing.
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(t.Context(), killedCallDeadline)
 	defer cancel()
@@ -121,7 +125,7 @@ func TestGitCommandReturnsAfterKillWithOrphanHoldingPipes(t *testing.T) {
 	start := time.Now()
 
 	go func() {
-		_, err := source.GitCommand(ctx, t.TempDir(), "fetch", "origin")
+		_, err := runGit(ctx, t.TempDir(), "fetch", "origin")
 		done <- err
 	}()
 

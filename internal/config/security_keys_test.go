@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // oneMiB is the body and message default the security keys fall back to.
@@ -78,14 +79,18 @@ allowed_subjects = ["sub-123"]
 }
 
 func TestLoadSecurityKeysFromEnv(t *testing.T) {
-	t.Setenv("CAIRNOS_API_CORS_ORIGINS", "https://a.example, https://b.example")
-	t.Setenv("CAIRNOS_API_MAX_BODY_BYTES", "8192")
-	t.Setenv("CAIRNOS_API_MAX_RECV_MSG_BYTES", "16384")
-	t.Setenv("CAIRNOS_OAUTH_AUTO_PROVISION", "true")
-	t.Setenv("CAIRNOS_OAUTH_ALLOWED_EMAIL_DOMAINS", "example.com")
-	t.Setenv("CAIRNOS_OAUTH_ALLOWED_SUBJECTS", "sub-a, sub-b")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_API_CORS_ORIGINS":            "https://a.example, https://b.example",
+		"CAIRNOS_API_MAX_BODY_BYTES":          "8192",
+		"CAIRNOS_API_MAX_RECV_MSG_BYTES":      "16384",
+		"CAIRNOS_OAUTH_AUTO_PROVISION":        envOn,
+		"CAIRNOS_OAUTH_ALLOWED_EMAIL_DOMAINS": "example.com",
+		"CAIRNOS_OAUTH_ALLOWED_SUBJECTS":      "sub-a, sub-b",
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

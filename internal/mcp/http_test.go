@@ -2,13 +2,13 @@ package mcp_test
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // bearerRoundTripper attaches a static bearer token to every request, the
@@ -41,8 +41,9 @@ func TestHTTPTransportEnforcesScopeFromHeader(t *testing.T) {
 		mux.HandleFunc(pattern, route)
 	}
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	// The streamable transport holds a response open while it writes, so this
+	// path needs a real server on an in-memory listener rather than a recorder.
+	server := nettest.NewServer(t, mux)
 
 	tests := []struct {
 		name    string
@@ -58,7 +59,7 @@ func TestHTTPTransportEnforcesScopeFromHeader(t *testing.T) {
 			t.Parallel()
 
 			token := fix.token(t, tt.scopes...)
-			session := connectHTTP(t, server.URL+"/mcp", token)
+			session := connectHTTP(t, server, "/mcp", token)
 
 			result, err := session.CallTool(t.Context(), &sdk.CallToolParams{
 				Name:      toolRunWorkflow,
@@ -80,11 +81,13 @@ func TestHTTPTransportEnforcesScopeFromHeader(t *testing.T) {
 }
 
 // connectHTTP dials the streamable MCP endpoint with a token-injecting client.
-func connectHTTP(t *testing.T, endpoint, token string) *sdk.ClientSession {
+func connectHTTP(t *testing.T, server *nettest.Server, path, token string) *sdk.ClientSession {
 	t.Helper()
 
+	endpoint := server.URL + path
+
 	httpClient := &http.Client{
-		Transport: &bearerRoundTripper{token: token, base: http.DefaultTransport},
+		Transport: &bearerRoundTripper{token: token, base: server.Transport()},
 	}
 
 	client := sdk.NewClient(&sdk.Implementation{Name: clientName, Version: clientVersion}, nil)

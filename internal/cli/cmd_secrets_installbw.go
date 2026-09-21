@@ -4,11 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 
 	"github.com/chadit/CairnOS/internal/bwinstall"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // bwReleaseT is the release tag the version in bwpin_gen.go belongs to, and
@@ -38,7 +38,7 @@ func (a *App) cmdSecretsInstallBW(ctx context.Context, args []string) int {
 		return code
 	}
 
-	dir, err := bwInstallDir(*binDir)
+	dir, err := bwInstallDir(*binDir, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -145,12 +145,12 @@ func (a *App) WithoutBitwardenPin() *App {
 
 // bwInstallDir resolves where the binary goes, defaulting to the personal bin
 // directory a login shell already has on its PATH.
-func bwInstallDir(flagValue string) (string, error) {
+func bwInstallDir(flagValue string, lookup environ.Lookup) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
 
-	home, err := os.UserHomeDir()
+	home, err := homeDir(lookup)
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}

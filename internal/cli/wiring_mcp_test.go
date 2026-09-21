@@ -63,6 +63,9 @@ func newMCPEchoServerURL(t *testing.T) string {
 		})
 
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+
+	// Real socket on purpose: the workflow run builds its runner clients from
+	// config, so the server_url has to be one something can dial.
 	httpServer := httptest.NewServer(handler)
 	t.Cleanup(httpServer.Close)
 

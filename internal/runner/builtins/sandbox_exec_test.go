@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -26,6 +27,7 @@ const (
 	cannedOutput   = "sandbox-canned-output"
 	sampleCmd      = "echo hello"
 	testDockerHost = "tcp://x"
+	dockerHostVar  = "DOCKER_HOST"
 
 	cfgAllow    = "allow_actions"
 	cfgImageKey = "image"
@@ -66,13 +68,7 @@ func probeFor(onPath []string, dockerHost string, socket bool) builtins.SandboxP
 
 			return "", exec.ErrNotFound
 		},
-		Getenv: func(key string) string {
-			if key == "DOCKER_HOST" {
-				return dockerHost
-			}
-
-			return ""
-		},
+		Env:        environ.Map(map[string]string{dockerHostVar: dockerHost}),
 		StatSocket: func(string) bool { return socket },
 	}
 }
@@ -126,8 +122,8 @@ exit 0`
 }
 
 // stageRecordingStub writes a recording "podman" stub into a fresh dir and
-// returns the dir and its argv record file. The caller installs PATH so the
-// paralleltest linter sees the env mutation in the test body.
+// returns the dir and its argv record file. The caller aims a probe at the dir
+// rather than editing the process PATH, which keeps the case parallel.
 func stageRecordingStub(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -138,17 +134,21 @@ func stageRecordingStub(t *testing.T) (string, string) {
 	return dir, argvFile
 }
 
-// pathWith prepends dir to the current PATH.
-func pathWith(dir string) string {
-	return dir + string(os.PathListSeparator) + os.Getenv("PATH")
+// stubProbe points runtime detection at one staged directory. DOCKER_HOST is
+// answered empty so detection falls to the configured runtime rather than to
+// whatever the machine running the suite has exported.
+func stubProbe(dir string) builtins.SandboxProbe {
+	return builtins.SandboxProbe{
+		Env: environ.Map(map[string]string{"PATH": dir, dockerHostVar: ""}),
+	}
 }
 
 // executeRecording builds a runner from cfg, runs task, and returns the argv
 // the recording stub saw.
-func executeRecording(t *testing.T, cfg map[string]any, task *runner.Task, argvFile string) []string {
+func executeRecording(t *testing.T, dir string, cfg map[string]any, task *runner.Task, argvFile string) []string {
 	t.Helper()
 
-	sandbox, err := builtins.NewSandboxExec(cfg)
+	sandbox, err := builtins.NewSandboxExecWithProbe(cfg, stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -299,10 +299,10 @@ func TestSandboxDetectionIsPerInstance(t *testing.T) {
 
 func TestSandboxArgvHardenedByDefault(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	argv := executeRecording(t, sandboxConfig(nil), sandboxTask(), argvFile)
+	t.Parallel()
+
+	argv := executeRecording(t, dir, sandboxConfig(nil), sandboxTask(), argvFile)
 
 	wantFlags := []string{
 		"--network=none",
@@ -344,10 +344,10 @@ func TestSandboxArgvHardenedByDefault(t *testing.T) {
 
 func TestSandboxArgvNetworkOptIn(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	argv := executeRecording(t, sandboxConfig(map[string]any{cfgNetwork: true}), sandboxTask(), argvFile)
+	t.Parallel()
+
+	argv := executeRecording(t, dir, sandboxConfig(map[string]any{cfgNetwork: true}), sandboxTask(), argvFile)
 
 	if slices.Contains(argv, "--network=none") {
 		t.Fatalf("network=true still emitted --network=none: %v", argv)
@@ -356,10 +356,10 @@ func TestSandboxArgvNetworkOptIn(t *testing.T) {
 
 func TestSandboxArgvHardenOptOut(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	argv := executeRecording(t, sandboxConfig(map[string]any{cfgHarden: false}), sandboxTask(), argvFile)
+	t.Parallel()
+
+	argv := executeRecording(t, dir, sandboxConfig(map[string]any{cfgHarden: false}), sandboxTask(), argvFile)
 
 	for _, flag := range []string{"--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only", "--tmpfs=/tmp"} {
 		if slices.Contains(argv, flag) {
@@ -375,11 +375,11 @@ func TestSandboxArgvHardenOptOut(t *testing.T) {
 
 func TestSandboxArgvMountRendersReadOnly(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
+
+	t.Parallel()
 
 	cfg := sandboxConfig(map[string]any{cfgMounts: []any{"/hostsrc:/ctrdst"}})
-	argv := executeRecording(t, cfg, sandboxTask(), argvFile)
+	argv := executeRecording(t, dir, cfg, sandboxTask(), argvFile)
 
 	mount, found := flagValue(argv, "-v")
 	if !found || mount != "/hostsrc:/ctrdst:ro" {
@@ -389,13 +389,13 @@ func TestSandboxArgvMountRendersReadOnly(t *testing.T) {
 
 func TestSandboxArgvWorkdirParamOverride(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
+
+	t.Parallel()
 
 	task := sandboxTask()
 	task.Params[wdKey] = "/custom"
 
-	argv := executeRecording(t, sandboxConfig(nil), task, argvFile)
+	argv := executeRecording(t, dir, sandboxConfig(nil), task, argvFile)
 
 	if workdir, found := flagValue(argv, "-w"); !found || workdir != "/custom" {
 		t.Fatalf("workdir flag = %q (found %v), want /custom", workdir, found)
@@ -404,11 +404,11 @@ func TestSandboxArgvWorkdirParamOverride(t *testing.T) {
 
 func TestSandboxKillArgvCannotBeInjected(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
+
+	t.Parallel()
 
 	hostileRunID := `run1; rm -rf / $(touch pwned) && echo`
-	argv := executeRecording(t, sandboxConfig(nil), sandboxTaskRun(hostileRunID), argvFile)
+	argv := executeRecording(t, dir, sandboxConfig(nil), sandboxTaskRun(hostileRunID), argvFile)
 
 	name, found := flagValue(argv, "--name")
 	if !found {
@@ -554,10 +554,10 @@ func TestSandboxNoRuntimeAtExecute(t *testing.T) {
 
 func TestSandboxExecuteSuccessShape(t *testing.T) {
 	dir, _ := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	t.Parallel()
+
+	sandbox, err := builtins.NewSandboxExecWithProbe(sandboxConfig(nil), stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -594,10 +594,10 @@ func TestSandboxExecuteSuccessShape(t *testing.T) {
 // a retry the fresh deadline could clear.
 func TestSandboxDeadlineAtStartIsTransientTimeout(t *testing.T) {
 	dir, _ := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	t.Parallel()
+
+	sandbox, err := builtins.NewSandboxExecWithProbe(sandboxConfig(nil), stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -623,10 +623,10 @@ while [ $i -lt 20000 ]; do
 done
 exit 0`
 	writeShim(t, dir, rtPodman, body)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	t.Parallel()
+
+	sandbox, err := builtins.NewSandboxExecWithProbe(sandboxConfig(nil), stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -657,10 +657,10 @@ func TestSandboxExecuteNonZeroExit(t *testing.T) {
 echo "boom-from-container" >&2
 exit 3`
 	writeShim(t, dir, rtPodman, body)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	t.Parallel()
+
+	sandbox, err := builtins.NewSandboxExecWithProbe(sandboxConfig(nil), stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}
@@ -686,10 +686,10 @@ func TestSandboxExecuteTimeoutKillsContainer(t *testing.T) {
 fi
 exec sleep 30`
 	writeShim(t, dir, rtPodman, body)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
 
-	sandbox, err := builtins.NewSandboxExec(sandboxConfig(nil))
+	t.Parallel()
+
+	sandbox, err := builtins.NewSandboxExecWithProbe(sandboxConfig(nil), stubProbe(dir))
 	if err != nil {
 		t.Fatalf("new sandbox: %v", err)
 	}

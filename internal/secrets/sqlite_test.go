@@ -122,6 +122,29 @@ func TestSQLiteNoPlaintextAtRest(t *testing.T) {
 	}
 }
 
+// TestSQLiteRefusesAFileThatIsNotADatabase covers a truncated or overwritten
+// store file. Opening has to fail loudly: a store that came up empty would
+// answer every read with ErrNotFound, which reads as a host with no secrets
+// configured rather than a host whose secrets are gone.
+func TestSQLiteRefusesAFileThatIsNotADatabase(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), sqliteDBFile)
+
+	// A valid header followed by nothing is what a half-written copy leaves,
+	// and it is the shape an empty-file check would wave through.
+	corrupt := append([]byte("SQLite format 3\x00"), make([]byte, 64)...)
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatalf("write the corrupt database: %v", err)
+	}
+
+	secretStore, err := secrets.OpenSQLite(path, sealerFromKeys(t, secretstest.KeySet{Primary: randomKey(t)}))
+	if err == nil {
+		t.Cleanup(func() { _ = secretStore.Close() })
+		t.Fatal("OpenSQLite accepted a file that is not a database")
+	}
+}
+
 // TestSQLiteRolledBackCiphertextFailsOpen is the security-council amendment 6
 // case at the store level: a DB-write attacker who advances a row's recency
 // stamp past the ciphertext it was sealed under cannot open it, because

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"os"
 	"path/filepath"
 
 	"github.com/chadit/CairnOS/internal/agentloop"
@@ -82,7 +81,7 @@ func (a *App) cmdMCPServe(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
 
@@ -131,7 +130,7 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), mem, rulesSvc, credManager, nil,
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), mem, rulesSvc, credManager, nil,
 		a.logger, nil)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
@@ -223,7 +222,7 @@ func (a *App) cmdMCPPublish(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	client, err := mcp.NewRegistryClient(cfg.MCP.RegistryURL, os.Getenv(mcpRegistryTokenEnv), nil)
+	client, err := mcp.NewRegistryClient(cfg.MCP.RegistryURL, a.envLookup().Get(mcpRegistryTokenEnv), nil)
 	if err != nil {
 		a.printErrf("mcp publish: %v\n", err)
 
@@ -287,7 +286,7 @@ func (a *App) cmdMCPImport(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	client, err := mcp.NewRegistryClient(cfg.MCP.RegistryURL, os.Getenv(mcpRegistryTokenEnv), nil)
+	client, err := mcp.NewRegistryClient(cfg.MCP.RegistryURL, a.envLookup().Get(mcpRegistryTokenEnv), nil)
 	if err != nil {
 		a.printErrf("mcp import: %v\n", err)
 

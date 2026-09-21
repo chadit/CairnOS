@@ -86,6 +86,7 @@ const (
 var (
 	errGetUpdates  = errors.New("fake get updates failed")
 	errSendMessage = errors.New("fake send message failed")
+	errDialRefused = errors.New("fake dial refused")
 )
 
 // confirmData rebuilds a proposal button's callback_data, the wire contract the

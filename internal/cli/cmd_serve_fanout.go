@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
+	"net/http"
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/store"
@@ -18,14 +19,23 @@ import (
 // [notify.mattermost] names an identity, and both when both (FR34). Neither
 // gives a nil fan-out, which disables every producer. A nil registry is the
 // standalone `schedule run` worker, which holds no identities to send through.
-func BuildFanout(cfg *config.Config, registry *messaging.Registry, logger *slog.Logger) *notify.Fanout {
+// webhookTransport carries the Discord sink, the one client this function
+// builds itself; nil means the default one. The Mattermost sink sends through
+// a client the registry already holds.
+func BuildFanout(
+	cfg *config.Config,
+	registry *messaging.Registry,
+	lookup environ.Lookup,
+	logger *slog.Logger,
+	webhookTransport http.RoundTripper,
+) *notify.Fanout {
 	sinks := make([]notify.Sink, 0, 2)
 
 	// The webhook URL is a credential, so it is read only from the environment
 	// and never from a config key.
-	if webhook := os.Getenv(NotifyDiscordWebhookEnv); webhook != "" {
+	if webhook := lookup.Get(NotifyDiscordWebhookEnv); webhook != "" {
 		sinks = append(sinks, notify.Sink{
-			Poster: notify.NewDiscordNotifier(webhook),
+			Poster: notify.NewDiscordNotifierOver(webhook, webhookTransport),
 			Events: cfg.Notify.Discord.Events,
 		})
 	}

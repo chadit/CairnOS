@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/chat"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/openaicompat"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/pkg/runner"
@@ -205,7 +205,7 @@ type fixtureOptions struct {
 // fixture is one adapter service over fakes plus the httptest server tests drive
 // it through.
 type fixture struct {
-	server    *httptest.Server
+	server    *nettest.Fake
 	agent     *fakeAgent
 	store     *fakeStore
 	authStore *auth.SQLite
@@ -252,7 +252,7 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 }
 
 // mountService mounts a service's Extension routes on a plain mux behind an
-// httptest server, the shape internal/mcp uses and the real serve mux follows.
+// in-process server, the shape internal/mcp uses and the real serve mux follows.
 // It returns a fixture carrying only the server, for tests that build the
 // service themselves.
 func mountService(t *testing.T, service *openaicompat.Service) *fixture {
@@ -263,23 +263,38 @@ func mountService(t *testing.T, service *openaicompat.Service) *fixture {
 		mux.HandleFunc(pattern, route)
 	}
 
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	server := nettest.New(mux)
 
 	return &fixture{server: server}
 }
 
+// mountStreamed serves the same routes on an in-memory listener. The
+// disconnect case reads a response while the handler is still writing it,
+// which a recorder cannot do.
+func mountStreamed(t *testing.T, service *openaicompat.Service) *nettest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	for pattern, route := range service.Extension().HTTPRoutes {
+		mux.HandleFunc(pattern, route)
+	}
+
+	return nettest.NewServer(t, mux)
+}
+
 // probe issues a GET and returns the status code, so a test proves an unmounted
 // path (the deliberately absent confirm route) answers 404.
-func probe(t *testing.T, url string) int {
+func probe(t *testing.T, server *nettest.Fake, path string) int {
 	t.Helper()
+
+	url := server.URL + path
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		t.Fatalf("build probe request: %v", err)
 	}
 
-	client := &http.Client{Timeout: testRequestTimeout}
+	client := server.Client()
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -293,15 +308,17 @@ func probe(t *testing.T, url string) int {
 
 // getBody issues a GET and returns the response body, so a test tells which
 // handler served a path apart.
-func getBody(t *testing.T, url string) string {
+func getBody(t *testing.T, server *nettest.Fake, path string) string {
 	t.Helper()
+
+	url := server.URL + path
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		t.Fatalf("build get request: %v", err)
 	}
 
-	client := &http.Client{Timeout: testRequestTimeout}
+	client := server.Client()
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -407,7 +424,7 @@ func (f *fixture) post(t *testing.T, token, body string) (int, []byte) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	client := &http.Client{Timeout: testRequestTimeout}
+	client := f.server.Client()
 
 	resp, err := client.Do(req)
 	if err != nil {

@@ -4,7 +4,16 @@ import (
 	"testing"
 
 	"go.uber.org/goleak"
+
+	"github.com/chadit/CairnOS/internal/environ"
 )
+
+// keyEnv answers one API-key variable and nothing else. Handing a runner its
+// credential this way is what lets these cases run in parallel: setting one in
+// the process would be visible to every other case at once.
+func keyEnv(name, value string) environ.Lookup {
+	return environ.Map(map[string]string{name: value})
+}
 
 // mcpServerRead is a real leak nobody is tracking: the MCP SDK parks a
 // server-side reader per client the mcp_client cases open and never stops it.

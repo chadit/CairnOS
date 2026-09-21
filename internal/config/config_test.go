@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 const fileTOML = `
@@ -38,6 +39,14 @@ model = "gpt-4o"
 [runner.openai.circuit_breaker]
 failure_threshold = 0.5
 `
+
+// envOn is the value an override carries to turn a flag on, and envURL the
+// endpoint the redirect cases point a bridge at. Both are named because the
+// package repeats them across enough tables for goconst to ask.
+const (
+	envOn  = "true"
+	envURL = "https://env.example.com"
+)
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -117,13 +126,17 @@ func TestLoadOverlaysFileOnDefaults(t *testing.T) {
 }
 
 func TestLoadEnvOverridesBeatFile(t *testing.T) {
-	t.Setenv("CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS", "16")
-	t.Setenv("CAIRNOS_ENGINE_MAX_CALL_DEPTH", "5")
-	t.Setenv("CAIRNOS_STORE_DSN", "file:/tmp/env.db")
-	t.Setenv("CAIRNOS_ENV_ALLOWLIST", "HOME, USER")
-	t.Setenv("CAIRNOS_RETENTION_SWEEP", "1d")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, fileTOML))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS": "16",
+		"CAIRNOS_ENGINE_MAX_CALL_DEPTH":         "5",
+		"CAIRNOS_STORE_DSN":                     "file:/tmp/env.db",
+		"CAIRNOS_ENV_ALLOWLIST":                 "HOME, USER",
+		"CAIRNOS_RETENTION_SWEEP":               "1d",
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, fileTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -224,8 +237,12 @@ func TestLoadTuningEmbeddingDefaultsOff(t *testing.T) {
 }
 
 func TestLoadTuningEmbeddingEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_TUNING_EMBEDDING_MODEL", "text-embedding-3-large")
-	t.Setenv("CAIRNOS_TUNING_EQUIVALENCE_THRESHOLD", "0.97")
+	t.Parallel()
+
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_TUNING_EMBEDDING_MODEL":       "text-embedding-3-large",
+		"CAIRNOS_TUNING_EQUIVALENCE_THRESHOLD": "0.97",
+	})
 
 	const tuningTOML = `
 [tuning]
@@ -233,7 +250,7 @@ embedding_model = "text-embedding-3-small"
 equivalence_threshold = 0.90
 `
 
-	cfg, err := config.Load(writeConfig(t, tuningTOML))
+	cfg, err := config.LoadWith(writeConfig(t, tuningTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -307,13 +324,17 @@ clock_skew = "45s"
 }
 
 func TestLoadAuthM1M4L2EnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_AUTH_ENABLED", "true")
-	t.Setenv("CAIRNOS_AUTH_MAX_CONCURRENT_LOGINS", "8")
-	t.Setenv("CAIRNOS_AUTH_LOGIN_RATE_PER_MINUTE", "120")
-	t.Setenv("CAIRNOS_AUTH_STREAM_RECHECK", "20s")
-	t.Setenv("CAIRNOS_AUTH_CLOCK_SKEW", "10s")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_AUTH_ENABLED":               envOn,
+		"CAIRNOS_AUTH_MAX_CONCURRENT_LOGINS": "8",
+		"CAIRNOS_AUTH_LOGIN_RATE_PER_MINUTE": "120",
+		"CAIRNOS_AUTH_STREAM_RECHECK":        "20s",
+		"CAIRNOS_AUTH_CLOCK_SKEW":            "10s",
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -476,9 +497,13 @@ categories = ["job-search"]
 }
 
 func TestLoadHiveKeyRefEnvOverride(t *testing.T) {
-	t.Setenv("CAIRNOS_HIVE_KEY_REF", "rotated_hive_key")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, "[hive]\nenabled = true\nkey_ref = \"hive_key\""))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_HIVE_KEY_REF": "rotated_hive_key",
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, "[hive]\nenabled = true\nkey_ref = \"hive_key\""), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -623,10 +648,14 @@ sweep_interval = "45s"
 }
 
 func TestLoadSchedulerEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_SCHEDULER_WORKER_CONCURRENCY", "12")
-	t.Setenv("CAIRNOS_SCHEDULER_ACK_WAIT", "90s")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_SCHEDULER_WORKER_CONCURRENCY": "12",
+		"CAIRNOS_SCHEDULER_ACK_WAIT":           "90s",
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -655,13 +684,17 @@ func TestLoadMCPDefaults(t *testing.T) {
 }
 
 func TestLoadMCPEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_MCP_ENABLED", "true")
-	t.Setenv("CAIRNOS_MCP_TRANSPORT", "stdio")
-	t.Setenv("CAIRNOS_MCP_PATH", "/env-mcp")
-	t.Setenv("CAIRNOS_MCP_REGISTRY_URL", "https://env-registry/v0")
-	t.Setenv("CAIRNOS_MCP_ADVERTISE_URL", "https://env-node/mcp")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_MCP_ENABLED":       envOn,
+		"CAIRNOS_MCP_TRANSPORT":     "stdio",
+		"CAIRNOS_MCP_PATH":          "/env-mcp",
+		"CAIRNOS_MCP_REGISTRY_URL":  "https://env-registry/v0",
+		"CAIRNOS_MCP_ADVERTISE_URL": "https://env-node/mcp",
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -701,9 +734,13 @@ func TestLoadChatOpenAICompat(t *testing.T) {
 }
 
 func TestLoadChatOpenAICompatEnvOverride(t *testing.T) {
-	t.Setenv("CAIRNOS_CHAT_OPENAI_COMPAT", "true")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_CHAT_OPENAI_COMPAT": envOn,
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -772,14 +809,18 @@ signature_skew  = "2m"
 // environment, so passing proves the environment beat a file that set the same
 // keys rather than agreeing with it.
 func TestLoadWebhookEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_WEBHOOK_ENABLED", "true")
-	t.Setenv("CAIRNOS_WEBHOOK_RATE_PER_MINUTE", "240")
-	t.Setenv("CAIRNOS_WEBHOOK_TEST_WAIT", "45s")
-	t.Setenv("CAIRNOS_WEBHOOK_SIGNATURE_SKEW", "90s")
+	t.Parallel()
+
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_WEBHOOK_ENABLED":         envOn,
+		"CAIRNOS_WEBHOOK_RATE_PER_MINUTE": "240",
+		"CAIRNOS_WEBHOOK_TEST_WAIT":       "45s",
+		"CAIRNOS_WEBHOOK_SIGNATURE_SKEW":  "90s",
+	})
 
 	fileWithWebhook := "[webhook]\nenabled = false\nrate_per_minute = 60\ntest_wait = \"30s\"\nsignature_skew = \"5m\""
 
-	cfg, err := config.Load(writeConfig(t, fileWithWebhook))
+	cfg, err := config.LoadWith(writeConfig(t, fileWithWebhook), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -867,12 +908,16 @@ auto_apply_enabled = true
 }
 
 func TestLoadHiveEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_HIVE_ENABLED", "true")
-	t.Setenv("CAIRNOS_HIVE_PUBLISH_ENABLED", "true")
-	t.Setenv("CAIRNOS_HIVE_CATEGORIES", "research, automation")
-	t.Setenv("CAIRNOS_AUTONOMIC_AUTO_APPLY_ENABLED", "true")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, ""))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_HIVE_ENABLED":                 envOn,
+		"CAIRNOS_HIVE_PUBLISH_ENABLED":         envOn,
+		"CAIRNOS_HIVE_CATEGORIES":              "research, automation",
+		"CAIRNOS_AUTONOMIC_AUTO_APPLY_ENABLED": envOn,
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, ""), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -887,12 +932,16 @@ func TestLoadHiveEnvOverrides(t *testing.T) {
 }
 
 func TestLoadAuthEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_AUTH_ENABLED", "true")
-	t.Setenv("CAIRNOS_AUTH_ISSUER", "env-node")
-	t.Setenv("CAIRNOS_AUTH_ACCESS_TOKEN_TTL", "2h")
-	t.Setenv("CAIRNOS_AUTH_TLS_TERMINATED", "true")
+	t.Parallel()
 
-	cfg, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_AUTH_ENABLED":          envOn,
+		"CAIRNOS_AUTH_ISSUER":           "env-node",
+		"CAIRNOS_AUTH_ACCESS_TOKEN_TTL": "2h",
+		"CAIRNOS_AUTH_TLS_TERMINATED":   envOn,
+	})
+
+	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -931,9 +980,13 @@ func TestLoadRejectsBadValues(t *testing.T) {
 }
 
 func TestLoadRejectsBadEnvValue(t *testing.T) {
-	t.Setenv("CAIRNOS_API_ENABLED", "definitely")
+	t.Parallel()
 
-	_, err := config.Load(filepath.Join(t.TempDir(), "absent.toml"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_API_ENABLED": "definitely",
+	})
+
+	_, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
 	if !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("error = %v, want ErrInvalidConfig", err)
 	}
@@ -981,8 +1034,12 @@ max_file_bytes = 4096
 }
 
 func TestLoadChatFileRefsEnvOverrides(t *testing.T) {
-	t.Setenv("CAIRNOS_CHAT_FILE_ALLOWLIST", "/srv/one, /srv/two")
-	t.Setenv("CAIRNOS_CHAT_MAX_FILE_BYTES", "128")
+	t.Parallel()
+
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_CHAT_FILE_ALLOWLIST": "/srv/one, /srv/two",
+		"CAIRNOS_CHAT_MAX_FILE_BYTES": "128",
+	})
 
 	chatTOML := `
 [chat]
@@ -991,7 +1048,7 @@ file_allowlist = ["/data/docs"]
 max_file_bytes = 4096
 `
 
-	cfg, err := config.Load(writeConfig(t, chatTOML))
+	cfg, err := config.LoadWith(writeConfig(t, chatTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -1034,9 +1091,13 @@ func TestLoadSecretsBackendFromFile(t *testing.T) {
 // TestLoadSecretsBackendEnvOverridesFile has the file ask for the env backend,
 // so passing means the environment won and the store backend took.
 func TestLoadSecretsBackendEnvOverridesFile(t *testing.T) {
-	t.Setenv("CAIRNOS_SECRETS_BACKEND", "store")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, "[secrets]\nbackend = \"env\"\n"))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_SECRETS_BACKEND": "store",
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, "[secrets]\nbackend = \"env\"\n"), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/messaging"
 )
 
@@ -44,6 +45,7 @@ type serveFailedState struct {
 type serveFailNotifier struct {
 	cfg    *config.Config
 	logger *slog.Logger
+	env    environ.Lookup
 	dir    string
 	host   string
 }
@@ -51,8 +53,10 @@ type serveFailNotifier struct {
 // newServeFailNotifier wires the notifier runServe hands its failures to,
 // before the first stage that can fail, so a startup that never reaches the
 // bridges still reports.
-func newServeFailNotifier(cfg *config.Config, dir string, logger *slog.Logger) *serveFailNotifier {
-	return &serveFailNotifier{cfg: cfg, dir: dir, logger: logger, host: hostname()}
+func newServeFailNotifier(
+	cfg *config.Config, dir string, lookup environ.Lookup, logger *slog.Logger,
+) *serveFailNotifier {
+	return &serveFailNotifier{cfg: cfg, dir: dir, env: lookup, logger: logger, host: hostname()}
 }
 
 // announce posts one serve_failed line unless an earlier notice already covered
@@ -68,7 +72,7 @@ func (n *serveFailNotifier) announce(ctx context.Context, stage string, cause er
 		return
 	}
 
-	fanout := BuildFanout(n.cfg, n.oneShotRegistry(), n.logger)
+	fanout := BuildFanout(n.cfg, n.oneShotRegistry(), n.env, n.logger, nil)
 	if !fanout.Selects(config.NotifyEventServeFailed) {
 		return
 	}
@@ -160,7 +164,7 @@ func (n *serveFailNotifier) oneShotSender(name string) (messaging.Sender, bool) 
 		return nil, false
 	}
 
-	token, _ := config.ResolveMattermostToken(&declared, name, os.Getenv)
+	token, _ := config.ResolveMattermostToken(&declared, name, n.env.Get)
 	if token == "" {
 		n.logger.Info("serve failure notice has no mattermost token", "identity", name,
 			"tried", config.MattermostTokenEnvs(&declared, name))

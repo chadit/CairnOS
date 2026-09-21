@@ -5,13 +5,20 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/secrets"
 )
 
-func TestEnvGetReadsPrefixedVariable(t *testing.T) {
-	t.Setenv(secrets.EnvPrefix+"DB_PASSWORD", "hunter2")
+// envWith builds the environment source over one prefixed variable, which is
+// all any of these cases needs and keeps them out of the process environment.
+func envWith(name, value string) *secrets.Env {
+	return secrets.NewEnvWith(environ.Map(map[string]string{secrets.EnvPrefix + name: value}))
+}
 
-	source := secrets.NewEnv()
+func TestEnvGetReadsPrefixedVariable(t *testing.T) {
+	t.Parallel()
+
+	source := envWith("DB_PASSWORD", "hunter2")
 
 	value, err := source.Get(t.Context(), "db_password")
 	if err != nil {
@@ -24,9 +31,9 @@ func TestEnvGetReadsPrefixedVariable(t *testing.T) {
 }
 
 func TestEnvGetNormalizesNameStyles(t *testing.T) {
-	t.Setenv(secrets.EnvPrefix+"API_KEY", "k")
+	t.Parallel()
 
-	source := secrets.NewEnv()
+	source := envWith("API_KEY", "k")
 
 	for _, name := range []string{"api_key", "api-key", "API.KEY"} {
 		value, err := source.Get(t.Context(), name)
@@ -39,7 +46,7 @@ func TestEnvGetNormalizesNameStyles(t *testing.T) {
 func TestEnvGetMissingReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	source := secrets.NewEnv()
+	source := secrets.NewEnvWith(environ.Map(nil))
 
 	_, err := source.Get(t.Context(), "ghost_secret_never_set")
 	if !errors.Is(err, secrets.ErrNotFound) {
@@ -53,7 +60,7 @@ func TestEnvGetHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	source := secrets.NewEnv()
+	source := secrets.NewEnvWith(environ.Map(nil))
 
 	if _, err := source.Get(ctx, "anything"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)

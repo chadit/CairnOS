@@ -160,7 +160,7 @@ func TestVaultPutAndQueryOverGateway(t *testing.T) {
 
 	fix := startServer(t)
 
-	resp := httpPost(t, fix.httpBase+"/v1/vault", `{"document":{"title":"gateway note","body":"http body","tags":["gw"]}}`)
+	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/vault", `{"document":{"title":"gateway note","body":"http body","tags":["gw"]}}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -179,7 +179,7 @@ func TestVaultPutAndQueryOverGateway(t *testing.T) {
 		t.Fatal("gateway PutDocument returned no id")
 	}
 
-	query := httpPost(t, fix.httpBase+"/v1/vault/query", `{"text":"http"}`)
+	query := httpPost(t, fix.transport, fix.httpBase+"/v1/vault/query", `{"text":"http"}`)
 	defer func() { _ = query.Body.Close() }()
 
 	if query.StatusCode != http.StatusOK {
@@ -206,14 +206,14 @@ func TestRulesGetOverGateway(t *testing.T) {
 
 	fix := startServer(t)
 
-	put := httpPost(t, fix.httpBase+"/v1/rules", `{"rule":{"language":"go","key":"indent","value":"tabs"}}`)
+	put := httpPost(t, fix.transport, fix.httpBase+"/v1/rules", `{"rule":{"language":"go","key":"indent","value":"tabs"}}`)
 	defer func() { _ = put.Body.Close() }()
 
 	if put.StatusCode != http.StatusOK {
 		t.Fatalf("POST /v1/rules status = %d, want 200", put.StatusCode)
 	}
 
-	code, body := httpGet(t, fix.httpBase+"/v1/rules/go")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/rules/go")
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/rules/go = %d (%s), want 200", code, body)
 	}

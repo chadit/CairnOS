@@ -84,7 +84,7 @@ type MCPClient struct {
 // the runner. A credential key has no lookup to resolve against and fails the
 // build.
 func NewMCPClient(cfg map[string]any) (*MCPClient, error) {
-	return buildMCPClient(MCPClientName, cfg, nil)
+	return buildMCPClient(MCPClientName, cfg, nil, nil)
 }
 
 // NewMCPClientWithCredentials builds the runner with an optional credential
@@ -92,13 +92,26 @@ func NewMCPClient(cfg map[string]any) (*MCPClient, error) {
 // construction fails, and the streamable HTTP transport carries a bearer token
 // minted per request.
 func NewMCPClientWithCredentials(cfg map[string]any, lookup TokenLookup) (*MCPClient, error) {
-	return buildMCPClient(MCPClientName, cfg, lookup)
+	return buildMCPClient(MCPClientName, cfg, lookup, nil)
+}
+
+// NewMCPClientOver is NewMCPClientWithCredentials over a caller-supplied round
+// tripper. A nil transport keeps the guarded default. The bearer wrapper still
+// goes on top, so a credential is minted the same way either side of the seam.
+func NewMCPClientOver(cfg map[string]any, lookup TokenLookup, transport http.RoundTripper) (*MCPClient, error) {
+	return buildMCPClient(MCPClientName, cfg, lookup, transport)
 }
 
 // buildMCPClient is the shared constructor. name is the registered identifier
 // the instance answers to; error codes and Meta always keep the mcp_client
-// prefix. lookup is nil on the no-credential path.
-func buildMCPClient(name string, cfg map[string]any, lookup TokenLookup) (*MCPClient, error) {
+// prefix. lookup is nil on the no-credential path, transport on the guarded
+// one.
+func buildMCPClient(
+	name string,
+	cfg map[string]any,
+	lookup TokenLookup,
+	transport http.RoundTripper,
+) (*MCPClient, error) {
 	serverURL, err := configValue(cfg, cfgKeyServerURL, "")
 	if err != nil {
 		return nil, wrapConfigErr(MCPClientName, err)
@@ -146,6 +159,10 @@ func buildMCPClient(name string, cfg map[string]any, lookup TokenLookup) (*MCPCl
 		// describeTimeout.
 		client.httpClient = safeHTTPClient(MCPClientName, 0, allowPrivate)
 
+		if transport != nil {
+			client.httpClient.Transport = transport
+		}
+
 		if credential != "" {
 			// The bearer round-tripper wraps the guarded transport, so every
 			// request the session makes carries the token while the client's
@@ -164,7 +181,7 @@ func buildMCPClient(name string, cfg map[string]any, lookup TokenLookup) (*MCPCl
 // MCPClientFactory adapts buildMCPClient to the registry contract with no
 // credential lookup. It is MCPClientFactoryWithCredentials with a nil lookup.
 func MCPClientFactory(cfg map[string]any) (runner.Runner, error) {
-	return buildMCPClient(MCPClientName, cfg, nil)
+	return buildMCPClient(MCPClientName, cfg, nil, nil)
 }
 
 // MCPClientFactoryWithCredentials returns a registry factory that wires lookup
@@ -172,7 +189,7 @@ func MCPClientFactory(cfg map[string]any) (runner.Runner, error) {
 // Authorization: Bearer over the streamable HTTP transport.
 func MCPClientFactoryWithCredentials(lookup TokenLookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return buildMCPClient(MCPClientName, cfg, lookup)
+		return buildMCPClient(MCPClientName, cfg, lookup, nil)
 	}
 }
 
@@ -189,7 +206,7 @@ func MCPClientFactoryFor(name string) runner.Factory {
 // lookup, so an imported mcp_client block can bind a credential too.
 func MCPClientFactoryForWithCredentials(name string, lookup TokenLookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return buildMCPClient(name, cfg, lookup)
+		return buildMCPClient(name, cfg, lookup, nil)
 	}
 }
 

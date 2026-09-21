@@ -95,6 +95,10 @@ var (
 	// tarball's install prefix, where the update has nothing to build with.
 	errNoGoToolchain = errors.New("no go toolchain on PATH or at " + goFallbackPath)
 
+	// errNoHomeDir reports an environment that names no home directory, which
+	// leaves the paths resolved under it with nothing to resolve against.
+	errNoHomeDir = errors.New("the environment names no home directory")
+
 	// errGitCountShape reports output from `git rev-list --left-right --count`
 	// that is not the two numbers the fast-forward decision reads.
 	errGitCountShape = errors.New("unexpected git commit-count output")

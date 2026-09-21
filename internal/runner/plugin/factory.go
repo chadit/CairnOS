@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -20,7 +21,7 @@ const cfgKeyEnvPassthrough = "env_passthrough"
 // match what the operator wrote, whatever the plugin calls itself. ctx
 // bounds construction (the registry builds runners synchronously at startup);
 // the spawned process itself lives until Close.
-func Factory(ctx context.Context, name string) runner.Factory {
+func Factory(ctx context.Context, name string, lookup environ.Lookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		command, err := commandFromConfig(cfg)
 		if err != nil {
@@ -32,7 +33,7 @@ func Factory(ctx context.Context, name string) runner.Factory {
 			return nil, fmt.Errorf("configure plugin runner %q: %w", name, err)
 		}
 
-		plug, err := New(ctx, Config{Command: command, Name: name, EnvPassthrough: passthrough})
+		plug, err := New(ctx, Config{Command: command, Name: name, EnvPassthrough: passthrough, Env: lookup})
 		if err != nil {
 			return nil, fmt.Errorf("start plugin runner %q: %w", name, err)
 		}

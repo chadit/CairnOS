@@ -74,7 +74,7 @@ func TestModelsListsBuiltinsAndConfigured(t *testing.T) {
 	personalities := chat.NewPersonalities(map[string]string{"support": "be helpful"}, "")
 	fix := mountModels(t, personalities)
 
-	body := getBody(t, fix.server.URL+modelsPath)
+	body := getBody(t, fix.server, modelsPath)
 
 	var list modelListBody
 	if err := json.Unmarshal([]byte(body), &list); err != nil {
@@ -110,7 +110,7 @@ func TestModelsOverrideNoDuplicate(t *testing.T) {
 	fix := mountModels(t, personalities)
 
 	want := []string{chat.PersonalityAssistant, chat.PersonalityOps}
-	if got := modelIDs(t, getBody(t, fix.server.URL+modelsPath)); !slices.Equal(got, want) {
+	if got := modelIDs(t, getBody(t, fix.server, modelsPath)); !slices.Equal(got, want) {
 		t.Errorf("model ids = %v, want %v", got, want)
 	}
 }
@@ -196,7 +196,7 @@ func (f *fixture) getModels(t *testing.T, token string) (int, []byte) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	client := &http.Client{Timeout: testRequestTimeout}
+	client := f.server.Client()
 
 	resp, err := client.Do(req)
 	if err != nil {

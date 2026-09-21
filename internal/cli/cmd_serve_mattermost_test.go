@@ -61,7 +61,7 @@ func TestServeSkipsMattermostWhenNoIdentity(t *testing.T) {
 
 	dir := bridgeServeDir(t, serveConfigTOML)
 
-	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 
@@ -82,12 +82,11 @@ func TestServeSkipsMattermostWhenNoIdentity(t *testing.T) {
 // token env is unset starts nothing, logs one line naming the env an operator
 // has to set, and leaves serve running (FR2).
 func TestServeSkipsMattermostIdentityWithoutToken(t *testing.T) {
-	// Force the token empty regardless of ambient env; t.Setenv forbids Parallel.
-	t.Setenv(mattermostTokenEnv, "")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, mattermostWithChatTOML)
 
-	stdout, stderr, exit, cancel := serveUntilReady(t, dir)
+	stdout, stderr, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 
@@ -108,11 +107,11 @@ func TestServeSkipsMattermostIdentityWithoutToken(t *testing.T) {
 // identity with chat off fails serve startup with config.ErrInvalidConfig,
 // because the bridge has no agent to drive (FR4).
 func TestServeFailsWhenMattermostWithoutChat(t *testing.T) {
-	t.Setenv(mattermostTokenEnv, "fake-not-a-real-token")
+	t.Parallel()
 
 	dir := bridgeServeDir(t, mattermostNoChatTOML)
 
-	code, _, stderr := runCLI(t, serveCmd, flagDirArg, dir)
+	code, _, stderr := runEnvCLI(t, tokenEnv(mattermostTokenEnv, fakeBridgeToken), serveCmd, flagDirArg, dir)
 
 	if code != cli.ExitFailure {
 		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
@@ -135,7 +134,7 @@ func TestServePrintsMessagingEndpoint(t *testing.T) {
 
 	dir := bridgeServeDir(t, serveConfigTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir)
+	stdout, _, exit, cancel := serveUntilReady(t, dir, nil)
 
 	cancel()
 

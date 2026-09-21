@@ -32,7 +32,7 @@ func ParseDuration(text string) (time.Duration, error) {
 
 	parsed, err := time.ParseDuration(trimmed)
 	if err != nil {
-		return 0, fmt.Errorf("bad duration %q: %w", text, err)
+		return 0, fmt.Errorf("%w %q: %w", ErrBadDuration, text, err)
 	}
 
 	return parsed, nil

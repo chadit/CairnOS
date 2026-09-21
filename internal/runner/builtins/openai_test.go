@@ -5,10 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -119,11 +120,11 @@ func assertLLMUsage(t *testing.T, usage runner.Usage) {
 }
 
 func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil &&
@@ -134,9 +135,8 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 
 		_, _ = io.WriteString(w, openaiSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -168,11 +168,11 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 }
 
 func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -181,9 +181,8 @@ func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
 
 		_, _ = io.WriteString(w, openaiJSONContentBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -219,14 +218,13 @@ func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
 }
 
 func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, openaiProseContentBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -246,11 +244,11 @@ func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
 }
 
 func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -259,9 +257,8 @@ func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
 
 		_, _ = io.WriteString(w, openaiSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -286,6 +283,8 @@ func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
 }
 
 func TestOpenAIClassifiesStatusCodes(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		retryAfter string
@@ -301,9 +300,9 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
 					w.Header().Set("Retry-After", tt.retryAfter)
 				}
@@ -311,9 +310,8 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, `{"error":{"message":"nope"}}`)
 			}))
-			defer server.Close()
 
-			llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+			llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 			if err != nil {
 				t.Fatalf("new openai: %v", err)
 			}
@@ -337,11 +335,11 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 }
 
 func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
-	t.Setenv(builtins.OpenAIKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -351,9 +349,8 @@ func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, openaiStreamBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
 	}
@@ -395,6 +392,8 @@ func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 }
 
 func TestOpenAIValidate(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		cfg      map[string]any
@@ -431,9 +430,9 @@ func TestOpenAIValidate(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(builtins.OpenAIKeyEnv, tt.key)
+			t.Parallel()
 
-			llm, err := builtins.NewOpenAI(tt.cfg, &http.Client{Timeout: time.Second})
+			llm, err := builtins.NewOpenAI(tt.cfg, &http.Client{Timeout: time.Second}, openAIKey(tt.key))
 			if err != nil {
 				t.Fatalf("new openai: %v", err)
 			}
@@ -450,4 +449,9 @@ func TestOpenAIValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// openAIKey answers the openai runner's key variable and nothing else.
+func openAIKey(value string) environ.Lookup {
+	return keyEnv(builtins.OpenAIKeyEnv, value)
 }

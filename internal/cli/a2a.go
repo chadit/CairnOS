@@ -5,13 +5,13 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/chadit/CairnOS/internal/a2a"
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/telemetry"
@@ -43,7 +43,7 @@ type a2aServeDeps struct {
 // bundle cannot be built or attached; a disabled A2A mounts nothing and returns
 // true. Kept out of runServe for the same reason attachMCPServe is.
 func (a *App) attachA2AServe(ctx context.Context, cfg *config.Config, tel *telemetry.Telemetry, apiCfg *api.Config, deps *a2aServeDeps) (int, bool) {
-	bundle, err := buildA2ABundle(cfg, api.NewWorkflowResolver(deps.workflowsDir, deps.logger), deps)
+	bundle, err := buildA2ABundle(cfg, api.NewWorkflowResolver(deps.workflowsDir, deps.logger), a.envLookup(), deps)
 	if err != nil {
 		return a.failServe(ctx, tel, "a2a", err), false
 	}
@@ -74,14 +74,16 @@ const a2aWellKnownPath = a2a.WellKnownPath
 // the advertised endpoint and channels, and wires the service over the shared
 // manager, resolver, store, and bridge core. A nil bundle with a nil error
 // means A2A is disabled.
-func buildA2ABundle(cfg *config.Config, resolver *api.WorkflowResolver, deps *a2aServeDeps) (*a2a.Bundle, error) {
+func buildA2ABundle(
+	cfg *config.Config, resolver *api.WorkflowResolver, lookup environ.Lookup, deps *a2aServeDeps,
+) (*a2a.Bundle, error) {
 	logger := deps.logger
 
 	if !cfg.A2A.Enabled {
 		return nil, nil //nolint:nilnil // a nil bundle is the documented "a2a disabled" state, not an error
 	}
 
-	signingKey, origin, err := a2a.ResolveSigningKey(cfg.A2A.CardSigningKeyFile, reusableAuthKey(cfg), logger)
+	signingKey, origin, err := a2a.ResolveSigningKey(cfg.A2A.CardSigningKeyFile, reusableAuthKey(cfg, lookup), logger)
 	if err != nil {
 		return nil, fmt.Errorf("resolve a2a card signing key: %w", err)
 	}
@@ -154,12 +156,12 @@ func a2aChannels(registry *messaging.Registry) []a2a.Channel {
 // anchor (.agents/spec/08-auth-and-access.md, Change 3). It returns nil when
 // auth is off, when auth runs HS256, or when the material fails to load, which
 // sends ResolveSigningKey to its file or ephemeral path instead.
-func reusableAuthKey(cfg *config.Config) ed25519.PrivateKey {
+func reusableAuthKey(cfg *config.Config, lookup environ.Lookup) ed25519.PrivateKey {
 	if !cfg.Auth.Enabled || cfg.Auth.SigningAlgorithm != auth.AlgEdDSA {
 		return nil
 	}
 
-	material, err := auth.LoadMaterial(cfg.Auth.SigningAlgorithm, os.Getenv)
+	material, err := auth.LoadMaterial(cfg.Auth.SigningAlgorithm, lookup.Get)
 	if err != nil {
 		return nil
 	}

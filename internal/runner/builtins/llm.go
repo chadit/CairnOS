@@ -11,10 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -89,6 +89,11 @@ const millionTokens = 1_000_000
 // optional default output format. Prices of zero mean unpriced, so CostUSD
 // reports zero rather than a guess.
 type llmConfig struct {
+	// env answers the API-key variables. It is a field rather than a direct
+	// os.Getenv so a test can hand one runner a key without setting it for
+	// every other runner in the process.
+	env environ.Lookup
+
 	model        string
 	baseURL      string
 	outputFormat string
@@ -101,7 +106,10 @@ type llmConfig struct {
 
 // decodeLLMConfig reads the shared LLM config keys with per-provider
 // defaults. A zero defaultMaxTokens means the field is omitted when unset.
-func decodeLLMConfig(cfg map[string]any, name, defaultBaseURL string, defaultMaxTokens int64) (llmConfig, error) {
+// The lookup rides along because the key never lives in the config block.
+func decodeLLMConfig(
+	cfg map[string]any, name, defaultBaseURL string, defaultMaxTokens int64, lookup environ.Lookup,
+) (llmConfig, error) {
 	var decoded llmConfig
 
 	model, err := configValue(cfg, keyModel, "")
@@ -148,6 +156,7 @@ func decodeLLMConfig(cfg map[string]any, name, defaultBaseURL string, defaultMax
 	}
 
 	return llmConfig{
+		env:          lookup,
 		model:        model,
 		baseURL:      strings.TrimSuffix(baseURL, "/"),
 		maxTokens:    maxTokens,
@@ -252,7 +261,7 @@ func (c *llmConfig) requireAPIKey(name string, keyEnvs []string) error {
 		return nil
 	}
 
-	if apiKey(keyEnvs) != "" {
+	if apiKey(c.env, keyEnvs) != "" {
 		return nil
 	}
 
@@ -270,12 +279,12 @@ func missingKeyMessage(keyEnvs []string) string {
 	return "set one of the " + strings.Join(keyEnvs, " or ") + " environment variables"
 }
 
-// apiKey returns the first key the environment carries, so a block named after
+// apiKey returns the first key the lookup carries, so a block named after
 // itself wins over the variable named after its type. It reads at call time,
 // which is what lets a rotation land without a restart.
-func apiKey(keyEnvs []string) string {
-	for _, env := range keyEnvs {
-		if value := os.Getenv(env); value != "" {
+func apiKey(lookup environ.Lookup, keyEnvs []string) string {
+	for _, key := range keyEnvs {
+		if value := lookup.Get(key); value != "" {
 			return value
 		}
 	}

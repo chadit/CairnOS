@@ -13,6 +13,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/workflow"
 )
 
@@ -518,8 +519,10 @@ type Tuning struct {
 // work item; a worker claims and runs it. A fire no worker can take right away
 // is not dropped, it waits in the queue for the next free worker.
 type Scheduler struct {
-	// AckWait is the lease an item holds while a worker runs it. A worker that
-	// crashes mid-run leaves the lease to expire, and the sweep reclaims it.
+	// AckWait is the lease an item holds while a worker runs it. The worker
+	// renews the lease while the run is still going, so this bounds how long a
+	// dead worker's item stays stuck, not how long a run may take. A schedule
+	// with an overlap guard is held back for at most this long after a crash.
 	AckWait time.Duration
 
 	// Backoff is how long a failed item waits before it can be redelivered.
@@ -940,10 +943,18 @@ const (
 	defaultClockSkew           = 30 * time.Second
 )
 
-// Load resolves the configuration: defaults, the TOML file when present, then
-// CAIRNOS_* environment overrides. A missing file is not an error (defaults
-// serve); an unreadable or invalid file is.
+// Load resolves the configuration under this process's own environment. A
+// missing file is not an error (defaults serve); an unreadable or invalid file
+// is.
 func Load(path string) (Config, error) {
+	return LoadWith(path, environ.OS())
+}
+
+// LoadWith is Load over a supplied environment: defaults, the TOML file when
+// present, then the CAIRNOS_* overrides lookup answers. Taking the lookup lets
+// a caller state the overrides a case is about without exporting them into the
+// process every other case then reads.
+func LoadWith(path string, lookup environ.Lookup) (Config, error) {
 	cfg := Default()
 
 	data, err := os.ReadFile(path) // #nosec G304 -- the config path is the operator's own choice
@@ -957,7 +968,7 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	if envErr := applyEnv(&cfg, os.Getenv); envErr != nil {
+	if envErr := applyEnv(&cfg, lookup.Get); envErr != nil {
 		return cfg, envErr
 	}
 
@@ -977,7 +988,7 @@ func Load(path string) (Config, error) {
 		return cfg, validErr
 	}
 
-	if validErr := validateSources(cfg.Sources, filepath.Dir(path)); validErr != nil {
+	if validErr := validateSources(cfg.Sources, filepath.Dir(path), lookup); validErr != nil {
 		return cfg, validErr
 	}
 

@@ -30,6 +30,11 @@ var (
 	// JSON-shaped in practice, so this stays defensive.
 	errUnmappableValue = errors.New("value has no starlark equivalent")
 
+	// errStdoutPipe reports that a command's stdout pipe could not be opened.
+	// The three process runners classify a start failure and a pipe failure
+	// differently, so startPiped marks the pipe case for them.
+	errStdoutPipe = errors.New("open stdout pipe")
+
 	// errBadOutput reports a Starlark output value the code runner refuses to
 	// hand downstream: a non-data type, an int outside int64, or a dict with a
 	// non-string key. The runner wraps it as code.bad_output. Failing here

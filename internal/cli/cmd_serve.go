@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/hive"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/messaging"
@@ -56,7 +56,7 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("serve: %v\n", err)
 
@@ -156,9 +156,9 @@ type serveStores struct {
 func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stores *serveStores) int {
 	db, mem, scheds := stores.db, stores.mem, stores.scheds
 
-	a.serveFail = newServeFailNotifier(cfg, dir, a.logger)
+	a.serveFail = newServeFailNotifier(cfg, dir, a.envLookup(), a.logger)
 
-	authn, err := buildAuthenticator(cfg, stores.keyStore)
+	authn, err := buildAuthenticator(cfg, stores.keyStore, a.envLookup())
 	if err != nil {
 		a.printErrf("serve: auth: %v\n", err)
 
@@ -203,7 +203,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	msgRegistry := messaging.NewRegistry()
 
-	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, mem, stores.rules, credManager,
+	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, a.envLookup(), mem, stores.rules, credManager,
 		&messageSenderAdapter{registry: msgRegistry, logger: logger}, logger)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
@@ -215,7 +215,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	workflowsDir := filepath.Join(dir, workflowsDirName)
 
-	fanout := BuildFanout(cfg, msgRegistry, logger)
+	fanout := BuildFanout(cfg, msgRegistry, a.envLookup(), logger, nil)
 	sourceNotifier.SetFanout(fanout)
 
 	eng, err := buildServeEngine(ctx, cfg, &serveEngineDeps{
@@ -682,12 +682,12 @@ func startSweep(ctx context.Context, cfg *config.Config, db store.Store, keyStor
 // the signing material in the environment. A nil store (auth disabled)
 // yields a nil authenticator, which keeps the API serving without token
 // checks.
-func buildAuthenticator(cfg *config.Config, keyStore authStore) (*auth.Authenticator, error) {
+func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.Lookup) (*auth.Authenticator, error) {
 	if keyStore == nil {
 		return nil, nil //nolint:nilnil // nil authenticator is the documented "auth disabled" state, not an error
 	}
 
-	material, err := auth.LoadMaterial(cfg.Auth.SigningAlgorithm, os.Getenv)
+	material, err := auth.LoadMaterial(cfg.Auth.SigningAlgorithm, lookup.Get)
 	if err != nil {
 		return nil, fmt.Errorf("load signing material: %w", err)
 	}

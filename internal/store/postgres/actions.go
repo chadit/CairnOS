@@ -55,7 +55,7 @@ func (s *Store) UpsertActionResult(ctx context.Context, result *store.ActionResu
 		result.RunID, result.ActionName, result.Runner, string(result.Status), result.Attempt,
 		output, usage, meta, actionErr, nullableTime(result.StartedAt), nullableTime(result.FinishedAt))
 	if err != nil {
-		return fmt.Errorf("upsert action %s/%s: %w", result.RunID, result.ActionName, err)
+		return missingRunErr(result.RunID, result.ActionName, err)
 	}
 
 	return nil

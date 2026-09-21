@@ -13,6 +13,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/bwinstall"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // bwToolsDir is the directory under the CairnOS home that holds the pinned
@@ -118,7 +119,12 @@ func (a *App) readThrough(
 	a.logger.Info("using the Bitwarden CLI",
 		"path", choice.path, "version", choice.version, "reason", choice.reason)
 
-	client := &bitwarden.Client{Binary: choice.path, Logger: a.logger}
+	client := &bitwarden.Client{
+		Binary: choice.path,
+		Logger: a.logger,
+		Env:    a.envLookup(),
+		Clock:  a.bwClock,
+	}
 
 	item, err := client.Read(ctx, creds, itemName)
 	if err != nil {
@@ -134,7 +140,7 @@ func (a *App) readThrough(
 // Anything else falls back to the copy CairnOS installs and verifies itself.
 func (a *App) resolveBitwarden(ctx context.Context, home string) (bwChoice, error) {
 	if _, err := a.bwPin(runtime.GOOS); err != nil {
-		return unpinnedBitwarden(ctx, err)
+		return unpinnedBitwarden(ctx, a.envLookup(), err)
 	}
 
 	choice, usable := a.hostBitwarden(ctx)
@@ -150,7 +156,7 @@ func (a *App) resolveBitwarden(ctx context.Context, home string) (bwChoice, erro
 // copy is logged under: no binary, a version that does not parse, and a version
 // behind the pin.
 func (a *App) hostBitwarden(ctx context.Context) (bwChoice, bool) {
-	binary, err := lookBitwardenBinary()
+	binary, err := lookBitwardenBinary(a.envLookup())
 	if err != nil {
 		return bwChoice{reason: bwReasonNoHost}, false
 	}
@@ -221,12 +227,12 @@ func matchesPin(dest, want string) bool {
 // unpinnedBitwarden accepts the operator's own bw on a platform this build pins
 // nothing for. There is no digest and no version to compare against there, and
 // refusing a working command over it would leave nothing to get past.
-func unpinnedBitwarden(ctx context.Context, cause error) (bwChoice, error) {
+func unpinnedBitwarden(ctx context.Context, lookup environ.Lookup, cause error) (bwChoice, error) {
 	if !errors.Is(cause, errNoPinnedBitwarden) {
 		return bwChoice{}, cause
 	}
 
-	binary, err := lookBitwardenBinary()
+	binary, err := lookBitwardenBinary(lookup)
 	if err != nil {
 		return bwChoice{}, err
 	}

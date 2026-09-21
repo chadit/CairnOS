@@ -35,6 +35,10 @@ const (
 	// codeNoPendingApproval reports an approval decision with no gate left
 	// to decide.
 	codeNoPendingApproval = "api.no_pending_approval"
+	// codeApprovalNotFound reports a decision aimed at a gate the run does
+	// not hold pending: an action_name that names no approval gate, or one a
+	// concurrent decision already settled.
+	codeApprovalNotFound = "api.approval_not_found"
 	// codeApprovalAmbiguous reports an omitted action_name when several
 	// gates are pending; the message lists them so the caller reruns with
 	// one.
@@ -142,7 +146,7 @@ func exactGRPCCode(code string) (codes.Code, bool) {
 func apiGRPCCode(code string) codes.Code {
 	switch code {
 	case codeWorkflowNotFound, codeRunNotFound, codeMemoryNotFound, codeBreakerNotFound,
-		codeSuggestionNotFound, codeIdentityNotFound:
+		codeSuggestionNotFound, codeIdentityNotFound, codeApprovalNotFound:
 		return codes.NotFound
 	case codeRunFinished, codeRunNotManaged, codeChatDisabled:
 		return codes.FailedPrecondition

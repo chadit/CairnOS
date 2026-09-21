@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -32,7 +32,7 @@ func httpTask(params map[string]any) *runner.Task {
 func TestHTTPGetParsesJSONBodyReachableByField(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
@@ -40,7 +40,6 @@ func TestHTTPGetParsesJSONBodyReachableByField(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"count": 3, "ok": true}`)
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
 	if err != nil {
@@ -80,7 +79,7 @@ func TestHTTPGetParsesJSONBodyReachableByField(t *testing.T) {
 func TestHTTPAppliesQueryAndHeaders(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("q") != "cairn" || r.Header.Get("X-Token") != "secret" {
 			t.Errorf("query/header not applied: query=%q header=%q", r.URL.RawQuery, r.Header.Get("X-Token"))
 		}
@@ -88,7 +87,6 @@ func TestHTTPAppliesQueryAndHeaders(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok": true}`)
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
 	if err != nil {
@@ -125,7 +123,7 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
 					w.Header().Set("Retry-After", tt.retryAfter)
 				}
@@ -133,7 +131,6 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, "nope")
 			}))
-			defer server.Close()
 
 			fetch, err := builtins.NewHTTP(nil, server.Client())
 			if err != nil {
@@ -157,11 +154,10 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 func TestHTTPNonJSONResponseReturnsStringBody(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "plain text reply")
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
 	if err != nil {
@@ -182,11 +178,10 @@ func TestHTTPNonJSONResponseReturnsStringBody(t *testing.T) {
 func TestHTTPJSONParamRejectsNonJSON(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "definitely not json")
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
 	if err != nil {
@@ -210,7 +205,7 @@ func TestHTTPPostEncodesObjectBody(t *testing.T) {
 
 	received := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if r.Method == http.MethodPost &&
@@ -222,7 +217,6 @@ func TestHTTPPostEncodesObjectBody(t *testing.T) {
 
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
 	if err != nil {
@@ -251,7 +245,7 @@ func TestHTTPPostEncodesObjectBody(t *testing.T) {
 func TestHTTPPathJoinsBaseURL(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/items" {
 			t.Errorf("path = %q, want /v1/items", r.URL.Path)
 		}
@@ -259,7 +253,6 @@ func TestHTTPPathJoinsBaseURL(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok": true}`)
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTP(map[string]any{baseURLKey: server.URL}, server.Client())
 	if err != nil {
@@ -324,7 +317,7 @@ func TestHTTPValidate(t *testing.T) {
 func TestHTTPCredentialSendsBearer(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(authHeader); got != bearerPrefix+credToken {
 			t.Errorf("Authorization = %q, want %q", got, bearerPrefix+credToken)
 		}
@@ -332,7 +325,6 @@ func TestHTTPCredentialSendsBearer(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok": true}`)
 	}))
-	defer server.Close()
 
 	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
 
@@ -379,7 +371,7 @@ func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if got := r.Header.Get(authHeader); got != explicit {
 					t.Errorf("Authorization = %q, want the explicit header %q", got, explicit)
 				}
@@ -387,7 +379,6 @@ func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"ok": true}`)
 			}))
-			defer server.Close()
 
 			lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
 
@@ -417,11 +408,10 @@ func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
 func TestHTTPCredentialTokenNeverInError(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, "denied for "+r.Header.Get(authHeader))
 	}))
-	defer server.Close()
 
 	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
 
@@ -453,10 +443,9 @@ func TestHTTPCredentialTokenNeverInError(t *testing.T) {
 func TestHTTPCredentialMintFailureIsTransient(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
 
 	lookup := &fakeTokenLookup{
 		tokens: map[string]string{credName: credToken},
@@ -485,7 +474,7 @@ func TestHTTPCredentialMintFailureIsTransient(t *testing.T) {
 func TestHTTPNilLookupSendsNoBearer(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(authHeader); got != "" {
 			t.Errorf("Authorization = %q, want none without a credential", got)
 		}
@@ -493,7 +482,6 @@ func TestHTTPNilLookupSendsNoBearer(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok": true}`)
 	}))
-	defer server.Close()
 
 	fetch, err := builtins.NewHTTPWithCredentials(nil, server.Client(), nil)
 	if err != nil {

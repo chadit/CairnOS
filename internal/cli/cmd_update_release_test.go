@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 const (
@@ -60,7 +60,7 @@ func TestUpdateInstallsARelease(t *testing.T) {
 	requireGoBuild(t)
 
 	asset, revision := buildStampedBinary(t)
-	server := startReleaseServer(t, defaultStagedRelease(asset, revision))
+	api := startReleaseServer(t, defaultStagedRelease(asset, revision))
 
 	target := filepath.Join(t.TempDir(), updateLinkName)
 	writeFile(t, target, updateOldContent)
@@ -70,7 +70,7 @@ func TestUpdateInstallsARelease(t *testing.T) {
 	steps := recordingSteps(t, &order, target)
 
 	code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
-		cli.UpdateRun{APIBase: server.URL, Executable: target, Home: t.TempDir()}, steps)
+		&cli.UpdateRun{APIBase: api.base, Transport: api.transport, Executable: target, Home: t.TempDir()}, steps)
 	if err != nil {
 		t.Fatalf("DriveUpdate() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestUpdateRefusesAMismatchedAsset(t *testing.T) {
 	release := defaultStagedRelease(asset, revision)
 	release.sums = fmt.Sprintf("%s  %s\n", strings.Repeat("0", 64), release.assetName)
 
-	server := startReleaseServer(t, release)
+	api := startReleaseServer(t, release)
 
 	target := filepath.Join(t.TempDir(), updateLinkName)
 	writeFile(t, target, updateOldContent)
@@ -114,7 +114,7 @@ func TestUpdateRefusesAMismatchedAsset(t *testing.T) {
 	var order []string
 
 	code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
-		cli.UpdateRun{APIBase: server.URL, Executable: target, Home: t.TempDir()},
+		&cli.UpdateRun{APIBase: api.base, Transport: api.transport, Executable: target, Home: t.TempDir()},
 		recordingSteps(t, &order, target))
 	if err == nil {
 		t.Fatalf("DriveUpdate() accepted an asset with the wrong digest, exit = %d", code)
@@ -144,7 +144,7 @@ func TestUpdateRefusesAReleaseWithoutChecksums(t *testing.T) {
 	release := defaultStagedRelease([]byte("an asset nothing vouches for\n"), strings.Repeat("f", 40))
 	release.noChecksums = true
 
-	server := startReleaseServer(t, release)
+	api := startReleaseServer(t, release)
 	work, _ := stageClonePair(t)
 
 	target := filepath.Join(work, "bin", updateLinkName)
@@ -153,7 +153,7 @@ func TestUpdateRefusesAReleaseWithoutChecksums(t *testing.T) {
 	var order []string
 
 	code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
-		cli.UpdateRun{APIBase: server.URL, Executable: target, Home: t.TempDir()},
+		&cli.UpdateRun{APIBase: api.base, Transport: api.transport, Executable: target, Home: t.TempDir()},
 		recordingSteps(t, &order, ""))
 	if err == nil {
 		t.Fatalf("DriveUpdate() accepted a release with no checksums, exit = %d", code)
@@ -203,14 +203,15 @@ func TestUpdateFallsBackToTheCheckout(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := startReleaseServer(t, withDefaultSums(&testCase.release))
+			api := startReleaseServer(t, withDefaultSums(&testCase.release))
 			work, _ := stageClonePair(t)
 
 			var order []string
 
 			code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
-				cli.UpdateRun{
-					APIBase:    server.URL,
+				&cli.UpdateRun{
+					APIBase:    api.base,
+					Transport:  api.transport,
 					Executable: filepath.Join(work, "bin", updateLinkName),
 					Home:       t.TempDir(),
 				},
@@ -253,11 +254,12 @@ func TestUpdateSkipsTheLookup(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			server, calls := startCountingReleaseServer(t, defaultStagedRelease(asset, revision))
+			api := startCountingReleaseServer(t, defaultStagedRelease(asset, revision))
 			work, _ := stageClonePair(t)
 
 			run := cli.UpdateRun{
-				APIBase:    server.URL,
+				APIBase:    api.base,
+				Transport:  api.transport,
 				Executable: filepath.Join(work, "bin", updateLinkName),
 				Home:       t.TempDir(),
 			}
@@ -266,11 +268,11 @@ func TestUpdateSkipsTheLookup(t *testing.T) {
 			var order []string
 
 			if _, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-				DriveUpdate(t.Context(), run, recordingSteps(t, &order, "")); err != nil {
+				DriveUpdate(t.Context(), &run, recordingSteps(t, &order, "")); err != nil {
 				t.Fatalf("DriveUpdate() error = %v", err)
 			}
 
-			if got := calls.Load(); got != 0 {
+			if got := api.calls.Load(); got != 0 {
 				t.Errorf("the release API was called %d time(s)", got)
 			}
 
@@ -297,13 +299,14 @@ func TestUpdateCheckAgainstARelease(t *testing.T) {
 		annotated: true,
 	})
 
-	server := startReleaseServer(t, release)
+	api := startReleaseServer(t, release)
 
 	var stdout, stderr bytes.Buffer
 
 	code, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(),
-		cli.UpdateRun{
-			APIBase:    server.URL,
+		&cli.UpdateRun{
+			APIBase:    api.base,
+			Transport:  api.transport,
 			Executable: filepath.Join(t.TempDir(), updateLinkName),
 			Home:       t.TempDir(),
 			Check:      true,
@@ -398,32 +401,41 @@ func withDefaultSums(release *stagedRelease) *stagedRelease {
 	return release
 }
 
-// startReleaseServer stands up the fake release API and asset host.
-func startReleaseServer(t *testing.T, release *stagedRelease) *httptest.Server {
+// releaseHost is the host the fake API answers for. Nothing resolves it and no
+// socket is opened: the shared fixture transport hands every request straight
+// to the handler.
+const releaseHost = nettest.BaseURL
+
+// releaseAPI is the fake release API a case drives: the base to aim the lookup
+// at, the transport that answers it, and how many requests reached it.
+type releaseAPI struct {
+	transport http.RoundTripper
+	calls     *atomic.Int32
+	base      string
+}
+
+// startReleaseServer builds the fake release API and asset host.
+func startReleaseServer(t *testing.T, release *stagedRelease) releaseAPI {
 	t.Helper()
 
-	server, _ := startCountingReleaseServer(t, release)
-
-	return server
+	return startCountingReleaseServer(t, release)
 }
 
 // startCountingReleaseServer also reports how many requests reached it, which
 // is how a case proves the lookup was skipped rather than merely unhelpful.
-func startCountingReleaseServer(t *testing.T, release *stagedRelease) (*httptest.Server, *atomic.Int32) {
+func startCountingReleaseServer(t *testing.T, release *stagedRelease) releaseAPI {
 	t.Helper()
 
 	release = withDefaultSums(release)
 
 	var calls atomic.Int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls.Add(1)
 		serveRelease(writer, request, release)
-	}))
+	})
 
-	t.Cleanup(server.Close)
-
-	return server, &calls
+	return releaseAPI{base: releaseHost, transport: nettest.Transport(handler), calls: &calls}
 }
 
 // serveRelease answers the three endpoints the lookup reads plus the download
@@ -608,8 +620,10 @@ func buildStampedBinary(t *testing.T) ([]byte, string) {
 	build.Dir = module
 	build.Env = buildEnv
 
+	// A skip here would take the only two cases that install a real asset and
+	// check a digest refusal with it, and leave a green run saying so.
 	if output, err := build.CombinedOutput(); err != nil {
-		t.Skipf("go build is unavailable here: %v\n%s", err, output)
+		t.Fatalf("build the staged release asset: %v\n%s", err, output)
 	}
 
 	asset, err := os.ReadFile(out) // #nosec G304 -- a path this test built

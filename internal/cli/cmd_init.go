@@ -129,7 +129,7 @@ func (a *App) cmdInit(args []string) int {
 		return code
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("init: %v\n", err)
 

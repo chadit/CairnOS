@@ -26,7 +26,9 @@ const blockedTargetSuffix = ".blocked_target"
 
 // loopbackServer starts an httptest server (bound to 127.0.0.1) that answers
 // every request with a 200, so a fetch that reaches it is observable as a
-// success and a fetch that the guard refuses never lands.
+// success and a fetch that the guard refuses never lands. Real sockets on
+// purpose: the guard under test refuses at dial, and there is no dial to
+// refuse when the fixture answers in memory.
 func loopbackServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -37,6 +39,17 @@ func loopbackServer(t *testing.T) *httptest.Server {
 	t.Cleanup(server.Close)
 
 	return server
+}
+
+// loopbackMCPServer puts the echo MCP server on a real loopback listener, for
+// the same reason loopbackServer opens one.
+func loopbackMCPServer(t *testing.T) string {
+	t.Helper()
+
+	server := httptest.NewServer(newMCPHandler())
+	t.Cleanup(server.Close)
+
+	return server.URL
 }
 
 // assertBlocked fails unless err is the permanent blocked_target a runner
@@ -204,7 +217,7 @@ func TestMCPClientRefusesLoopbackByDefault(t *testing.T) {
 	t.Parallel()
 
 	guarded, err := builtins.MCPClientFactory(map[string]any{
-		serverURLKey: newMCPServerURL(t),
+		serverURLKey: loopbackMCPServer(t),
 		toolKey:      echoTool,
 	})
 	if err != nil {
@@ -222,7 +235,7 @@ func TestMCPClientAllowsLoopbackWhenOptedIn(t *testing.T) {
 	t.Parallel()
 
 	guarded, err := builtins.MCPClientFactory(map[string]any{
-		serverURLKey:    newMCPServerURL(t),
+		serverURLKey:    loopbackMCPServer(t),
 		toolKey:         echoTool,
 		allowPrivateKey: true,
 	})

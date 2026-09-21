@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/bwinstall"
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 	"github.com/chadit/CairnOS/internal/workflow"
@@ -86,28 +89,75 @@ func runPinnedCLI(t *testing.T, binarySum string, args ...string) (int, string, 
 	return code, stdout.String(), stderr.String()
 }
 
-// pinnedApp builds the App every run helper drives, with the Bitwarden release
-// pinned to one digest. It exists because a command that resolves bw hashes it
-// and refuses anything but the pin, so a helper that builds an App without
-// passing through here would put its own cases in front of that refusal.
-//
-// The asset URL is one nothing serves: a case reaches the installer only when
-// it is about the refusal, and downloading the real CLI from a unit test is
-// never what that case meant.
+// pinnedApp builds the App every run helper drives. A command that resolves bw
+// refuses anything but the pinned digest, so a helper building an App without
+// passing through here would skip that refusal. The asset URL is one nothing
+// serves, and the stepping clock spends the readiness budget in polls, not on a
+// wall clock a busy host runs past.
 func pinnedApp(t *testing.T, stdout, stderr *bytes.Buffer, binarySum string) *cli.App {
 	t.Helper()
 
-	return cli.New(stdout, stderr).WithBitwardenPin(unreachableAsset, binarySum)
+	return cli.New(stdout, stderr).
+		WithBitwardenPin(unreachableAsset, binarySum).
+		WithBitwardenClock(bitwarden.NewSteppingClock(bwReadyPolls))
 }
 
-// runUnpinnedCLI drives one invocation on a platform this build pins no release
-// for, which runtime.GOOS makes unreachable any other way.
-func runUnpinnedCLI(t *testing.T, args ...string) (int, string, string) {
+// runEnvCLI drives one invocation over a staged environment instead of the
+// process one, so a case that needs PATH or a token set can still run beside
+// every other case rather than serializing the whole package.
+func runEnvCLI(t *testing.T, env map[string]string, args ...string) (int, string, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).WithoutBitwardenPin().Run(t.Context(), args)
+	code := pinnedApp(t, &stdout, &stderr, testBinaryDigest(t)).
+		WithEnv(environ.Map(env)).
+		Run(t.Context(), args)
+
+	return code, stdout.String(), stderr.String()
+}
+
+// pathEnv is the staged environment for a case that puts one directory in front
+// of the command's PATH search. Nothing else is inherited, so a bw on the
+// developer's own machine can never answer for the fake.
+func pathEnv(dir string) map[string]string {
+	return map[string]string{"PATH": dir}
+}
+
+// fakeBridgeToken stands in for a bridge credential. It is not a real token and
+// never leaves the process; the bridges only check that the variable is set.
+const fakeBridgeToken = "fake-not-a-real-token" // #nosec G101 -- fixture, not a credential
+
+// tokenEnv is the staged environment for a case that needs one variable set.
+func tokenEnv(name, value string) map[string]string {
+	return map[string]string{name: value}
+}
+
+// withSourcePath adds the host's PATH to a staged environment. A config that
+// carries a [source.<name>] block is refused unless the version-control binary
+// sits on the PATH the loader is handed, so a case about such a config has to
+// pass a real one. Reading the process PATH changes nothing, so the case still
+// runs beside every other one.
+func withSourcePath(env map[string]string) map[string]string {
+	staged := maps.Clone(env)
+	staged["PATH"] = os.Getenv("PATH")
+
+	return staged
+}
+
+// runUnpinnedEnvCLI drives one invocation on a platform this build pins no
+// release for, which runtime.GOOS makes unreachable any other way, over a
+// staged environment so the case still runs beside every other one.
+func runUnpinnedEnvCLI(t *testing.T, env map[string]string, args ...string) (int, string, string) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	code := cli.New(&stdout, &stderr).
+		WithoutBitwardenPin().
+		WithBitwardenClock(bitwarden.NewSteppingClock(bwReadyPolls)).
+		WithEnv(environ.Map(env)).
+		Run(t.Context(), args)
 
 	return code, stdout.String(), stderr.String()
 }

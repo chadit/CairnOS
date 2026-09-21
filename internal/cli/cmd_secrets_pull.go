@@ -5,13 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/service"
 )
 
@@ -47,7 +47,7 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return code
 	}
 
-	dir, err := resolveSecretsDir(*dirFlag, *system)
+	dir, err := resolveSecretsDir(*dirFlag, *system, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -56,7 +56,7 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 
 	configPath := filepath.Join(dir, configFileName)
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadWith(configPath, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
@@ -77,18 +77,19 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 // the invoking user's: the documented `sudo cairnos secrets pull --system` would
 // otherwise read /root/.cairnos/config.toml, find no block, and report success
 // having written nothing.
-func resolveSecretsDir(flagValue string, system bool) (string, error) {
+func resolveSecretsDir(flagValue string, system bool, lookup environ.Lookup) (string, error) {
 	if flagValue == "" && system {
 		return service.SystemHome, nil
 	}
 
-	return resolveDir(flagValue)
+	return resolveDir(flagValue, lookup)
 }
 
 // lookBitwardenBinary finds the bw the host itself provides, which the resolver
-// prefers over the pinned copy whenever its version is not behind the pin.
-func lookBitwardenBinary() (string, error) {
-	binary, err := exec.LookPath(bwBinary)
+// prefers over the pinned copy whenever its version is not behind the pin. The
+// search runs over the injected PATH rather than the process one.
+func lookBitwardenBinary(lookup environ.Lookup) (string, error) {
+	binary, err := environ.LookPath(lookup, bwBinary)
 	if err != nil {
 		return "", errNoBitwardenBinary
 	}
@@ -115,7 +116,7 @@ func (a *App) pullBitwarden(
 ) int {
 	credsPath := opts.resolve(block.CredentialsFile, config.DefaultBitwardenCredentialsFile)
 
-	creds, err := bitwarden.LoadCredentials(credsPath, os.Getenv)
+	creds, err := bitwarden.LoadCredentials(credsPath, a.envLookup().Get)
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 

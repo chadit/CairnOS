@@ -24,20 +24,8 @@ const jsonContentType = "application/json"
 // httpTimeout bounds every gateway request in these tests.
 const httpTimeout = 30 * time.Second
 
-// newHTTPClient builds a client with an explicit timeout, long enough for
-// the streaming route to finish. Keep-alives are off so a spare dialed
-// connection is closed rather than pooled; a pooled one that never sent a
-// request holds Server.Shutdown for its 5 s grace period, past the fixture's
-// shutdown budget.
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout:   httpTimeout,
-		Transport: &http.Transport{DisableKeepAlives: true},
-	}
-}
-
 // httpGet fetches one gateway route and returns status code and body.
-func httpGet(t *testing.T, url string) (int, []byte) {
+func httpGet(t *testing.T, transport *memTransport, url string) (int, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
@@ -45,7 +33,7 @@ func httpGet(t *testing.T, url string) (int, []byte) {
 		t.Fatalf("build request: %v", err)
 	}
 
-	resp, err := newHTTPClient().Do(req)
+	resp, err := transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -61,7 +49,7 @@ func httpGet(t *testing.T, url string) (int, []byte) {
 }
 
 // httpPost posts a JSON body to one gateway route.
-func httpPost(t *testing.T, url, body string) *http.Response {
+func httpPost(t *testing.T, transport *memTransport, url, body string) *http.Response {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
@@ -71,7 +59,7 @@ func httpPost(t *testing.T, url, body string) *http.Response {
 
 	req.Header.Set("Content-Type", jsonContentType)
 
-	resp, err := newHTTPClient().Do(req)
+	resp, err := transport.httpClient().Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
@@ -84,7 +72,7 @@ func TestGatewayTypedRouteSuccess(t *testing.T) {
 
 	fix := startServer(t)
 
-	code, body := httpGet(t, fix.httpBase+"/v1/health")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/health")
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/health = %d (%s), want 200", code, body)
 	}
@@ -110,7 +98,7 @@ func TestGatewayErrorEnvelope(t *testing.T) {
 
 	// An undeclared input rejects the run with workflow.invalid before any
 	// record exists; the gateway must answer 400 with the canonical envelope.
-	resp := httpPost(t, fix.httpBase+"/v1/workflows/hello/runs", `{"inputs":{"bogus":1}}`)
+	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", `{"inputs":{"bogus":1}}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -148,7 +136,7 @@ func TestGatewayErrorEnvelopeNotFound(t *testing.T) {
 
 	fix := startServer(t)
 
-	code, body := httpGet(t, fix.httpBase+"/v1/runs/no-such-run")
+	code, body := httpGet(t, fix.transport, fix.httpBase+"/v1/runs/no-such-run")
 	if code != http.StatusNotFound {
 		t.Fatalf("status = %d (%s), want 404", code, body)
 	}
@@ -174,7 +162,7 @@ func TestGatewayStreamsParseableJSONLines(t *testing.T) {
 
 	fix := startServer(t)
 
-	resp := httpPost(t, fix.httpBase+"/v1/workflows/hello/runs", `{}`)
+	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", `{}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -234,60 +222,130 @@ func TestGatewayStreamsParseableJSONLines(t *testing.T) {
 	}
 }
 
-func TestGatewayServesOpenAPIAndRoutes(t *testing.T) {
+// TestGatewayMountsDiscoveryEndpoints pins what the server owns about
+// /openapi.json and /routes: both are mounted, both answer without a token
+// (spec L4), and both hand back JSON. Their contents come from the proto, so
+// asserting the paths inside them would test the generator.
+func TestGatewayMountsDiscoveryEndpoints(t *testing.T) {
 	t.Parallel()
 
 	fix := startServer(t)
 
-	code, body := httpGet(t, fix.httpBase+"/openapi.json")
-	if code != http.StatusOK {
-		t.Fatalf("GET /openapi.json = %d, want 200", code)
-	}
+	for _, path := range []string{"/openapi.json", "/routes"} {
+		code, body := httpGet(t, fix.transport, fix.httpBase+path)
+		if code != http.StatusOK {
+			t.Errorf("GET %s = %d (%s), want 200", path, code, body)
 
-	var openapi struct {
-		Paths map[string]any `json:"paths"`
-	}
+			continue
+		}
 
-	if err := json.Unmarshal(body, &openapi); err != nil {
-		t.Fatalf("parse openapi document: %v", err)
-	}
-
-	if _, exists := openapi.Paths["/v1/health"]; !exists {
-		t.Fatalf("openapi paths %v missing /v1/health", openapi.Paths)
-	}
-
-	code, body = httpGet(t, fix.httpBase+"/routes")
-	if code != http.StatusOK {
-		t.Fatalf("GET /routes = %d, want 200", code)
-	}
-
-	var routes struct {
-		Routes []struct {
-			Method string `json:"method"`
-			Path   string `json:"path"`
-			RPC    string `json:"rpc"`
-		} `json:"routes"`
-	}
-
-	if err := json.Unmarshal(body, &routes); err != nil {
-		t.Fatalf("parse routes listing: %v", err)
-	}
-
-	var foundHealth bool
-
-	for _, route := range routes.Routes {
-		if route.Path == "/v1/health" && route.Method == http.MethodGet {
-			foundHealth = true
-
-			if !strings.Contains(route.RPC, "Health") {
-				t.Fatalf("health route rpc = %q, want the Health RPC named", route.RPC)
-			}
+		var document map[string]any
+		if err := json.Unmarshal(body, &document); err != nil {
+			t.Errorf("GET %s returned unparseable JSON %q: %v", path, body, err)
 		}
 	}
+}
 
-	if !foundHealth {
-		t.Fatalf("routes %v missing GET /v1/health", routes.Routes)
+// TestGatewayRejectsBadRequests covers the three failures that never reach a
+// handler. Each answers the canonical envelope with a synthesized api.* code,
+// which is what keeps a routing failure the same shape as a handler error for
+// clients. The wrong-method answer is grpc-gateway's: it reports the route as
+// unimplemented rather than sending 405 with an Allow header.
+func TestGatewayRejectsBadRequests(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		wantErr  string
+		wantCode int
+	}{
+		{
+			name:     "malformed json body",
+			method:   http.MethodPost,
+			path:     "/v1/workflows/hello/runs",
+			body:     `{"inputs":`,
+			wantCode: http.StatusBadRequest,
+			wantErr:  "api.invalid_argument",
+		},
+		{
+			name:     "wrong method on a known route",
+			method:   http.MethodGet,
+			path:     "/v1/workflows/hello/runs",
+			wantCode: http.StatusNotImplemented,
+			wantErr:  "api.unimplemented",
+		},
+		{
+			name:     "unknown path",
+			method:   http.MethodGet,
+			path:     "/v1/no-such-route",
+			wantCode: http.StatusNotFound,
+			wantErr:  "api.not_found",
+		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			code, body := httpRequest(t, fix.transport, tt.method, fix.httpBase+tt.path, tt.body)
+			if code != tt.wantCode {
+				t.Fatalf("%s %s = %d (%s), want %d", tt.method, tt.path, code, body, tt.wantCode)
+			}
+
+			var envelope struct {
+				Status string `json:"status"`
+				Error  struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+
+			if err := json.Unmarshal(body, &envelope); err != nil {
+				t.Fatalf("parse error envelope %q: %v", body, err)
+			}
+
+			if envelope.Status != statusError || envelope.Error.Code != tt.wantErr {
+				t.Fatalf("envelope = %s, want status error with code %s", body, tt.wantErr)
+			}
+		})
+	}
+}
+
+// httpRequest sends one gateway request with an optional body and returns the
+// status code and the whole body, which the routing failures answer in one
+// piece.
+func httpRequest(t *testing.T, transport *memTransport, method, url, body string) (int, []byte) {
+	t.Helper()
+
+	var payload io.Reader = http.NoBody
+	if body != "" {
+		payload = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), method, url, payload)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", jsonContentType)
+
+	resp, err := transport.httpClient().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	read, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	return resp.StatusCode, read
 }
 
 func TestServerRefusesNetworkBinds(t *testing.T) {

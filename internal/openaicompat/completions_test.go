@@ -123,7 +123,7 @@ func TestConfirmationRendersAsAssistantText(t *testing.T) {
 
 	// The adapter mounts only the completions route, so a confirm path on this
 	// surface is not routed: a foreign client has no way to approve.
-	notFound := probe(t, fix.server.URL+"/v1/chat/sessions/"+defaultSessionID+"/confirm")
+	notFound := probe(t, fix.server, "/v1/chat/sessions/"+defaultSessionID+"/confirm")
 	if notFound != http.StatusNotFound {
 		t.Errorf("confirm route status = %d, want 404 (no confirm route by design)", notFound)
 	}

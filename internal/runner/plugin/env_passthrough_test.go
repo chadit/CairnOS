@@ -1,8 +1,10 @@
 package plugin_test
 
 import (
+	"os"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/plugin"
 )
 
@@ -12,6 +14,16 @@ const (
 	hostSecretName  = "CAIRNOS_TEST_HOST_SECRET"
 	hostSecretValue = "super-secret-token"
 )
+
+// hostEnv is the parent environment the plugin is spawned under. PATH is the
+// real one so the child can still find an interpreter; the secret is staged
+// here rather than in the process so the case stays parallel.
+func hostEnv() environ.Lookup {
+	return environ.Map(map[string]string{
+		"PATH":         os.Getenv("PATH"),
+		hostSecretName: hostSecretValue,
+	})
+}
 
 // echoEnvValue spawns one echo plugin under the given passthrough allowlist,
 // asks it to echo the host secret variable, and returns the value the child
@@ -23,6 +35,7 @@ func echoEnvValue(t *testing.T, passthrough []string) string {
 		Command:        []string{buildEchoPlugin(t)},
 		Name:           echoName,
 		EnvPassthrough: passthrough,
+		Env:            hostEnv(),
 	})
 	if err != nil {
 		t.Fatalf("new echo plugin: %v", err)
@@ -49,7 +62,7 @@ func echoEnvValue(t *testing.T, passthrough []string) string {
 // host secret variable does not reach the plugin child unless it is
 // allowlisted, and does reach it when env_passthrough names it.
 func TestPluginDoesNotInheritHostSecret(t *testing.T) {
-	t.Setenv(hostSecretName, hostSecretValue)
+	t.Parallel()
 
 	if got := echoEnvValue(t, nil); got != "" {
 		t.Fatalf("plugin child saw host secret %q with no allowlist; the base env must exclude it", got)

@@ -7,11 +7,11 @@ import (
 	"io"
 	"net/http"
 	neturl "net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -79,31 +79,38 @@ const defaultGitHubTimeout = 30 * time.Second
 // since/state for list_issues, title/body/labels for create_issue. The token
 // comes from CAIRNOS_RUNNER_GITHUB_TOKEN and is optional for public reads.
 type GitHub struct {
-	client  *http.Client
+	client *http.Client
+
+	// env answers the token variable. Injecting it keeps a test from having to
+	// set a token every other test in the process would then see.
+	env environ.Lookup
+
 	baseURL string
 }
 
 // NewGitHub builds the runner over an injected HTTP client so tests can
 // point it at httptest servers.
-func NewGitHub(cfg map[string]any, client *http.Client) (*GitHub, error) {
+func NewGitHub(cfg map[string]any, client *http.Client, lookup environ.Lookup) (*GitHub, error) {
 	baseURL, err := configValue(cfg, cfgKeyBaseURL, defaultGitHubBaseURL)
 	if err != nil {
 		return nil, wrapConfigErr(GitHubName, err)
 	}
 
-	return &GitHub{baseURL: strings.TrimSuffix(baseURL, "/"), client: client}, nil
+	return &GitHub{baseURL: strings.TrimSuffix(baseURL, "/"), client: client, env: lookup}, nil
 }
 
 // GitHubFactory adapts NewGitHub to the registry contract with the shared
 // egress guard wrapping the client. allow_private_targets opts out of the IP
 // guard for operators pointing the runner at an internal GitHub Enterprise host.
-func GitHubFactory(cfg map[string]any) (runner.Runner, error) {
-	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
-	if err != nil {
-		return nil, wrapConfigErr(GitHubName, err)
-	}
+func GitHubFactory(lookup environ.Lookup) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
+		if err != nil {
+			return nil, wrapConfigErr(GitHubName, err)
+		}
 
-	return NewGitHub(cfg, safeHTTPClient(GitHubName, defaultGitHubTimeout, allowPrivate))
+		return NewGitHub(cfg, safeHTTPClient(GitHubName, defaultGitHubTimeout, allowPrivate), lookup)
+	}
 }
 
 // Name implements runner.Runner.
@@ -379,7 +386,7 @@ func (g *GitHub) send(ctx context.Context, method, url string, payload any) ([]b
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("X-Github-Api-Version", githubAPIVersion)
 
-	if token := os.Getenv(githubTokenEnv); token != "" {
+	if token := g.env.Get(githubTokenEnv); token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 

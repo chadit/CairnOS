@@ -3,11 +3,11 @@ package localmodel_test
 import (
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/localmodel"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // fixtureTag is the stable release the fake GitHub reports.
@@ -105,7 +105,7 @@ func TestUpstreamModelReportsMissingFile(t *testing.T) {
 func fakeUpstream(t *testing.T, fixture *upstreamFixture) *localmodel.Upstream {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			_, _ = w.Write([]byte(`{"tag_name":"` + fixture.tag + `","html_url":"https://example.test/` + fixture.tag + `"}`))
@@ -117,7 +117,6 @@ func fakeUpstream(t *testing.T, fixture *upstreamFixture) *localmodel.Upstream {
 			http.NotFound(w, r)
 		}
 	}))
-	t.Cleanup(server.Close)
 
 	return localmodel.NewUpstream(localmodel.UpstreamOptions{
 		Client:         server.Client(),

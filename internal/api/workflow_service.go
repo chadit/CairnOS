@@ -291,7 +291,7 @@ func (s *workflowService) ApproveRun(ctx context.Context, req *cairnosv1.Approve
 
 	actor := actorFromContext(ctx, s.authenticator)
 	if err := s.store.DecideApproval(ctx, held.ID, actionName, decision, actor, req.GetComment()); err != nil {
-		return nil, canonicalStatus(err)
+		return nil, approvalDecisionStatus(held.ID, actionName, err)
 	}
 
 	if err := s.startResume(ctx, held, results, flow); err != nil {
@@ -490,6 +490,20 @@ func (*workflowService) sendFinished(handle *RunHandle, stream cairnosv1.Workflo
 }
 
 // runLookupStatus classifies a store GetRun failure.
+// approvalDecisionStatus classifies a failed gate decision. The store settles
+// a gate in one guarded statement, so a name that was never declared and a
+// gate another decision already settled both come back as not-found; without
+// this the caller's own mistake would surface as INTERNAL.
+func approvalDecisionStatus(runID, actionName string, err error) error {
+	if errors.Is(err, store.ErrApprovalNotFound) {
+		return errorStatus(codes.NotFound, cairnerr.Newf(codeApprovalNotFound,
+			"run %s has no pending approval %q: the action is not an approval gate, or the gate is already decided",
+			runID, actionName))
+	}
+
+	return canonicalStatus(err)
+}
+
 func runLookupStatus(runID string, err error) error {
 	if errors.Is(err, store.ErrRunNotFound) {
 		return errorStatus(codes.NotFound, cairnerr.Newf(codeRunNotFound, "no run %s", runID))

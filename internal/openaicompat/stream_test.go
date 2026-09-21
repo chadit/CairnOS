@@ -141,7 +141,7 @@ func TestStreamConfirmationRendersAsDelta(t *testing.T) {
 		}
 	}
 
-	notFound := probe(t, fix.server.URL+"/v1/chat/sessions/"+defaultSessionID+"/confirm")
+	notFound := probe(t, fix.server, "/v1/chat/sessions/"+defaultSessionID+"/confirm")
 	if notFound != http.StatusNotFound {
 		t.Errorf("confirm route status = %d, want 404 (no confirm route by design)", notFound)
 	}
@@ -203,12 +203,12 @@ func TestStreamClientDisconnectCancelsTurn(t *testing.T) {
 		t.Fatalf("build service: %v", err)
 	}
 
-	fix := mountService(t, service)
+	server := mountStreamed(t, service)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fix.server.URL+completionsPath, strings.NewReader(streamUserBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+completionsPath, strings.NewReader(streamUserBody))
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestStreamClientDisconnectCancelsTurn(t *testing.T) {
 	// The handler flushes the role chunk before the turn runs, so Do returns
 	// with the stream still open and the body stays unread until cancel drops
 	// the connection under it.
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := server.Client().Do(req)
 	if err != nil {
 		t.Fatalf("stream request: %v", err)
 	}
@@ -261,7 +261,7 @@ func (f *fixture) postStream(t *testing.T, token, body string) (int, http.Header
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	client := &http.Client{Timeout: testRequestTimeout}
+	client := f.server.Client()
 
 	resp, err := client.Do(req)
 	if err != nil {

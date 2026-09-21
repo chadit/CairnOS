@@ -111,8 +111,8 @@ func TestConditionRejectsBadSyntax(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := workflow.ParseCondition(tt.expr); err == nil {
-				t.Fatalf("parse %q succeeded, want error", tt.expr)
+			if _, err := workflow.ParseCondition(tt.expr); !errors.Is(err, workflow.ErrBadExpression) {
+				t.Fatalf("parse %q error = %v, want ErrBadExpression", tt.expr, err)
 			}
 		})
 	}
@@ -251,8 +251,8 @@ func TestParseDurationSupportsDays(t *testing.T) {
 		t.Fatalf("parse 1h30m: %v", err)
 	}
 
-	if _, err := workflow.ParseDuration("soon"); err == nil {
-		t.Fatal("parse soon succeeded, want error")
+	if _, err := workflow.ParseDuration("soon"); !errors.Is(err, workflow.ErrBadDuration) {
+		t.Fatalf("parse soon error = %v, want ErrBadDuration", err)
 	}
 
 	if _, err := workflow.ParseDuration(""); !errors.Is(err, workflow.ErrEmptyDuration) {

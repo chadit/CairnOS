@@ -4,10 +4,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/notify"
 )
 
@@ -18,15 +18,14 @@ func TestDiscordNotifierPostsAlert(t *testing.T) {
 
 	got := make(chan string, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		got <- string(body)
 
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer server.Close()
 
-	notifier := notify.NewDiscordNotifier(server.URL)
+	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 
 	alert := notify.ReauthAlert{
 		Tool:        toolCodex,
@@ -55,12 +54,11 @@ func TestDiscordNotifierPostsAlert(t *testing.T) {
 func TestDiscordNotifierReportsErrorStatus(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer server.Close()
 
-	notifier := notify.NewDiscordNotifier(server.URL)
+	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 
 	err := notifier.Notify(t.Context(), notify.ReauthAlert{Tool: "qwen"})
 	if !errors.Is(err, notify.ErrNotifyStatus) {
@@ -84,15 +82,14 @@ func TestReauthAlertMessageOmitsEmptyFields(t *testing.T) {
 
 	got := make(chan string, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		got <- string(body)
 
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer server.Close()
 
-	notifier := notify.NewDiscordNotifier(server.URL)
+	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 
 	// Only Tool is set: Account, Fix, and Job labels must not appear.
 	if err := notifier.Notify(t.Context(), notify.ReauthAlert{Tool: toolCodex}); err != nil {

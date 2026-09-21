@@ -27,12 +27,22 @@ import (
 // readHeaderTimeout bounds slow-header clients on the HTTP listener.
 const readHeaderTimeout = 10 * time.Second
 
+// passthroughPrefix marks a gRPC target whose address goes straight to the
+// dialer instead of through a name resolver.
+const passthroughPrefix = "passthrough:///"
+
 // Config wires one Server.
 type Config struct {
 	// Breakers exposes the engine's circuit breakers to AdminService;
 	// the serve wiring passes the engine itself. Nil keeps ResetBreaker
 	// answering UNIMPLEMENTED for embedders without an in-process engine.
 	Breakers BreakerAdmin
+
+	// Transport supplies the listeners in place of host sockets. Nil, the
+	// production case, binds the configured addresses. The test suite passes
+	// an in-memory transport so a parallel run never trips over kernel
+	// network limits that have nothing to do with the code under test.
+	Transport Transport
 
 	// GatewayDialCreds is the client credential the HTTP gateway uses to dial
 	// the gRPC backend over loopback. It pairs with Creds: when the gRPC
@@ -130,6 +140,14 @@ type Config struct {
 	// BindPolicy decides which non-loopback binds the guard accepts; the
 	// zero value keeps the loopback-only behavior.
 	BindPolicy BindPolicy
+}
+
+// Transport replaces the server's host sockets. Listen supplies each
+// listener, and Dial reaches one of them by the address its Addr reports, so
+// the gateway's own backend connection stays inside the process too.
+type Transport interface {
+	Listen(ctx context.Context, network, address string) (net.Listener, error)
+	Dial(ctx context.Context, address string) (net.Conn, error)
 }
 
 // Extension bundles one optional service's registration hooks plus any extra
@@ -268,14 +286,14 @@ func (s *Server) listen(ctx context.Context) error {
 		}
 	}
 
-	listenCfg := &net.ListenConfig{}
+	listen := s.listenFunc()
 
-	s.grpcLis, err = listenCfg.Listen(ctx, grpcNet, grpcAddr)
+	s.grpcLis, err = listen(ctx, grpcNet, grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s %s: %w", grpcNet, grpcAddr, err)
 	}
 
-	s.httpLis, err = listenCfg.Listen(ctx, httpNet, httpAddr)
+	s.httpLis, err = listen(ctx, httpNet, httpAddr)
 	if err != nil {
 		s.closeListeners()
 
@@ -283,6 +301,18 @@ func (s *Server) listen(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// listenFunc picks how the server binds: the configured transport when one is
+// set, and an ordinary host socket otherwise.
+func (s *Server) listenFunc() func(context.Context, string, string) (net.Listener, error) {
+	if s.cfg.Transport != nil {
+		return s.cfg.Transport.Listen
+	}
+
+	listenCfg := &net.ListenConfig{}
+
+	return listenCfg.Listen
 }
 
 // startGRPC registers the services plus reflection and serves in the
@@ -378,7 +408,7 @@ func (s *Server) startGRPC() {
 // serves HTTP in the background. Dialing (rather than the in-process
 // handler) keeps server streaming working over the gateway.
 func (s *Server) startGateway(ctx context.Context) error {
-	conn, err := grpc.NewClient(s.gatewayTarget(), grpc.WithTransportCredentials(s.gatewayDialCreds()))
+	conn, err := grpc.NewClient(s.gatewayTarget(), s.gatewayDialOptions()...)
 	if err != nil {
 		return fmt.Errorf("dial gateway backend: %w", err)
 	}
@@ -452,8 +482,27 @@ func (s *Server) startGateway(ctx context.Context) error {
 	return nil
 }
 
+// gatewayDialOptions builds the options the gateway dials its own backend
+// with. A configured transport supplies the dialer, so a server running on
+// in-memory listeners reaches itself without a host socket.
+func (s *Server) gatewayDialOptions() []grpc.DialOption {
+	options := []grpc.DialOption{grpc.WithTransportCredentials(s.gatewayDialCreds())}
+
+	if s.cfg.Transport != nil {
+		options = append(options, grpc.WithContextDialer(s.cfg.Transport.Dial))
+	}
+
+	return options
+}
+
 // gatewayTarget renders the bound gRPC address as a grpc.NewClient target.
+// A configured transport takes the passthrough resolver, which hands the
+// address to that transport's dialer rather than resolving it.
 func (s *Server) gatewayTarget() string {
+	if s.cfg.Transport != nil {
+		return passthroughPrefix + s.grpcLis.Addr().String()
+	}
+
 	if s.grpcLis.Addr().Network() == networkUnix {
 		return unixPrefix + s.grpcLis.Addr().String()
 	}

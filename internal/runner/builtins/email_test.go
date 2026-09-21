@@ -2,9 +2,9 @@ package builtins_test
 
 import (
 	"errors"
-	"net"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -50,7 +50,7 @@ func TestEmailValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mail, err := builtins.NewEmail(tt.cfg)
+			mail, err := builtins.NewEmail(tt.cfg, environ.Map(nil))
 			if err != nil {
 				t.Fatalf("new email: %v", err)
 			}
@@ -64,34 +64,23 @@ func TestEmailValidate(t *testing.T) {
 	}
 }
 
+// refusedPort needs root to bind, which is what makes a dial to it fail.
+const refusedPort = 1
+
 func TestEmailDialFailureIsTransient(t *testing.T) {
 	t.Parallel()
 
-	// Grabbing a loopback port and closing it leaves an address that refuses
-	// connections, standing in for an unreachable SMTP server.
-	var listenCfg net.ListenConfig
-
-	listener, err := listenCfg.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	addr, isTCP := listener.Addr().(*net.TCPAddr)
-	if !isTCP {
-		t.Fatalf("listener address type %T", listener.Addr())
-	}
-
-	if closeErr := listener.Close(); closeErr != nil {
-		t.Fatalf("close listener: %v", closeErr)
-	}
-
+	// Port 1 needs root to bind, so nothing in this suite can answer there and
+	// the dial is refused every run. Taking an ephemeral port and closing it
+	// races instead: another test's listener can pick the same port up and
+	// answer the dial this case needs refused.
 	cfg := map[string]any{
 		hostKey: "127.0.0.1",
-		portKey: int64(addr.Port),
+		portKey: int64(refusedPort),
 		fromKey: testSender,
 	}
 
-	mail, err := builtins.NewEmail(cfg)
+	mail, err := builtins.NewEmail(cfg, environ.Map(nil))
 	if err != nil {
 		t.Fatalf("new email: %v", err)
 	}
@@ -109,7 +98,7 @@ func TestEmailRejectsHeaderInjection(t *testing.T) {
 
 	cfg := map[string]any{hostKey: "smtp.cairn.test", fromKey: testSender}
 
-	mail, err := builtins.NewEmail(cfg)
+	mail, err := builtins.NewEmail(cfg, environ.Map(nil))
 	if err != nil {
 		t.Fatalf("new email: %v", err)
 	}

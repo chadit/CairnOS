@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
 	"slices"
 	"strings"
 
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/telemetry"
 )
@@ -48,7 +48,7 @@ func (a *App) buildMattermostBridge(
 			fmt.Errorf("%w: bridge.mattermost.identity requires [chat] enabled", config.ErrInvalidConfig)), false
 	}
 
-	identities, err := mattermostIdentities(settings, deps.logger)
+	identities, err := mattermostIdentities(settings, a.envLookup(), deps.logger)
 	if err != nil {
 		return nil, a.failServe(ctx, tel, mattermostStage, err), false
 	}
@@ -76,7 +76,9 @@ func (a *App) buildMattermostBridge(
 // logging one info line for each it skips (FR2). Every client shares one rate
 // bucket because Mattermost keys its own limit by source IP (decision D5). Name
 // order makes the log lines and any failure reproducible across starts.
-func mattermostIdentities(settings *config.Mattermost, logger *slog.Logger) ([]mattermost.Identity, error) {
+func mattermostIdentities(
+	settings *config.Mattermost, lookup environ.Lookup, logger *slog.Logger,
+) ([]mattermost.Identity, error) {
 	limiter := mattermost.NewBucket(mattermost.BucketConfig{
 		RatePerSecond: float64(settings.RatePerSec),
 		Burst:         float64(settings.RateBurst),
@@ -87,7 +89,7 @@ func mattermostIdentities(settings *config.Mattermost, logger *slog.Logger) ([]m
 	for _, name := range slices.Sorted(maps.Keys(settings.Identity)) {
 		identity := settings.Identity[name]
 
-		token, env := config.ResolveMattermostToken(&identity, name, os.Getenv)
+		token, env := config.ResolveMattermostToken(&identity, name, lookup.Get)
 		if token == "" {
 			logger.Info("mattermost identity disabled: no token env set", "identity", name,
 				"tried", strings.Join(config.MattermostTokenEnvs(&identity, name), " "))

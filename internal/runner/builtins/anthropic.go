@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -67,16 +68,19 @@ type Anthropic struct {
 }
 
 // NewAnthropic builds the runner for a block named after the type, over an
-// injected HTTP client so tests can point it at httptest servers.
-func NewAnthropic(cfg map[string]any, client *http.Client) (*Anthropic, error) {
-	return NewAnthropicFor(AnthropicName, cfg, client)
+// injected HTTP client so tests can point it at httptest servers and an
+// injected lookup so they can supply a key without setting one process-wide.
+func NewAnthropic(cfg map[string]any, client *http.Client, lookup environ.Lookup) (*Anthropic, error) {
+	return NewAnthropicFor(AnthropicName, cfg, client, lookup)
 }
 
 // NewAnthropicFor builds the runner for a block under any name. The name
 // decides which API key it reads first, so two anthropic-type blocks pointed at
 // different gateways do not have to share one credential.
-func NewAnthropicFor(block string, cfg map[string]any, client *http.Client) (*Anthropic, error) {
-	decoded, err := decodeLLMConfig(cfg, AnthropicName, defaultAnthropicBaseURL, defaultAnthropicMaxTokens)
+func NewAnthropicFor(
+	block string, cfg map[string]any, client *http.Client, lookup environ.Lookup,
+) (*Anthropic, error) {
+	decoded, err := decodeLLMConfig(cfg, AnthropicName, defaultAnthropicBaseURL, defaultAnthropicMaxTokens, lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +94,15 @@ func NewAnthropicFor(block string, cfg map[string]any, client *http.Client) (*An
 
 // AnthropicFactory adapts NewAnthropic to the registry contract with a
 // backstopped HTTP client.
-func AnthropicFactory(cfg map[string]any) (runner.Runner, error) {
-	return AnthropicFactoryFor(AnthropicName)(cfg)
+func AnthropicFactory(lookup environ.Lookup) runner.Factory {
+	return AnthropicFactoryFor(AnthropicName, lookup)
 }
 
 // AnthropicFactoryFor is the registration for a `[runner.<name>]` block of this
 // type under another name.
-func AnthropicFactoryFor(block string) runner.Factory {
+func AnthropicFactoryFor(block string, lookup environ.Lookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return NewAnthropicFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout})
+		return NewAnthropicFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout}, lookup)
 	}
 }
 
@@ -177,7 +181,7 @@ func (a *Anthropic) run(ctx context.Context, task *runner.Task, stream chan<- ru
 // so a rotation needs no restart.
 func (a *Anthropic) authHeaders() map[string]string {
 	return map[string]string{
-		"x-api-key":         apiKey(a.keyEnvs),
+		"x-api-key":         apiKey(a.cfg.env, a.keyEnvs),
 		"anthropic-version": anthropicVersion,
 	}
 }

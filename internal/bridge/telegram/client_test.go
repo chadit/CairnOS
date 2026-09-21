@@ -3,7 +3,6 @@ package telegram_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"path"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bridge/telegram"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // botEnvelope is the Bot API response wrapper the fake server writes and the
@@ -23,27 +23,28 @@ type botEnvelope struct {
 	OK          bool            `json:"ok"`
 }
 
-// botServer is a minimal httptest Bot API server, the one place a client test
-// still needs the real HTTP path: it serves scripted getUpdates and records the
+// botHost is the base URL the suite's clients carry. Nothing dials it, but the
+// client embeds it in every request, so a redaction assertion still sees the
+// token sitting in a real URL.
+const botHost = nettest.BaseURL
+
+// botServer is the fake Bot API: it serves scripted getUpdates and records the
 // sendMessage text so the round-trip test can assert real marshaling and
 // decoding end to end.
 type botServer struct {
-	server  *httptest.Server
 	updates []telegram.Update
 	sent    []string
 	mu      sync.Mutex
 }
 
-// newBotServer starts the fake Bot API server and registers its shutdown.
-func newBotServer(t *testing.T) *botServer {
+// newBotServer builds the fake Bot API and the client that answers from it.
+func newBotServer(t *testing.T) (*botServer, telegram.BotAPI) {
 	t.Helper()
 
 	bs := &botServer{}
-	bs.server = httptest.NewServer(http.HandlerFunc(bs.handle))
+	tripper := nettest.Transport(http.HandlerFunc(bs.handle))
 
-	t.Cleanup(bs.server.Close)
-
-	return bs
+	return bs, telegram.NewClientOver(testToken, botHost, time.Second, time.Second, tripper)
 }
 
 // setUpdates scripts the batch the next getUpdates returns.
@@ -108,7 +109,7 @@ func writeEnvelope(writer http.ResponseWriter, result any) {
 func TestClientRedactsTokenOnConnectionFailure(t *testing.T) {
 	t.Parallel()
 
-	bot := telegram.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second)
+	bot := telegram.NewClientOver(testToken, botHost, time.Second, time.Second, nettest.Unreachable(errDialRefused))
 
 	_, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err == nil {
@@ -130,16 +131,15 @@ func TestClientRedactsTokenOnConnectionFailure(t *testing.T) {
 func TestClientRedactsTokenInAPIError(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	refuser := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		envelope := botEnvelope{OK: false, Description: "unauthorized for " + testToken}
 		if err := json.NewEncoder(writer).Encode(envelope); err != nil {
 			http.Error(writer, "encode", http.StatusInternalServerError)
 		}
-	}))
+	})
 
-	t.Cleanup(server.Close)
-
-	bot := telegram.NewClient(testToken, server.URL, time.Second, time.Second)
+	bot := telegram.NewClientOver(testToken, botHost, time.Second, time.Second,
+		nettest.Transport(refuser))
 
 	_, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err == nil {
@@ -156,10 +156,8 @@ func TestClientRedactsTokenInAPIError(t *testing.T) {
 func TestClientRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	server := newBotServer(t)
+	server, bot := newBotServer(t)
 	server.setUpdates([]telegram.Update{*messageUpdate(1, 100, "hi")})
-
-	bot := telegram.NewClient(testToken, server.server.URL, time.Second, time.Second)
 
 	updates, err := bot.GetUpdates(t.Context(), 0, 1)
 	if err != nil {

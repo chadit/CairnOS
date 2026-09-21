@@ -3,12 +3,12 @@ package localmodel_test
 import (
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/localmodel"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // TestProbeAcceptsAnsweringServer proves the liveness check is satisfied by
@@ -16,7 +16,7 @@ import (
 func TestProbeAcceptsAnsweringServer(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1"+localmodel.ModelsPath {
 			http.NotFound(w, r)
 
@@ -25,7 +25,6 @@ func TestProbeAcceptsAnsweringServer(t *testing.T) {
 
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
-	defer server.Close()
 
 	if err := localmodel.Probe(t.Context(), server.Client(), server.URL+"/v1"); err != nil {
 		t.Fatalf("probe: %v", err)
@@ -37,10 +36,9 @@ func TestProbeAcceptsAnsweringServer(t *testing.T) {
 func TestProbeRejectsErrorStatus(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "loading", http.StatusServiceUnavailable)
 	}))
-	defer server.Close()
 
 	err := localmodel.Probe(t.Context(), server.Client(), server.URL+"/v1")
 	if !errors.Is(err, localmodel.ErrUnexpectedStatus) {
@@ -55,7 +53,7 @@ func TestWaitHealthyRidesOutASlowStart(t *testing.T) {
 
 	var calls atomic.Int32
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) < 3 {
 			http.Error(w, "loading", http.StatusServiceUnavailable)
 
@@ -64,7 +62,6 @@ func TestWaitHealthyRidesOutASlowStart(t *testing.T) {
 
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
-	defer server.Close()
 
 	if err := localmodel.WaitHealthy(t.Context(), server.Client(), server.URL+"/v1", 30*time.Second); err != nil {
 		t.Fatalf("wait: %v", err)

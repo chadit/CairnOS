@@ -24,6 +24,13 @@ func hostTable() []string {
 	return []string{harnessVar + "=" + harnessPath}
 }
 
+// serveEnv stands in for the environment serve itself runs under. Passing it as
+// a slice is what replaces t.Setenv here: the child sees the variable and no
+// other case in the process does.
+func serveEnv() []string {
+	return []string{inheritedVar + "=" + inheritedText}
+}
+
 // echoShim writes a script that prints one variable, so a case reads the child's
 // own view of its environment rather than the parent's.
 func echoShim(t *testing.T, name string) string {
@@ -40,7 +47,7 @@ func TestExecPassesHostTableToChild(t *testing.T) {
 
 	t.Parallel()
 
-	built, err := builtins.ExecFactoryWithHostEnv(hostTable())(execConfig(nil))
+	built, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil)(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec with a host table: %v", err)
 	}
@@ -62,7 +69,7 @@ func TestExecWithoutHostTableLeavesTheChildAlone(t *testing.T) {
 
 	t.Parallel()
 
-	built, err := builtins.ExecFactoryWithHostEnv(nil)(execConfig(nil))
+	built, err := builtins.ExecFactoryWithHostEnv(nil, nil)(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec without a host table: %v", err)
 	}
@@ -105,7 +112,7 @@ func TestCLIPassesHostTableToChild(t *testing.T) {
 
 	t.Parallel()
 
-	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, hostTable())(nil)
+	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, hostTable(), nil)(nil)
 	if err != nil {
 		t.Fatalf("build cli with a host table: %v", err)
 	}
@@ -125,12 +132,11 @@ func TestCLIPassesHostTableToChild(t *testing.T) {
 // not regress: these runners exist to drive tools whose logins live in serve's
 // own environment, so a nil table has to leave that environment untouched.
 func TestCLIWithoutHostTableStillInheritsServeEnvironment(t *testing.T) {
-	// No t.Parallel: t.Setenv forbids it.
 	shim := writeShim(t, t.TempDir(), "printinherited", `printf '%s' "$`+inheritedVar+`"`)
 
-	t.Setenv(inheritedVar, inheritedText)
+	t.Parallel()
 
-	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, nil)(nil)
+	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, nil, serveEnv())(nil)
 	if err != nil {
 		t.Fatalf("build cli without a host table: %v", err)
 	}
@@ -150,13 +156,12 @@ func TestCLIWithoutHostTableStillInheritsServeEnvironment(t *testing.T) {
 // serve's environment rather than replacing it, which is the difference between
 // a wrapped tool that can still find its login and one that cannot.
 func TestCLIWithHostTableKeepsInheritedEnvironment(t *testing.T) {
-	// No t.Parallel: t.Setenv forbids it.
 	shim := writeShim(t, t.TempDir(), "printboth",
 		`printf '%s|%s' "$`+inheritedVar+`" "$`+harnessVar+`"`)
 
-	t.Setenv(inheritedVar, inheritedText)
+	t.Parallel()
 
-	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, hostTable())(nil)
+	built, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: shim}, hostTable(), serveEnv())(nil)
 	if err != nil {
 		t.Fatalf("build cli with a host table: %v", err)
 	}
@@ -175,14 +180,13 @@ func TestCLIWithHostTableKeepsInheritedEnvironment(t *testing.T) {
 // TestSandboxArgvCarriesNoHostTable covers the FR6 exclusion. sandbox_exec hands
 // the container no environment by design, and the host table does not get to be
 // the exception: nothing the runner builds passes a variable across that
-// boundary, even with one set in the serve process.
+// boundary.
 func TestSandboxArgvCarriesNoHostTable(t *testing.T) {
 	dir, argvFile := stageRecordingStub(t)
-	t.Setenv("PATH", pathWith(dir))
-	t.Setenv("DOCKER_HOST", "")
-	t.Setenv(harnessVar, harnessPath)
 
-	argv := executeRecording(t, sandboxConfig(nil), sandboxTask(), argvFile)
+	t.Parallel()
+
+	argv := executeRecording(t, dir, sandboxConfig(nil), sandboxTask(), argvFile)
 
 	for index, arg := range argv {
 		if arg == "-e" || arg == "--env" {
@@ -211,14 +215,14 @@ func assertRunnerName(t *testing.T, built runner.Runner, want string) {
 func TestHostEnvFactoriesBuildTheRightRunners(t *testing.T) {
 	t.Parallel()
 
-	execRunner, err := builtins.ExecFactoryWithHostEnv(hostTable())(execConfig(nil))
+	execRunner, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil)(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec: %v", err)
 	}
 
 	assertRunnerName(t, execRunner, builtins.ExecName)
 
-	cliRunner, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: binTrue}, hostTable())(nil)
+	cliRunner, err := builtins.CLIFactory(builtins.CodexName, builtins.CLITool{Binary: binTrue}, hostTable(), nil)(nil)
 	if err != nil {
 		t.Fatalf("build cli: %v", err)
 	}

@@ -15,7 +15,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -80,9 +79,12 @@ params = { delay_ms = 60000 }
 `
 
 // fixture is one running API server plus the clients to poke it; db is the
-// store underneath the server, exposed for seeding rows directly.
+// store underneath the server, exposed for seeding rows directly. transport
+// carries the in-memory listeners, so the HTTP helpers can reach the gateway
+// without a host socket.
 type fixture struct {
 	server       *api.Server
+	transport    *memTransport
 	conn         *grpc.ClientConn
 	db           *sqlite.Store
 	workflowsDir string
@@ -173,6 +175,7 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
 	drain := api.NewDrain()
+	transport := newMemTransport()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -186,6 +189,7 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 	})
 
 	server := api.NewServer(&api.Config{
+		Transport:    transport,
 		GRPCAddr:     loopbackEphemeral,
 		HTTPAddr:     loopbackEphemeral,
 		WorkflowsDir: workflowsDir,
@@ -219,14 +223,10 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 		}
 	})
 
-	conn, err := grpc.NewClient(server.GRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial grpc: %v", err)
-	}
-
-	t.Cleanup(func() { _ = conn.Close() })
+	conn := transport.dialGRPC(t, server.GRPCAddr())
 
 	return &fixture{
+		transport:    transport,
 		server:       server,
 		conn:         conn,
 		db:           db,

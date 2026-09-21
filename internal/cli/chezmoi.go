@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // chezmoiConfigPath is where chezmoi keeps its own config on a workstation. The
@@ -13,6 +17,32 @@ import (
 // a dotfile apply, so `secrets auth` offers them rather than asking for a second
 // copy of what is already on the machine.
 const chezmoiConfigPath = ".config/chezmoi/chezmoi.toml"
+
+// homeEnvKey is the variable os.UserHomeDir reads on this platform. The
+// injected environment has to be asked the same question the process
+// environment would be.
+func homeEnvKey() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "USERPROFILE"
+	case "plan9":
+		return "home"
+	default:
+		return "HOME"
+	}
+}
+
+// homeDir resolves the operator's home from the injected environment, so a case
+// can point one command at a staged home without moving the whole process.
+func homeDir(lookup environ.Lookup) (string, error) {
+	key := homeEnvKey()
+
+	if home := lookup.Get(key); home != "" {
+		return home, nil
+	}
+
+	return "", fmt.Errorf("%w: %s", errNoHomeDir, key)
+}
 
 // chezmoiDefaults holds the values chezmoi's config can supply. Empty strings
 // mean chezmoi had nothing to say, not that the value is empty.
@@ -48,8 +78,8 @@ type chezmoiFile struct {
 // A missing or unparsable file is not an error: the prompts still work, they
 // just have nothing to pre-fill, and failing here would block an operator whose
 // workstation tooling is unrelated to this host.
-func readChezmoiDefaults(logger *slog.Logger) chezmoiDefaults {
-	home, err := os.UserHomeDir()
+func readChezmoiDefaults(lookup environ.Lookup, logger *slog.Logger) chezmoiDefaults {
+	home, err := homeDir(lookup)
 	if err != nil {
 		logger.Debug("no home directory for chezmoi defaults", "error", err)
 

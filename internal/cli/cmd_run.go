@@ -67,7 +67,7 @@ func (a *App) cmdRun(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(mem)
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("run: %v\n", err)
 
@@ -153,7 +153,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		return nil, nil, ExitFailure, false
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), mem, nil, credManager, nil,
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), mem, nil, credManager, nil,
 		a.logger, nil)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)

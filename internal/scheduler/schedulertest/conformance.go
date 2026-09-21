@@ -30,6 +30,9 @@ const (
 	// pastLease advances the clock past the one-minute lease or backoff so a
 	// redelivery or sweep is due.
 	pastLease = 2 * time.Minute
+	// renewedLease is where a heartbeat pushes a lease to, far enough past
+	// pastLease that the renewal, not the clock, is what keeps the item alive.
+	renewedLease = 10 * time.Minute
 	// pastFuture clears a far-future availability so a delayed item is claimable.
 	pastFuture = 2 * time.Hour
 	// agedReady is how long the oldest-ready-age case lets a ready item sit.
@@ -60,6 +63,8 @@ func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.W
 	}{
 		{name: "EnqueueIsExactlyOnce", run: testQueueEnqueueExactlyOnce},
 		{name: "OccurrencePendingTracksUnfinishedWork", run: testQueueOccurrencePending},
+		{name: "OccurrencePendingIgnoresExpiredLease", run: testQueueOccurrencePendingIgnoresExpiredLease},
+		{name: "RenewHoldsTheLease", run: testQueueRenewHoldsTheLease},
 		{name: "ClaimLeasesDueItems", run: testQueueClaimLeasesDueItems},
 		{name: "ClaimSkipsFutureItems", run: testQueueClaimSkipsFutureItems},
 		{name: "AckRemovesItem", run: testQueueAckRemovesItem},
@@ -118,23 +123,66 @@ func testQueueOccurrencePending(t *testing.T, queue scheduler.WorkQueue) {
 
 	base := queueBaseTime()
 
-	assertPending(t, queue, false, "empty queue")
+	assertPending(t, queue, base, false, "empty queue")
 
 	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID, base), base)
-	assertPending(t, queue, true, "ready occurrence")
+	assertPending(t, queue, base, true, "ready occurrence")
 
 	item := mustClaimOne(t, queue, base)
-	assertPending(t, queue, true, "leased occurrence")
+	assertPending(t, queue, base, true, "leased occurrence")
 
 	if err := queue.Ack(t.Context(), item.ID); err != nil {
 		t.Fatalf("ack: %v", err)
 	}
 
-	assertPending(t, queue, false, "acked occurrence")
+	assertPending(t, queue, base, false, "acked occurrence")
 
 	mustEnqueue(t, queue, scheduler.PollDedupKeyFor(pendingScheduleID, "42"), base)
 	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID+"0", base), base)
-	assertPending(t, queue, false, "poll event plus a longer schedule id")
+	assertPending(t, queue, base, false, "poll event plus a longer schedule id")
+}
+
+// testQueueOccurrencePendingIgnoresExpiredLease pins the crash case: a worker
+// that dies mid-run leaves its lease behind, and once that lease runs out the
+// occurrence stops holding the schedule back. Without this the next fire is
+// skipped for the rest of the lease, every time, with nothing to clear it.
+func testQueueOccurrencePendingIgnoresExpiredLease(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	base := queueBaseTime()
+
+	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID, base), base)
+	mustClaimOne(t, queue, base) // leased with lease_until = base + 1m, then the worker dies
+
+	assertPending(t, queue, base, true, "lease still live")
+	assertPending(t, queue, base.Add(pastLease), false, "lease expired with no worker to renew it")
+}
+
+// testQueueRenewHoldsTheLease pins the other half: a worker that is still
+// running its item keeps the occurrence in flight past the original deadline,
+// and the sweep leaves a renewed lease alone.
+func testQueueRenewHoldsTheLease(t *testing.T, queue scheduler.WorkQueue) {
+	t.Helper()
+
+	base := queueBaseTime()
+
+	mustEnqueue(t, queue, scheduler.DedupKeyFor(pendingScheduleID, base), base)
+	claimed := mustClaimOne(t, queue, base)
+
+	if err := queue.Renew(t.Context(), []string{claimed.ID}, base.Add(renewedLease)); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+
+	assertPending(t, queue, base.Add(pastLease), true, "renewed lease")
+
+	reclaimed, dead, err := queue.SweepExpired(t.Context(), base.Add(pastLease), maxDeliveries)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	if reclaimed != 0 || dead != 0 {
+		t.Fatalf("sweep reclaimed=%d dead=%d, want 0 and 0 for a renewed lease", reclaimed, dead)
+	}
 }
 
 func testQueueClaimLeasesDueItems(t *testing.T, queue scheduler.WorkQueue) {
@@ -528,11 +576,12 @@ func mustEnqueue(t *testing.T, queue scheduler.WorkQueue, dedup string, availabl
 }
 
 // assertPending reads the pending-occurrence answer for the schedule under test
-// and fails when it differs from want; stage names the queue state it is read in.
-func assertPending(t *testing.T, queue scheduler.WorkQueue, want bool, stage string) {
+// at now and fails when it differs from want; stage names the queue state it is
+// read in.
+func assertPending(t *testing.T, queue scheduler.WorkQueue, now time.Time, want bool, stage string) {
 	t.Helper()
 
-	got, err := queue.OccurrencePending(t.Context(), pendingScheduleID)
+	got, err := queue.OccurrencePending(t.Context(), pendingScheduleID, now)
 	if err != nil {
 		t.Fatalf("occurrence pending (%s): %v", stage, err)
 	}

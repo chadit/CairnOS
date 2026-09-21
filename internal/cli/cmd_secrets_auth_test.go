@@ -9,6 +9,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // The answers a piped stdin gives the four prompts, and the chezmoi fixture's
@@ -32,9 +33,10 @@ const authSubcmd = "auth"
 // is the state a fresh host is in.
 const credentialsFileName = "bitwarden.env"
 
-// runAuth drives the command over a piped stdin, which is how every prompt case
-// answers without a terminal.
-func runAuth(t *testing.T, stdin string, args ...string) (int, string, string) {
+// runAuth drives the command over a piped stdin and a staged environment, which
+// is how every prompt case answers without a terminal and without moving the
+// process HOME out from under the rest of the suite.
+func runAuth(t *testing.T, env map[string]string, stdin string, args ...string) (int, string, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
@@ -42,6 +44,7 @@ func runAuth(t *testing.T, stdin string, args ...string) (int, string, string) {
 	argv := append([]string{secretsCmd, authSubcmd}, args...)
 	code := pinnedApp(t, &stdout, &stderr, testBinaryDigest(t)).
 		WithStdin(strings.NewReader(stdin)).
+		WithEnv(environ.Map(env)).
 		Run(t.Context(), argv)
 
 	return code, stdout.String(), stderr.String()
@@ -50,18 +53,18 @@ func runAuth(t *testing.T, stdin string, args ...string) (int, string, string) {
 // emptyHome points the chezmoi lookup at a home with no chezmoi config, so a
 // case about typed answers is not quietly answered by the developer's own
 // workstation config.
-func emptyHome(t *testing.T) {
+func emptyHome(t *testing.T) map[string]string {
 	t.Helper()
 
-	t.Setenv("HOME", t.TempDir())
+	return map[string]string{cli.HomeEnvName(): t.TempDir()}
 }
 
-// writeChezmoiConfig stages the config `secrets auth` reads its defaults from.
-func writeChezmoiConfig(t *testing.T) {
+// writeChezmoiConfig stages the config `secrets auth` reads its defaults from
+// and returns the environment pointing at it.
+func writeChezmoiConfig(t *testing.T) map[string]string {
 	t.Helper()
 
 	home := t.TempDir()
-	t.Setenv("HOME", home)
 
 	dir := filepath.Join(home, ".config", "chezmoi")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -75,6 +78,8 @@ func writeChezmoiConfig(t *testing.T) {
 		"bw_master_key = \"" + chezmoiKey + "\"\n"
 
 	writePullFile(t, filepath.Join(dir, "chezmoi.toml"), body)
+
+	return map[string]string{cli.HomeEnvName(): home}
 }
 
 // readCredentials returns the written file, failing the test when it is missing.
@@ -93,15 +98,13 @@ func readCredentials(t *testing.T, dir string) string {
 // gets one from four answers, at the mode the loader insists on. The three
 // credentials are not operator-visible, so no transcript may carry them, and a
 // redirected stdin skips the visible-typing warning.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthWritesWhatWasTyped(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	dir := t.TempDir()
 	typed := strings.Join([]string{authTypedItem, authTypedID, authTypedSecret, authTypedKey}, "\n") + "\n"
 
-	code, stdout, stderr := runAuth(t, typed, flagDirArg, dir)
+	code, stdout, stderr := runAuth(t, emptyHome(t), typed, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -143,14 +146,13 @@ func TestSecretsAuthWritesWhatWasTyped(t *testing.T) {
 // these four values on the workstation, so four Enters reuse them rather than
 // asking for a second copy. The three secrets are offered as "from chezmoi" and
 // never printed, which is why defaultHint treats them apart from the item name.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthTakesChezmoiDefaults(t *testing.T) {
-	writeChezmoiConfig(t)
+	t.Parallel()
 
+	env := writeChezmoiConfig(t)
 	dir := t.TempDir()
 
-	code, stdout, stderr := runAuth(t, "\n\n\n\n", flagDirArg, dir)
+	code, stdout, stderr := runAuth(t, env, "\n\n\n\n", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -178,14 +180,12 @@ func TestSecretsAuthTakesChezmoiDefaults(t *testing.T) {
 // TestSecretsAuthFailsOnAClosedStdin covers FR17. A deploy script that reaches
 // this command has no terminal behind it, so the run has to end rather than wait
 // for a line that cannot arrive.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthFailsOnAClosedStdin(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	dir := t.TempDir()
 
-	code, _, stderr := runAuth(t, "", flagDirArg, dir)
+	code, _, stderr := runAuth(t, emptyHome(t), "", flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure", code)
 	}
@@ -202,6 +202,8 @@ func TestSecretsAuthFailsOnAClosedStdin(t *testing.T) {
 // TestSecretsAuthChecksAnExistingFile covers FR16: the credentials already on
 // the host are proven against the vault here, rather than at the next deploy.
 func TestSecretsAuthChecksAnExistingFile(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{
 		cairnosOneVar: "one",
 		"CAIRNOS_TWO": "two",
@@ -211,9 +213,7 @@ func TestSecretsAuthChecksAnExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	writePullFile(t, filepath.Join(dir, credentialsFileName), credentialsFixtureFor(pullItem))
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, stdout, stderr := runAuth(t, "", flagDirArg, dir)
+	code, stdout, stderr := runAuth(t, pathEnv(binDir), "", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
@@ -228,14 +228,14 @@ func TestSecretsAuthChecksAnExistingFile(t *testing.T) {
 // TestSecretsAuthReportsAMissingItem is the other half of the status check: the
 // credentials open the vault, and the item they name is not in it.
 func TestSecretsAuthReportsAMissingItem(t *testing.T) {
+	t.Parallel()
+
 	binDir := stageFakeBW(t, map[string]string{cairnosOneVar: "one"})
 
 	dir := t.TempDir()
 	writePullFile(t, filepath.Join(dir, credentialsFileName), credentialsFixtureFor("absent-item"))
 
-	t.Setenv("PATH", pathWith(binDir))
-
-	code, _, stderr := runAuth(t, "", flagDirArg, dir)
+	code, _, stderr := runAuth(t, pathEnv(binDir), "", flagDirArg, dir)
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want failure", code)
 	}
@@ -263,17 +263,15 @@ func assignment(name, value string) string {
 // loader strips one matching pair and processes no escapes, so a master password
 // that begins and ends with a quote comes back two characters shorter without
 // it, and the vault refuses an unlock that names nothing about the file.
-//
-//nolint:paralleltest // t.Setenv rewrites HOME for the whole process
 func TestSecretsAuthRoundTripsASecretHoldingQuotes(t *testing.T) {
-	emptyHome(t)
+	t.Parallel()
 
 	const awkward = "'it's \"quoted\"'"
 
 	dir := t.TempDir()
 	typed := strings.Join([]string{authTypedItem, authTypedID, authTypedSecret, awkward}, "\n") + "\n"
 
-	if code, _, stderr := runAuth(t, typed, flagDirArg, dir); code != cli.ExitOK {
+	if code, _, stderr := runAuth(t, emptyHome(t), typed, flagDirArg, dir); code != cli.ExitOK {
 		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
 	}
 

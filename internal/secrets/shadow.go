@@ -1,6 +1,10 @@
 package secrets
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/chadit/CairnOS/internal/environ"
+)
 
 // EnvVarName reports the environment variable the env source reads for a secret
 // named name: the prefix plus the canonical name uppercased with dashes and
@@ -15,12 +19,12 @@ func (e *Env) EnvVarName(name string) string {
 
 // ShadowedByEnv returns the names whose env variable is set, so Chain(env,
 // store) serves the env value, not the store row. lookup is injected
-// (os.LookupEnv in production) so tests need no process environment.
+// (environ.OS in production) so tests need no process environment.
 //
 // Env winning is deliberate, but a stale env var silently masks a rotated
 // value, so callers surface the collision rather than resolve it here.
-func ShadowedByEnv(names []string, lookup func(string) (string, bool)) []string {
-	env := NewEnv()
+func ShadowedByEnv(names []string, lookup environ.Lookup) []string {
+	env := NewEnvWith(lookup)
 
 	var shadowed []string
 

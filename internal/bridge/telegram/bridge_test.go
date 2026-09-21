@@ -10,6 +10,7 @@ import (
 	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/bridge/bridgetest"
 	"github.com/chadit/CairnOS/internal/bridge/telegram"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // TestBridgeMultiTurnPersistsAcrossRestart proves an allowlisted chat holds a
@@ -292,9 +293,9 @@ func TestBridgeBackoffStateChangeLogsOnly(t *testing.T) {
 
 // TestBridgeNoTokenInLogsOnTransportError proves the token, which a transport
 // error carries in its URL, never reaches the poll loop's logs. It injects the
-// real client through the NewClient seam pointed at a dead port, so the redaction
-// under test is the shipped client's, not a fake's (acceptance 6; security
-// amendment: no token in errors or logs).
+// real client through the NewClientOver seam over a failing tripper, so the
+// redaction under test is the shipped client's, not a fake's (acceptance 6;
+// security amendment: no token in errors or logs).
 func TestBridgeNoTokenInLogsOnTransportError(t *testing.T) {
 	t.Parallel()
 
@@ -311,7 +312,7 @@ func TestBridgeNoTokenInLogsOnTransportError(t *testing.T) {
 			ConfirmTTL: time.Minute,
 		}),
 		Metrics:     metrics,
-		API:         telegram.NewClient(testToken, "http://127.0.0.1:1", time.Second, time.Second),
+		API:         telegram.NewClientOver(testToken, botHost, time.Second, time.Second, nettest.Unreachable(errDialRefused)),
 		Users:       map[int64]bridge.Grant{1: {Workspace: wsDefault}},
 		Logger:      logger,
 		Token:       testToken,

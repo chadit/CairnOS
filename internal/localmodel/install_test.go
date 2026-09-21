@@ -2,7 +2,6 @@ package localmodel_test
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/localmodel"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // fixtureRuntimeLib is the shared library the fixture archive ships beside its
@@ -397,7 +397,7 @@ func newInstallHarness(t *testing.T) *installHarness {
 
 	harness := &installHarness{hits: map[string]int{}, archive: archive}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		harness.mu.Lock()
 		defer harness.mu.Unlock()
 
@@ -411,7 +411,6 @@ func newInstallHarness(t *testing.T) *installHarness {
 
 		_, _ = w.Write(weights)
 	}))
-	t.Cleanup(server.Close)
 
 	build := localmodel.Build{
 		GOOS: localmodel.OSLinux, GOARCH: localmodel.ArchAMD64,

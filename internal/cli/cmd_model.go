@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/localmodel"
 	"github.com/chadit/CairnOS/internal/service"
 )
@@ -180,7 +181,7 @@ func (a *App) cmdModelInstall(ctx context.Context, prefix string, args []string,
 		return ExitFailure
 	}
 
-	target, err := ResolveModelTarget(&opts)
+	target, err := ResolveModelTarget(&opts, a.envLookup())
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -207,7 +208,7 @@ type ModelTarget struct {
 
 // ResolveModelTarget turns the flags into the home, catalog entry, and
 // platform build an install pass works against.
-func ResolveModelTarget(opts *ModelOptions) (*ModelTarget, error) {
+func ResolveModelTarget(opts *ModelOptions, lookup environ.Lookup) (*ModelTarget, error) {
 	// Only the port is checked here. Every subcommand that resolves a target
 	// carries one, while the two server knobs exist on setup and upgrade alone
 	// and are checked where they are registered.
@@ -215,7 +216,7 @@ func ResolveModelTarget(opts *ModelOptions) (*ModelTarget, error) {
 		return nil, err
 	}
 
-	home, err := resolveDir(opts.dir)
+	home, err := resolveDir(opts.dir, lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +618,7 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 		return code
 	}
 
-	target, err := ResolveModelTarget(&opts)
+	target, err := ResolveModelTarget(&opts, a.envLookup())
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -775,7 +776,7 @@ func (a *App) cmdModelUninstall(ctx context.Context, args []string) int {
 		return code
 	}
 
-	home, err := resolveDir(opts.dir)
+	home, err := resolveDir(opts.dir, a.envLookup())
 	if err != nil {
 		a.printCmdErr(prefix, err)
 

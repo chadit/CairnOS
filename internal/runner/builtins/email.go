@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -60,6 +60,10 @@ const headerOverhead = 64
 // at send time. Params: to, body, and an optional subject. STARTTLS engages
 // whenever the server advertises it, mirroring smtp.SendMail's default.
 type Email struct {
+	// env answers the password variable at send time, injected so a test can
+	// supply one without setting it for the whole process.
+	env environ.Lookup
+
 	host string
 	port string
 	from string
@@ -70,7 +74,7 @@ type Email struct {
 // builds (the registry constructs every built-in at startup); Validate
 // reports the missing settings when a workflow actually references the
 // runner.
-func NewEmail(cfg map[string]any) (*Email, error) {
+func NewEmail(cfg map[string]any, lookup environ.Lookup) (*Email, error) {
 	host, err := configValue(cfg, cfgKeyHost, "")
 	if err != nil {
 		return nil, err
@@ -91,12 +95,14 @@ func NewEmail(cfg map[string]any) (*Email, error) {
 		return nil, err
 	}
 
-	return &Email{host: host, port: port, from: from, user: user}, nil
+	return &Email{host: host, port: port, from: from, user: user, env: lookup}, nil
 }
 
 // EmailFactory adapts NewEmail to the registry contract.
-func EmailFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewEmail(cfg)
+func EmailFactory(lookup environ.Lookup) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		return NewEmail(cfg, lookup)
+	}
 }
 
 // Name implements runner.Runner.
@@ -215,7 +221,7 @@ func (e *Email) handshake(client *smtp.Client) error {
 		return nil
 	}
 
-	auth := smtp.PlainAuth("", e.user, os.Getenv(emailPasswordEnv), e.host)
+	auth := smtp.PlainAuth("", e.user, e.env.Get(emailPasswordEnv), e.host)
 
 	if err := client.Auth(auth); err != nil {
 		return &runner.Error{

@@ -2,12 +2,15 @@ package bitwarden_test
 
 import (
 	"errors"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // The item and fields every case reads, spelled the way a host config would.
@@ -41,12 +44,26 @@ func oneItem() string {
 	}))
 }
 
-// newClient builds a client pointed at the staged fake, with a short timeout so
-// a case that hangs fails rather than waiting out the default minute. The binary
-// is the absolute symlink path, which is what LookPath hands the command in
-// production and what lets the child find its own fixtures.
+// readyPolls is how many polls the readiness budget lasts in these cases. A
+// child normally binds within two, so this is ample room on a busy host, and it
+// is finite: a daemon that answers neither way ends the wait instead of hanging
+// the run. Nothing longer helps, because a host that drops loopback traffic
+// keeps dropping it for minutes.
+const readyPolls = 120
+
+// newClient builds a client pointed at the staged fake. The binary is the
+// absolute symlink path, which lets the child find its own fixtures.
+//
+// The stepping clock keeps these cases off a stopwatch: the budget is spent in
+// polls, so the wait ends when the fake's listener answers rather than when a
+// loaded host runs past a wall-clock deadline.
 func newClient(fake fakeBW) *bitwarden.Client {
-	return &bitwarden.Client{Binary: fake.binary, Timeout: 20 * time.Second}
+	return &bitwarden.Client{
+		Binary:  fake.binary,
+		Timeout: 20 * time.Second,
+		Env:     environ.Map(map[string]string{"HOME": filepath.Dir(fake.binary)}),
+		Clock:   bitwarden.NewSteppingClock(readyPolls),
+	}
 }
 
 // wantCode asserts the failure carries one canonical code.
@@ -242,22 +259,143 @@ func TestFieldsReportsAnItemThatIsNotThere(t *testing.T) {
 }
 
 // TestFieldsGivesUpWhenServeNeverAnswers bounds the one step with no natural
-// limit. The fake starts and stays alive without listening, which is what a
-// daemon that fails to bind looks like from here.
+// limit. The fake stays alive without listening, which is what a daemon that
+// fails to bind looks like from here. A one-poll budget ends each wait on the
+// first miss, so the case proves the whole thing ends without the suite sitting
+// through it.
 func TestFieldsGivesUpWhenServeNeverAnswers(t *testing.T) {
 	t.Parallel()
 
-	fake := stageFakeBW(t, oneItem(), fakeSettings{NoServe: true})
+	fake := stageFakeBW(t, oneItem(), fakeSettings{SilentServes: startAttempts + 1})
 
-	start := time.Now()
+	client := newClient(fake)
+	client.Clock = bitwarden.NewSteppingClock(1)
+
+	_, err := client.Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	wantCode(t, err, bitwarden.CodeReady)
+
+	if got := len(servePorts(recorded(t, fake.argv))); got != startAttempts {
+		t.Fatalf("serve ran %d times, want %d", got, startAttempts)
+	}
+
+	// The text, because the operator reads it: three ports went quiet and the
+	// message has to say so rather than report one anonymous timeout.
+	message := err.Error()
+	if strings.Count(message, "never answered") != startAttempts {
+		t.Fatalf("the failure does not name what each of the %d starts hit: %s", startAttempts, message)
+	}
+}
+
+// silentPolls is the budget for the case that has to spend one. It is small
+// enough that the first wait gives up in seconds and still leaves the second
+// start far more room than a child needs to bind, and a start lost to a slow
+// host has the third to fall back on.
+const silentPolls = 20
+
+// TestFieldsMovesOnFromAPortThatGoesQuiet covers the other unusable port: the
+// child is up and holding nothing, which is how a port the host stopped
+// carrying traffic for looks from here. Waiting longer on it never helped, so
+// the budget running out has to start over somewhere else.
+func TestFieldsMovesOnFromAPortThatGoesQuiet(t *testing.T) {
+	t.Parallel()
+
+	fake := stageFakeBW(t, oneItem(), fakeSettings{SilentServes: 1})
+
+	client := newClient(fake)
+	client.Clock = bitwarden.NewSteppingClock(silentPolls)
+
+	values, err := client.Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	if err != nil {
+		t.Fatalf("fields: %v", err)
+	}
+
+	if values[fieldToken] != valueToken {
+		t.Fatalf("value = %q, want the item read over the second daemon", values[fieldToken])
+	}
+
+	ports := servePorts(recorded(t, fake.argv))
+	if len(ports) != 2 {
+		t.Fatalf("serve ran %d times, want one that went quiet and one that answered: %v", len(ports), ports)
+	}
+}
+
+// TestFieldsMovesToAnotherPortWhenTheChildLosesIt covers the race the protocol
+// cannot design away: the port is released before the child binds it, so
+// anything else on the host can take it in between. The fake binds a port this
+// case holds open, which fails the way that lost port does.
+func TestFieldsMovesToAnotherPortWhenTheChildLosesIt(t *testing.T) {
+	t.Parallel()
+
+	fake := stageFakeBW(t, oneItem(), fakeSettings{BusyPort: occupiedPort(t), BusyServes: 1})
+
+	values, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	if err != nil {
+		t.Fatalf("fields: %v", err)
+	}
+
+	if values[fieldToken] != valueToken {
+		t.Fatalf("value = %q, want the item read over the second daemon", values[fieldToken])
+	}
+
+	ports := servePorts(recorded(t, fake.argv))
+	if len(ports) != 2 {
+		t.Fatalf("serve ran %d times, want one that lost its port and one that answered: %v", len(ports), ports)
+	}
+
+	if ports[0] == ports[1] {
+		t.Fatalf("the second start reused port %s, which is the port that was taken", ports[0])
+	}
+}
+
+// startAttempts is how many ports one read will try before reporting. A host
+// where every start loses its port has to say so rather than keep spawning
+// children a deploy is waiting on.
+const startAttempts = 3
+
+// TestFieldsGivesUpAfterEveryPortIsLost pins that bound and keeps the child's
+// own words in the failure: without them the operator sees a daemon that went
+// quiet, not a port that was already taken.
+func TestFieldsGivesUpAfterEveryPortIsLost(t *testing.T) {
+	t.Parallel()
+
+	busy := occupiedPort(t)
+	fake := stageFakeBW(t, oneItem(), fakeSettings{BusyPort: busy, BusyServes: startAttempts + 1})
 
 	_, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
 	wantCode(t, err, bitwarden.CodeReady)
 
-	// The readiness budget is 15s; anything near the fake's 30s sleep would mean
-	// the call waited on the process instead of its own deadline.
-	if elapsed := time.Since(start); elapsed > 25*time.Second {
-		t.Fatalf("the call took %s, well past the readiness budget", elapsed)
+	if got := len(servePorts(recorded(t, fake.argv))); got != startAttempts {
+		t.Fatalf("serve ran %d times, want %d", got, startAttempts)
+	}
+
+	message := err.Error()
+	for _, want := range []string{"fake serve", strconv.Itoa(busy)} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("the failure does not carry the child's stderr (%q missing): %s", want, message)
+		}
+	}
+}
+
+// TestFieldsSurvivesAProbeThatGoesUnanswered covers the loopback path this host
+// can drop on a recycled port: one probe gets nothing back and costs its own
+// short bound, and the next one finds the same daemon listening. Restarting
+// there would throw away a daemon that was up.
+func TestFieldsSurvivesAProbeThatGoesUnanswered(t *testing.T) {
+	t.Parallel()
+
+	fake := stageFakeBW(t, oneItem(), fakeSettings{StallFirstProbe: true})
+
+	values, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	if err != nil {
+		t.Fatalf("fields: %v", err)
+	}
+
+	if values[fieldToken] != valueToken {
+		t.Fatalf("value = %q, want the item read after the stalled probe", values[fieldToken])
+	}
+
+	if got := len(servePorts(recorded(t, fake.argv))); got != 1 {
+		t.Fatalf("serve ran %d times, want the one daemon that stayed up", got)
 	}
 }
 
@@ -270,10 +408,11 @@ func TestFieldsLocksAndStopsTheDaemonOnFailure(t *testing.T) {
 
 	fake := stageFakeBW(t, itemsJSON(), fakeSettings{})
 
-	if _, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem,
-		[]string{fieldToken}); err == nil {
-		t.Fatal("fields returned nil for an item that is not in the vault")
-	}
+	// The code, not just any error: a readiness failure would also be non-nil and
+	// would leave the lock record empty for a reason that has nothing to do with
+	// the cleanup this case is about.
+	_, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	wantCode(t, err, bitwarden.CodeItem)
 
 	if calls := recorded(t, fake.calls); !strings.Contains(calls, "/lock") {
 		t.Fatalf("calls %q show no lock after a failure", calls)

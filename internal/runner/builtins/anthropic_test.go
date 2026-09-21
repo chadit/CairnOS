@@ -5,11 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -76,11 +77,11 @@ data: {"type":"message_stop"}
 `
 
 func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil &&
@@ -92,9 +93,8 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 
 		_, _ = io.WriteString(w, anthropicSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -127,11 +127,11 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 }
 
 func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -140,9 +140,8 @@ func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
 
 		_, _ = io.WriteString(w, anthropicJSONContentBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -178,14 +177,13 @@ func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
 }
 
 func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, anthropicProseContentBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -205,11 +203,11 @@ func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
 }
 
 func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -218,9 +216,8 @@ func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
 
 		_, _ = io.WriteString(w, anthropicSuccessBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -247,6 +244,8 @@ func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
 }
 
 func TestAnthropicClassifiesStatusCodes(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		retryAfter string
@@ -262,9 +261,9 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.retryAfter != "" {
 					w.Header().Set("Retry-After", tt.retryAfter)
 				}
@@ -272,9 +271,8 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = io.WriteString(w, `{"error":{"message":"nope"}}`)
 			}))
-			defer server.Close()
 
-			llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+			llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 			if err != nil {
 				t.Fatalf("new anthropic: %v", err)
 			}
@@ -298,11 +296,11 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 }
 
 func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
-	t.Setenv(builtins.AnthropicKeyEnv, testAPIKey)
+	t.Parallel()
 
 	requests := make(chan map[string]any, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
@@ -312,9 +310,8 @@ func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, anthropicStreamBody)
 	}))
-	defer server.Close()
 
-	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client())
+	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
 	if err != nil {
 		t.Fatalf("new anthropic: %v", err)
 	}
@@ -359,6 +356,8 @@ func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 }
 
 func TestAnthropicValidate(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name     string
 		cfg      map[string]any
@@ -391,9 +390,9 @@ func TestAnthropicValidate(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(builtins.AnthropicKeyEnv, tt.key)
+			t.Parallel()
 
-			llm, err := builtins.NewAnthropic(tt.cfg, &http.Client{Timeout: time.Second})
+			llm, err := builtins.NewAnthropic(tt.cfg, &http.Client{Timeout: time.Second}, anthropicKey(tt.key))
 			if err != nil {
 				t.Fatalf("new anthropic: %v", err)
 			}
@@ -410,4 +409,9 @@ func TestAnthropicValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// anthropicKey answers the anthropic runner's key variable and nothing else.
+func anthropicKey(value string) environ.Lookup {
+	return keyEnv(builtins.AnthropicKeyEnv, value)
 }

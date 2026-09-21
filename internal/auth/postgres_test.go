@@ -1,22 +1,24 @@
 package auth_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/store/storetest"
 )
 
-// TestOpenPostgresRejectsBadDSN proves OpenPostgres surfaces a connection failure
-// instead of a half-built store, with no Postgres required. The live-Postgres
-// conformance test lives in tests/integration.
-func TestOpenPostgresRejectsBadDSN(t *testing.T) {
+// TestOpenPostgresRejectsUnreachableServer proves OpenPostgres reports the
+// connection failure instead of handing back a half-built store whose first
+// query fails later. The DSN points at a loopback port nothing listens on, so
+// the failure is a real refused connect and needs no Postgres. Conformance
+// against a live Postgres lives in tests/integration.
+func TestOpenPostgresRejectsUnreachableServer(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	store, err := auth.OpenPostgres(t.Context(), storetest.RefusedPostgresDSN(t))
+	if err == nil {
+		_ = store.Close()
 
-	if _, err := auth.OpenPostgres(ctx, "postgres://user:pass@127.0.0.1:1/nope"); err == nil {
-		t.Fatal("OpenPostgres with a canceled context and dead DSN returned no error")
+		t.Fatal("OpenPostgres against a refused port returned no error")
 	}
 }

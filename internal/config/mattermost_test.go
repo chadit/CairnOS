@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 // identityOps is the sample identity name these tests declare and assert
@@ -208,6 +209,8 @@ func TestLoadMattermostIdentitiesFromFile(t *testing.T) {
 // time: each case starts from a file that sets a different value, so a binding
 // missing from the env table shows up as the file value surviving.
 func TestLoadMattermostEnvOverridesBeatFile(t *testing.T) {
+	t.Parallel()
+
 	fileTOML := `
 [bridge.mattermost]
 url           = "https://file.example.com"
@@ -241,9 +244,9 @@ events   = ["held"]
 		value string
 	}{
 		{
-			name: "url", env: "CAIRNOS_BRIDGE_MATTERMOST_URL", value: "https://env.example.com",
+			name: "url", env: "CAIRNOS_BRIDGE_MATTERMOST_URL", value: envURL,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.URL },
-			want: "https://env.example.com",
+			want: envURL,
 		},
 		{
 			name: "team", env: "CAIRNOS_BRIDGE_MATTERMOST_TEAM", value: "env-team",
@@ -251,7 +254,7 @@ events   = ["held"]
 			want: "env-team",
 		},
 		{
-			name: "insecure http", env: "CAIRNOS_BRIDGE_MATTERMOST_INSECURE_HTTP", value: "true",
+			name: "insecure http", env: "CAIRNOS_BRIDGE_MATTERMOST_INSECURE_HTTP", value: envOn,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.InsecureHTTP },
 			want: true,
 		},
@@ -294,9 +297,9 @@ events   = ["held"]
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(tt.env, tt.value)
+			t.Parallel()
 
-			cfg, err := config.Load(writeConfig(t, fileTOML))
+			cfg, err := config.LoadWith(writeConfig(t, fileTOML), environ.Map(map[string]string{tt.env: tt.value}))
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}
@@ -309,7 +312,11 @@ events   = ["held"]
 }
 
 func TestLoadNotifyMattermostEventsEnvOverridesFile(t *testing.T) {
-	t.Setenv("CAIRNOS_NOTIFY_MATTERMOST_EVENTS", "run_failed, budget_denied")
+	t.Parallel()
+
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_NOTIFY_MATTERMOST_EVENTS": "run_failed, budget_denied",
+	})
 
 	fileTOML := teamedMattermostTOML + `
 [notify.mattermost]
@@ -318,7 +325,7 @@ channel  = "#alerts"
 events   = ["held"]
 `
 
-	cfg, err := config.Load(writeConfig(t, fileTOML))
+	cfg, err := config.LoadWith(writeConfig(t, fileTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -344,10 +351,14 @@ channel  = "#alerts"
 // identity and channel than the file names, which is how a deployment redirects
 // alerts without editing the config file.
 func TestLoadNotifyMattermostTargetEnvOverridesFile(t *testing.T) {
-	t.Setenv("CAIRNOS_NOTIFY_MATTERMOST_IDENTITY", "release")
-	t.Setenv("CAIRNOS_NOTIFY_MATTERMOST_CHANNEL", "#releases")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, twoIdentityTOML))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_NOTIFY_MATTERMOST_IDENTITY": "release",
+		"CAIRNOS_NOTIFY_MATTERMOST_CHANNEL":  "#releases",
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, twoIdentityTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -365,9 +376,13 @@ func TestLoadNotifyMattermostTargetEnvOverridesFile(t *testing.T) {
 // override lands before validation, so an env pointing at an identity nobody
 // declared fails at load rather than at the first fan-out.
 func TestLoadRejectsUndeclaredNotifyIdentityFromEnv(t *testing.T) {
-	t.Setenv("CAIRNOS_NOTIFY_MATTERMOST_IDENTITY", "nope")
+	t.Parallel()
 
-	_, err := config.Load(writeConfig(t, twoIdentityTOML))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_NOTIFY_MATTERMOST_IDENTITY": "nope",
+	})
+
+	_, err := config.LoadWith(writeConfig(t, twoIdentityTOML), envOverrides)
 	if !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("error = %v, want ErrInvalidConfig", err)
 	}
@@ -377,9 +392,13 @@ func TestLoadRejectsUndeclaredNotifyIdentityFromEnv(t *testing.T) {
 // has no single env form, so the file binding survives an env overlay exactly
 // as the Telegram users table does.
 func TestLoadMattermostIdentitiesAreFileOnly(t *testing.T) {
-	t.Setenv("CAIRNOS_BRIDGE_MATTERMOST_URL", "https://env.example.com")
+	t.Parallel()
 
-	cfg, err := config.Load(writeConfig(t, validMattermostTOML))
+	envOverrides := environ.Map(map[string]string{
+		"CAIRNOS_BRIDGE_MATTERMOST_URL": envURL,
+	})
+
+	cfg, err := config.LoadWith(writeConfig(t, validMattermostTOML), envOverrides)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

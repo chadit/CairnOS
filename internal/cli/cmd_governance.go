@@ -171,7 +171,7 @@ func (a *App) cmdBudget(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	dir, err := resolveDir(*dirFlag)
+	dir, err := resolveDir(*dirFlag, a.envLookup())
 	if err != nil {
 		a.printErrf("budget: %v\n", err)
 

@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/execretry"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -70,6 +71,11 @@ type cliExec struct {
 	// before hosts existed; a non-empty slice is appended to that same
 	// environment rather than replacing it.
 	env []string
+
+	// inherited is the environment the child starts from. Nil leaves cmd.Env
+	// unset, so the child inherits this process's environment exactly as it did
+	// before hosts existed; wiring passes os.Environ().
+	inherited []string
 
 	stdin bool
 
@@ -133,39 +139,40 @@ func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runn
 		defer cancel()
 	}
 
-	// #nosec G204 -- the binary and argv template come from the operator's
-	// own runner config block, not from workflow params or network input.
-	cmd := exec.CommandContext(runCtx, c.binary, substitutePrompt(c.args, prompt)...)
-
-	// A nil Env inherits serve's environment, which is what these runners have
-	// always done and what the wrapped tools' own logins depend on. Setting it is
-	// reserved for the case where there is a host table to add.
-	if len(c.env) > 0 {
-		cmd.Env = append(os.Environ(), c.env...)
-	}
-
-	if c.stdin {
-		cmd.Stdin = strings.NewReader(prompt)
-	}
-
-	stderr := &tailBuffer{limit: stderrTailKeep}
-	cmd.Stderr = stderr
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return runner.Result{}, &runner.Error{
-			Class: runner.ClassPermanent, Code: c.code("start"),
-			Message: "open stdout pipe: " + err.Error(), Cause: err,
-		}
-	}
-
 	start := time.Now()
 
-	if err := cmd.Start(); err != nil {
+	piped, err := startPiped(runCtx, func() *exec.Cmd {
+		// #nosec G204 -- the binary and argv template come from the operator's
+		// own runner config block, not from workflow params or network input.
+		cmd := exec.CommandContext(runCtx, c.binary, substitutePrompt(c.args, prompt)...)
+
+		// A nil Env inherits serve's environment, which is what these runners have
+		// always done and what the wrapped tools' own logins depend on. Setting it is
+		// reserved for the case where a caller supplied one.
+		if c.inherited != nil || len(c.env) > 0 {
+			cmd.Env = append(slices.Clone(c.inherited), c.env...)
+		}
+
+		if c.stdin {
+			cmd.Stdin = strings.NewReader(prompt)
+		}
+
+		return cmd
+	})
+	if err != nil {
+		if errors.Is(err, errStdoutPipe) {
+			return runner.Result{}, &runner.Error{
+				Class: runner.ClassPermanent, Code: c.code("start"),
+				Message: err.Error(), Cause: err,
+			}
+		}
+
 		return runner.Result{}, c.classifyStart(runCtx, err)
 	}
 
-	stdoutText, scanErr := collectStdout(runCtx, stdoutPipe, stream)
+	cmd, stderr := piped.cmd, piped.stderr
+
+	stdoutText, scanErr := collectStdout(runCtx, piped.stdout, stream)
 
 	waitErr := cmd.Wait()
 	latency := time.Since(start)
@@ -364,6 +371,46 @@ func looksReauth(message string) bool {
 	}
 
 	return false
+}
+
+// pipedCmd is a child with the pipes its caller drains: stdout to read, and a
+// bounded stderr tail the failure message quotes. path is the resolved
+// executable of the last attempt, which a failed start still needs to name.
+type pipedCmd struct {
+	cmd    *exec.Cmd
+	stdout io.ReadCloser
+	stderr *tailBuffer
+	path   string
+}
+
+// startPiped wires the pipes onto a fresh command and starts it, retrying a
+// busy executable: a workflow can write a script and run it in the next breath,
+// and execve refuses while another fork holds the write descriptor. A pipe
+// failure wraps errStdoutPipe, which is how a caller tells it apart from a
+// failed start. The result is never nil.
+func startPiped(ctx context.Context, build func() *exec.Cmd) (*pipedCmd, error) {
+	piped := &pipedCmd{}
+
+	started, err := execretry.Start(ctx, func() (*exec.Cmd, error) {
+		cmd := build()
+		piped.path = cmd.Path
+		piped.stderr = &tailBuffer{limit: stderrTailKeep}
+		cmd.Stderr = piped.stderr
+
+		stdout, pipeErr := cmd.StdoutPipe()
+		if pipeErr != nil {
+			return nil, fmt.Errorf("%w: %w", errStdoutPipe, pipeErr)
+		}
+
+		piped.stdout = stdout
+
+		return cmd, nil
+	})
+
+	piped.cmd = started
+
+	//nolint:wrapcheck // each runner classifies this failure into its own code
+	return piped, err
 }
 
 // collectStdout drains the pipe line by line, forwarding to the stream when

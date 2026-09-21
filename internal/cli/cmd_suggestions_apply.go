@@ -108,7 +108,7 @@ func (a *App) cmdSuggestionsRevert(ctx context.Context, args []string) int {
 // workflows directory under the CairnOS home. The label prefixes any directory
 // resolution error.
 func (a *App) buildApplier(db store.Store, cfg *config.Config, dirFlagValue, label string) (*autonomic.Applier, int, bool) {
-	home, err := resolveDir(dirFlagValue)
+	home, err := resolveDir(dirFlagValue, a.envLookup())
 	if err != nil {
 		a.printErrf("%s: %v\n", label, err)
 
