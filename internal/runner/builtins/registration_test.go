@@ -35,6 +35,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.MCPClientName:     builtins.MCPClientFactory,
 		builtins.SandboxExecName:   builtins.SandboxExecFactory,
 		builtins.ExecName:          builtins.ExecFactory,
+		builtins.UsageName:         builtins.UsageFactory(builtins.UsageOptions{}),
 	}
 
 	for name, factory := range factories {
@@ -63,6 +64,7 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.OpenAIName,
 		builtins.QwenName,
 		builtins.SandboxExecName,
+		builtins.UsageName,
 		builtins.WebhookName,
 	}
 

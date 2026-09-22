@@ -518,7 +518,7 @@ There are two kinds of model runner. Pick per action.
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 
 [runner.openai]
 model = "gpt-4.1"
@@ -665,6 +665,85 @@ every action.
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.
 
+### Rate-limit windows
+
+The `usage` runner reports how much of each rate-limit window a model CLI login
+has spent: the 5-hour and weekly windows for Claude Code, and whatever windows
+the Codex plan carries. Point it at the launchers you already use, here or on
+another box, and schedule it like anything else.
+
+```toml
+[runner.usage]
+timeout    = 60
+claude_gap = 65
+claude     = ["claude-agent"]
+codex      = ["codex-work"]
+```
+
+Both lists default to the bare tool name (`claude`, `codex`), so a host that
+never wrote the block still reports whatever is on its `PATH`. An entry is
+either a bare name, an absolute path, or a `~/` path. Anything a shell would act
+on, a space included, is refused at config load, because a remote entry is
+placed into a command the far side runs. `timeout` is seconds per launcher and
+defaults to 60.
+
+`claude_gap` is the wait between two Claude logins on the same machine, in
+seconds, and defaults to 65. Claude Code caches its usage answer in the shared
+config directory for about a minute and does not key that cache by login, so
+launchers that swap only the token and share `~/.claude` hand back the previous
+login's figures when probed inside that window. The gap outlasts the cache.
+Probing three Claude logins therefore takes two gaps of wall clock, a little
+over two minutes; probing one takes none, and Codex never waits. If your
+launchers give each login a config directory of its own, set it to `0`.
+
+```toml
+[action.windows]
+runner = "usage"
+params = { host = "build_box", launchers = ["claude-agent"] }
+```
+
+`host` names a `[host.<name>]` block and needs its `ssh` alias; leave it out to
+probe this machine. `launchers` narrows the run to some of the configured ones,
+and a name the block never listed fails at workflow load. When the remote box's
+non-login `PATH` has no CLI on it, set `wrapper` on the host block and the
+launcher runs through that command.
+
+Output is a report per login, with the plan, every window's used percentage, and
+its reset time. A launcher that fails records its reason and the rest still
+report; only a run where nothing answered fails the action. Two more fields save
+a downstream action from walking the list. `summary` is the table below as
+Markdown, wrapped in a code fence so a chat client keeps the columns lined up.
+`has_errors` is `true` when any login failed, which is what a condition reads:
+
+```toml
+[action.alert]
+runner     = "message"
+depends_on = ["windows"]
+condition  = "${{ windows.output.has_errors }} == true"
+params     = { identity = "ops", to = "#usage", text = "${{ windows.output.summary }}" }
+```
+
+`cairnos usage` runs the same probe by hand and prints that table, with reset
+times in UTC. `--host` and `--launchers a,b` mean what the params do, `--json`
+prints the whole report instead, and `--dir` picks the CairnOS home:
+
+```text
+$ cairnos usage --host build_box
+LOGIN         PLAN     WINDOW  USED  RESETS
+claude-agent  max      5h      2%    2026-09-22 18:50 UTC
+                       7d      23%   2026-09-24 12:00 UTC
+codex-work    prolite  7d      24%   2026-09-26 10:01 UTC
+```
+
+A login that failed prints its error across the window columns. When the Claude
+gap applies, the command says how long it will wait before it starts. It exits
+non-zero only when no login reported at all.
+
+This runner speaks each CLI's own stdio protocol, the one those tools expose to
+their SDKs, through your launcher. It never opens a credential file, never sets
+`CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and never calls the vendors' HTTP endpoints
+itself. Whichever login your launcher picks is the login it reports on.
+
 ### Schedule syntax
 
 A workflow's `schedule` key takes `@hourly`, `@daily`, `@weekly`, `@monthly`, a
@@ -753,6 +832,11 @@ The workflow file lives in the repository and every host that clones it reads th
 same text, so only `dest` and the environment file should name the path, and a box
 where `$HOME` moves needs no edit to the workflow. `allowlist` is the gate: a
 variable missing from it fails the run instead of being read.
+
+`${{ system.hostname }}` needs no allowlist entry. It resolves when the action
+launches to the name of the machine running it, so one workflow deployed to
+several hosts can tell their posts or files apart. Any other `system.` name fails
+at workflow load.
 
 `dest` is an absolute path outside the CairnOS directory, since CairnOS prunes
 and backs up its own home on its own schedule. CairnOS passes no git credentials
@@ -882,8 +966,9 @@ machines once and every job gets the answer:
 
 ```toml
 [host.build_box]
-type = "worker"
-ssh  = "build-box"
+type    = "worker"
+ssh     = "build-box"
+wrapper = "~/.local/bin/agent-env"
 
 [host.build_box.harness.claude]
 name = "claude-agent"
@@ -899,7 +984,13 @@ provider = "zai"
 
 `type` is `worker` for a machine that runs the CLIs or `agent` for one that
 drives them, and `ssh` is the alias a job reaches it by, held to the same
-grammar as the block name since that is what it is. Each tool block takes
+grammar as the block name since that is what it is. `wrapper` is optional: a
+command on that host the launcher is run through, as
+`<wrapper> <launcher> <args...>`. It sets up the environment (PATH, nvm, and so
+on) and must exec its arguments. Use it when the box's non-login `PATH` lacks
+the CLI. It is absolute or `~/`-prefixed, and it may not carry a character a
+shell would act on, because it goes into a command that host's login shell
+runs. Each tool block takes
 `path`, `name`, and `provider`, and all three are optional. `path` defaults to
 `~/.local/bin` and must not end in a slash, `name` defaults to the block's own
 key, so `copilot` above needs no keys at all. `provider` is a label for whose
@@ -913,6 +1004,7 @@ The block above becomes exactly this:
 CAIRNOS_HOSTS=build_box
 CAIRNOS_HOST_BUILD_BOX_TYPE=worker
 CAIRNOS_HOST_BUILD_BOX_SSH=build-box
+CAIRNOS_HOST_BUILD_BOX_WRAPPER=~/.local/bin/agent-env
 CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude codex copilot omp-glm
 CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent
 CAIRNOS_HOST_BUILD_BOX_HARNESS_CODEX=~/.local/bin/codex-agent
@@ -928,7 +1020,7 @@ mapping loses information, so two names that would land on one variable, such as
 winning.
 
 A variable is absent rather than empty when the thing it describes is not
-configured. `_SSH` and `_PROVIDER` appear only when the block sets them, and a
+configured. `_SSH`, `_WRAPPER`, and `_PROVIDER` appear only when the block sets them, and a
 host with no tool blocks gets no `_HARNESSES` line at all, so a job can tell
 "nothing configured" from "configured as nothing".
 
@@ -1014,6 +1106,13 @@ outside those channels can set the post prop `activate_ai = "true"`. Inside an
 allowed channel a sliding window still applies, so a runaway conversation goes
 quiet for a cooldown instead of running up your bill.
 
+Mention the bot with `usage`, or ask how much of the weekly limit is left, and
+it answers in the thread with the same table `cairnos usage` prints. There is
+no approval step, because the probe changes nothing and spends no quota. Each
+Claude login after the first waits out the CLI's usage cache (`claude_gap`,
+65 seconds by default), so three Claude logins take a little over two minutes
+before the reply lands.
+
 ### Sending messages
 
 Every identity is also a send target, from three places.
@@ -1036,6 +1135,20 @@ params = { identity = "ops", to = "#alerts", text = "run ${run.id} finished" }
 
 The action outputs the created post id, so a later action can answer in the
 same thread with `thread = "${action.announce.output}"`.
+
+A scheduled workflow that should keep posting into one thread sets `thread_key`
+instead. The first post under a key opens a new thread and CairnOS stores its
+root post id. Every later post with the same identity, target, and key replies
+there, across runs and restarts:
+
+```toml
+[action.report]
+runner = "message"
+params = { identity = "ops", to = "#usage", thread_key = "usage:${{ system.hostname }}", text = "${{ windows.output.summary }}" }
+```
+
+If someone deletes the root post, the next send opens a fresh thread and
+remembers that one. `thread` and `thread_key` together fail at workflow load.
 
 And from the notification fan-out, which posts held jobs and failed runs into a
 channel:

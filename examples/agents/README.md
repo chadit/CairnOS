@@ -25,6 +25,7 @@ or any listing site.
 | language_rules_assistant | single-action workflow | language_rules_service |
 | release_monitor | parallel fan-in, sentinel condition | github, anthropic |
 | browser_snapshot | agent action, MCP tool | browser_nav, anthropic |
+| usage_report | cron schedule, thread_key, bool condition | usage, message |
 
 ## What each sample needs
 
@@ -41,6 +42,7 @@ Env keys below are all prefixed `CAIRNOS_RUNNER_`; runner config blocks
 | language_rules_assistant | none; set dir in its config block |
 | release_monitor | GITHUB_TOKEN, ANTHROPIC_API_KEY |
 | browser_snapshot | ANTHROPIC_API_KEY |
+| usage_report | none; the posts need CAIRNOS_BRIDGE_MATTERMOST_TOKEN under serve |
 
 ## Notes
 

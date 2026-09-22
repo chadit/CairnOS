@@ -469,6 +469,8 @@ func (b *builder) checkForeachItemsRef(flow *Workflow, action *Action, ref Ref) 
 		}
 	case RefItem, RefIndex:
 		b.addf(CodeBadForeach, "action %q foreach items cannot reference %s", action.Name, ref.Raw)
+	case RefSystem:
+		b.checkSystemRef(action, ref)
 	case RefEnv, RefSecret:
 		// Shape checked at parse time; runtime resolves the value.
 	}
@@ -619,9 +621,20 @@ func (b *builder) checkRef(flow *Workflow, action *Action, ref Ref) {
 		if action.Foreach == nil {
 			b.addf(CodeBadForeach, "action %q reads %s but declares no foreach", action.Name, ref.Raw)
 		}
+	case RefSystem:
+		b.checkSystemRef(action, ref)
 	case RefEnv, RefSecret:
 		// Shape was checked at parse time. Allowlist and secret existence are
 		// runtime config concerns, enforced when the engine resolves values.
+	}
+}
+
+// checkSystemRef refuses a system.* name the engine cannot answer, so a typo
+// fails at load like an undeclared input instead of at the first scheduled run.
+func (b *builder) checkSystemRef(action *Action, ref Ref) {
+	if ref.Target != SystemHostname {
+		b.addf(CodeBadReference, "action %q references unknown system value %s; only system.%s exists",
+			action.Name, ref.Raw, SystemHostname)
 	}
 }
 

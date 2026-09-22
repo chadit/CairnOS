@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"time"
 
@@ -174,6 +175,10 @@ type Config struct {
 	// to come back promptly and never block, or it stalls the scheduler.
 	OnEvent func(Event)
 
+	// Hostname answers ${{ system.hostname }}. Injected so a test pins the
+	// name; nil means os.Hostname.
+	Hostname func() (string, error)
+
 	// EnvAllowlist names the only environment variables ${{ env.* }} may
 	// read; anything else fails with config.invalid.
 	EnvAllowlist []string
@@ -226,6 +231,10 @@ func New(cfg Config, registry *runner.Registry, stateStore store.Store) *Engine 
 
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
+	}
+
+	if cfg.Hostname == nil {
+		cfg.Hostname = os.Hostname
 	}
 
 	if cfg.Instrumentation == nil {

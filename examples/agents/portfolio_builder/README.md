@@ -20,7 +20,7 @@ schedule.
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 
 [runner.codex]
 # binary = "codex"          # override if the CLI lives elsewhere; the runner

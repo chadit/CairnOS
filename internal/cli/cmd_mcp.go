@@ -10,7 +10,6 @@ import (
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
-	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/mcp"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/rules"
@@ -130,8 +129,8 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), mem, rulesSvc, credManager, nil,
-		a.logger, nil)
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, rulesSvc, credManager, nil,
+		nil, a.logger, nil)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
 

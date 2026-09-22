@@ -1,0 +1,46 @@
+# usage_report.toml: hourly rate-limit report for the model CLI logins on a
+# build machine, posted into one chat thread per reporting host.
+#
+# Run it under serve, which holds the chat identity the posts go out as:
+#   cairnos schedule add examples/agents/usage_report/usage_report.toml
+#
+# The README covers the [host.build_box], [runner.usage], and
+# [bridge.mattermost] blocks this workflow reads.
+
+[workflow]
+name        = "usage_report"
+version     = "1"
+description = "Probe each model CLI login on build_box and post its rate-limit windows to chat."
+schedule    = "0 * * * *"
+timeout     = "10m"
+
+[workflow.inputs.channel]
+type        = "string"
+default     = "#usage"
+description = "Channel the report thread lives in."
+
+[workflow.inputs.mention]
+type        = "string"
+default     = "@oncall"
+description = "Who the alert pings when a login fails to report."
+
+# One probe per configured launcher, run on build_box over ssh. A login that
+# fails lands in the report instead of failing the action.
+[action.windows]
+runner = "usage"
+params = { host = "build_box" }
+
+# The thread key carries the reporting host, so two serves posting the same
+# workflow keep separate threads instead of replying into each other's.
+[action.post]
+runner     = "message"
+depends_on = ["windows"]
+params     = { identity = "ops", to = "${{ inputs.channel }}", thread_key = "usage:${{ system.hostname }}", text = "${{ windows.output.summary }}" }
+
+# Waits on post so the first run opens the thread once rather than racing
+# post for it. Skipped, not failed, when every login reported.
+[action.alert]
+runner     = "message"
+depends_on = ["windows", "post"]
+condition  = "${{ windows.output.has_errors }} == true"
+params     = { identity = "ops", to = "${{ inputs.channel }}", thread_key = "usage:${{ system.hostname }}", text = "${{ inputs.mention }} some build_box logins failed to report; the error rows name them:\n${{ windows.output.summary }}" }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -113,13 +114,18 @@ func (*skillTool) Describe() runner.ToolSpec {
 }
 
 // toolExchangeRecord renders one tool exchange for the transcript. A successful
-// skill load is special-cased to the raw-body record so the description-match
-// path carries byte-identical text to a slash invocation. Every other tool, and
-// a skill error, takes the truncating render that bounds one large value.
+// skill load keeps its raw body so the description-match path matches a slash
+// invocation byte for byte, and a usage report keeps its table unescaped so the
+// reply can carry it verbatim. Everything else takes the truncating JSON render.
 func toolExchangeRecord(tool string, arguments map[string]any, output any) string {
-	if tool == SkillToolName {
+	switch tool {
+	case SkillToolName:
 		if record, ok := skillToolRecord(output); ok {
 			return record
+		}
+	case ToolUsage:
+		if text, ok := builtins.UsageToolText(output); ok {
+			return fmt.Sprintf("called %s(%s) ->\n%s", tool, renderValue(arguments), truncateResult(text))
 		}
 	}
 

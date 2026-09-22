@@ -13,6 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/service"
+	"github.com/chadit/CairnOS/internal/shellquote"
 )
 
 // bwBinary is the CLI this command drives. It is the standalone build, not the
@@ -220,30 +221,20 @@ func (a *App) renderEnvFile(label, path string, values map[string]string, dryRun
 	return ExitOK
 }
 
-// renderEnv builds the file body in sorted order, so two runs against an
-// unchanged vault produce identical bytes and a diff means something moved.
-// Every value is single-quoted, because both readers of this file treat an
-// unquoted one as shell words: a value with a space would set half a variable
-// and run the rest as a command.
+// renderEnv sorts so an unchanged vault produces identical bytes. Every value is
+// single-quoted because systemd's EnvironmentFile and the POSIX shell that
+// sources this on macOS both split an unquoted one into words, so a value with a
+// space would set half a variable and run the rest as a command.
 func renderEnv(names []string, values map[string]string) []byte {
 	var out strings.Builder
 
 	out.WriteString(generatedHeader)
 
 	for _, name := range names {
-		fmt.Fprintf(&out, "%s=%s\n", name, shellQuote(values[name]))
+		fmt.Fprintf(&out, "%s=%s\n", name, shellquote.Word(values[name]))
 	}
 
 	return []byte(out.String())
-}
-
-// shellQuote wraps a value in single quotes, closing, escaping, and reopening
-// around any single quote inside it. Both readers agree on that form: systemd's
-// EnvironmentFile parser has the same three states as the POSIX shell that
-// sources this on macOS, taking a single-quoted run literally and a backslash
-// outside quotes as an escape.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 // checkRenderable refuses a value neither reader can carry. Both parse line by

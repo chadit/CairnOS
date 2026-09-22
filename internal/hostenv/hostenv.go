@@ -20,6 +20,7 @@ const (
 
 	typeSuffix     = "_TYPE"
 	sshSuffix      = "_SSH"
+	wrapperSuffix  = "_WRAPPER"
 	listSuffix     = "_HARNESSES"
 	binInfix       = "_HARNESS_"
 	providerSuffix = "_PROVIDER"
@@ -60,6 +61,12 @@ func hostVars(name string, host config.Host) []string {
 	// "no alias configured" from "alias configured as nothing".
 	if host.SSH != "" {
 		vars = append(vars, prefix+sshSuffix+"="+host.SSH)
+	}
+
+	// Left out rather than set empty for the same reason the alias is: a job
+	// reading an empty value would run the launcher through nothing.
+	if host.Wrapper != "" {
+		vars = append(vars, prefix+wrapperSuffix+"="+host.Wrapper)
 	}
 
 	// A host with no tool blocks leaves the index out rather than setting it

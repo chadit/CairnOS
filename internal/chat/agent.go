@@ -67,9 +67,9 @@ type Config struct {
 	// triggering is unavailable instead of starting a run.
 	Trigger WorkflowTrigger
 
-	// Tools are the read tools the agent may call inline (memory, vault_query),
-	// keyed by name. run_workflow is not here: its call is intercepted into the
-	// confirmation gate, never executed.
+	// Tools are the read tools the agent may call inline (memory, vault_query,
+	// skill, usage), keyed by name. run_workflow is not here: its call is
+	// intercepted into the confirmation gate, never executed.
 	Tools map[string]runner.Runner
 
 	// Personalities resolves a session's personality to its system prompt.

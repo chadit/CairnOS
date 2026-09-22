@@ -97,7 +97,7 @@ agent action's name in the runner's `allow_actions`.
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 
 # plus the [runner.browser_nav] block shown above
 ```

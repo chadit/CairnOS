@@ -950,6 +950,36 @@ func TestEnvReferences(t *testing.T) {
 	})
 }
 
+// systemTOML embeds the hostname in text, the way a thread key names the
+// machine a scheduled post came from.
+const systemTOML = `
+[workflow]
+name = "whereami"
+
+[action.read_host]
+runner = "local_fn"
+params = { fn = "capture", key = "usage:${{ system.hostname }}" }
+`
+
+func TestSystemHostnameResolvesAtLaunch(t *testing.T) {
+	t.Parallel()
+
+	sink := &paramSink{}
+
+	cfg := baseConfig()
+	cfg.Hostname = func() (string, error) { return "build-box-7", nil }
+
+	eng, _ := newTestEngine(t, cfg, map[string]builtins.Func{fnCapture: sink.capture})
+
+	run := mustRun(t, eng, parseFlow(t, systemTOML), nil)
+
+	wantRunStatus(t, run, store.RunSucceeded)
+
+	if got := sink.snapshot()["key"]; got != "usage:build-box-7" {
+		t.Fatalf("key = %v, want the injected hostname interpolated", got)
+	}
+}
+
 func TestEveryTransitionIsPersisted(t *testing.T) {
 	t.Parallel()
 

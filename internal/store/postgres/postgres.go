@@ -150,6 +150,16 @@ CREATE TABLE IF NOT EXISTS bridge_sessions (
     PRIMARY KEY (workspace_id, transport, chat_key)
 );
 
+CREATE TABLE IF NOT EXISTS message_threads (
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    identity     TEXT NOT NULL,
+    target       TEXT NOT NULL,
+    thread_key   TEXT NOT NULL,
+    root_id      TEXT NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (workspace_id, identity, target, thread_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workflow ON runs(workflow_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(workspace_id, status, created_at);

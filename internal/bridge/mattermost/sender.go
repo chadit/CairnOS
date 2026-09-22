@@ -2,6 +2,7 @@ package mattermost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -57,10 +58,22 @@ func (i *identity) Send(ctx context.Context, target messaging.Target, text, thre
 
 	post, err := i.client.CreatePost(ctx, channelID, threadID, text)
 	if err != nil {
+		if threadID != "" && isNotFound(err) {
+			err = fmt.Errorf("%w %s: %w", messaging.ErrThreadNotFound, threadID, err)
+		}
+
 		return messaging.PostRef{}, fmt.Errorf("mattermost identity %q: post to %s: %w", i.name, target, err)
 	}
 
 	return messaging.PostRef{PostID: post.ID, ChannelID: post.ChannelID}, nil
+}
+
+// isNotFound reports a post refused because something it names is gone. A reply
+// reads that as its root, since a missing channel fails the fresh root the same way.
+func isNotFound(err error) bool {
+	failure, isAPIError := errors.AsType[*APIError](err)
+
+	return isAPIError && failure.Class == ClassNotFound
 }
 
 // resolveTarget turns one parsed target into the channel to post in. An id form

@@ -23,7 +23,14 @@ const (
 	// RefIndex reads the zero-based position of the current foreach element
 	// (${{ index }}); only valid inside a foreach action.
 	RefIndex
+	// RefSystem reads a fact about the machine running the action, such as
+	// ${{ system.hostname }}; validation accepts only SystemHostname.
+	RefSystem
 )
+
+// SystemHostname is the one system.* name: the host the engine runs on, so one
+// workflow deployed to several machines can tell their posts apart.
+const SystemHostname = "hostname"
 
 // Ref is one parsed interpolation reference from a params value, a goal, or a
 // condition expression.
@@ -55,6 +62,7 @@ const (
 	nsSecrets   = "secrets"
 	nsItem      = "item"
 	nsIndex     = "index"
+	nsSystem    = "system"
 	fieldOutput = "output"
 )
 
@@ -180,7 +188,7 @@ func parseRef(raw, body string) (Ref, error) {
 	}
 
 	switch parts[0] {
-	case nsInputs, nsEnv, nsSecrets:
+	case nsInputs, nsEnv, nsSecrets, nsSystem:
 		return parseNamespacedRef(raw, parts)
 	default:
 		return parseActionRef(raw, parts)
@@ -216,6 +224,8 @@ func parseNamespacedRef(raw string, parts []string) (Ref, error) {
 		kind = RefEnv
 	case nsSecrets:
 		kind = RefSecret
+	case nsSystem:
+		kind = RefSystem
 	}
 
 	return Ref{Raw: raw, Kind: kind, Target: parts[1]}, nil

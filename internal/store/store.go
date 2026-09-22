@@ -383,6 +383,18 @@ type BridgeSessionStore interface {
 	LookupBridgeSession(ctx context.Context, transport, chatKey string) (string, error)
 }
 
+// MessageThreadStore remembers the root post each message thread_key opened, so
+// a scheduled workflow keeps replying in one thread across runs and restarts.
+type MessageThreadStore interface {
+	// BindMessageThread upserts the root post id for (identity, target, key) in
+	// the request workspace, overwriting a root that went missing.
+	BindMessageThread(ctx context.Context, identity, target, key, rootID string) error
+
+	// LookupMessageThread returns the bound root post id, or
+	// ErrMessageThreadNotFound when no post has opened that thread yet.
+	LookupMessageThread(ctx context.Context, identity, target, key string) (string, error)
+}
+
 // ApprovalStatus is the decision state of a human-approval gate.
 type ApprovalStatus string
 
@@ -499,6 +511,10 @@ type Store interface {
 	// the Telegram long-poll loop resolves per turn
 	// (.agents/spec/parity/messaging-bridge.md).
 	BridgeSessionStore
+
+	// MessageThreadStore carries the thread_key roots the message runner posts
+	// replies under.
+	MessageThreadStore
 
 	// ListActionResults returns every action row for a run.
 	ListActionResults(ctx context.Context, runID string) ([]*ActionResult, error)

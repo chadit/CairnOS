@@ -1,7 +1,9 @@
 package mattermost
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -129,7 +131,7 @@ func classifyStatus(method string, resp *http.Response) error {
 	case status == http.StatusTooManyRequests:
 		failure.Class = ClassRateLimited
 		failure.RetryAfter = rateLimitHint(resp.Header.Get(rateLimitResetHeader))
-	case status == http.StatusNotFound:
+	case status == http.StatusNotFound || status == http.StatusBadRequest && missingRoot(resp.Body):
 		failure.Class = ClassNotFound
 	case status == http.StatusRequestTimeout || status >= http.StatusInternalServerError:
 		failure.Class = ClassTransient
@@ -138,6 +140,27 @@ func classifyStatus(method string, resp *http.Response) error {
 	}
 
 	return failure
+}
+
+// missingRootErrorID is the id Mattermost puts on the 400 it answers a reply to a
+// deleted or unknown root with, the same fact a 404 states for anything else.
+const missingRootErrorID = "api.post.create_post.root_id.app_error"
+
+// maxErrorBodyBytes bounds the error body read, which only needs the id field.
+const maxErrorBodyBytes = 4096
+
+// missingRoot reports whether an error body names a missing thread root. A
+// body that does not parse is some other 400 and keeps its permanent class.
+func missingRoot(body io.Reader) bool {
+	var serverError struct {
+		ID string `json:"id"`
+	}
+
+	if err := json.NewDecoder(io.LimitReader(body, maxErrorBodyBytes)).Decode(&serverError); err != nil {
+		return false
+	}
+
+	return serverError.ID == missingRootErrorID
 }
 
 // rateLimitHint reads the reset header as whole seconds. A missing or unreadable

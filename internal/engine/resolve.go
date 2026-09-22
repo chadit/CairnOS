@@ -28,6 +28,8 @@ func (e *Engine) resolver(ctx context.Context, inputs, outputs map[string]any) w
 			return e.resolveEnv(ref)
 		case workflow.RefSecret:
 			return e.resolveSecret(ctx, ref)
+		case workflow.RefSystem:
+			return e.resolveSystem(ref)
 		case workflow.RefItem, workflow.RefIndex:
 			// item and index only exist inside a fan-out, layered on by
 			// foreachResolver; the base resolver never binds them. Validation
@@ -126,6 +128,21 @@ func (e *Engine) resolveGoal(ctx context.Context, action *workflow.Action, input
 	}
 
 	return rendered, nil
+}
+
+// resolveSystem answers a system.* reference at launch, so a run reports the host
+// it actually ran on rather than the one that loaded the workflow.
+func (e *Engine) resolveSystem(ref workflow.Ref) (any, error) {
+	if ref.Target != workflow.SystemHostname {
+		return nil, errf(CodePreconditionFailed, "unknown system value %s", ref.Raw)
+	}
+
+	hostname, err := e.cfg.Hostname()
+	if err != nil {
+		return nil, errf(CodePreconditionFailed, "%s: read hostname: %v", ref.Raw, err)
+	}
+
+	return hostname, nil
 }
 
 // resolveEnv reads an environment variable, but only when its name is in the

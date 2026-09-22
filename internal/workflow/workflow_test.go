@@ -389,6 +389,37 @@ func TestParseAcceptsSecondsSchedule(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsSystemHostname(t *testing.T) {
+	t.Parallel()
+
+	const src = "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\n" +
+		"params = { key = \"usage:${{ system.hostname }}\" }"
+
+	if _, err := workflow.Parse([]byte(src)); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	refs, errs := workflow.ExtractRefs("${{ system.hostname }}")
+	if len(errs) > 0 || len(refs) != 1 || refs[0].Kind != workflow.RefSystem || refs[0].Target != workflow.SystemHostname {
+		t.Fatalf("refs = %+v, errs = %v, want one system ref to the hostname", refs, errs)
+	}
+}
+
+func TestParseRejectsUnknownSystemValue(t *testing.T) {
+	t.Parallel()
+
+	const src = "[workflow]\nname = \"w\"\n[action.a]\nrunner = \"mock\"\nparams = { x = \"${{ system.kernel }}\" }"
+
+	_, err := workflow.Parse([]byte(src))
+	if err == nil {
+		t.Fatal("parse succeeded, want system.kernel refused")
+	}
+
+	if codes := codesOf(t, err); !slices.Contains(codes, workflow.CodeBadReference) {
+		t.Fatalf("codes = %v, want %s", codes, workflow.CodeBadReference)
+	}
+}
+
 func TestParseAcceptsRequires(t *testing.T) {
 	t.Parallel()
 

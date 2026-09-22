@@ -153,6 +153,16 @@ CREATE TABLE IF NOT EXISTS bridge_sessions (
     PRIMARY KEY (workspace_id, transport, chat_key)
 );
 
+CREATE TABLE IF NOT EXISTS message_threads (
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    identity     TEXT NOT NULL,
+    target       TEXT NOT NULL,
+    thread_key   TEXT NOT NULL,
+    root_id      TEXT NOT NULL,
+    updated_at   TIMESTAMP NOT NULL,
+    PRIMARY KEY (workspace_id, identity, target, thread_key)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
     content, content='chat_messages', content_rowid='rowid'
 );

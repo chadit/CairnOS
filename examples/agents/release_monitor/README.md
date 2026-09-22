@@ -78,7 +78,7 @@ The issues repo is `CairnOS-Issues`, corrected from the vision's
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 
 [runner.github]
 # base_url defaults to https://api.github.com; set it for a GitHub

@@ -42,7 +42,7 @@ action with `local_fn.unknown_fn`.
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 
 [runner.email]
 host = "smtp.example.com"

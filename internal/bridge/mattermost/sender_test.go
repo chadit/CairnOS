@@ -240,3 +240,29 @@ func TestSenderReresolvesAStaleNameEntry(t *testing.T) {
 		t.Fatalf("posts = %+v, want the second one in the re-resolved channel", posts)
 	}
 }
+
+// goneRootConn fails every post with the not-found class the client gives a
+// missing post, which is what a reply to a deleted root meets.
+type goneRootConn struct {
+	*fakeConn
+}
+
+// CreatePost refuses the post the way the server refuses a reply to a gone root.
+func (*goneRootConn) CreatePost(_ context.Context, _, _, _ string) (mattermost.Post, error) {
+	return mattermost.Post{}, &mattermost.APIError{Class: mattermost.ClassNotFound, Method: "CreatePost", Status: 404}
+}
+
+func TestSenderReportsAMissingThreadRoot(t *testing.T) {
+	t.Parallel()
+
+	sender := senderFor(t, &goneRootConn{fakeConn: newFakeConn(botUserID, botUsername)})
+	target := messaging.Target{Kind: messaging.KindChannelID, Value: channelID}
+
+	if _, err := sender.Send(t.Context(), target, "in thread", "root-9"); !errors.Is(err, messaging.ErrThreadNotFound) {
+		t.Fatalf("reply error = %v, want ErrThreadNotFound", err)
+	}
+
+	if _, err := sender.Send(t.Context(), target, "no thread", ""); errors.Is(err, messaging.ErrThreadNotFound) {
+		t.Fatalf("root post error = %v, want a plain not-found since no thread was named", err)
+	}
+}

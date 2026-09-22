@@ -86,7 +86,7 @@ func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, *chat.Pers
 	// see the same library.
 	source := skillSourceAdapter{lib: skills.New(deps.skillsDir, deps.logger)}
 
-	tools := chat.BuildToolSet(chatReadTools(deps.memory, deps.vault, source))
+	tools := chat.BuildToolSet(chatReadTools(deps.memory, deps.vault, source, deps.registry))
 
 	trigger := api.NewChatWorkflowTrigger(deps.manager, api.NewWorkflowResolver(deps.workflowsDir, deps.logger))
 
@@ -182,11 +182,13 @@ func chatDriver(registry *runner.Registry, name string) (runner.ToolCaller, erro
 	return caller, nil
 }
 
-// chatReadTools builds the read tools the chat agent runs inline: the memory
-// tool when a memory store is configured, the vault query tool when a vault
-// store is configured, and the skill read tool when a skill source is wired. A
-// nil dependency leaves its tool out, so a node without a vault still runs chat.
-func chatReadTools(mem memory.Store, vaultStore vault.Store, skillSource chat.SkillSource) map[string]runner.Runner {
+// chatReadTools builds the read tools the chat agent runs inline: memory, vault
+// query, skill, and the usage probe, each only when its dependency is present.
+// The probe is the registry's own instance, so chat reads the same launchers and
+// hosts a workflow action does.
+func chatReadTools(
+	mem memory.Store, vaultStore vault.Store, skillSource chat.SkillSource, registry *runner.Registry,
+) map[string]runner.Runner {
 	tools := map[string]runner.Runner{}
 
 	if mem != nil {
@@ -199,6 +201,14 @@ func chatReadTools(mem memory.Store, vaultStore vault.Store, skillSource chat.Sk
 
 	if skillSource != nil {
 		tools[chat.SkillToolName] = chat.NewSkillTool(skillSource)
+	}
+
+	if registry == nil {
+		return tools
+	}
+
+	if usage, built := registry.Get(builtins.UsageName); built {
+		tools[chat.ToolUsage] = usage
 	}
 
 	return tools

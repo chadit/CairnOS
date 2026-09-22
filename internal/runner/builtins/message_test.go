@@ -3,10 +3,12 @@ package builtins_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/runner/builtins"
+	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -18,6 +20,9 @@ const (
 	testIdentity   = "ops"
 	testChannel    = "#alerts"
 	testMessagePID = "post-42"
+	testRootID     = "root-7"
+	threadKeyParam = "thread_key"
+	testThreadKey  = "usage:build_box"
 )
 
 // errMessageTransport is what recordingSender returns once a test makes the
@@ -32,12 +37,13 @@ type sentMessage struct {
 	Thread   string
 }
 
-// recordingSender is a builtins.MessageSender that keeps every send and can fail
-// with either a classified runner error or a bare transport error.
+// recordingSender keeps every send and fails with the configured error. A reply
+// on goneRoot fails the way serve reports a root the chat server deleted.
 type recordingSender struct {
-	fail   error
-	postID string
-	sent   []sentMessage
+	fail     error
+	postID   string
+	goneRoot string
+	sent     []sentMessage
 }
 
 // Send records the call and answers with the configured failure or post id.
@@ -46,6 +52,10 @@ func (s *recordingSender) Send(_ context.Context, identity, to, text, thread str
 
 	if s.fail != nil {
 		return "", s.fail
+	}
+
+	if thread != "" && thread == s.goneRoot {
+		return "", fmt.Errorf("reply on %s: %w", thread, builtins.ErrMessageThreadMissing)
 	}
 
 	return s.postID, nil
@@ -64,7 +74,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 
 	sender := &recordingSender{postID: testMessagePID}
 
-	built, err := builtins.MessageFactory(sender)(nil)
+	built, err := builtins.MessageFactory(sender, nil)(nil)
 	if err != nil {
 		t.Fatalf("build message runner: %v", err)
 	}
@@ -73,7 +83,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 		identityKey: testIdentity,
 		toKey:       testChannel,
 		textKey:     "deploy finished",
-		threadKey:   "root-7",
+		threadKey:   testRootID,
 	}))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -83,7 +93,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 		t.Fatalf("output = %v, want the created message id", result.Output)
 	}
 
-	want := sentMessage{Identity: testIdentity, To: testChannel, Text: "deploy finished", Thread: "root-7"}
+	want := sentMessage{Identity: testIdentity, To: testChannel, Text: "deploy finished", Thread: testRootID}
 	if len(sender.sent) != 1 || sender.sent[0] != want {
 		t.Fatalf("sends = %+v, want exactly %+v", sender.sent, want)
 	}
@@ -96,7 +106,7 @@ func TestMessageOmitsThreadWhenAbsent(t *testing.T) {
 
 	sender := &recordingSender{postID: "post-1"}
 
-	built, err := builtins.MessageFactory(sender)(nil)
+	built, err := builtins.MessageFactory(sender, nil)(nil)
 	if err != nil {
 		t.Fatalf("build message runner: %v", err)
 	}
@@ -139,6 +149,21 @@ func TestMessageValidateRejectsBadParams(t *testing.T) {
 			wantCode: "message.missing_text",
 		},
 		{
+			name: "thread and thread_key together",
+			params: map[string]any{
+				identityKey: testIdentity, toKey: testChannel, textKey: testBody,
+				threadKey: testRootID, threadKeyParam: testThreadKey,
+			},
+			wantCode: "message.thread_conflict",
+		},
+		{
+			name: "non-string thread_key",
+			params: map[string]any{
+				identityKey: testIdentity, toKey: testChannel, textKey: testBody, threadKeyParam: 7,
+			},
+			wantCode: "message.bad_thread_key",
+		},
+		{
 			name: "non-string thread",
 			params: map[string]any{
 				identityKey: testIdentity, toKey: testChannel, textKey: testBody, threadKey: 7,
@@ -147,7 +172,7 @@ func TestMessageValidateRejectsBadParams(t *testing.T) {
 		},
 	}
 
-	built, err := builtins.MessageFactory(&recordingSender{})(nil)
+	built, err := builtins.MessageFactory(&recordingSender{}, nil)(nil)
 	if err != nil {
 		t.Fatalf("build message runner: %v", err)
 	}
@@ -180,7 +205,7 @@ func TestMessageValidateRejectsBadParams(t *testing.T) {
 func TestMessageWithoutSenderIsPermanent(t *testing.T) {
 	t.Parallel()
 
-	built, err := builtins.MessageFactory(nil)(nil)
+	built, err := builtins.MessageFactory(nil, nil)(nil)
 	if err != nil {
 		t.Fatalf("build message runner: %v", err)
 	}
@@ -233,7 +258,7 @@ func TestMessageKeepsSeamClassification(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			built, err := builtins.MessageFactory(&recordingSender{fail: testCase.fail})(nil)
+			built, err := builtins.MessageFactory(&recordingSender{fail: testCase.fail}, nil)(nil)
 			if err != nil {
 				t.Fatalf("build message runner: %v", err)
 			}
@@ -252,5 +277,117 @@ func TestMessageKeepsSeamClassification(t *testing.T) {
 					classified, testCase.wantCode, testCase.wantClass)
 			}
 		})
+	}
+}
+
+// threadStore is an in-memory builtins.MessageThreads keyed the way the run
+// store keys its rows, answering a miss with the store's own sentinel.
+type threadStore struct {
+	roots map[string]string
+}
+
+// threadRow joins the three parts a root is remembered under.
+func threadRow(identity, target, key string) string {
+	return identity + "|" + target + "|" + key
+}
+
+// LookupMessageThread reads one remembered root.
+func (s *threadStore) LookupMessageThread(_ context.Context, identity, target, key string) (string, error) {
+	rootID, known := s.roots[threadRow(identity, target, key)]
+	if !known {
+		return "", store.ErrMessageThreadNotFound
+	}
+
+	return rootID, nil
+}
+
+// BindMessageThread remembers one root, replacing any earlier one.
+func (s *threadStore) BindMessageThread(_ context.Context, identity, target, key, rootID string) error {
+	s.roots[threadRow(identity, target, key)] = rootID
+
+	return nil
+}
+
+// keyedPost runs one thread_key post through a runner over the given seams.
+func keyedPost(t *testing.T, sender *recordingSender, threads *threadStore) any {
+	t.Helper()
+
+	built, err := builtins.MessageFactory(sender, threads)(nil)
+	if err != nil {
+		t.Fatalf("build message runner: %v", err)
+	}
+
+	result, err := built.Execute(t.Context(), messageTask(map[string]any{
+		identityKey: testIdentity, toKey: testChannel, textKey: testBody, threadKeyParam: testThreadKey,
+	}))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	return result.Output
+}
+
+func TestMessageThreadKeyOpensARootThenReplies(t *testing.T) {
+	t.Parallel()
+
+	sender := &recordingSender{postID: testMessagePID}
+	threads := &threadStore{roots: map[string]string{}}
+
+	if output := keyedPost(t, sender, threads); output != testMessagePID {
+		t.Fatalf("first post output = %v, want the root id %s", output, testMessagePID)
+	}
+
+	if got := threads.roots[threadRow(testIdentity, testChannel, testThreadKey)]; got != testMessagePID {
+		t.Fatalf("remembered root = %q, want %q", got, testMessagePID)
+	}
+
+	keyedPost(t, sender, threads)
+
+	if len(sender.sent) != 2 || sender.sent[0].Thread != "" || sender.sent[1].Thread != testMessagePID {
+		t.Fatalf("sends = %+v, want a root post and then a reply on %s", sender.sent, testMessagePID)
+	}
+}
+
+func TestMessageThreadKeyReplacesAMissingRoot(t *testing.T) {
+	t.Parallel()
+
+	const goneRoot = "post-deleted"
+
+	sender := &recordingSender{postID: testMessagePID, goneRoot: goneRoot}
+	threads := &threadStore{roots: map[string]string{threadRow(testIdentity, testChannel, testThreadKey): goneRoot}}
+
+	if output := keyedPost(t, sender, threads); output != testMessagePID {
+		t.Fatalf("output = %v, want the fresh root %s", output, testMessagePID)
+	}
+
+	if len(sender.sent) != 2 || sender.sent[0].Thread != goneRoot || sender.sent[1].Thread != "" {
+		t.Fatalf("sends = %+v, want a failed reply on %s and then a fresh root", sender.sent, goneRoot)
+	}
+
+	if got := threads.roots[threadRow(testIdentity, testChannel, testThreadKey)]; got != testMessagePID {
+		t.Fatalf("remembered root = %q, want the fresh %q", got, testMessagePID)
+	}
+}
+
+func TestMessageThreadKeyKeepsOtherSendFailures(t *testing.T) {
+	t.Parallel()
+
+	sender := &recordingSender{fail: errMessageTransport}
+	threads := &threadStore{roots: map[string]string{threadRow(testIdentity, testChannel, testThreadKey): "post-1"}}
+
+	built, err := builtins.MessageFactory(sender, threads)(nil)
+	if err != nil {
+		t.Fatalf("build message runner: %v", err)
+	}
+
+	_, err = built.Execute(t.Context(), messageTask(map[string]any{
+		identityKey: testIdentity, toKey: testChannel, textKey: testBody, threadKeyParam: testThreadKey,
+	}))
+	if !errors.Is(err, errMessageTransport) {
+		t.Fatalf("Execute error = %v, want the transport failure", err)
+	}
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("sends = %+v, want one reply and no fresh root after an unrelated failure", sender.sent)
 	}
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"maps"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,9 +15,10 @@ const (
 	hostKeyType    = "type"
 	hostKeySSH     = "ssh"
 	hostKeyHarness = "harness"
+	hostKeyWrapper = "wrapper"
 )
 
-// Harness block keys, checked the same way one level down.
+// Tool block keys, checked the same way one level down.
 const (
 	harnessKeyPath     = "path"
 	harnessKeyName     = "name"
@@ -38,8 +38,14 @@ const (
 // what home means; CairnOS never expands it.
 const DefaultHarnessPath = "~/.local/bin"
 
-// homePrefix is the one relative form such a path may take.
-const homePrefix = "~/"
+// homePrefix is the one relative form such a path may take, and posixRoot the
+// absolute one. Both are matched as prefixes rather than through filepath,
+// because these paths only ever resolve on the POSIX host that runs the binary;
+// filepath.IsAbs would answer for whichever machine parsed the config.
+const (
+	homePrefix = "~/"
+	posixRoot  = "/"
+)
 
 // hostNamePattern and harnessKeyPattern are the two block-name grammars. A host
 // name allows dots and dashes because it usually mirrors an ssh alias; a cli key
@@ -49,8 +55,13 @@ var (
 	harnessKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 )
 
+// hostPathPattern bounds a path that reaches a remote login shell. Everything a
+// shell acts on sits outside it, so the value stays data instead of being one
+// interpolation away from a second command.
+var hostPathPattern = regexp.MustCompile(`^[A-Za-z0-9_.+@~/-]+$`)
+
 // Harness is one AI command-line tool installed on a host, named from a
-// [host.<name>.harness.<cli>] block. The engine launches Path + "/" + Name
+// [host.<name>.<tool table>.<cli>] block. The engine launches Path + "/" + Name
 // instead of trusting the worker host's PATH, which a non-login ssh shell
 // usually leaves without ~/.local/bin on it.
 type Harness struct {
@@ -80,6 +91,11 @@ type Host struct {
 
 	// SSH is the alias a job uses to reach this host, when reaching it needs one.
 	SSH string
+
+	// Wrapper is a command on this host that a launcher is run through, as
+	// "<wrapper> <launcher> <args...>". It sets the environment up and execs its
+	// arguments. Absolute, or "~/"-prefixed for the host to expand.
+	Wrapper string
 }
 
 // hostEntry is one key of one host block, carried together so every error names
@@ -90,7 +106,7 @@ type hostEntry struct {
 	key   string
 }
 
-// harnessEntry is one key of one harness block, for the same reason.
+// harnessEntry is one key of one tool block, for the same reason.
 type harnessEntry struct {
 	value any
 	host  string
@@ -131,7 +147,7 @@ func parseHostBlocks(raw map[string]map[string]any) (map[string]Host, error) {
 }
 
 // parseHostBlock decodes one host block strictly. go-toml hands the nested
-// harness tables back inside this same map, so the whole two-level shape is
+// tool tables back inside this same map, so the whole two-level shape is
 // decoded here rather than through a second struct tag.
 func parseHostBlock(name string, block map[string]any) (Host, error) {
 	host := Host{Harnesses: map[string]Harness{}}
@@ -157,6 +173,8 @@ func applyHostKey(host *Host, entry hostEntry) error {
 		host.Type, err = hostString(entry)
 	case hostKeySSH:
 		host.SSH, err = hostString(entry)
+	case hostKeyWrapper:
+		host.Wrapper, err = hostString(entry)
 	case hostKeyHarness:
 		host.Harnesses, err = parseHarnessBlocks(entry)
 	default:
@@ -166,7 +184,7 @@ func applyHostKey(host *Host, entry hostEntry) error {
 	return err
 }
 
-// parseHarnessBlocks decodes the harness table of one host. Its value and each
+// parseHarnessBlocks decodes the tool table of one host. Its value and each
 // cli's value both have to be tables, and a scalar in either place is an
 // operator mistake worth naming rather than ignoring.
 func parseHarnessBlocks(entry hostEntry) (map[string]Harness, error) {
@@ -190,7 +208,7 @@ func parseHarnessBlocks(entry hostEntry) (map[string]Harness, error) {
 	return harnesses, nil
 }
 
-// parseHarnessBlock decodes one harness block, seeding the two defaults so a
+// parseHarnessBlock decodes one tool block, seeding the two defaults so a
 // block written empty still describes a launchable binary. A key written blank
 // keeps the blank and fails validation, since an operator who typed the key
 // meant to name something.
@@ -313,7 +331,32 @@ func validateHost(name string, host *Host) error {
 			ErrInvalidConfig, name, host.SSH, hostNamePattern)
 	}
 
+	if err := validateHostWrapper(name, host.Wrapper); err != nil {
+		return err
+	}
+
 	return validateHarnesses(name, host.Harnesses)
+}
+
+// validateHostWrapper holds the command to the same grammar a tool path gets,
+// plus the shell-safe character set it needs of its own: the value is spliced
+// into a command the remote login shell runs, so a metacharacter here would be
+// a second command rather than a program name.
+func validateHostWrapper(name, path string) error {
+	if path == "" {
+		return nil
+	}
+
+	if err := validateHostPath(path); err != nil {
+		return fmt.Errorf("%w: host.%s.%s %q %w", ErrInvalidConfig, name, hostKeyWrapper, path, err)
+	}
+
+	if !hostPathPattern.MatchString(path) {
+		return fmt.Errorf("%w: host.%s.%s %q %w %s",
+			ErrInvalidConfig, name, hostKeyWrapper, path, ErrHostPathPattern, hostPathPattern)
+	}
+
+	return nil
 }
 
 // validateHarnesses checks one host's harnesses, refusing two cli keys that
@@ -349,7 +392,7 @@ func claimHarnessToken(seen map[string]string, host, cli string) error {
 	return nil
 }
 
-// validateHarness checks one harness block's key and its two path parts.
+// validateHarness checks one tool block's key and its two path parts.
 func validateHarness(host, cli string, harness *Harness) error {
 	if !harnessKeyPattern.MatchString(cli) {
 		return fmt.Errorf("%w: host.%s.harness.%s name must match %s",
@@ -363,27 +406,31 @@ func validateHarness(host, cli string, harness *Harness) error {
 	return validateHarnessName(host, cli, harness.Name)
 }
 
-// validateHarnessPath keeps the directory resolvable on the host that runs the
-// binary. A relative path other than "~/" would resolve against whatever working
-// directory the job happened to have, which is not something config can promise.
+// validateHostPath refuses a relative path because it would resolve against
+// whatever working directory the job had. A trailing slash is refused, not
+// tidied, because "~//claude" is a home path to a shell but the absolute
+// "/claude" to Python's posixpath.join, so two lanes would launch different binaries.
+func validateHostPath(path string) error {
+	if !strings.HasPrefix(path, posixRoot) && !strings.HasPrefix(path, homePrefix) {
+		return ErrHostPathRelative
+	}
+
+	if strings.HasSuffix(path, "/") {
+		return ErrHostPathTrailingSlash
+	}
+
+	return nil
+}
+
+// validateHarnessPath adds the one rule a tool directory has of its own: it
+// cannot be blank, since a block that named the key meant to name a directory.
 func validateHarnessPath(host, cli, path string) error {
 	if path == "" {
 		return fmt.Errorf("%w: host.%s.harness.%s.path must be set", ErrInvalidConfig, host, cli)
 	}
 
-	if !filepath.IsAbs(path) && !strings.HasPrefix(path, homePrefix) {
-		return fmt.Errorf("%w: host.%s.harness.%s.path %q must be absolute or start with %q",
-			ErrInvalidConfig, host, cli, path, homePrefix)
-	}
-
-	// A trailing slash is refused rather than tidied because the consumers do not
-	// agree on what a doubled one means. "~//" renders "~//claude", which a shell
-	// reads as a path under home and Python's posixpath.join reads as the absolute
-	// "/claude", so two lanes would launch two different binaries with no error
-	// from either.
-	if strings.HasSuffix(path, "/") {
-		return fmt.Errorf("%w: host.%s.harness.%s.path %q must not end with a slash",
-			ErrInvalidConfig, host, cli, path)
+	if err := validateHostPath(path); err != nil {
+		return fmt.Errorf("%w: host.%s.harness.%s.path %q %w", ErrInvalidConfig, host, cli, path, err)
 	}
 
 	return nil

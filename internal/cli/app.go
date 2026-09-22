@@ -63,6 +63,7 @@ Commands:
   audit     List governance audit actions (pause, resume, terminate)
   prune     Delete runs and outputs past the retention window
   health    Exit 0 when the config loads and the store answers
+  usage     Report what each model CLI login has spent of its rate-limit windows
   service   Run serve under the host supervisor: setup, status, uninstall
   model     Managed local LLM: setup, status, check, upgrade, uninstall
   update    Update this host: install the latest release or rebuild the
@@ -212,6 +213,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdPrune(ctx, rest)
 	case "health":
 		return a.cmdHealth(ctx, rest)
+	case "usage":
+		return a.cmdUsage(ctx, rest)
 	default:
 		return a.dispatchServeClients(ctx, name, rest)
 	}

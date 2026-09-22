@@ -9,7 +9,6 @@ import (
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/environ"
-	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/tuning"
@@ -148,8 +147,8 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 // opens no secret source, so a workflow binding a credential to a runner fails
 // here at BuildAll, the same signal a missing credential gives elsewhere.
 func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.Registry, error) {
-	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), nil, nil, nil, nil,
-		a.logger, nil)
+	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), nil, nil, nil, nil,
+		nil, a.logger, nil)
 }
 
 // replayComparator builds the output-equivalence comparator for replay. An

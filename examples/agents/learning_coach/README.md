@@ -25,7 +25,7 @@ material. Today the workflow has no memory of past weeks.
 
 ```toml
 [runner.anthropic]
-model = "claude-sonnet-4-5"
+model = "claude-sonnet-5"
 ```
 
 Environment:

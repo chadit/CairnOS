@@ -599,6 +599,16 @@ func (*capturingStore) LookupBridgeSession(_ context.Context, transport, chatKey
 	return "", fmt.Errorf("%w: %s/%s", store.ErrBridgeSessionNotFound, transport, chatKey)
 }
 
+// BindMessageThread implements store.Store.
+func (*capturingStore) BindMessageThread(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
+// LookupMessageThread implements store.Store.
+func (*capturingStore) LookupMessageThread(_ context.Context, _, _, key string) (string, error) {
+	return "", fmt.Errorf("%w: %s", store.ErrMessageThreadNotFound, key)
+}
+
 // ReconcileInterrupted implements store.Store.
 func (*capturingStore) ReconcileInterrupted(_ context.Context) (int, error) {
 	return 0, nil

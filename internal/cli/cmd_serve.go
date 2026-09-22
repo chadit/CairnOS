@@ -204,7 +204,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	msgRegistry := messaging.NewRegistry()
 
 	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, a.envLookup(), mem, stores.rules, credManager,
-		&messageSenderAdapter{registry: msgRegistry, logger: logger}, logger)
+		&messageSenderAdapter{registry: msgRegistry, logger: logger}, db, logger)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}

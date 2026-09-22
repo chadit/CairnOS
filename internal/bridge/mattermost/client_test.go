@@ -671,3 +671,43 @@ func TestCreatePostRetriesAfterARateLimit(t *testing.T) {
 		t.Fatalf("the server saw %d attempts, want the 429 and one retry", got)
 	}
 }
+
+func TestMissingThreadRootReadsAsNotFound(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		body      string
+		wantClass mattermost.ErrorClass
+	}{
+		{
+			name:      "reply to a deleted root",
+			body:      `{"id":"api.post.create_post.root_id.app_error","message":"Invalid RootId parameter.","status_code":400}`,
+			wantClass: mattermost.ClassNotFound,
+		},
+		{
+			name:      "any other bad request",
+			body:      `{"id":"api.post.create_post.message_length.app_error","status_code":400}`,
+			wantClass: mattermost.ClassPermanent,
+		},
+		{name: "a body that is not json", body: "bad request", wantClass: mattermost.ClassPermanent},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(testCase.body))
+			})
+
+			_, err := newConnectedClient(t, mux).CreatePost(t.Context(), testChannelID, "gone-root", testPostText)
+
+			if failure := apiError(t, err); failure.Class != testCase.wantClass {
+				t.Fatalf("400 with %s gave class %v, want %v", testCase.body, failure.Class, testCase.wantClass)
+			}
+		})
+	}
+}

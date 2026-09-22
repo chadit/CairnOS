@@ -915,12 +915,13 @@ func newServeRegistry(
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
 	msgSender builtins.MessageSender,
+	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
 ) (*runner.Registry, *SourceDirtyNotifier, error) {
 	notifier := NewSourceDirtyNotifier(nil)
 
-	registry, err := newRegistry(ctx, cfg.Runners, sources, hostenv.Render(cfg.Hosts), env, mem,
-		rulesSvc, credLookup, msgSender, logger, notifier)
+	registry, err := newRegistry(ctx, cfg.Runners, sources, cfg.Hosts, env, mem,
+		rulesSvc, credLookup, msgSender, msgThreads, logger, notifier)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -933,22 +934,24 @@ func newServeRegistry(
 // block. BuildAll hands each factory its [runner.<name>] block and spawns
 // plugin child processes, so ctx bounds construction.
 //
-// msgSender and sourceObs are seams only serve fills; with nil the message
-// runner refuses and the source runner only logs.
+// msgSender, msgThreads, and sourceObs are seams only serve fills; with nil the
+// message runner refuses and the source runner only logs.
 func newRegistry(
 	ctx context.Context,
 	runnerCfgs map[string]map[string]any,
 	sources []sourcesync.Spec,
-	hostEnv []string,
+	hosts map[string]config.Host,
 	env environ.Lookup,
 	mem memory.Store,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
 	msgSender builtins.MessageSender,
+	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
 	sourceObs builtins.SourceObserver,
 ) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
+	hostEnv := hostenv.Render(hosts)
 
 	for name, tool := range builtins.CLIDefaults() {
 		if err := registry.Register(name, builtins.CLIFactory(name, tool, hostEnv, os.Environ())); err != nil {
@@ -956,7 +959,10 @@ func newRegistry(
 		}
 	}
 
-	for _, builtin := range fixedBuiltins(sources, hostEnv, env, rulesSvc, credLookup, msgSender, logger, sourceObs) {
+	fixed := fixedBuiltins(sources, hosts, hostEnv, env, rulesSvc, credLookup,
+		msgSender, msgThreads, logger, sourceObs)
+
+	for _, builtin := range fixed {
 		if err := registry.Register(builtin.name, builtin.factory); err != nil {
 			return nil, fmt.Errorf("register %s runner: %w", builtin.name, err)
 		}
@@ -1003,11 +1009,13 @@ type builtinRunner struct {
 // per-runner branch pushed newRegistry past the complexity ceiling.
 func fixedBuiltins(
 	sources []sourcesync.Spec,
+	hosts map[string]config.Host,
 	hostEnv []string,
 	env environ.Lookup,
 	rulesSvc rules.Service,
 	credLookup builtins.TokenLookup,
 	msgSender builtins.MessageSender,
+	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
 	sourceObs builtins.SourceObserver,
 ) []builtinRunner {
@@ -1025,9 +1033,32 @@ func fixedBuiltins(
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
 		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ())},
-		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender)},
+		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender, msgThreads)},
 		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
+		{name: builtins.UsageName, factory: builtins.UsageFactory(usageOptions(hosts, env))},
 	}
+}
+
+// usageOptions builds the usage runner's seams from config. The usage command and
+// the registry share it so both probe the same host table.
+func usageOptions(hosts map[string]config.Host, env environ.Lookup) builtins.UsageOptions {
+	return builtins.UsageOptions{
+		Hosts:   usageHosts(hosts),
+		Lookup:  env,
+		Version: appVersion(),
+	}
+}
+
+// usageHosts narrows the host table to the two keys the usage runner reads, which
+// keeps the built-in off the config package's import path.
+func usageHosts(hosts map[string]config.Host) map[string]builtins.UsageHost {
+	targets := make(map[string]builtins.UsageHost, len(hosts))
+
+	for name, host := range hosts {
+		targets[name] = builtins.UsageHost{SSH: host.SSH, Wrapper: host.Wrapper}
+	}
+
+	return targets
 }
 
 // alreadyRegisteredAsBuiltin reports whether a block carries the built-in's own

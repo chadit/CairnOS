@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -60,7 +61,7 @@ func (a *App) writeActionTable(results []*store.ActionResult) {
 		var output string
 
 		if result.Output != nil {
-			output = truncate(fmt.Sprintf("%v", result.Output))
+			output = truncate(previewValue(result.Output))
 		}
 
 		a.tabWritef(tab, "%s\t%s\t%s\t%d\t$%.4f\t%s\t%s\n",
@@ -80,6 +81,21 @@ func formatTableTime(value time.Time) string {
 	}
 
 	return value.UTC().Format(tableTimeLayout)
+}
+
+// previewValue renders an output for a table cell. A stored map or list prints as
+// `map[k:v]` under %v, so anything but a string goes through JSON to stay readable.
+func previewValue(value any) string {
+	if text, isText := value.(string); isText {
+		return text
+	}
+
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+
+	return string(encoded)
 }
 
 // truncate caps text at outputPreviewLen bytes for preview columns.

@@ -6,6 +6,10 @@ import "errors"
 // values cover execution failures; these cover config decoding, which happens
 // before any task exists.
 var (
+	// ErrMessageThreadMissing marks a reply whose root post the chat server no longer
+	// has. Serve wraps the transport's own sentinel in it so this package stays off messaging.
+	ErrMessageThreadMissing = errors.New("message thread root is gone")
+
 	// ErrConfigValue reports a runner config key holding the wrong type.
 	ErrConfigValue = errors.New("invalid runner config value")
 
@@ -34,6 +38,50 @@ var (
 	// The three process runners classify a start failure and a pipe failure
 	// differently, so startPiped marks the pipe case for them.
 	errStdoutPipe = errors.New("open stdout pipe")
+
+	// errUsagePipe reports that a launcher's stdin pipe could not be opened. It
+	// sits beside errStdoutPipe because the usage runner writes as well as
+	// reads, so a failure on either pipe ends the exchange before it starts.
+	errUsagePipe = errors.New("open stdin pipe")
+
+	// errUsageProtocol reports a launcher configured under a protocol the usage
+	// runner has no dialog for. Config decoding builds the pairs, so this stays
+	// defensive.
+	errUsageProtocol = errors.New("no usage dialog for protocol")
+
+	// errUsageRefused reports a CLI that answered the usage request with a
+	// failure of its own: an expired login, a plan that reports no limits, or a
+	// launcher pointed at an account the vendor rejected.
+	errUsageRefused = errors.New("cli refused the usage request")
+
+	// errUsageNoLimits reports an answer that carried no rate-limit windows.
+	// The login works and the plan simply publishes nothing, which is a fact
+	// about that login rather than a broken probe.
+	errUsageNoLimits = errors.New("cli reported no rate limit windows")
+
+	// errUsageNoResponse reports a launcher whose stdout ended before the usage
+	// answer arrived, which is what a wrapper that never reached the CLI looks
+	// like from here.
+	errUsageNoResponse = errors.New("cli ended without a usage response")
+
+	// errUsageTimeout reports a probe that outlived its deadline.
+	errUsageTimeout = errors.New("cli timed out")
+
+	// errUsageCanceled reports a probe the caller ended. It is kept apart from
+	// the timeout because a run someone stopped says nothing about the CLI.
+	errUsageCanceled = errors.New("cli probe canceled")
+
+	// errUsageBadWindow reports a rate-limit window the CLI sent in a shape this
+	// build cannot read. It surfaces only when no window decoded at all, since
+	// one unreadable key among several is a field this build has yet to learn.
+	errUsageBadWindow = errors.New("cli sent an unreadable rate limit window")
+
+	// errUsageUnprobed reports a launcher the run never reached, because the
+	// wait between two Claude logins was cut short.
+	errUsageUnprobed = errors.New("not probed: the run ended while spacing claude logins apart")
+
+	// errUsageNoHome reports a "~/" launcher with no HOME to expand it against.
+	errUsageNoHome = errors.New("no home directory in the environment")
 
 	// errBadOutput reports a Starlark output value the code runner refuses to
 	// hand downstream: a non-data type, an int outside int64, or a dict with a

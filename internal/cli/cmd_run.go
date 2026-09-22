@@ -11,7 +11,6 @@ import (
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/engine"
-	"github.com/chadit/CairnOS/internal/hostenv"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/telemetry"
@@ -153,8 +152,8 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		return nil, nil, ExitFailure, false
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), hostenv.Render(cfg.Hosts), a.envLookup(), mem, nil, credManager, nil,
-		a.logger, nil)
+	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
+		nil, a.logger, nil)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
 		a.closeSecretSource(closeSource)

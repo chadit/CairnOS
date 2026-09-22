@@ -3,8 +3,10 @@ package builtins
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -14,15 +16,25 @@ const MessageName = "message"
 // Message params. to and text reuse the keys the email runner already spells
 // the same two ideas with.
 const (
-	paramIdentity = "identity"
-	paramThread   = "thread"
+	paramIdentity  = "identity"
+	paramThread    = "thread"
+	paramThreadKey = "thread_key"
 )
 
 // Stable machine codes the send path reports.
 const (
 	codeMessageUnavailable = MessageName + ".unavailable"
 	codeMessageSend        = MessageName + ".send"
+	codeMessageThreadBoth  = MessageName + ".thread_conflict"
+	codeMessageThreadStore = MessageName + ".thread_store"
 )
+
+// MessageThreads remembers the root post each thread_key opened; the run store
+// satisfies it. A lookup miss is store.ErrMessageThreadNotFound.
+type MessageThreads interface {
+	LookupMessageThread(ctx context.Context, identity, target, key string) (string, error)
+	BindMessageThread(ctx context.Context, identity, target, key, rootID string) error
+}
 
 // MessageSender is the send seam this runner drives. It is declared here rather
 // than taken from the messaging package so pkg/runner and its built-ins stay the
@@ -38,10 +50,11 @@ type MessageSender interface {
 // a workflow reaches a channel or a person on the same connection the bridge
 // answers on (FR32).
 //
-// Config: none. Params: identity, to, text, and an optional thread. The target
-// is one of #channel, @user, channel:<id>, or user:<id>.
+// Config: none. Params: identity, to, text, and an optional thread or
+// thread_key. The target is one of #channel, @user, channel:<id>, or user:<id>.
 type Message struct {
-	sender MessageSender
+	sender  MessageSender
+	threads MessageThreads
 }
 
 // MessageFactory adapts a send seam to the registry contract. A nil sender is
@@ -49,9 +62,9 @@ type Message struct {
 // hold no identity registry. Registering anyway keeps `cairnos validate` and a
 // local run agreeing with serve about which runner names exist; Execute is
 // where a host that cannot send says so.
-func MessageFactory(sender MessageSender) runner.Factory {
+func MessageFactory(sender MessageSender, threads MessageThreads) runner.Factory {
 	return func(_ map[string]any) (runner.Runner, error) {
-		return &Message{sender: sender}, nil
+		return &Message{sender: sender, threads: threads}, nil
 	}
 }
 
@@ -61,7 +74,7 @@ func (*Message) Name() string {
 }
 
 // Validate implements runner.Runner: params must carry string identity, to, and
-// text values, with thread optional.
+// text values, with at most one of thread and thread_key.
 func (*Message) Validate(task *runner.Task) error {
 	if err := requireStringParam(task, paramIdentity, MessageName); err != nil {
 		return err
@@ -75,7 +88,21 @@ func (*Message) Validate(task *runner.Task) error {
 		return err
 	}
 
-	return optionalStringParam(task, paramThread, MessageName)
+	if err := optionalStringParam(task, paramThread, MessageName); err != nil {
+		return err
+	}
+
+	if err := optionalStringParam(task, paramThreadKey, MessageName); err != nil {
+		return err
+	}
+
+	_, hasThread := task.Params[paramThread]
+	if _, hasKey := task.Params[paramThreadKey]; hasThread && hasKey {
+		return runner.NewError(runner.ClassPermanent, codeMessageThreadBoth,
+			paramThread+" and "+paramThreadKey+" are mutually exclusive: pick a fixed root or a remembered one")
+	}
+
+	return nil
 }
 
 // Execute implements runner.Runner. The created message id is the output so a
@@ -94,10 +121,11 @@ func (m *Message) Execute(ctx context.Context, task *runner.Task) (runner.Result
 	target, _ := task.Params[paramTo].(string)
 	text, _ := task.Params[paramText].(string)
 	thread, _ := task.Params[paramThread].(string)
+	key, _ := task.Params[paramThreadKey].(string)
 
 	start := time.Now()
 
-	messageID, err := m.sender.Send(ctx, identity, target, text, thread)
+	messageID, err := m.dispatch(ctx, identity, target, text, thread, key)
 	if err != nil {
 		return runner.Result{}, classifySend(err)
 	}
@@ -107,6 +135,64 @@ func (m *Message) Execute(ctx context.Context, task *runner.Task) (runner.Result
 		Usage:  runner.Usage{Latency: time.Since(start)},
 		Meta:   map[string]string{paramIdentity: identity, paramTo: target},
 	}, nil
+}
+
+// dispatch sends a keyed message through the thread store so every run of the
+// workflow lands under the root post its key opened.
+func (m *Message) dispatch(ctx context.Context, identity, target, text, thread, key string) (string, error) {
+	if key != "" {
+		return m.sendKeyed(ctx, identity, target, text, key)
+	}
+
+	messageID, err := m.sender.Send(ctx, identity, target, text, thread)
+	if err != nil {
+		return "", fmt.Errorf("post to %s: %w", target, err)
+	}
+
+	return messageID, nil
+}
+
+// sendKeyed replies under the root this key opened, or opens one. A root the
+// server lost is replaced rather than failing every later run of the workflow.
+func (m *Message) sendKeyed(ctx context.Context, identity, target, text, key string) (string, error) {
+	if m.threads == nil {
+		return "", runner.NewError(runner.ClassPermanent, codeMessageThreadStore,
+			paramThreadKey+" needs the run store, which this host did not hand the message runner")
+	}
+
+	rootID, err := m.threads.LookupMessageThread(ctx, identity, target, key)
+	if err != nil && !errors.Is(err, store.ErrMessageThreadNotFound) {
+		return "", runner.NewError(runner.ClassTransient, codeMessageThreadStore, "look up thread: "+err.Error())
+	}
+
+	if rootID != "" {
+		messageID, err := m.sender.Send(ctx, identity, target, text, rootID)
+		if err == nil {
+			return messageID, nil
+		}
+
+		if !errors.Is(err, ErrMessageThreadMissing) {
+			return "", fmt.Errorf("reply in thread %s: %w", rootID, err)
+		}
+	}
+
+	return m.openThread(ctx, identity, target, text, key)
+}
+
+// openThread posts a new root and remembers it. A failed bind is permanent,
+// because a retry would post the same root a second time.
+func (m *Message) openThread(ctx context.Context, identity, target, text, key string) (string, error) {
+	rootID, err := m.sender.Send(ctx, identity, target, text, "")
+	if err != nil {
+		return "", fmt.Errorf("open thread %s: %w", key, err)
+	}
+
+	if err := m.threads.BindMessageThread(ctx, identity, target, key, rootID); err != nil {
+		return "", runner.NewError(runner.ClassPermanent, codeMessageThreadStore,
+			"posted "+rootID+" but could not remember it for "+paramThreadKey+" "+key+": "+err.Error())
+	}
+
+	return rootID, nil
 }
 
 // classifySend keeps whatever classification the send seam already made, since

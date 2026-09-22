@@ -188,9 +188,9 @@ func (t *chatTurn) finishAnswer(ctx context.Context, result runner.Result) error
 	return emit(ctx, t.out, &Event{Type: EventTurnDone, Text: answer, Usage: t.usage})
 }
 
-// runReadTool executes one allowed read tool (memory, vault_query) inline,
-// streams a tool-call event, persists the exchange as a tool-role message so it
-// replays into the next turn, and lets the loop continue. A tool that is not in
+// runReadTool executes one allowed read tool inline, streams a tool-call event,
+// persists the exchange as a tool-role message so it replays into the next
+// turn, and lets the loop continue. A tool that is not in
 // the allowlist or fails surfaces its outcome into the transcript rather than
 // failing the turn, so the driver can adapt.
 func (t *chatTurn) runReadTool(ctx context.Context, tool string, arguments map[string]any) error {

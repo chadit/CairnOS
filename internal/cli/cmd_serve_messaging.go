@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/messaging"
+	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -53,6 +55,10 @@ func (s *messageSenderAdapter) Send(ctx context.Context, identity, recipient, te
 	if err != nil {
 		s.logger.WarnContext(ctx, "message runner send failed",
 			"identity", identity, "target", target.String(), "error", err)
+
+		if errors.Is(err, messaging.ErrThreadNotFound) {
+			err = fmt.Errorf("%w: %w", builtins.ErrMessageThreadMissing, err)
+		}
 
 		return "", fmt.Errorf("send as %q to %s: %w", identity, target, err)
 	}

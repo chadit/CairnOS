@@ -6,8 +6,11 @@ import (
 	"net/http"
 
 	"github.com/chadit/CairnOS/internal/api"
+	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/reach"
+	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/scheduler"
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 // HomeEnvName is the variable the commands resolve a home directory from. It
@@ -175,4 +178,16 @@ func (a *App) UpdateDriveRestart(ctx context.Context, hooks UpdateRestartHooks, 
 // real swap on a file it owns.
 func UpdateInstallBinary(target, staged string) error {
 	return installBinary(target, staged)
+}
+
+// NewMessageSender exposes serve's send adapter, so a test can drive the message
+// runner through the same error translation serve applies.
+func NewMessageSender(registry *messaging.Registry, logger *slog.Logger) builtins.MessageSender {
+	return &messageSenderAdapter{registry: registry, logger: logger}
+}
+
+// ServeChatReadTools exposes the read tools serve hands the chat agent when only
+// the runner registry is present, so a case can pin which runners chat reuses.
+func ServeChatReadTools(registry *runner.Registry) map[string]runner.Runner {
+	return chatReadTools(nil, nil, nil, registry)
 }

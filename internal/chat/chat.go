@@ -36,6 +36,9 @@ const (
 	ToolMemory = builtins.MemoryName
 	// ToolVaultQuery is the read-only vault graph query.
 	ToolVaultQuery = builtins.VaultQueryName
+	// ToolUsage is the read-only rate-limit probe of the configured model CLI
+	// logins, the same one `cairnos usage` runs.
+	ToolUsage = builtins.UsageName
 	// ToolRunWorkflow is the D9 gated trigger: calling it proposes a workflow,
 	// it never runs one directly.
 	ToolRunWorkflow = RunWorkflowToolName

@@ -513,6 +513,16 @@ func (*fakeStore) LookupBridgeSession(_ context.Context, transport, chatKey stri
 	return "", fmt.Errorf("%w: %s/%s", store.ErrBridgeSessionNotFound, transport, chatKey)
 }
 
+// BindMessageThread implements store.Store.
+func (*fakeStore) BindMessageThread(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
+// LookupMessageThread implements store.Store.
+func (*fakeStore) LookupMessageThread(_ context.Context, _, _, key string) (string, error) {
+	return "", fmt.Errorf("%w: %s", store.ErrMessageThreadNotFound, key)
+}
+
 // ReconcileInterrupted implements store.Store; the fake never has
 // interrupted runs to reconcile.
 func (*fakeStore) ReconcileInterrupted(_ context.Context) (int, error) {

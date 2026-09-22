@@ -145,6 +145,9 @@ func RunConformance(t *testing.T, openFn OpenFunc) {
 		{name: "BridgeSessionRebindUpserts", run: testBridgeSessionRebindUpserts},
 		{name: "BridgeSessionNotFound", run: testBridgeSessionNotFound},
 		{name: "BridgeSessionIsolatesByWorkspace", run: testBridgeSessionIsolatesByWorkspace},
+		{name: "MessageThreadRoundTrip", run: testMessageThreadRoundTrip},
+		{name: "MessageThreadRebindUpserts", run: testMessageThreadRebindUpserts},
+		{name: "MessageThreadIsolatesEveryKeyPart", run: testMessageThreadIsolatesEveryKeyPart},
 	}
 
 	for _, tt := range cases {

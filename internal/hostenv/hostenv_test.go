@@ -2,6 +2,7 @@ package hostenv_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/config"
@@ -23,8 +24,9 @@ const (
 func twoHosts() map[string]config.Host {
 	return map[string]config.Host{
 		"build_box": {
-			Type: config.HostTypeWorker,
-			SSH:  "build-box",
+			Type:    config.HostTypeWorker,
+			SSH:     "build-box",
+			Wrapper: "~/.local/bin/agent-env",
 			Harnesses: map[string]config.Harness{
 				cliClaude: {Path: config.DefaultHarnessPath, Name: "claude-agent"},
 				"omp-glm": {Path: config.DefaultHarnessPath, Name: "omp-glm", Provider: "zai"},
@@ -47,6 +49,7 @@ func TestRenderGolden(t *testing.T) {
 		"CAIRNOS_HOSTS=build_box builder.example.com",
 		"CAIRNOS_HOST_BUILD_BOX_TYPE=worker",
 		"CAIRNOS_HOST_BUILD_BOX_SSH=build-box",
+		"CAIRNOS_HOST_BUILD_BOX_WRAPPER=~/.local/bin/agent-env",
 		"CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude omp-glm",
 		"CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent",
 		"CAIRNOS_HOST_BUILD_BOX_HARNESS_OMP_GLM=~/.local/bin/omp-glm",
@@ -180,5 +183,20 @@ func TestRenderOmitsUnsetOptionalFields(t *testing.T) {
 
 	if got := hostenv.Render(hosts); !slices.Equal(got, want) {
 		t.Fatalf("Render mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+// TestRenderLeavesOutAnAbsentWrapper is the other half of the golden case: a
+// host that names no wrapper gets no variable, so a job can tell "run it
+// directly" from "run it through nothing".
+func TestRenderLeavesOutAnAbsentWrapper(t *testing.T) {
+	t.Parallel()
+
+	rendered := hostenv.Render(twoHosts())
+
+	for _, entry := range rendered {
+		if strings.HasPrefix(entry, "CAIRNOS_HOST_BUILDER_EXAMPLE_COM_WRAPPER") {
+			t.Fatalf("rendered %#v, want no wrapper for the host that names none", rendered)
+		}
 	}
 }

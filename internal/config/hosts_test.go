@@ -21,6 +21,9 @@ const (
 	// wantSlashRefusal is the trailing-slash guard's message, asserted for an
 	// absolute path, a doubled slash, and the home-prefixed form.
 	wantSlashRefusal = "must not end with a slash"
+
+	// wantPatternRefusal is the shared half of every grammar guard's message.
+	wantPatternRefusal = "must match"
 )
 
 // hostTOML builds one [host.build_box] block from the lines a case wants,
@@ -213,7 +216,7 @@ func TestLoadHostRejectsBadBlocks(t *testing.T) {
 		{
 			name: "ssh alias with a space",
 			toml: hostTOML(`type = "worker"`, `ssh  = "build box"`),
-			want: "must match",
+			want: wantPatternRefusal,
 		},
 		{
 			name: "name carrying a directory",
@@ -314,5 +317,98 @@ func TestLoadWithoutHostsLeavesAnEmptyTable(t *testing.T) {
 
 	if len(cfg.Hosts) != 0 {
 		t.Fatalf("hosts = %+v, want an empty table", cfg.Hosts)
+	}
+}
+
+func TestLoadHostAcceptsAWrapper(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "an absolute path", path: "/usr/local/bin/agent-env"},
+		{name: "a home-prefixed path", path: "~/.local/bin/agent-env"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			toml := hostTOML(`type = "worker"`, `ssh = "build-box"`, `wrapper = "`+testCase.path+`"`)
+
+			cfg, err := config.Load(writeConfig(t, toml))
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+
+			if got := cfg.Hosts[hostName].Wrapper; got != testCase.path {
+				t.Fatalf("wrapper = %q, want %q", got, testCase.path)
+			}
+		})
+	}
+}
+
+func TestLoadHostRefusesAnUnusableWrapper(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		want error
+		name string
+		path string
+	}{
+		{name: "a relative path", path: "agent-env", want: config.ErrHostPathRelative},
+		{name: "a trailing slash", path: "/usr/local/bin/", want: config.ErrHostPathTrailingSlash},
+		{name: "a shell metacharacter", path: "/usr/local/bin/agent-env;id", want: config.ErrHostPathPattern},
+		{name: "a space", path: "/usr/local/agent env", want: config.ErrHostPathPattern},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			toml := hostTOML(`type = "worker"`, `wrapper = "`+testCase.path+`"`)
+
+			_, err := config.Load(writeConfig(t, toml))
+			if !errors.Is(err, config.ErrInvalidConfig) {
+				t.Fatalf("load(%q) = %v, want an invalid config error", testCase.path, err)
+			}
+
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("error = %v, want %v", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestLoadHostWithoutAWrapperLeavesItEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(writeConfig(t, hostTOML(`type = "worker"`)))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if got := cfg.Hosts[hostName].Wrapper; got != "" {
+		t.Fatalf("wrapper = %q, want it empty", got)
+	}
+}
+
+// TestLoadHostWrapperAbsolutenessIsPOSIX pins the rule that matters for a value
+// only the remote host ever resolves: a slash-rooted path is absolute wherever
+// the config was parsed, including a Windows build where filepath.IsAbs would
+// say otherwise.
+func TestLoadHostWrapperAbsolutenessIsPOSIX(t *testing.T) {
+	t.Parallel()
+
+	toml := hostTOML(`type = "worker"`, `wrapper = "/usr/local/bin/agent-env"`)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if got := cfg.Hosts[hostName].Wrapper; got != "/usr/local/bin/agent-env" {
+		t.Fatalf("wrapper = %q, want the slash-rooted path accepted", got)
 	}
 }
