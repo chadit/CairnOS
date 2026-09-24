@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -452,6 +453,52 @@ func TestTypingPostsAsTheIdentity(t *testing.T) {
 
 	if sent["channel_id"] != testChannelID || sent["parent_id"] != "pstroot" {
 		t.Fatalf("request body = %v, want the channel and thread the turn runs in", sent)
+	}
+}
+
+// TestAddReactionPostsAsTheIdentity pins the reaction body: the server rejects
+// a reaction whose user_id is not the token's own account.
+func TestAddReactionPostsAsTheIdentity(t *testing.T) {
+	t.Parallel()
+
+	var body atomic.Value
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v4/reactions", func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body.Store(string(raw))
+
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	client := newConnectedClient(t, mux)
+
+	if err := client.AddReaction(t.Context(), testPostID, "eyes"); err != nil {
+		t.Fatalf("AddReaction: %v", err)
+	}
+
+	sent := map[string]string{}
+	raw, _ := body.Load().(string)
+
+	if err := json.Unmarshal([]byte(raw), &sent); err != nil {
+		t.Fatalf("request body %q does not parse: %v", raw, err)
+	}
+
+	want := map[string]string{"user_id": testBotID, "post_id": testPostID, "emoji_name": "eyes"}
+	if !maps.Equal(sent, want) {
+		t.Fatalf("request body = %v, want %v", sent, want)
+	}
+}
+
+func TestAddReactionNeedsAConnectedIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := nettest.NewServer(t, http.NewServeMux())
+
+	client := newTestClient(t, server, nil)
+
+	if err := client.AddReaction(t.Context(), testPostID, "eyes"); !errors.Is(err, mattermost.ErrNotConnected) {
+		t.Fatalf("AddReaction before Connect = %v, want ErrNotConnected", err)
 	}
 }
 

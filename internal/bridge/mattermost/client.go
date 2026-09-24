@@ -398,6 +398,32 @@ func (c *Client) Typing(ctx context.Context, channelID, parentID string) error {
 	return c.do(ctx, call, nil)
 }
 
+// reactionRequest is the POST /reactions body. emoji_name is the short name
+// without colons, and user_id must be the caller's own id or the server refuses it.
+type reactionRequest struct {
+	UserID    string `json:"user_id"`
+	PostID    string `json:"post_id"`
+	EmojiName string `json:"emoji_name"`
+}
+
+// AddReaction puts emojiName on postID as this identity. The bridge uses it to
+// acknowledge a post it picked up, so like Typing its failure is cosmetic.
+func (c *Client) AddReaction(ctx context.Context, postID, emojiName string) error {
+	identity := c.Me()
+	if identity.ID == "" {
+		return &APIError{Class: ClassPermanent, Method: "AddReaction", Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
+	}
+
+	call := &apiRequest{
+		Method: "AddReaction",
+		Verb:   http.MethodPost,
+		Path:   "/reactions",
+		Body:   reactionRequest{UserID: identity.ID, PostID: postID, EmojiName: emojiName},
+	}
+
+	return c.do(ctx, call, nil)
+}
+
 // readMaxPostSize asks the server for its own ceiling rather than hardcoding
 // one: the value arrives as a decimal string, it differs between releases, and
 // an admin can raise it. An unreadable answer is a warning and a safe default,

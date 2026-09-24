@@ -32,6 +32,10 @@ type Mattermost struct {
 	// rather than by id, because the lookup endpoint is team-scoped.
 	Team string
 
+	// AckReaction is the emoji an identity puts on a post it accepted, so the
+	// sender sees it was picked up before the reply lands. Empty turns it off.
+	AckReaction string
+
 	// SendTimeout bounds each outbound REST call.
 	SendTimeout time.Duration
 
@@ -135,6 +139,10 @@ const (
 	defaultMattermostBotLoopMaxEvents = 20
 	defaultMattermostBotLoopWindow    = 5 * time.Minute
 	defaultMattermostBotLoopCooldown  = 10 * time.Minute
+
+	// defaultMattermostAckReaction is the eyes emoji, which reads as "seen, on
+	// it" without promising an outcome.
+	defaultMattermostAckReaction = "eyes"
 )
 
 // mattermostIdentityPattern constrains identity names so uppercasing one always
@@ -143,6 +151,12 @@ const (
 const mattermostIdentityPattern = `^[a-z][a-z0-9_]*$`
 
 var mattermostIdentityName = regexp.MustCompile(mattermostIdentityPattern)
+
+// mattermostEmojiPattern is the short-name alphabet Mattermost accepts for an
+// emoji, so a typo or a pasted ":eyes:" fails the load rather than every reaction.
+const mattermostEmojiPattern = `^[a-z0-9_+-]+$`
+
+var mattermostEmojiName = regexp.MustCompile(mattermostEmojiPattern)
 
 // DefaultMattermostTokenEnv is where a bot token comes from when nothing says
 // otherwise. One Mattermost server is the ordinary case and every identity on
@@ -201,6 +215,11 @@ func validateMattermost(mattermost *Mattermost, notifyChannel string) error {
 
 	if err := validateMattermostLimits(mattermost); err != nil {
 		return err
+	}
+
+	if mattermost.AckReaction != "" && !mattermostEmojiName.MatchString(mattermost.AckReaction) {
+		return fmt.Errorf("%w: bridge.mattermost.ack_reaction %q must be an emoji short name matching %s",
+			ErrInvalidConfig, mattermost.AckReaction, mattermostEmojiPattern)
 	}
 
 	names := make([]string, 0, len(mattermost.Identity))
@@ -406,6 +425,7 @@ type fileMattermost struct {
 	ConfirmTTL   *string                           `toml:"confirm_ttl"`
 	RatePerSec   *int                              `toml:"rate_per_sec"`
 	RateBurst    *int                              `toml:"rate_burst"`
+	AckReaction  *string                           `toml:"ack_reaction"`
 	BotLoop      fileBotLoop                       `toml:"bot_loop"`
 	Identity     map[string]fileMattermostIdentity `toml:"identity"`
 }

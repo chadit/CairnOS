@@ -137,6 +137,7 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "BRIDGE_MATTERMOST_CONFIRM_TTL", set: intoDuration(&cfg.Bridge.Mattermost.ConfirmTTL)},
 		{suffix: "BRIDGE_MATTERMOST_RATE_PER_SEC", set: intoInt(&cfg.Bridge.Mattermost.RatePerSec)},
 		{suffix: "BRIDGE_MATTERMOST_RATE_BURST", set: intoInt(&cfg.Bridge.Mattermost.RateBurst)},
+		{suffix: "BRIDGE_MATTERMOST_ACK_REACTION", set: intoString(&cfg.Bridge.Mattermost.AckReaction)},
 		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_MAX_EVENTS", set: intoInt(&cfg.Bridge.Mattermost.BotLoop.MaxEvents)},
 		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_WINDOW", set: intoDuration(&cfg.Bridge.Mattermost.BotLoop.Window)},
 		{suffix: "BRIDGE_MATTERMOST_BOT_LOOP_COOLDOWN", set: intoDuration(&cfg.Bridge.Mattermost.BotLoop.Cooldown)},

@@ -75,6 +75,10 @@ func TestLoadMattermostDefaults(t *testing.T) {
 	if mattermost.BotLoop.Window != 5*time.Minute || mattermost.BotLoop.Cooldown != 10*time.Minute {
 		t.Errorf("bot_loop window/cooldown defaults = %v/%v, want 5m/10m", mattermost.BotLoop.Window, mattermost.BotLoop.Cooldown)
 	}
+
+	if mattermost.AckReaction != "eyes" {
+		t.Errorf("ack_reaction default = %q, want eyes", mattermost.AckReaction)
+	}
 }
 
 // TestLoadNotifyMattermostDefaults pins the sink to unconfigured with the same
@@ -105,6 +109,7 @@ send_timeout  = "8s"
 confirm_ttl   = "5m"
 rate_per_sec  = 4
 rate_burst    = 40
+ack_reaction  = "white_check_mark"
 
 [bridge.mattermost.bot_loop]
 max_events = 7
@@ -149,6 +154,10 @@ func TestLoadMattermostServerBlockFromFile(t *testing.T) {
 
 	if mattermost.RatePerSec != 4 || mattermost.RateBurst != 40 {
 		t.Fatalf("mattermost rate settings not overlaid: %+v", mattermost)
+	}
+
+	if mattermost.AckReaction != "white_check_mark" {
+		t.Fatalf("mattermost ack_reaction = %q, want white_check_mark", mattermost.AckReaction)
 	}
 
 	if mattermost.BotLoop.MaxEvents != 7 {
@@ -277,6 +286,11 @@ events   = ["held"]
 			name: "rate burst", env: "CAIRNOS_BRIDGE_MATTERMOST_RATE_BURST", value: "33",
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.RateBurst },
 			want: 33,
+		},
+		{
+			name: "ack reaction", env: "CAIRNOS_BRIDGE_MATTERMOST_ACK_REACTION", value: "thumbsup",
+			got:  func(c config.Config) any { return c.Bridge.Mattermost.AckReaction },
+			want: "thumbsup",
 		},
 		{
 			name: "bot loop max events", env: "CAIRNOS_BRIDGE_MATTERMOST_BOT_LOOP_MAX_EVENTS", value: "5",
@@ -505,6 +519,16 @@ func TestLoadRejectsInvalidMattermost(t *testing.T) {
 				"[bridge.mattermost.identity.ops]\nusername = \"a\"\nworkspace = \"w\"",
 		},
 		{
+			name: "ack_reaction wrapped in colons",
+			toml: "[bridge.mattermost]\nurl = \"https://mm.example.com\"\nack_reaction = \":eyes:\"\n\n" +
+				"[bridge.mattermost.identity.ops]\nusername = \"a\"\nworkspace = \"w\"",
+		},
+		{
+			name: "ack_reaction with uppercase and a space",
+			toml: "[bridge.mattermost]\nurl = \"https://mm.example.com\"\nack_reaction = \"Thumbs Up\"\n\n" +
+				"[bridge.mattermost.identity.ops]\nusername = \"a\"\nworkspace = \"w\"",
+		},
+		{
 			name: "zero bot_loop.cooldown",
 			toml: "[bridge.mattermost]\nurl = \"https://mm.example.com\"\n\n" +
 				"[bridge.mattermost.bot_loop]\ncooldown = \"0s\"\n\n" +
@@ -521,6 +545,24 @@ func TestLoadRejectsInvalidMattermost(t *testing.T) {
 				t.Fatalf("error = %v, want ErrInvalidConfig", err)
 			}
 		})
+	}
+}
+
+// TestLoadMattermostEmptyAckReactionDisables proves an operator can switch the
+// reaction off with an empty value rather than having it rejected as malformed.
+func TestLoadMattermostEmptyAckReactionDisables(t *testing.T) {
+	t.Parallel()
+
+	offTOML := "[bridge.mattermost]\nurl = \"https://mm.example.com\"\nack_reaction = \"\"\n\n" +
+		"[bridge.mattermost.identity.ops]\nusername = \"a\"\nworkspace = \"w\""
+
+	cfg, err := config.Load(writeConfig(t, offTOML))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if cfg.Bridge.Mattermost.AckReaction != "" {
+		t.Fatalf("ack_reaction = %q, want empty", cfg.Bridge.Mattermost.AckReaction)
 	}
 }
 

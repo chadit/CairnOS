@@ -132,6 +132,9 @@ type identity struct {
 	serverURL string
 	team      string
 
+	// ackReaction is the emoji put on each accepted post; empty skips it.
+	ackReaction string
+
 	cfg config.MattermostIdentity
 }
 
@@ -199,14 +202,15 @@ func newIdentity(declared *Identity, cfg *Config) *identity {
 			Cooldown:  cfg.Server.BotLoop.Cooldown,
 			MaxEvents: cfg.Server.BotLoop.MaxEvents,
 		}),
-		approvers: approvers,
-		allowBots: map[string]struct{}{},
-		tripped:   map[string]bool{},
-		channels:  newChannelCache(cfg.ChannelCacheTTL),
-		cfg:       declared.Config,
-		name:      declared.Name,
-		serverURL: cfg.Server.URL,
-		team:      cfg.Server.Team,
+		approvers:   approvers,
+		allowBots:   map[string]struct{}{},
+		tripped:     map[string]bool{},
+		channels:    newChannelCache(cfg.ChannelCacheTTL),
+		cfg:         declared.Config,
+		name:        declared.Name,
+		serverURL:   cfg.Server.URL,
+		team:        cfg.Server.Team,
+		ackReaction: cfg.Server.AckReaction,
 	}
 }
 
@@ -450,9 +454,9 @@ func (b *Bridge) refuse(ctx context.Context, agent *identity, reason, key string
 		"identity", agent.name, "chat_key", key, "reason", reason)
 }
 
-// handle turns an admitted post into the core's inbound and raises the typing
-// indicator on the way, so the conversation shows the agent picked the post up
-// before the turn finishes (FR17).
+// handle turns an admitted post into the core's inbound, reacting to it and
+// raising the typing indicator on the way, so the conversation shows the agent
+// picked the post up before the turn finishes (FR17).
 func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 	post := turn.event.Post
 
@@ -463,6 +467,8 @@ func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
+
+	go b.acknowledge(ctx, agent, post.ID)
 
 	sender := b.senderName(ctx, agent, post, turn.event.SenderName)
 
@@ -492,6 +498,19 @@ func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 		Out:  agent.out,
 		Kind: bridge.KindMessage,
 	})
+}
+
+// acknowledge reacts to an accepted post off the socket's consumer, like typing,
+// so a slow POST never stalls the read (NFR2); a failure is logged, never fatal.
+func (b *Bridge) acknowledge(ctx context.Context, agent *identity, postID string) {
+	if agent.ackReaction == "" {
+		return
+	}
+
+	if err := agent.client.AddReaction(ctx, postID, agent.ackReaction); err != nil {
+		b.log.DebugContext(ctx, "mattermost ack reaction failed",
+			"identity", agent.name, "post_id", postID, "emoji", agent.ackReaction, "error", err)
+	}
 }
 
 // automated reports whether a post came from something other than a person

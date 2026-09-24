@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,9 @@ const (
 	teamName     = "main"
 	serverURL    = "https://mm.example.test"
 	workspaceOps = "default"
+
+	// rootPostID is the post most cases mention or reply under.
+	rootPostID = "root-1"
 )
 
 // recordedPost is one CreatePost the fake server accepted.
@@ -35,6 +39,12 @@ type recordedPost struct {
 	ChannelID string
 	RootID    string
 	Message   string
+}
+
+// recordedReaction is one AddReaction the fake server saw, failed or not.
+type recordedReaction struct {
+	PostID string
+	Emoji  string
 }
 
 // fakeConn is a scripted mattermost.Conn: it replays whatever a test pushes,
@@ -46,8 +56,13 @@ type fakeConn struct {
 	users    map[string]mattermost.User
 	channels map[string]mattermost.Channel
 
+	// reactErr, when set, is what every AddReaction returns after recording.
+	reactErr error
+
 	posts []recordedPost
 	me    mattermost.User
+
+	reactions []recordedReaction
 
 	mu     sync.Mutex
 	typing int
@@ -146,6 +161,23 @@ func (c *fakeConn) Typing(_ context.Context, _, _ string) error {
 	c.typing++
 
 	return nil
+}
+
+func (c *fakeConn) AddReaction(_ context.Context, postID, emojiName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.reactions = append(c.reactions, recordedReaction{PostID: postID, Emoji: emojiName})
+
+	return c.reactErr
+}
+
+// Reactions returns a copy of every reaction the identity attempted, in order.
+func (c *fakeConn) Reactions() []recordedReaction {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]recordedReaction(nil), c.reactions...)
 }
 
 // Posts returns a copy of everything the identity posted, in order.
@@ -282,7 +314,7 @@ func startBridgeWithBackoff(
 ) {
 	t.Helper()
 
-	built := mattermost.New(&mattermost.Config{
+	runBridge(t, unit, &mattermost.Config{
 		Core:       unit.core,
 		Metrics:    unit.metrics,
 		Logger:     quietLogger(),
@@ -292,6 +324,31 @@ func startBridgeWithBackoff(
 		},
 		BackoffBase: backoff,
 	})
+}
+
+// startAckingBridge is startBridge with the acknowledgement reaction set, which
+// the other cases leave empty so their fakes record no reactions.
+func startAckingBridge(t *testing.T, unit *suite, emoji string, identities ...mattermost.Identity) {
+	t.Helper()
+
+	runBridge(t, unit, &mattermost.Config{
+		Core:       unit.core,
+		Metrics:    unit.metrics,
+		Logger:     quietLogger(),
+		Identities: identities,
+		Server: config.Mattermost{
+			URL: serverURL, Team: teamName, ConfirmTTL: 10 * time.Minute, AckReaction: emoji,
+		},
+		BackoffBase: time.Millisecond,
+	})
+}
+
+// runBridge runs a built adapter until the case ends, draining the core on the
+// way out so no conversation worker or proposal timer outlives it.
+func runBridge(t *testing.T, unit *suite, cfg *mattermost.Config) {
+	t.Helper()
+
+	built := mattermost.New(cfg)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -362,11 +419,11 @@ func TestChannelMentionRepliesInThread(t *testing.T) {
 	conn := newFakeConn(botUserID, botUsername)
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
-	conn.push(channelEvent("root-1", "", "@cairn deploy please", true))
+	conn.push(channelEvent(rootPostID, "", "@cairn deploy please", true))
 
 	posts := waitForPosts(t, conn, 1)
 
-	if posts[0].RootID != "root-1" {
+	if posts[0].RootID != rootPostID {
 		t.Fatalf("reply root = %q, want the mentioned post id", posts[0].RootID)
 	}
 
@@ -385,9 +442,9 @@ func TestThreadContinuationKeepsSession(t *testing.T) {
 	conn := newFakeConn(botUserID, botUsername)
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
-	conn.push(channelEvent("root-1", "", "@cairn first", true))
+	conn.push(channelEvent(rootPostID, "", "@cairn first", true))
 	waitForPosts(t, conn, 1)
-	conn.push(channelEvent("p2", "root-1", "@cairn second", true))
+	conn.push(channelEvent("p2", rootPostID, "@cairn second", true))
 	waitForPosts(t, conn, 2)
 
 	turns := unit.chat.Turns()
@@ -532,13 +589,13 @@ func TestLoopLimiterStopsRunawayBots(t *testing.T) {
 	loop := config.BotLoop{MaxEvents: 2, Window: time.Minute, Cooldown: time.Minute}
 	startBridge(t, unit, loop, opsIdentity(conn, channelID))
 
-	first := botEvent("root-1", map[string]string{propFromBot: propTrue})
+	first := botEvent(rootPostID, map[string]string{propFromBot: propTrue})
 	conn.push(first)
 	waitForPosts(t, conn, 1)
 
 	for _, postID := range []string{"p2", "p3"} {
 		event := botEvent(postID, map[string]string{propFromBot: propTrue})
-		event.Post.RootID = "root-1"
+		event.Post.RootID = rootPostID
 		conn.push(event)
 	}
 
@@ -618,7 +675,7 @@ func TestEachIdentityAnswersOnlyItsOwnMention(t *testing.T) {
 
 	// Both identities see the same channel post; only alpha is in its mention
 	// list, so only alpha may answer.
-	forAlpha := channelEvent("root-1", "", "@alpha status please", false)
+	forAlpha := channelEvent(rootPostID, "", "@alpha status please", false)
 	forAlpha.Mentions = []string{"bot-alpha"}
 
 	alphaConn.push(forAlpha)
@@ -724,7 +781,7 @@ func TestBareMentionRunsNoTurn(t *testing.T) {
 	conn := newFakeConn(botUserID, botUsername)
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
-	conn.push(channelEvent("root-1", "", "@cairn", true))
+	conn.push(channelEvent(rootPostID, "", "@cairn", true))
 	conn.push(dmEvent("p2", "now answer me"))
 
 	waitForPosts(t, conn, 1)
@@ -756,5 +813,130 @@ func TestNewSubstitutesMissingMetrics(t *testing.T) {
 
 	if len(built.Senders()) != 1 {
 		t.Fatalf("Senders() = %d identities, want 1", len(built.Senders()))
+	}
+}
+
+// ackEmoji is the reaction the acknowledgement cases configure. It differs from
+// the config default so a case proves the configured value reaches the server.
+const ackEmoji = "white_check_mark"
+
+// TestAcceptedPostGetsAckReaction proves an accepted post carries the configured
+// reaction while its turn is still gated, so the sender sees it was picked up
+// before any reply exists.
+func TestAcceptedPostGetsAckReaction(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		event  *mattermost.Event
+		name   string
+		text   string
+		postID string
+	}{
+		{
+			name: "channel mention", event: channelEvent(rootPostID, "", "@cairn deploy please", true),
+			text: "deploy please", postID: rootPostID,
+		},
+		{name: "direct message", event: dmEvent("dm-1", "hello there"), text: "hello there", postID: "dm-1"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			unit := newSuite(t)
+			unit.chat.GateOn(testCase.text)
+
+			conn := newFakeConn(botUserID, botUsername)
+
+			startAckingBridge(t, unit, ackEmoji, opsIdentity(conn))
+			conn.push(testCase.event)
+
+			bridgetest.WaitFor(t, func() bool { return len(conn.Reactions()) > 0 })
+
+			if posts := conn.Posts(); len(posts) != 0 {
+				t.Fatalf("identity replied %+v while the turn was still gated", posts)
+			}
+
+			want := []recordedReaction{{PostID: testCase.postID, Emoji: ackEmoji}}
+			if got := conn.Reactions(); !slices.Equal(got, want) {
+				t.Fatalf("reactions = %+v, want %+v", got, want)
+			}
+
+			unit.chat.Release()
+			waitForPosts(t, conn, 1)
+		})
+	}
+}
+
+// TestUnprocessedPostGetsNoAckReaction proves only a post that becomes a turn is
+// acknowledged, and that an empty ack_reaction turns the reaction off. The DM
+// pushed second is answered, so the first post was already through the gate.
+func TestUnprocessedPostGetsNoAckReaction(t *testing.T) {
+	t.Parallel()
+
+	answered := recordedReaction{PostID: "p2", Emoji: ackEmoji}
+
+	cases := []struct {
+		first       *mattermost.Event
+		name        string
+		emoji       string
+		want        []recordedReaction
+		wantReplies int
+	}{
+		{
+			name:  "automated post outside allow_bots_in",
+			first: botEvent("p1", map[string]string{propFromBot: propTrue}),
+			emoji: ackEmoji, want: []recordedReaction{answered}, wantReplies: 1,
+		},
+		{
+			name:  "bare mention with nothing to answer",
+			first: channelEvent("p1", "", "@cairn", true),
+			emoji: ackEmoji, want: []recordedReaction{answered}, wantReplies: 1,
+		},
+		{
+			name:  "reaction turned off",
+			first: channelEvent("p1", "", "@cairn deploy please", true),
+			emoji: "", want: nil, wantReplies: 2,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			unit := newSuite(t)
+			conn := newFakeConn(botUserID, botUsername)
+
+			startAckingBridge(t, unit, testCase.emoji, opsIdentity(conn))
+			conn.push(testCase.first)
+			conn.push(dmEvent("p2", "now answer me"))
+
+			waitForPosts(t, conn, testCase.wantReplies)
+			bridgetest.WaitFor(t, func() bool { return len(conn.Reactions()) >= len(testCase.want) })
+
+			if got := conn.Reactions(); !slices.Equal(got, testCase.want) {
+				t.Fatalf("reactions = %+v, want %+v", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestAckReactionFailureStillRunsTurn proves a refused reaction costs only the
+// decoration: the turn still runs and the reply still lands.
+func TestAckReactionFailureStillRunsTurn(t *testing.T) {
+	t.Parallel()
+
+	unit := newSuite(t)
+	conn := newFakeConn(botUserID, botUsername)
+	conn.reactErr = &mattermost.APIError{Class: mattermost.ClassPermanent, Method: "AddReaction", Status: 403}
+
+	startAckingBridge(t, unit, ackEmoji, opsIdentity(conn))
+	conn.push(dmEvent("p1", "hello there"))
+
+	waitForPosts(t, conn, 1)
+	bridgetest.WaitFor(t, func() bool { return len(conn.Reactions()) == 1 })
+
+	if !unit.chat.HasTurn("hello there") {
+		t.Fatalf("agent turns = %+v, want the dm text despite the failed reaction", unit.chat.Turns())
 	}
 }

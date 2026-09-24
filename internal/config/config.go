@@ -797,6 +797,7 @@ func Default() Config {
 				ConfirmTTL:  defaultBridgeConfirmTTL,
 				RatePerSec:  defaultMattermostRatePerSec,
 				RateBurst:   defaultMattermostRateBurst,
+				AckReaction: defaultMattermostAckReaction,
 				BotLoop: BotLoop{
 					MaxEvents: defaultMattermostBotLoopMaxEvents,
 					Window:    defaultMattermostBotLoopWindow,
@@ -1500,6 +1501,7 @@ func applyScalars(cfg *Config, file *fileConfig) {
 	setIf(&cfg.Bridge.Mattermost.InsecureHTTP, file.Bridge.Mattermost.InsecureHTTP)
 	setIf(&cfg.Bridge.Mattermost.RatePerSec, file.Bridge.Mattermost.RatePerSec)
 	setIf(&cfg.Bridge.Mattermost.RateBurst, file.Bridge.Mattermost.RateBurst)
+	setIf(&cfg.Bridge.Mattermost.AckReaction, file.Bridge.Mattermost.AckReaction)
 	setIf(&cfg.Bridge.Mattermost.BotLoop.MaxEvents, file.Bridge.Mattermost.BotLoop.MaxEvents)
 	setIf(&cfg.Notify.Mattermost.Identity, file.Notify.Mattermost.Identity)
 	setIf(&cfg.Notify.Mattermost.Channel, file.Notify.Mattermost.Channel)

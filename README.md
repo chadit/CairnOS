@@ -1050,8 +1050,9 @@ creates or edits a bot account.
 
 ```toml
 [bridge.mattermost]
-url  = "https://mm.example.com"
-team = "main"            # needed when you name channels by #name
+url          = "https://mm.example.com"
+team         = "main"    # needed when you name channels by #name
+ack_reaction = "eyes"    # emoji put on a post the bot picked up; "" turns it off
 
 [bridge.mattermost.identity.ops]
 username      = "ops-agent"      # must match the account the token belongs to
@@ -1093,6 +1094,12 @@ off.
 A DM needs no mention. In a channel the bot answers only when you `@mention` it
 in ordinary text, and it replies in that post's thread, so each thread is its
 own conversation with its own history.
+
+When the bot takes a post on, it reacts to that post with `ack_reaction` so you
+know it was seen and is being worked on. The default is `eyes`. Use the emoji's
+short name without colons, such as `white_check_mark`, or set it to `""` to
+skip the reaction. Posts the bot ignores or declines get no reaction, and a
+reaction that fails never holds up the reply.
 
 `approvers` lists the usernames that may answer `approve` or `deny` when the
 agent proposes a workflow run. Leave it empty and every proposal expires

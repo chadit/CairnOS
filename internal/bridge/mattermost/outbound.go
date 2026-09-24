@@ -50,6 +50,9 @@ type Poster interface {
 
 	// Typing raises the transient typing indicator; failures are ignored.
 	Typing(ctx context.Context, channelID, parentID string) error
+
+	// AddReaction acknowledges a post with an emoji; failures are ignored.
+	AddReaction(ctx context.Context, postID, emojiName string) error
 }
 
 // Channels resolves the two channel forms a send target can name.
