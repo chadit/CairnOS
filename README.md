@@ -122,8 +122,9 @@ script living in that repository reaches the host without anyone logging in.
 Push it, wait for the next sync, and it is there.
 
 **CairnOS does not.** The binary the service runs is the one someone built from
-a clone on that host. It changes when you update that clone and deploy it, and
-at no other time.
+a clone on that host. It changes when someone runs `cairnos update` or deploys
+the clone, or on its own once [`[update] auto`](#letting-serve-update-itself) is
+on.
 
 ### Update CairnOS before the workflow that needs it
 
@@ -162,18 +163,26 @@ queued while it was failing, so there is no backlog to drain and nothing to
 replay by hand.
 
 `cairnos update` does the whole sequence in the order that matters, and it has
-two ways to get a new binary.
+two ways to get a new binary. Which one it takes depends on where the running
+binary lives.
 
-**It looks for a GitHub release first.** The latest release is asked for the
-asset matching this host's `GOOS` and `GOARCH`, that file and the release's
-`checksums.txt` are downloaded to a temporary directory, and the sha256 is
-checked before anything else touches the file. Then the binary is written over
-the running one and the rest of the sequence carries on from there. A release
-has to carry `cairnos_<goos>_<goarch>` (with `.exe` on Windows) for your
-platform plus `checksums.txt` in `sha256sum` format. No binary for your
-platform means there is nothing to install and the clone gets built. A binary
-with no `checksums.txt` beside it is a broken release, and the update stops
-there rather than quietly building the clone instead.
+**A binary built from a clone follows that clone.** The binary lives at
+`<clone>/bin/cairnos`, so the clone is one directory up. The update fetches the
+remote the clone's branch tracks, fast-forwards onto it, and rebuilds. A clone
+that has diverged or carries local commits is left exactly as it is, and the
+update says so and builds what is checked out. A published release is never
+consulted here, so a host tracking main is never moved back onto an older tag.
+
+**A binary with no clone around it installs the latest GitHub release.** The
+latest release is asked for the asset matching this host's `GOOS` and `GOARCH`,
+that file and the release's `checksums.txt` are downloaded to a temporary
+directory, and the sha256 is checked before anything else touches the file.
+Then the binary is written over the running one and the rest of the sequence
+carries on from there. A release has to carry `cairnos_<goos>_<goarch>` (with
+`.exe` on Windows) for your platform plus `checksums.txt` in `sha256sum`
+format. No binary for your platform means there is nothing to install, and the
+update says so. A binary with no `checksums.txt` beside it is a broken release,
+and the update stops there.
 
 Two things have to agree before a release binary is installed. The tag is
 resolved to the commit it points at, following an annotated tag through its own
@@ -186,14 +195,8 @@ move without the code moving.
 
 The repository is private right now, so the lookup needs `GITHUB_TOKEN` or
 `GH_TOKEN` in the environment. Without one the API answers 404, which reads as
-"no release" rather than as a failure, and the update takes the other path.
-
-**Otherwise it builds the clone.** It finds the clone the running binary was
-built from (the binary lives at `<clone>/bin/cairnos`, so the clone is one
-directory up), fetches and fast-forwards it, and rebuilds. This is the fallback
-when no release fits, and it is the developer path. A clone that has diverged or
-carries local commits is left exactly as it is, and the update says so and
-builds what is checked out.
+"no release", and with no clone around the binary there is nothing to install.
+`--source <dir>` names a clone to build instead.
 
 Either way, the new build runs its own `secrets pull` and only then does the
 service restart. Secrets before the restart is the part worth keeping straight:
@@ -211,24 +214,80 @@ drain and restarts immediately, which is what you want when the running build
 is the thing that is broken. An older service that predates the drain endpoint
 is restarted the old way, and the update says so.
 
-Three flags skip the release lookup and go straight to the clone: `--source
-<dir>` points at a different clone, `--no-fetch` builds what is already there,
-and `--no-release` skips the lookup while still fetching. `scripts/deploy.sh`
-and `make deploy` pass `--no-fetch`, so deploying a tree you are working in is
-never replaced by whatever the last tag published.
+Three flags steer that choice. `--source <dir>` builds a named clone, which is
+how a binary with no clone around it builds one. `--no-fetch` builds what is
+already checked out without fetching or asking for a release. `--no-release`
+skips the release lookup a binary outside a clone would make, which leaves
+`--source` to name what to build. `scripts/deploy.sh` and `make deploy` pass
+`--no-fetch`, so deploying a tree you are working in builds exactly that tree.
 
 On the way out it points `~/.local/bin/cairnos` at the build it just made, so a
 login shell runs the same binary the service does. It replaces a symlink aimed
 somewhere else, refuses to touch a regular file sitting in that spot, and warns
 when `~/.local/bin` is not on your PATH. `--no-link` skips the step.
 
+### Letting serve update itself
+
+`cairnos update` runs when someone runs it. To have the service keep itself
+current instead, turn on the `[update]` block in `config.toml`:
+
+```toml
+[update]
+auto     = true    # default false
+interval = "15m"   # default 15m, how often serve checks
+```
+
+Every interval, serve works out the wanted revision the same way
+`cairnos update` does. For a binary built from a clone that's the commit the
+clone's upstream sits on, read after a `git fetch` of the tracked remote that
+moves only remote-tracking refs. For a binary with no clone around it, it's the
+commit the latest release's tag points at. When it matches the revision stamped into the running
+binary, nothing happens. When it doesn't, serve logs one line naming both
+revisions and runs the sequence the command runs: install the release, or
+fast-forward the clone and `make build`, then `secrets pull` and the link. It
+checks the new binary carries the wanted stamp, then drains itself the way
+`cairnos update` drains it. In-flight runs finish, bounded at 15 minutes, and
+the process exits for systemd to start the new binary.
+
+A few things differ from running the command by hand:
+
+- The loop only starts when serve is the main process of the systemd service
+  `cairnos service setup` installs, whose `Restart=always` brings a cleanly
+  exited serve back. The launchd agent restarts a crash only, and a serve run by
+  hand has nothing behind it, so serve logs one warning at startup and leaves
+  the loop off.
+- A clone with uncommitted changes or local commits isn't built. Its build
+  wouldn't be the upstream revision, so it would look stale again right after
+  the restart. A clone that tracks no upstream wants its own HEAD, as it does
+  for `cairnos update`.
+- The command and the loop take the same lock, `update.lock` in the CairnOS
+  home, around an install. A `cairnos update` started while the loop is
+  installing stops at once with "another update is already running on this
+  host", and the loop waits for the next interval while the command holds it.
+- A failed step (a dirty or diverged clone, a build failure, a bad checksum, a
+  failed secrets pull) is logged at ERROR with the step and the wanted
+  revision, and the running build keeps serving. That revision isn't tried
+  again until the wanted revision moves, so a broken build costs one attempt
+  rather than one per interval.
+- The revision is written to `auto-update-attempt` in the CairnOS home before
+  each attempt starts and cleared once it succeeds, so a serve that dies
+  mid-build (the host running out of memory, say) doesn't build it again once
+  systemd brings it back. To retry sooner, fix what broke and run
+  `cairnos update`, or delete that file and restart the service.
+- The source follows the same rule as `cairnos update`: a binary in a clone
+  follows that clone's upstream, and only a binary with no clone around it
+  follows releases.
+- The first check waits one interval after serve starts. `CAIRNOS_UPDATE_AUTO`
+  and `CAIRNOS_UPDATE_INTERVAL` override the two keys from the environment.
+
 ### Telling whether a host is behind
 
 `cairnos update --check` compares the build the service is running against what
-an update would put there: the commit the latest release's tag points at when
-the release path applies, and the clone's HEAD otherwise. It reads the revision
-Go stamps into every binary, through `/proc`, so a file replaced on disk is not
-mistaken for the process in memory:
+an update would put there: what the clone would build once the update
+fast-forwards it, and the commit the latest release's tag points at for a
+binary with no clone around it. It reads the revision Go stamps into every binary,
+through `/proc`, so a file replaced on disk is not mistaken for the process in
+memory:
 
 ```sh
 cairnos update --check
@@ -236,11 +295,15 @@ running: 7929e3e8a1...
 wanted:  625fb2e4c9...
 ```
 
-It exits 3 when the two differ, 0 when they match, and it fetches nothing,
-builds nothing, pulls no secrets and restarts nothing, so it is safe on a host
-you only want to look at. A full `cairnos update` prints the same two revisions
-before it acts on them. There is no `cairnos version` subcommand: that stamped
-revision is how a running build is identified.
+It exits 3 when the two differ and 0 when they match. On the clone path it
+fetches the tracked remote first, which moves only remote-tracking refs, so a
+clone nobody has fetched in days still reports the commits waiting upstream. `--no-fetch`
+skips the fetch and compares against the local HEAD. Either way the check
+changes nothing on the host: the clone stays where it is and there is no build
+or restart, so it is safe on a host you only want to look at. A full
+`cairnos update` prints the same two revisions before it acts on them. There is
+no `cairnos version` subcommand: that stamped revision is how a running build is
+identified.
 
 The check reads a systemd user service. Under launchd, or for a `--system`
 unit, read the stamp out of the deployed file yourself and compare it to the

@@ -115,6 +115,26 @@ var (
 	// the one the update produced.
 	errServiceStale = errors.New("the service came back on the wrong build")
 
+	// errUpdateBusy reports an update lock another update holds, which is how
+	// `cairnos update` and serve's loop keep from building in the same checkout
+	// or replacing the same binary at once.
+	errUpdateBusy = errors.New("another update is already running on this host")
+
+	// errDirtyCheckout reports a working tree carrying changes, which serve's
+	// update loop refuses to build: the result would be stamped "+dirty" and read
+	// as stale again after the restart.
+	errDirtyCheckout = errors.New("the checkout carries uncommitted changes")
+
+	// errDivergedCheckout reports a checkout holding commits its upstream lacks,
+	// which serve's update loop refuses to build because the result would not be
+	// the upstream revision it wanted.
+	errDivergedCheckout = errors.New("the checkout has commits its upstream lacks")
+
+	// errBuildStamp reports a new binary whose stamp is not the revision the
+	// update wanted. Serve's update loop stops there rather than restart onto a
+	// build it would judge stale and rebuild on every start after.
+	errBuildStamp = errors.New("the new build is not stamped with the wanted revision")
+
 	// errFlagValue reports a flag whose value cannot work. Catching it here beats
 	// finding out from a server that started on the wrong port: --port 0 makes
 	// llama-server bind an ephemeral port while every probe still targets :0, so

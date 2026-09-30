@@ -111,11 +111,12 @@ type releaseClient struct {
 	token  string
 }
 
-// releaseClient builds the lookup and download client, aimed at the public API
-// unless an override names another base. A nil transport is the default one, so
-// production opens real sockets; a test passes one that answers in process and
-// never touches the network stack.
-func (a *App) releaseClient(base string, transport http.RoundTripper) *releaseClient {
+// releaseClient builds one invocation's lookup and download client, aimed at
+// the public API unless opts names another base. A nil transport is the default
+// one, so production opens real sockets; a test passes one that answers in
+// process and never touches the network stack.
+func (a *App) releaseClient(opts *updateOptions) *releaseClient {
+	base := opts.apiBase
 	if base == "" {
 		base = releaseAPIBase
 	}
@@ -123,27 +124,44 @@ func (a *App) releaseClient(base string, transport http.RoundTripper) *releaseCl
 	return &releaseClient{
 		base:   base,
 		token:  releaseToken(a.envLookup()),
-		http:   &http.Client{Timeout: releaseTimeout, Transport: transport},
-		logger: a.logger,
+		http:   &http.Client{Timeout: releaseTimeout, Transport: opts.transport},
+		logger: a.lookupLogger(opts),
 	}
 }
 
-// findRelease answers with the release to install when one exists for this
-// platform. --no-fetch, --source and --no-release each mean the source path
-// only, so a developer deploying the tree in front of them is never clobbered.
+// lookupLogger is where the release lookup reports what it found: the App's
+// own logger unless the invocation names a quieter one.
+func (a *App) lookupLogger(opts *updateOptions) *slog.Logger {
+	if opts.lookupLogger != nil {
+		return opts.lookupLogger
+	}
+
+	return a.logger
+}
+
+// findRelease answers with the release to install when one fits this platform
+// and no checkout sits around the running binary. A binary built from a
+// checkout follows that checkout's upstream instead, so a host on a newer main
+// commit is never moved onto an older tag. --no-fetch, --source and
+// --no-release each skip the lookup too, so a developer deploying the tree in
+// front of them is never clobbered.
 func (a *App) findRelease(ctx context.Context, opts *updateOptions) (releaseBuild, bool, error) {
 	if !opts.fetch || opts.source != "" || !opts.release {
 		return releaseBuild{}, false, nil
 	}
 
+	if _, err := discoverSource("", opts.executable); err == nil {
+		return releaseBuild{}, false, nil
+	}
+
 	owner, repo, err := moduleSlug()
 	if err != nil {
-		a.logger.Info("update: no GitHub module to look for releases in", "error", err)
+		a.lookupLogger(opts).Info("update: no GitHub module to look for releases in", "error", err)
 
 		return releaseBuild{}, false, nil
 	}
 
-	return a.releaseClient(opts.apiBase, opts.transport).latestRelease(ctx, owner, repo)
+	return a.releaseClient(opts).latestRelease(ctx, owner, repo)
 }
 
 // moduleSlug reads owner and repository out of the module path the running

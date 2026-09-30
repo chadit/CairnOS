@@ -151,6 +151,139 @@ func TestUpdateCheckExitsBehind(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusesWhileAnotherUpdateHoldsTheLock covers `cairnos update` run
+// while serve's loop is mid-install. It stops at once, says why, and leaves the
+// checkout and every step alone.
+func TestUpdateRefusesWhileAnotherUpdateHoldsTheLock(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	work, upstream := stageClonePair(t)
+	commitAndPush(t, upstream, "upstream.txt")
+	before := gitOut(t, work, "rev-parse", "HEAD")
+	home := t.TempDir()
+
+	release, err := cli.HoldUpdateLock(home)
+	if err != nil {
+		t.Fatalf("HoldUpdateLock() error = %v", err)
+	}
+	defer release()
+
+	var order []string
+
+	_, err = cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(), &cli.UpdateRun{
+		Executable: filepath.Join(work, "bin", updateLinkName),
+		Home:       home,
+		NoRelease:  true,
+	}, recordingSteps(t, &order, ""))
+	// The sentinel's own text is the message the operator reads.
+	if !errors.Is(err, cli.ErrUpdateBusy) {
+		t.Fatalf("DriveUpdate() error = %v, want ErrUpdateBusy", err)
+	}
+
+	if len(order) != 0 {
+		t.Errorf("steps ran while another update held the lock: %v", order)
+	}
+
+	if head := gitOut(t, work, "rev-parse", "HEAD"); head != before {
+		t.Errorf("HEAD moved to %s while another update held the lock", head)
+	}
+}
+
+// TestUpdateCheckFetchesTheTrackedRemote covers a checkout whose branch tracks
+// a remote not called origin. The fetch follows the tracking config, so the
+// commit waiting there is still what the check reports.
+func TestUpdateCheckFetchesTheTrackedRemote(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	work, upstream := stageClonePair(t)
+	gitOut(t, work, "remote", "rename", "origin", "mirror")
+	remote := commitAndPush(t, upstream, "upstream.txt")
+
+	var stdout, stderr bytes.Buffer
+
+	code, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(), &cli.UpdateRun{
+		Executable: filepath.Join(work, "bin", updateLinkName),
+		Home:       t.TempDir(),
+		Check:      true,
+		NoRelease:  true,
+	}, failingSteps(t))
+	if err != nil {
+		t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
+	}
+
+	if code != cli.ExitBehind {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitBehind)
+	}
+
+	if !strings.Contains(stdout.String(), "wanted:  "+remote) {
+		t.Errorf("stdout does not report the commit on the tracked remote %s:\n%s", remote, stdout.String())
+	}
+}
+
+// TestUpdateCheckSeesTheRemote covers a host whose checkout nobody fetches.
+// The check fetches the remote-tracking refs and so reports the commit waiting
+// upstream; --no-fetch compares against the local HEAD alone. Neither moves the
+// checkout.
+func TestUpdateCheckSeesTheRemote(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	cases := []struct {
+		name         string
+		noFetch      bool
+		wantUpstream bool
+	}{
+		{name: "the check fetches and sees the upstream commit", wantUpstream: true},
+		{name: "no-fetch sees only the local HEAD", noFetch: true},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			work, upstream := stageClonePair(t)
+			local := gitOut(t, work, "rev-parse", "HEAD")
+			remote := commitAndPush(t, upstream, "upstream.txt")
+
+			var stdout, stderr bytes.Buffer
+
+			code, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(), &cli.UpdateRun{
+				Executable: filepath.Join(work, "bin", updateLinkName),
+				Home:       t.TempDir(),
+				Check:      true,
+				NoFetch:    testCase.noFetch,
+				NoRelease:  true,
+			}, failingSteps(t))
+			if err != nil {
+				t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
+			}
+
+			if code != cli.ExitBehind {
+				t.Fatalf("exit = %d, want %d", code, cli.ExitBehind)
+			}
+
+			wanted, unseen := local, remote
+			if testCase.wantUpstream {
+				wanted, unseen = remote, local
+			}
+
+			if !strings.Contains(stdout.String(), "wanted:  "+wanted) {
+				t.Errorf("stdout does not report %s as wanted:\n%s", wanted, stdout.String())
+			}
+
+			if strings.Contains(stdout.String(), unseen) {
+				t.Errorf("stdout names %s, which this check should not report:\n%s", unseen, stdout.String())
+			}
+
+			if head := gitOut(t, work, "rev-parse", "HEAD"); head != local {
+				t.Errorf("the check moved HEAD to %s, want it left at %s", head, local)
+			}
+		})
+	}
+}
+
 // TestUpdateRunsSecretsPullBeforeRestart covers FR11. The service reads both
 // environment files once, at startup, so a pull after the restart would leave
 // the new process on the previous values.
@@ -397,9 +530,14 @@ func stageClonePair(t *testing.T) (string, string) {
 
 	gitOut(t, root, "clone", "--quiet", origin, seed)
 
-	// go.mod is in the seed commit because source discovery refuses a directory
-	// without it, so every clone here is a checkout the update would accept.
-	commitAndPush(t, seed, "go.mod")
+	// The seed commit is a module that builds: source discovery refuses a
+	// directory without go.mod, and a case that runs serve's loop through to
+	// the drain builds the clone for real.
+	writeFile(t, filepath.Join(seed, "go.mod"), stagedModuleGoMod)
+	writeFile(t, filepath.Join(seed, "main.go"), stagedModuleMain)
+	gitOut(t, seed, "add", ".")
+	gitOut(t, seed, "commit", "--quiet", "-m", "seed a module that builds")
+	gitOut(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 
 	work := filepath.Join(root, "work")
 	upstream := filepath.Join(root, "upstream")

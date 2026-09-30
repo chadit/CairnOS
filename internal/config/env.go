@@ -108,6 +108,8 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "HIVE_KEY_REF", set: intoString(&cfg.Hive.KeyRef)},
 		{suffix: "HIVE_PREV_KEY_REF", set: intoString(&cfg.Hive.PrevKeyRef)},
 		{suffix: "AUTONOMIC_AUTO_APPLY_ENABLED", set: intoBool(&cfg.Autonomic.AutoApplyEnabled)},
+		{suffix: "UPDATE_AUTO", set: intoBool(&cfg.Update.Auto)},
+		{suffix: "UPDATE_INTERVAL", set: intoDuration(&cfg.Update.Interval)},
 		{suffix: "TUNING_MIN_SAVINGS_USD", set: intoFloat(&cfg.Tuning.MinSavingsUSD)},
 		{suffix: "TUNING_EMBEDDING_MODEL", set: intoString(&cfg.Tuning.EmbeddingModel)},
 		{suffix: "TUNING_EQUIVALENCE_THRESHOLD", set: intoFloat(&cfg.Tuning.EquivalenceThreshold)},

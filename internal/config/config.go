@@ -58,6 +58,7 @@ type Config struct {
 	Scheduler Scheduler
 	Webhook   Webhook
 	Retention Retention
+	Update    Update
 	Autonomic Autonomic
 }
 
@@ -739,6 +740,7 @@ func Default() Config {
 			Outputs: 30 * 24 * time.Hour,
 			Sweep:   6 * time.Hour,
 		},
+		Update:    Update{Interval: defaultUpdateInterval},
 		Telemetry: Telemetry{Enabled: true, Prometheus: ":9090"},
 		API: API{
 			GRPC:            ":7777",
@@ -1010,6 +1012,10 @@ func LoadWith(path string, lookup environ.Lookup) (Config, error) {
 	}
 
 	if validErr := validateNotify(&cfg.Notify, cfg.Bridge.Mattermost.Identity); validErr != nil {
+		return cfg, validErr
+	}
+
+	if validErr := validateUpdate(&cfg.Update); validErr != nil {
 		return cfg, validErr
 	}
 
@@ -1302,6 +1308,10 @@ type fileConfig struct {
 	} `toml:"secrets"`
 	Runner map[string]map[string]any `toml:"runner"`
 
+	// Update holds the [update] block verbatim so parsing can reject unknown
+	// keys itself, the same trap [secrets.bitwarden] uses.
+	Update map[string]any `toml:"update"`
+
 	// Credential holds each [credential.<name>] block verbatim so parsing can
 	// reject unknown keys itself: go-toml drops unknown struct fields silently,
 	// which would let a plaintext client_secret or a typo'd secret key sit in the
@@ -1372,6 +1382,10 @@ func applyTOML(cfg *Config, data []byte) error {
 	}
 
 	if err := applyDurations(cfg, &file); err != nil {
+		return err
+	}
+
+	if err := parseUpdateBlock(&cfg.Update, file.Update); err != nil {
 		return err
 	}
 

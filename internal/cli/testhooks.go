@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/chadit/CairnOS/internal/api"
+	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/reach"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
@@ -82,6 +83,10 @@ func NewQueueRunnerAdapter(fire inputsRunner, monitor *reach.Monitor) *QueueRunn
 // matching the message text.
 var ErrNoSourceCheckout = errNoSourceCheckout
 
+// ErrUpdateBusy is the refusal an update gets while another holds the lock,
+// exported so a case names the sentinel rather than matching the message text.
+var ErrUpdateBusy = errUpdateBusy
+
 // UpdateSourceDir resolves the checkout `cairnos update` builds from, given a
 // --source override and the path of the running binary. A test passes a staged
 // layout where the real command passes its own executable.
@@ -104,8 +109,8 @@ func UpdateLink(binary, linkDir string) error {
 // RunUpdateSteps drives the update's step sequence against substitutes, which
 // is how a test pins the pull-before-restart order without a vault or a unit.
 // The revision reads around the steps stay real, so dir must be a checkout.
-func (a *App) RunUpdateSteps(ctx context.Context, dir, home string, steps UpdateSteps) error {
-	return a.applyUpdate(ctx, dir, &updateOptions{home: home, link: true}, steps)
+func (*App) RunUpdateSteps(ctx context.Context, dir, home string, steps UpdateSteps) error {
+	return applyUpdate(ctx, dir, &updateOptions{home: home, link: true}, steps)
 }
 
 // UpdateRun names one invocation's inputs for a test: the release API to ask,
@@ -122,25 +127,73 @@ type UpdateRun struct {
 	Executable string
 	Home       string
 	Source     string
-	Check      bool
-	NoFetch    bool
-	NoRelease  bool
+
+	// Running is the revision the case says is running, where the command reads
+	// it out of the service's process image and serve's loop out of its own.
+	// Empty is nothing running, so a case never depends on the host's service.
+	Running string
+
+	Check     bool
+	NoFetch   bool
+	NoRelease bool
 }
 
-// DriveUpdate runs the whole release-or-source decision against staged inputs
-// and substituted steps, and returns the exit code the command would.
-func (a *App) DriveUpdate(ctx context.Context, run *UpdateRun, steps UpdateSteps) (int, error) {
-	return a.runUpdate(ctx, &updateOptions{
+// options resolves the run the way cmdUpdate resolves its flags.
+func (run *UpdateRun) options() *updateOptions {
+	return &updateOptions{
 		source:     run.Source,
 		home:       run.Home,
 		executable: run.Executable,
 		apiBase:    run.APIBase,
 		transport:  run.Transport,
+		running:    run.Running,
 		check:      run.Check,
 		fetch:      !run.NoFetch,
 		link:       true,
 		release:    !run.NoRelease,
-	}, steps)
+	}
+}
+
+// DriveUpdate runs the whole release-or-source decision against staged inputs
+// and substituted steps, and returns the exit code the command would.
+func (a *App) DriveUpdate(ctx context.Context, run *UpdateRun, steps UpdateSteps) (int, error) {
+	return a.runUpdate(ctx, run.options(), steps)
+}
+
+// AutoUpdateLoop is serve's self-update loop, held so a case can drive its
+// ticks one at a time and see what it remembers between them.
+type AutoUpdateLoop struct {
+	loop *autoUpdate
+}
+
+// NewAutoUpdateLoop builds the loop over a staged invocation. run.Running
+// stands in for the loop's own stamp, and steps replace every step but the
+// drain, which stays the loop's own so a case sees whether it was asked for.
+func (a *App) NewAutoUpdateLoop(run *UpdateRun, drain *api.Drain, steps UpdateSteps) *AutoUpdateLoop {
+	return &AutoUpdateLoop{loop: a.newAutoUpdate(run.options(), drain, steps, a.logger)}
+}
+
+// Tick runs one check and reports whether the loop is finished, which it is
+// once the process is draining for the new build.
+func (l *AutoUpdateLoop) Tick(ctx context.Context) bool {
+	return l.loop.tick(ctx)
+}
+
+// RunAutoUpdateStart runs serve's decision to start the loop against the
+// supervisor answer a case names, empty meaning supervised, so no case asks the
+// host's systemctl. It returns the channel serve waits on, nil when the loop
+// did not start; a started loop runs until ctx ends.
+func (a *App) RunAutoUpdateStart(ctx context.Context, update *config.Update, home, unsupervised string) <-chan struct{} {
+	a.unsupervised = func(context.Context) string { return unsupervised }
+
+	return a.startAutoUpdate(ctx, update, home, api.NewDrain(), a.logger)
+}
+
+// HoldUpdateLock takes the update lock under home the way a running update
+// does, so a case can watch the other side refuse or wait. The returned func
+// lets it go.
+func HoldUpdateLock(home string) (func(), error) {
+	return lockUpdate(home)
 }
 
 // UpdateRevisionReport prints one revision pair and answers with the exit code

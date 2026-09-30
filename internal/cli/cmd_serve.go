@@ -350,6 +350,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		tel:      tel,
 		fanout:   fanout,
 		secrets:  stores.secrets,
+		dir:      dir,
 	})
 }
 
@@ -366,13 +367,17 @@ type serveRuntime struct {
 	tel      *telemetry.Telemetry
 	fanout   *notify.Fanout
 	secrets  secrets.Source
+
+	// dir is the CairnOS home, which the update loop's secrets pull writes into.
+	dir string
 }
 
-// serveAndDrain starts the retention sweep, hive subscribe, usage refresh, and
-// chat bridge background loops, serves until ctx cancels, then drains every loop and
-// flushes telemetry. Split out of runServe so that composition root stays under
-// the maintainability ceiling. The local cancel is what a requested restart
-// pulls, so a drain stops every loop the way a SIGTERM would.
+// serveAndDrain starts the retention sweep, hive subscribe, usage refresh, auto
+// update, and chat bridge background loops, serves until ctx cancels, then
+// drains every loop and flushes telemetry. Split out of runServe so that
+// composition root stays under the maintainability ceiling. The local cancel is
+// what a requested restart pulls, so a drain stops every loop the way a SIGTERM
+// would.
 func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *serveStores, logger *slog.Logger, deps *serveRuntime) int {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -387,6 +392,7 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 	sweepDone := startSweep(ctx, cfg, stores.db, stores.keyStore, logger)
 	hiveDone := startHiveSubscribe(ctx, cfg, deps.secrets, stores.db, stores.scheds, logger)
 	usageDone := a.startUsageRefresh(ctx, deps.registry, logger)
+	updateDone := a.startAutoUpdate(ctx, &cfg.Update, deps.dir, deps.drain, logger)
 
 	a.announceHiveSubscribe(hiveDone)
 
@@ -410,6 +416,10 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 
 	if usageDone != nil {
 		<-usageDone
+	}
+
+	if updateDone != nil {
+		<-updateDone
 	}
 
 	<-bridgeDone

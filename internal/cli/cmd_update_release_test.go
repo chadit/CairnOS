@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,6 +24,13 @@ import (
 const (
 	updateStagedTag  = "v9.9.9"
 	updateOldContent = "the build this host was running\n"
+)
+
+// The smallest module that builds, for a fixture that needs a real binary
+// stamped with the commit its tree sits on.
+const (
+	stagedModuleGoMod = "module example.invalid/staged\n\ngo 1.27\n"
+	stagedModuleMain  = "package main\n\nfunc main() {}\n"
 )
 
 // The step names recordingSteps writes down, which is what the order
@@ -135,19 +143,17 @@ func TestUpdateRefusesAMismatchedAsset(t *testing.T) {
 }
 
 // TestUpdateRefusesAReleaseWithoutChecksums covers the release that publishes a
-// binary for this platform and nothing to verify it against. Falling back to
-// the clone would hide a half-uploaded release, so the update stops instead.
+// binary for this platform and nothing to verify it against. That is a broken
+// release rather than a missing one, so the update stops with nothing touched.
 func TestUpdateRefusesAReleaseWithoutChecksums(t *testing.T) {
 	t.Parallel()
-	requireGit(t)
 
 	release := defaultStagedRelease([]byte("an asset nothing vouches for\n"), strings.Repeat("f", 40))
 	release.noChecksums = true
 
 	api := startReleaseServer(t, release)
-	work, _ := stageClonePair(t)
 
-	target := filepath.Join(work, "bin", updateLinkName)
+	target := filepath.Join(t.TempDir(), updateLinkName)
 	writeFile(t, target, updateOldContent)
 
 	var order []string
@@ -173,12 +179,53 @@ func TestUpdateRefusesAReleaseWithoutChecksums(t *testing.T) {
 	}
 }
 
-// TestUpdateFallsBackToTheCheckout covers the two ordinary misses. Neither is a
-// failure: a private repository read without a token answers 404, and a release
-// cut before this platform was added carries no asset for it.
-func TestUpdateFallsBackToTheCheckout(t *testing.T) {
+// TestUpdateFollowsTheCheckoutAroundTheBinary covers a binary built from a
+// checkout on a host that can also see a published release. The checkout
+// wins without the release API being asked, so a host tracking main is never
+// moved back onto an older tag.
+func TestUpdateFollowsTheCheckoutAroundTheBinary(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
+
+	api := startCountingReleaseServer(t,
+		defaultStagedRelease([]byte("an asset the checkout never needs\n"), strings.Repeat("a", 40)))
+	work, _ := stageClonePair(t)
+
+	var order []string
+
+	code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
+		&cli.UpdateRun{
+			APIBase:    api.base,
+			Transport:  api.transport,
+			Executable: filepath.Join(work, "bin", updateLinkName),
+			Home:       t.TempDir(),
+		},
+		recordingSteps(t, &order, ""))
+	if err != nil {
+		t.Fatalf("DriveUpdate() error = %v", err)
+	}
+
+	if code != cli.ExitOK {
+		t.Fatalf("exit = %d, want %d", code, cli.ExitOK)
+	}
+
+	if got := api.calls.Load(); got != 0 {
+		t.Errorf("the release API was called %d time(s) for a binary built from a checkout", got)
+	}
+
+	want := []string{stepBuild, stepPull, stepRestart, stepLink}
+	if !slices.Equal(order, want) {
+		t.Fatalf("step order = %v, want the source path %v", order, want)
+	}
+}
+
+// TestUpdateWithNoReleaseAndNoCheckout covers a binary with no checkout around
+// it when the lookup misses in either ordinary way: a private repository read
+// without a token answers 404, and a release cut before this platform was added
+// carries no asset for it. Nothing can be installed, and the error says what
+// to do about it.
+func TestUpdateWithNoReleaseAndNoCheckout(t *testing.T) {
+	t.Parallel()
 
 	cases := []struct {
 		name    string
@@ -204,37 +251,31 @@ func TestUpdateFallsBackToTheCheckout(t *testing.T) {
 			t.Parallel()
 
 			api := startReleaseServer(t, withDefaultSums(&testCase.release))
-			work, _ := stageClonePair(t)
 
 			var order []string
 
-			code, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
+			_, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).DriveUpdate(t.Context(),
 				&cli.UpdateRun{
 					APIBase:    api.base,
 					Transport:  api.transport,
-					Executable: filepath.Join(work, "bin", updateLinkName),
+					Executable: filepath.Join(t.TempDir(), updateLinkName),
 					Home:       t.TempDir(),
 				},
 				recordingSteps(t, &order, ""))
-			if err != nil {
-				t.Fatalf("DriveUpdate() error = %v", err)
+			if !errors.Is(err, cli.ErrNoSourceCheckout) {
+				t.Fatalf("DriveUpdate() error = %v, want ErrNoSourceCheckout", err)
 			}
 
-			if code != cli.ExitOK {
-				t.Fatalf("exit = %d, want %d", code, cli.ExitOK)
-			}
-
-			want := []string{stepBuild, stepPull, stepRestart, stepLink}
-			if !slices.Equal(order, want) {
-				t.Fatalf("step order = %v, want the source path %v", order, want)
+			if len(order) != 0 {
+				t.Errorf("steps ran with nothing to install: %v", order)
 			}
 		})
 	}
 }
 
-// TestUpdateSkipsTheLookup pins the precedence deploy.sh relies on. Each of
-// these flags means the checkout in front of you, so a developer's dirty tree
-// is never replaced by whatever the last tag published.
+// TestUpdateSkipsTheLookup pins the flags that keep a binary with no checkout
+// around it off the release API. --source names the checkout to build instead;
+// --no-fetch and --no-release leave nothing to build without it, and say so.
 func TestUpdateSkipsTheLookup(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
@@ -242,12 +283,17 @@ func TestUpdateSkipsTheLookup(t *testing.T) {
 	asset, revision := buildStampedBinaryOrSkip(t)
 
 	cases := []struct {
-		with func(run *cli.UpdateRun, checkout string)
-		name string
+		with      func(run *cli.UpdateRun, checkout string)
+		name      string
+		wantBuild bool
 	}{
 		{name: "no-fetch", with: func(run *cli.UpdateRun, _ string) { run.NoFetch = true }},
 		{name: "no-release", with: func(run *cli.UpdateRun, _ string) { run.NoRelease = true }},
-		{name: "source", with: func(run *cli.UpdateRun, checkout string) { run.Source = checkout }},
+		{
+			name:      "source",
+			with:      func(run *cli.UpdateRun, checkout string) { run.Source = checkout },
+			wantBuild: true,
+		},
 	}
 
 	for _, testCase := range cases {
@@ -260,24 +306,30 @@ func TestUpdateSkipsTheLookup(t *testing.T) {
 			run := cli.UpdateRun{
 				APIBase:    api.base,
 				Transport:  api.transport,
-				Executable: filepath.Join(work, "bin", updateLinkName),
+				Executable: filepath.Join(t.TempDir(), updateLinkName),
 				Home:       t.TempDir(),
 			}
 			testCase.with(&run, work)
 
 			var order []string
 
-			if _, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-				DriveUpdate(t.Context(), &run, recordingSteps(t, &order, "")); err != nil {
-				t.Fatalf("DriveUpdate() error = %v", err)
-			}
+			_, err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
+				DriveUpdate(t.Context(), &run, recordingSteps(t, &order, ""))
 
 			if got := api.calls.Load(); got != 0 {
 				t.Errorf("the release API was called %d time(s)", got)
 			}
 
-			if len(order) == 0 || order[0] != stepBuild {
-				t.Errorf("step order = %v, want the source path to build first", order)
+			if !testCase.wantBuild {
+				if !errors.Is(err, cli.ErrNoSourceCheckout) {
+					t.Errorf("DriveUpdate() error = %v, want ErrNoSourceCheckout with nothing to build", err)
+				}
+
+				return
+			}
+
+			if err != nil || len(order) == 0 || order[0] != stepBuild {
+				t.Errorf("DriveUpdate() error = %v, step order = %v; want the named checkout built", err, order)
 			}
 		})
 	}
@@ -605,8 +657,8 @@ func buildStampedBinary(t *testing.T) ([]byte, string) {
 
 	module := t.TempDir()
 
-	writeFile(t, filepath.Join(module, "go.mod"), "module example.invalid/staged\n\ngo 1.27\n")
-	writeFile(t, filepath.Join(module, "main.go"), "package main\n\nfunc main() {}\n")
+	writeFile(t, filepath.Join(module, "go.mod"), stagedModuleGoMod)
+	writeFile(t, filepath.Join(module, "main.go"), stagedModuleMain)
 
 	gitOut(t, module, "init", "--quiet", "--initial-branch=main", ".")
 	gitOut(t, module, "add", ".")
@@ -614,16 +666,10 @@ func buildStampedBinary(t *testing.T) ([]byte, string) {
 
 	out := filepath.Join(t.TempDir(), "staged")
 
-	buildEnv := append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
-
-	build := exec.CommandContext(t.Context(), "go", "build", "-trimpath", "-o", out, ".")
-	build.Dir = module
-	build.Env = buildEnv
-
 	// A skip here would take the only two cases that install a real asset and
 	// check a digest refusal with it, and leave a green run saying so.
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build the staged release asset: %v\n%s", err, output)
+	if err := goBuildStamped(t.Context(), module, out); err != nil {
+		t.Fatalf("build the staged release asset: %v", err)
 	}
 
 	asset, err := os.ReadFile(out) // #nosec G304 -- a path this test built
@@ -632,4 +678,20 @@ func buildStampedBinary(t *testing.T) ([]byte, string) {
 	}
 
 	return asset, gitOut(t, module, "rev-parse", "HEAD")
+}
+
+// goBuildStamped compiles the module in dir to out with the user's and the
+// system's git config ignored, so cmd/go stamps the commit dir sits on however
+// the host's git is set up.
+func goBuildStamped(ctx context.Context, dir, out string) error {
+	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", out, ".") // #nosec G204 -- fixed argv from this test
+	build.Dir = dir
+
+	build.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
+
+	if output, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build in %s: %w\n%s", dir, err, output)
+	}
+
+	return nil
 }

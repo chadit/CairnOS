@@ -9,15 +9,19 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/execretry"
@@ -27,23 +31,28 @@ import (
 
 const updateUsage = `usage: cairnos update [flags]
 
-Update this host in place. The latest GitHub release for this platform is
-preferred: its asset is downloaded, checked against the published sha256, and
-written over the running binary. With no release to use, the checkout the
-running binary was built from is fast-forwarded and rebuilt instead. Either way
+Update this host in place. A binary built from a checkout, which lives at
+<checkout>/bin/cairnos, follows that checkout: it is fast-forwarded onto its
+upstream and rebuilt. Only a binary with no checkout around it installs the
+latest GitHub release for this platform, whose asset is downloaded, checked
+against the published sha256, and written over the running binary. Either way
 the new build pulls secrets, the service restarts when the revision or the
 secrets moved, and ~/.local/bin/cairnos ends up pointing at the result.
 
   --source <dir>  build from this checkout instead of the one around the
-                  running binary, which lives at <checkout>/bin/cairnos; this
-                  also skips the release lookup
+                  running binary; this also skips the release lookup
   --dir <dir>     CairnOS home the secrets pull writes into
-  --check         report the running and the wanted revision, exit 3 when they
-                  differ, and fetch, build, pull and restart nothing
+  --check         report the running and the wanted revision and exit 3 when
+                  they differ; on the checkout path it fetches the upstream's
+                  remote first, so commits that landed there count, while the
+                  release path asks the release API and fetches nothing; it
+                  moves the checkout, builds, pulls and restarts nothing
   --restart-now   restart the service immediately instead of letting it finish
                   its in-flight runs first
-  --no-fetch      build what is already checked out, reaching no release
-  --no-release    skip the release lookup and build the checkout
+  --no-fetch      build what is already checked out, reaching no release; with
+                  --check, compare against the local HEAD without fetching
+  --no-release    skip the release lookup a binary with no checkout around it
+                  would make, which leaves --source to name what to build
   --no-link       leave ~/.local/bin/cairnos alone
 `
 
@@ -67,6 +76,11 @@ const (
 	restartPoll    = time.Second
 )
 
+// buildWaitDelay bounds how long a canceled build or pull may hold its output
+// pipe once its process group was signaled. Anything that outlives the signal
+// would keep the pipe open, and serve's shutdown would wait on it.
+const buildWaitDelay = 5 * time.Second
+
 // dirtySuffix is what cmd/go appends to the stamped revision when the tree it
 // built from carried any change, untracked files included.
 const dirtySuffix = "+dirty"
@@ -85,7 +99,7 @@ const goosLinux = "linux"
 const procExeFormat = "/proc/%d/exe"
 
 // updateOptions carries one invocation's resolved inputs, so each step takes a
-// single value rather than the same seven parameters. executable and apiBase
+// single value rather than the same long parameter list. executable and apiBase
 // are resolved rather than parsed: a test names the binary to replace and the
 // server to ask, where the command names its own image and api.github.com.
 type updateOptions struct {
@@ -94,10 +108,21 @@ type updateOptions struct {
 	// answers in process, which keeps the suite off the host's network stack.
 	transport http.RoundTripper
 
+	// lookupLogger takes the release lookup's progress lines. Nil is the App's
+	// logger, which is what an operator running the command reads. Serve's loop
+	// asks on every tick, so it passes one that drops them and logs once when
+	// it acts on the answer instead.
+	lookupLogger *slog.Logger
+
 	source     string
 	home       string
 	executable string
 	apiBase    string
+
+	// running is the revision the update replaces, empty when nothing runs.
+	// The command reads it out of the service's process image; serve's loop is
+	// that process, so it names its own stamp.
+	running string
 
 	check   bool
 	fetch   bool
@@ -178,6 +203,7 @@ func (a *App) cmdUpdate(ctx context.Context, args []string) int {
 		source:     *sourceFlag,
 		home:       home,
 		executable: executable,
+		running:    a.runningRevision(ctx),
 		check:      *checkFlag,
 		fetch:      !*noFetchFlag,
 		link:       !*noLinkFlag,
@@ -195,10 +221,20 @@ func (a *App) cmdUpdate(ctx context.Context, args []string) int {
 	return code
 }
 
-// runUpdate picks between the release and the source path and then either
-// reports or applies. A release wins when one exists for this platform, since
-// installing a published build beats rebuilding the same commit on the host.
+// runUpdate picks between the source and the release path and then either
+// reports or applies. A checkout around the running binary wins over a
+// release, which findRelease decides. Everything but --check holds the update
+// lock, so this command and serve's loop never install at once.
 func (a *App) runUpdate(ctx context.Context, opts *updateOptions, steps UpdateSteps) (int, error) {
+	if !opts.check {
+		unlock, err := lockUpdate(opts.home)
+		if err != nil {
+			return ExitFailure, err
+		}
+
+		defer unlock()
+	}
+
 	build, found, err := a.findRelease(ctx, opts)
 	if err != nil {
 		return ExitFailure, err
@@ -218,13 +254,15 @@ func (a *App) runRelease(ctx context.Context, build *releaseBuild, opts *updateO
 	a.logger.Info("update: latest release", "tag", build.tag, "asset", build.assetName)
 
 	if opts.check {
-		return a.reportRevisionPair(a.runningRevision(ctx), build.revision), nil
+		return a.reportRevisionPair(opts.running, build.revision), nil
 	}
+
+	a.logger.Info("update: revisions", "running", displayRevision(opts.running), "wanted", build.revision)
 
 	return ExitOK, a.applyRelease(ctx, build, opts, steps)
 }
 
-// runSource is the fallback and the developer path: fast-forward the checkout
+// runSource is the path for any binary built from a checkout: fast-forward it
 // the running binary was built from and rebuild it. --check stops at the
 // report, which is what makes it safe on a host somebody only wants to look at.
 func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSteps) (int, error) {
@@ -236,7 +274,7 @@ func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSt
 	a.logger.Info("update: source checkout", "dir", dir)
 
 	if opts.check {
-		return a.reportSource(ctx, dir)
+		return a.reportSource(ctx, dir, opts)
 	}
 
 	if opts.fetch {
@@ -245,7 +283,14 @@ func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSt
 		}
 	}
 
-	return ExitOK, a.applyUpdate(ctx, dir, opts, steps)
+	wanted, err := wantedRevision(ctx, dir)
+	if err != nil {
+		return ExitFailure, err
+	}
+
+	a.logger.Info("update: revisions", "running", displayRevision(opts.running), "wanted", wanted)
+
+	return ExitOK, applyUpdate(ctx, dir, opts, steps)
 }
 
 // applyRelease installs the published binary and then runs the same pull,
@@ -253,11 +298,7 @@ func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSt
 // already runs installs nothing and still pulls, because a vault value can move
 // without the code moving.
 func (a *App) applyRelease(ctx context.Context, build *releaseBuild, opts *updateOptions, steps UpdateSteps) error {
-	running := a.runningRevision(ctx)
-
-	a.logger.Info("update: revisions", "running", displayRevision(running), "wanted", build.revision)
-
-	replaced := running != build.revision
+	replaced := opts.running != build.revision
 
 	if replaced {
 		if err := a.installRelease(ctx, build, opts, steps); err != nil {
@@ -292,7 +333,7 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts *upd
 
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	staged, err := a.releaseClient(opts.apiBase, opts.transport).stageAsset(ctx, build, dir)
+	staged, err := a.releaseClient(opts).stageAsset(ctx, build, dir)
 	if err != nil {
 		return err
 	}
@@ -310,15 +351,11 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts *upd
 // two steps --check shares with it. The pull sits before the restart because
 // the service reads both environment files once, at startup: pulling after
 // would leave the new process running on the previous values (FR11).
-func (a *App) applyUpdate(ctx context.Context, dir string, opts *updateOptions, steps UpdateSteps) error {
-	running := a.runningRevision(ctx)
-
+func applyUpdate(ctx context.Context, dir string, opts *updateOptions, steps UpdateSteps) error {
 	wanted, err := wantedRevision(ctx, dir)
 	if err != nil {
 		return err
 	}
-
-	a.logger.Info("update: revisions", "running", displayRevision(running), "wanted", wanted)
 
 	if buildErr := steps.Build(ctx, dir); buildErr != nil {
 		return buildErr
@@ -331,7 +368,7 @@ func (a *App) applyUpdate(ctx context.Context, dir string, opts *updateOptions, 
 		return err
 	}
 
-	if restartErr := steps.Restart(ctx, running != wanted, secretsMoved, wanted); restartErr != nil {
+	if restartErr := steps.Restart(ctx, opts.running != wanted, secretsMoved, wanted); restartErr != nil {
 		return restartErr
 	}
 
@@ -342,14 +379,42 @@ func (a *App) applyUpdate(ctx context.Context, dir string, opts *updateOptions, 
 	return steps.Link(binary)
 }
 
-// reportSource prints what the service runs beside what the checkout carries.
-func (a *App) reportSource(ctx context.Context, dir string) (int, error) {
-	wanted, err := wantedRevision(ctx, dir)
+// reportSource prints what the service runs beside what an update would build.
+// Without --no-fetch the remote-tracking refs are fetched first, so a checkout
+// nobody fetches still shows the commits waiting upstream instead of reporting
+// current forever. The working tree is left as it is either way.
+func (a *App) reportSource(ctx context.Context, dir string, opts *updateOptions) (int, error) {
+	wanted, err := checkRevision(ctx, dir, opts.fetch)
 	if err != nil {
 		return ExitFailure, err
 	}
 
-	return a.reportRevisionPair(a.runningRevision(ctx), wanted), nil
+	return a.reportRevisionPair(opts.running, wanted), nil
+}
+
+// checkRevision spells the revision an update would build. After a fetch that
+// is the upstream commit when the checkout would fast-forward onto it, and HEAD
+// when the update would leave the checkout alone. Without one it is HEAD,
+// because --no-fetch builds what is checked out.
+func checkRevision(ctx context.Context, dir string, fetch bool) (string, error) {
+	if !fetch {
+		return wantedRevision(ctx, dir)
+	}
+
+	if err := fetchUpstream(ctx, dir); err != nil {
+		return "", err
+	}
+
+	gap, err := upstreamGapOf(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+
+	if !gap.fastForwards() {
+		return wantedRevision(ctx, dir)
+	}
+
+	return revisionAt(ctx, dir, gap.ref)
 }
 
 // reportRevisionPair prints the running build beside the one the update would
@@ -411,15 +476,88 @@ type upstreamGap struct {
 	ahead  int
 }
 
-// syncCheckout fetches and fast-forwards only a checkout that is strictly
-// behind. One that has diverged or carries local commits is left alone, since
-// this command updates a host rather than resolving anyone's history. A dirty
-// tree is fine: the build stamps "+dirty" and the revision line shows it.
+// fastForwards reports whether the checkout is strictly behind its upstream,
+// the one shape an update moves rather than leaves alone.
+func (g upstreamGap) fastForwards() bool {
+	return g.ref != "" && g.behind > 0 && g.ahead == 0
+}
+
+// syncCheckout is the command's checkout step. Serve's loop runs its two halves
+// apart, because it fetches to decide and fast-forwards only once it has.
 func (a *App) syncCheckout(ctx context.Context, dir string) error {
-	if _, err := source.GitCommand(ctx, dir, "fetch", "--quiet", "origin"); err != nil {
-		return fmt.Errorf("fetch origin in %s: %w", dir, err)
+	if err := fetchUpstream(ctx, dir); err != nil {
+		return err
 	}
 
+	return a.fastForward(ctx, dir)
+}
+
+// fetchUpstream updates the remote-tracking refs of the remote the branch
+// tracks and nothing else, so learning what landed upstream never touches the
+// working tree. A checkout tracking nothing has nothing to fetch.
+func fetchUpstream(ctx context.Context, dir string) error {
+	remote := upstreamRemote(ctx, dir)
+	if remote == "" {
+		return nil
+	}
+
+	if _, err := source.GitCommand(ctx, dir, "fetch", "--quiet", "--", remote); err != nil {
+		return fmt.Errorf("fetch %s in %s: %w", remote, dir, err)
+	}
+
+	return nil
+}
+
+// upstreamRemote names the remote the checkout's branch tracks, which need not
+// be origin, and answers empty for a detached HEAD or a branch tracking
+// nothing. As with upstreamRef, git's non-zero exit is the answer.
+func upstreamRemote(ctx context.Context, dir string) string {
+	branch, err := source.GitCommand(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+
+	remote, err := source.GitCommand(ctx, dir, "config", "--get", "branch."+branch+".remote")
+	if err != nil {
+		return ""
+	}
+
+	return remote
+}
+
+// updateLockName is the file under the CairnOS home that `cairnos update` and
+// serve's loop lock around an install.
+const updateLockName = "update.lock"
+
+// lockUpdate takes the host's update lock and answers errUpdateBusy when
+// another update holds it. A home that does not exist has no serve and so no
+// loop to contend with, so the update goes ahead unlocked. The OS drops the
+// lock with the process, so a killed update never leaves it stuck.
+func lockUpdate(home string) (func(), error) {
+	path := filepath.Join(home, updateLockName)
+	lock := flock.New(path)
+
+	locked, err := lock.TryLock()
+	if errors.Is(err, fs.ErrNotExist) {
+		return func() {}, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("take the update lock %s: %w", path, err)
+	}
+
+	if !locked {
+		return nil, fmt.Errorf("%w: %s is held", errUpdateBusy, path)
+	}
+
+	return func() { _ = lock.Unlock() }, nil
+}
+
+// fastForward moves only a checkout that is strictly behind onto its upstream.
+// One that has diverged or carries local commits is left alone, since this
+// command updates a host rather than resolving anyone's history. A dirty tree
+// is fine: the build stamps "+dirty" and the revision line shows it.
+func (a *App) fastForward(ctx context.Context, dir string) error {
 	gap, err := upstreamGapOf(ctx, dir)
 	if err != nil {
 		return err
@@ -431,7 +569,7 @@ func (a *App) syncCheckout(ctx context.Context, dir string) error {
 		return nil
 	}
 
-	if gap.behind == 0 || gap.ahead > 0 {
+	if !gap.fastForwards() {
 		a.logger.Info("update: checkout left as is",
 			"upstream", gap.ref, "behind", gap.behind, "ahead", gap.ahead)
 
@@ -503,25 +641,52 @@ func parseGapCounts(line string) (int, int, error) {
 	return left, right, nil
 }
 
-// wantedRevision spells the checkout's HEAD the way cmd/go stamps it, with
-// "+dirty" on any change at all, untracked files included, because that is what
-// the plain `git status --porcelain` cmd/go runs reports.
+// wantedRevision spells the checkout's HEAD the way cmd/go stamps it.
 func wantedRevision(ctx context.Context, dir string) (string, error) {
-	head, err := source.GitCommand(ctx, dir, "rev-parse", "HEAD")
+	return revisionAt(ctx, dir, "HEAD")
+}
+
+// revisionAt spells the commit ref names the way cmd/go would stamp a build of
+// this working tree sitting on it, with "+dirty" on any change at all.
+func revisionAt(ctx context.Context, dir, ref string) (string, error) {
+	commit, err := commitOf(ctx, dir, ref)
 	if err != nil {
-		return "", fmt.Errorf("read HEAD in %s: %w", dir, err)
+		return "", err
 	}
 
+	dirty, err := treeDirty(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+
+	if dirty {
+		return commit + dirtySuffix, nil
+	}
+
+	return commit, nil
+}
+
+// commitOf resolves a ref to its commit. Unlike revisionAt it ignores the
+// working tree, which is what naming an upstream commit needs.
+func commitOf(ctx context.Context, dir, ref string) (string, error) {
+	commit, err := source.GitCommand(ctx, dir, "rev-parse", ref)
+	if err != nil {
+		return "", fmt.Errorf("read %s in %s: %w", ref, dir, err)
+	}
+
+	return commit, nil
+}
+
+// treeDirty reports whether the working tree carries any change, untracked
+// files included. That matches cmd/go, which stamps "+dirty" on anything a
+// plain `git status --porcelain` lists.
+func treeDirty(ctx context.Context, dir string) (bool, error) {
 	status, err := source.GitCommand(ctx, dir, "status", "--porcelain")
 	if err != nil {
-		return "", fmt.Errorf("read the working tree state in %s: %w", dir, err)
+		return false, fmt.Errorf("read the working tree state in %s: %w", dir, err)
 	}
 
-	if status != "" {
-		return head + dirtySuffix, nil
-	}
-
-	return head, nil
+	return status != "", nil
 }
 
 // runningRevision reads the stamp out of the service's own process image, so a
@@ -567,12 +732,29 @@ func stampedRevision(path string) (string, error) {
 		return "", fmt.Errorf("read the build stamp of %s: %w", path, err)
 	}
 
+	return settingsRevision(info.Settings), nil
+}
+
+// ownRevision is this process's own stamp. It is read from memory rather than
+// from the executable's path, which an update may already have replaced.
+func ownRevision() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+
+	return settingsRevision(info.Settings)
+}
+
+// settingsRevision spells a build's vcs settings the way the revision
+// comparison reads them.
+func settingsRevision(settings []debug.BuildSetting) string {
 	var (
 		revision string
 		dirty    bool
 	)
 
-	for _, setting := range info.Settings {
+	for _, setting := range settings {
 		switch setting.Key {
 		case "vcs.revision":
 			revision = setting.Value
@@ -582,10 +764,10 @@ func stampedRevision(path string) (string, error) {
 	}
 
 	if revision != "" && dirty {
-		return revision + dirtySuffix, nil
+		return revision + dirtySuffix
 	}
 
-	return revision, nil
+	return revision
 }
 
 // serveInstall picks the systemd install this host runs serve under. launchd
@@ -677,6 +859,8 @@ func runInDir(ctx context.Context, dir, name string, args ...string) error {
 		// network input reaches here.
 		command := exec.CommandContext(ctx, name, args...)
 		command.Dir = dir
+		command.WaitDelay = buildWaitDelay
+		killGroupOnCancel(command)
 
 		return command, nil
 	})

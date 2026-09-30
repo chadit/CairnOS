@@ -24,8 +24,8 @@ const (
 	ExitFailure = 1
 	ExitUsage   = 2
 
-	// ExitBehind reports a host whose service runs an older build than its
-	// checkout carries. Only `cairnos update --check` returns it, and a
+	// ExitBehind reports a host whose service runs a build other than the one
+	// an update would install. Only `cairnos update --check` returns it, and a
 	// scheduled check elsewhere keys on this exact number.
 	ExitBehind = 3
 )
@@ -93,6 +93,12 @@ type App struct {
 	// to the generated pin; tests replace it through WithBitwardenPin, since
 	// the fake bw a suite stages can never hash to a published release.
 	bwPin func(goos string) (bwAssetPin, error)
+
+	// unsupervised answers why nothing would start serve again after the update
+	// loop ends it, empty when something would. Nil is the real check, which
+	// asks systemctl; a suite hands over an answer so no case reads the host's
+	// own service.
+	unsupervised func(ctx context.Context) string
 
 	// bwClock measures the wait for `bw serve` to answer. Nil is the machine's
 	// clock, which is what a deploy waits on; a suite hands over one it drives

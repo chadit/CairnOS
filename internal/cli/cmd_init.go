@@ -54,6 +54,10 @@ runs    = "%s"                  # delete runs and action results older than this
 outputs = "%s"                  # truncate large action outputs sooner
 sweep   = "%s"                  # how often the background prune runs
 
+[update]
+auto     = %t                   # serve installs a newer build and restarts on it
+interval = "%s"                 # how often serve checks for one
+
 [env]
 # Environment variable names workflows may read; empty means no env access.
 allowlist = []
@@ -206,6 +210,8 @@ func renderConfig() string {
 		formatDuration(def.Retention.Runs),
 		formatDuration(def.Retention.Outputs),
 		formatDuration(def.Retention.Sweep),
+		def.Update.Auto,
+		formatDuration(def.Update.Interval),
 		def.Telemetry.Enabled,
 		def.Telemetry.Prometheus,
 		def.API.Enabled,
