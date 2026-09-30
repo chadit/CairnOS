@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -49,9 +50,24 @@ const (
 	initialScanBuffer = 64 << 10
 
 	// stderrTailKeep is how much trailing stderr survives into Meta and error
-	// messages. The tail, not the head, because the cause of a CLI failure is
-	// usually the last thing it printed.
+	// messages, and how much trailing stdout the exit classifier reads. The
+	// tail, not the head, because the cause of a CLI failure is usually the
+	// last thing it printed.
 	stderrTailKeep = 4096
+)
+
+// Refusal markers for a failed CLI exit, matched on lowercased output inside
+// non-alphanumeric boundaries so "quotation" is not "quota" and a "rate
+// limiter" log line is not a rate limit. The set is toolkit login-fallback's,
+// plus caps the Claude Code 2.1.284 and codex 0.157 binaries word without
+// "usage limit": "You've hit your session limit", "out of credits".
+var (
+	cliLimitPattern = regexp.MustCompile(`(^|[^a-z0-9])(429|rate.?limit(ed|s)?|too many requests|usage limits?|hit your [a-z' -]{0,30}(limit|budget|spend cap)|quota|out of credits|out of extra usage|credit balance (is )?too low)([^a-z0-9]|$)`)
+
+	// cliOverloadPattern is kept apart from the limit set because a 529 is
+	// the provider shedding load, not this account running out, the same split
+	// the Anthropic runner makes for overloaded_error.
+	cliOverloadPattern = regexp.MustCompile(`(^|[^a-z0-9])(529|overloaded)([^a-z0-9]|$)`)
 )
 
 // cliExec runs one configured command line per task. The named CLI runners
@@ -172,13 +188,18 @@ func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runn
 
 	cmd, stderr := piped.cmd, piped.stderr
 
-	stdoutText, scanErr := collectStdout(runCtx, piped.stdout, stream)
+	// Claude Code prints its limit and login refusals on stdout, and the
+	// transcript stops growing at maxCapturedOutput, so the classifier gets its
+	// own tail rather than the transcript's head.
+	stdoutTail := &tailBuffer{limit: stderrTailKeep}
+
+	stdoutText, scanErr := collectStdout(runCtx, io.TeeReader(piped.stdout, stdoutTail), stream)
 
 	waitErr := cmd.Wait()
 	latency := time.Since(start)
 
 	if waitErr != nil {
-		return runner.Result{}, c.classifyWait(runCtx, waitErr, cmd.ProcessState.ExitCode(), stderr.Text())
+		return runner.Result{}, c.classifyWait(runCtx, waitErr, stderr.Text(), stdoutTail.Text())
 	}
 
 	if scanErr != nil {
@@ -297,7 +318,7 @@ func (c *cliExec) classifyStart(runCtx context.Context, err error) error {
 // classifyWait maps a finished-but-failed process. A done context wins over
 // the exit status because CommandContext kills the child on cancellation, so
 // the non-zero exit is an effect of the timeout, not the tool's verdict.
-func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, exitCode int, stderrTail string) error {
+func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, stderrTail, stdoutTail string) error {
 	if runCtx.Err() != nil {
 		return &runner.Error{
 			Class:   runner.ClassTransient,
@@ -307,13 +328,13 @@ func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, exitCode i
 		}
 	}
 
-	if _, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
-		message := fmt.Sprintf("%s exited with code %d", c.binary, exitCode)
+	if exitErr, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
+		message := fmt.Sprintf("%s exited with code %d", c.binary, exitErr.ExitCode())
 		if stderrTail != "" {
 			message += ": " + stderrTail
 		}
 
-		return c.classifyExitOutput(stderrTail, message, waitErr)
+		return c.classifyExitOutput(stderrTail+"\n"+stdoutTail, message, waitErr)
 	}
 
 	return &runner.Error{
@@ -322,17 +343,20 @@ func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, exitCode i
 	}
 }
 
-// classifyExitOutput reads a non-zero exit's stderr to pick the error class.
-// Rate-limit signals win first, so a throttled call is not misread as expiry;
-// only then does a re-auth signal classify as NeedsReauth, which holds the job
-// for a human rather than failing it (D12, .agents/spec/14-open-decisions.md).
-// Anything else is permanent: an unexplained non-zero exit is not safe to
-// repeat.
-func (c *cliExec) classifyExitOutput(stderrTail, message string, cause error) error {
+// classifyExitOutput reads a non-zero exit's output tails to pick the error
+// class. A limit wins over re-auth, so a capped call retries (the wrapped CLI
+// picks its account per launch) instead of holding the job for a human (D12,
+// .agents/spec/14-open-decisions.md). An unexplained non-zero exit is
+// permanent: it is not safe to repeat.
+func (c *cliExec) classifyExitOutput(output, message string, cause error) error {
+	lowered := strings.ToLower(output)
+
 	switch {
-	case looksRateLimited(stderrTail):
+	case cliLimitPattern.MatchString(lowered):
 		return &runner.Error{Class: runner.ClassRateLimited, Code: c.code("rate_limited"), Message: message, Cause: cause}
-	case looksReauth(stderrTail):
+	case cliOverloadPattern.MatchString(lowered):
+		return &runner.Error{Class: runner.ClassTransient, Code: c.code("overloaded"), Message: message, Cause: cause}
+	case looksReauth(lowered):
 		return &runner.Error{
 			Class:   runner.ClassNeedsReauth,
 			Code:    c.code("needs_reauth"),
@@ -344,13 +368,12 @@ func (c *cliExec) classifyExitOutput(stderrTail, message string, cause error) er
 	}
 }
 
-// looksReauth spots an expired-credential signal in a CLI tool's output. The
-// strongest cross-tool marker is invalid_grant (a dead OAuth refresh token);
-// codex also surfaces 401 Unauthorized and "exceeded retry limit". Callers rule
-// out rate-limit text first, so this never sees a throttled call.
-func looksReauth(message string) bool {
-	lowered := strings.ToLower(message)
-
+// looksReauth spots an expired-credential signal in a CLI tool's lowercased
+// output. The strongest cross-tool marker is invalid_grant (a dead OAuth
+// refresh token); codex also surfaces 401 Unauthorized and "exceeded retry
+// limit", and Claude Code ends each login refusal with "Please run /login".
+// Callers rule out limit text first, so this never sees a capped call.
+func looksReauth(lowered string) bool {
 	for _, marker := range []string{
 		"invalid_grant",
 		"unauthorized",
@@ -364,6 +387,13 @@ func looksReauth(message string) bool {
 		"log in again",
 		"login again",
 		"please log in",
+		"not logged in",
+		"please run /login",
+		"invalid api key",
+		"session has expired",
+		"authentication failed",
+		"authentication error",
+		"failed to authenticate",
 	} {
 		if strings.Contains(lowered, marker) {
 			return true

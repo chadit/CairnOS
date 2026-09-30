@@ -83,6 +83,10 @@ var (
 	// errUsageNoHome reports a "~/" launcher with no HOME to expand it against.
 	errUsageNoHome = errors.New("no home directory in the environment")
 
+	// errUsageBadReport reports a script's usage report this build cannot read:
+	// JSON that does not decode, or a schema it does not know.
+	errUsageBadReport = errors.New("unreadable usage report")
+
 	// errBadOutput reports a Starlark output value the code runner refuses to
 	// hand downstream: a non-data type, an int outside int64, or a dict with a
 	// non-string key. The runner wraps it as code.bad_output. Failing here

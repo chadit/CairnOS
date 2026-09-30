@@ -27,7 +27,8 @@ const (
 	// the engine never repeats a side effect a runner did not declare safe.
 	ClassPermanent
 	// ClassRateLimited behaves like transient, but the engine prefers the
-	// RetryAfter hint over computed backoff.
+	// RetryAfter hint over computed backoff and retries it on any action,
+	// idempotent or not: the provider refused the call rather than running it.
 	ClassRateLimited
 	// ClassNeedsReauth marks an expired credential that cannot self-refresh, such
 	// as a dead OAuth refresh token on a subscription CLI tool. The engine cannot

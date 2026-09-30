@@ -2,10 +2,13 @@ package cli_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
@@ -197,5 +200,57 @@ func TestUsageFailsWhenNoLoginReports(t *testing.T) {
 
 	if !strings.Contains(stderr, "no login reported usage") {
 		t.Fatalf("stderr = %q, want the runner's reason", stderr)
+	}
+}
+
+// usageReportFile is a one-account account_pick.py report. The verb fills
+// written_at and the account's read_at.
+const usageReportFile = `{"schema": "account-pick.usage.v1", "written_at": %[1]d, "host": "agent-box", "accounts": [
+ {"tool": "codex", "account": "work", "wrapper": "codex-work", "read_at": %[1]d, "plan": "prolite",
+  "rate_limit_reached": null, "error": null,
+  "windows": [{"name": "weekly", "window_minutes": 10080, "used_percent": 24, "remaining_percent": 76,
+   "resets_at": 1790416865, "resets_in_seconds": 1000}],
+  "reset_credit_expiries": [4102444800], "score": 14.3}]}`
+
+func TestUsageReadsAStaleScriptReportWithoutRunningTheScript(t *testing.T) {
+	files := t.TempDir()
+	script := filepath.Join(files, "account-pick")
+	output := filepath.Join(files, "usage.json")
+
+	// #nosec G306 -- the script must be executable; it lives in t.TempDir.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'run\\n' >> \"$0.runs\"\n"), 0o700); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// Three hours is well past two 900-second intervals plus the script's timeout.
+	report := fmt.Appendf(nil, usageReportFile, time.Now().Add(-3*time.Hour).Unix())
+	if err := os.WriteFile(output, report, 0o600); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	block := "[runner.usage]\nscript = [\"" + script + "\", \"--out\", \"{output}\"]\noutput = \"" + output + "\"\ninterval = 900\n"
+	dir, shims := usageHome(t, block)
+
+	t.Parallel()
+
+	code, stdout, stderr := runEnvCLI(t, pathEnv(shims), usageCmd, flagDirArg, dir)
+	if code != cli.ExitOK {
+		t.Fatalf("usage exited %d: %s", code, stderr)
+	}
+
+	notice, table, _ := strings.Cut(stdout, "\n")
+	if !strings.HasPrefix(notice, "stale: "+usageCodexLauncher+" last read 3h0m0s ago") {
+		t.Fatalf("first line = %q, want the stale notice above the table", notice)
+	}
+
+	want := "LOGIN       PLAN     WINDOW  USED  RESETS                SCORE  CREDITS\n" +
+		"codex-work  prolite  weekly  24%   2026-09-26 10:01 UTC  14.3   1\n"
+
+	if table != want {
+		t.Fatalf("table =\n%s\nwant\n%s", table, want)
+	}
+
+	if _, err := os.Stat(script + ".runs"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run record stat = %v, want none: cairnos usage must read the file, not run the script", err)
 	}
 }

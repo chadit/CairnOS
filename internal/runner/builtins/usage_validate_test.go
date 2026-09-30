@@ -18,8 +18,8 @@ func configuredUsage(t *testing.T) *builtins.Usage {
 		codexConfigKey:  []any{codexLauncher},
 	}, builtins.UsageOptions{
 		Hosts: map[string]builtins.UsageHost{
-			buildBox:    {SSH: buildBoxAlias},
-			"quiet_box": {},
+			buildBox: {SSH: buildBoxAlias},
+			quietBox: {},
 		},
 	})
 }
@@ -60,7 +60,7 @@ func TestUsageValidateRefusesAnUnknownHost(t *testing.T) {
 func TestUsageValidateRefusesAHostWithoutAnAlias(t *testing.T) {
 	t.Parallel()
 
-	err := configuredUsage(t).Validate(usageTask(map[string]any{usageHostKey: "quiet_box"}))
+	err := configuredUsage(t).Validate(usageTask(map[string]any{usageHostKey: quietBox}))
 	assertValidateCode(t, err, "usage.host_no_ssh")
 }
 

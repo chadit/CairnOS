@@ -24,8 +24,9 @@ const (
 // block would name it.
 const usageActionName = "usage"
 
-// cmdUsage probes the configured model CLI logins and prints what each one has
-// spent of its rate-limit windows.
+// cmdUsage probes the configured model CLI logins, or reads the report a
+// configured script last wrote, and prints what each one has spent of its
+// rate-limit windows.
 func (a *App) cmdUsage(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet(usageActionName, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -60,7 +61,7 @@ func (a *App) cmdUsage(ctx context.Context, args []string) int {
 	return a.reportUsage(ctx, probe, usageProbeTask(*hostFlag, *launchersFlag), *jsonFlag)
 }
 
-// reportUsage runs the probe and renders it. A login that failed rides in the
+// reportUsage runs the probe, or reads the script's report, and renders it. A login that failed rides in the
 // report, so only a probe that reported nothing at all is an exit failure.
 func (a *App) reportUsage(ctx context.Context, probe *builtins.Usage, task *runner.Task, asJSON bool) int {
 	a.noteClaudeGap(probe, task)
@@ -73,10 +74,10 @@ func (a *App) reportUsage(ctx context.Context, probe *builtins.Usage, task *runn
 	}
 
 	if asJSON {
-		return a.printUsageJSON(report)
+		return a.printUsageJSON(&report)
 	}
 
-	a.writeUsageTable(report)
+	a.writeUsageTable(&report)
 
 	return ExitOK
 }
@@ -138,7 +139,7 @@ func usageWaitMinutes(total time.Duration) int {
 }
 
 // printUsageJSON prints the report in the shape a script parses.
-func (a *App) printUsageJSON(report builtins.UsageReport) int {
+func (a *App) printUsageJSON(report *builtins.UsageReport) int {
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		a.printErrf("usage: encode report: %v\n", err)
@@ -153,7 +154,12 @@ func (a *App) printUsageJSON(report builtins.UsageReport) int {
 
 // writeUsageTable prints the report's rows. tabwriter leaves a short row's last
 // cell out of the columns, so a failed login's reason spans them without widening them.
-func (a *App) writeUsageTable(report builtins.UsageReport) {
+// A stale report's notice goes above the table, the first thing read.
+func (a *App) writeUsageTable(report *builtins.UsageReport) {
+	if report.Notice != "" {
+		a.printOutf("%s\n", report.Notice)
+	}
+
 	tab := newTab(a.stdout)
 
 	for _, row := range report.Rows() {

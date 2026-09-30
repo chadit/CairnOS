@@ -42,14 +42,14 @@ func (*cannedUsage) Describe() runner.ToolSpec { return runner.ToolSpec{Name: ch
 func newCannedUsage(t *testing.T) *cannedUsage {
 	t.Helper()
 
-	output, err := builtins.UsageReport{
+	output, err := (&builtins.UsageReport{
 		Summary:   usageTable,
 		HasErrors: true,
 		Logins: []builtins.UsageLogin{
 			{Launcher: "claude-agent", Protocol: "claude", Error: "login expired"},
 			{Launcher: "codex-work", Protocol: "codex", Plan: "prolite"},
 		},
-	}.Map()
+	}).Map()
 	if err != nil {
 		t.Fatalf("render report: %v", err)
 	}

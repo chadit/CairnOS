@@ -146,6 +146,53 @@ func TestRetryRateLimitedWaitsAtLeastRetryAfter(t *testing.T) {
 	}
 }
 
+func TestRetryRateLimitedRetriesNonIdempotentAction(t *testing.T) {
+	t.Parallel()
+
+	retryAfter := 20 * time.Millisecond
+	failure := &runner.Error{
+		Class:      runner.ClassRateLimited,
+		Code:       "test.rate_limited",
+		Message:    "usage limit reached",
+		RetryAfter: retryAfter,
+	}
+
+	cases := []struct {
+		name         string
+		failures     int
+		wantAttempts int
+		wantFailure  bool
+	}{
+		{name: "recovers on the second attempt", failures: 1, wantAttempts: 2},
+		{name: "stops at max attempts", failures: 99, wantAttempts: 3, wantFailure: true},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			policy := reliability.Policy{MaxAttempts: 3, Backoff: reliability.BackoffConstant, BaseDelay: time.Millisecond}
+			call, calls := flakyCall(tt.failures, failure)
+
+			start := time.Now()
+
+			_, attempts, err := reliability.Retry(t.Context(), policy, false, call)
+
+			if tt.wantFailure != errors.Is(err, failure) || (!tt.wantFailure && err != nil) {
+				t.Fatalf("err = %v, want failure %v", err, tt.wantFailure)
+			}
+
+			if attempts != tt.wantAttempts || *calls != tt.wantAttempts {
+				t.Fatalf("attempts = %d, calls = %d, want %d each", attempts, *calls, tt.wantAttempts)
+			}
+
+			if minWait := retryAfter * time.Duration(tt.wantAttempts-1); time.Since(start) < minWait {
+				t.Fatalf("elapsed = %v, want >= %v (RetryAfter still applies)", time.Since(start), minWait)
+			}
+		})
+	}
+}
+
 func TestRetryExponentialBackoffWaitsFullDelayWithoutJitter(t *testing.T) {
 	t.Parallel()
 

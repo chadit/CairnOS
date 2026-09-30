@@ -43,6 +43,11 @@ const usageResetLayout = "2006-01-02 15:04 MST"
 const (
 	defaultUsageTimeout = 60 * time.Second
 
+	// defaultUsageScriptTimeout bounds a report script, which reads every
+	// account in turn and writes only at the end: account_pick.py allows 20
+	// seconds an account, so the probe's minute would cut off a slow fifth.
+	defaultUsageScriptTimeout = 5 * time.Minute
+
 	// defaultUsageClaudeGap outlasts the roughly 60-second cache described on
 	// probeAll, with a few seconds to spare for a slow launcher.
 	defaultUsageClaudeGap = 65 * time.Second
@@ -108,14 +113,16 @@ type usageLauncher struct {
 
 // Usage reports the rate-limit windows of the model CLI logins on this host or
 // a configured one. It speaks each CLI's own stdio protocol through the
-// operator's launcher, the path the vendors expose to their SDKs: no credential
-// file is read and no vendor endpoint is called, so the launcher owns identity.
+// operator's launcher, so the launcher owns identity, or with script set reads
+// that script's report instead.
 //
-// Config: timeout, claude, codex. Params: host, launchers.
+// Config: timeout plus claude, codex, claude_gap or script, output, interval,
+// host. Params: host, launchers.
 type Usage struct {
 	hosts     map[string]UsageHost
 	lookup    environ.Lookup
 	sleep     UsageSleeper
+	script    *usageScript
 	ssh       string
 	version   string
 	launchers []usageLauncher
@@ -125,21 +132,31 @@ type Usage struct {
 
 // UsageReport is one entry per login, naming the host only across an ssh hop.
 // Summary and HasErrors let a workflow post the table or branch on a failure without walking the list.
+// WrittenAt and Notice come only from a script's file: when it was written,
+// and a warning once that is too long ago to trust.
 type UsageReport struct {
+	WrittenAt time.Time    `json:"written_at,omitzero"`
 	Host      string       `json:"host,omitempty"`
 	Summary   string       `json:"summary"`
+	Notice    string       `json:"notice"`
 	Logins    []UsageLogin `json:"logins"`
 	HasErrors bool         `json:"has_errors"`
 }
 
 // UsageLogin is one launcher's answer. A failed probe fills Error and leaves
 // the rest zero, because one dead login must not cost the report the others.
+// ReadAt, Score and ResetCredits come only from an account_pick.py report: when
+// the account was read, the pick's ranking score, and the expiry of each banked
+// reset still unexpired.
 type UsageLogin struct {
-	Launcher string        `json:"launcher"`
-	Protocol string        `json:"protocol"`
-	Plan     string        `json:"plan"`
-	Error    string        `json:"error,omitempty"`
-	Windows  []UsageWindow `json:"windows"`
+	ReadAt       time.Time     `json:"read_at,omitzero"`
+	Score        *float64      `json:"score,omitempty"`
+	Launcher     string        `json:"launcher"`
+	Protocol     string        `json:"protocol"`
+	Plan         string        `json:"plan"`
+	Error        string        `json:"error,omitempty"`
+	Windows      []UsageWindow `json:"windows"`
+	ResetCredits []time.Time   `json:"reset_credits,omitempty"`
 }
 
 // UsageWindow is one rate-limit window. UsedPercent is the share of the window
@@ -152,33 +169,49 @@ type UsageWindow struct {
 
 // NewUsage decodes the runner config block. An absent block is the ordinary
 // case and yields the two default launchers with the default timeout, so a host
-// that never wrote the block still answers for whatever is on its PATH.
+// that never wrote the block still answers for whatever is on its PATH. A block
+// with script set reads that script's report and decodes no launchers.
 func NewUsage(cfg map[string]any, opts UsageOptions) (*Usage, error) {
-	timeout, err := decodeUsageTimeout(cfg)
+	script, err := decodeUsageScript(cfg, opts.Hosts)
 	if err != nil {
 		return nil, wrapConfigErr(UsageName, err)
 	}
 
-	claudeGap, err := decodeUsageClaudeGap(cfg)
+	fallback := defaultUsageTimeout
+	if script != nil {
+		fallback = defaultUsageScriptTimeout
+	}
+
+	timeout, err := decodeUsageTimeout(cfg, fallback)
 	if err != nil {
 		return nil, wrapConfigErr(UsageName, err)
 	}
 
-	launchers, err := decodeUsageLaunchers(cfg)
+	usage := &Usage{
+		script:  script,
+		ssh:     usageSSHCommand(opts.SSH),
+		version: usageVersion(opts.Version),
+		hosts:   opts.Hosts,
+		lookup:  opts.Lookup,
+		sleep:   usageSleeper(opts.Sleep),
+		timeout: timeout,
+	}
+
+	if script != nil {
+		return usage, nil
+	}
+
+	usage.claudeGap, err = decodeUsageClaudeGap(cfg)
 	if err != nil {
 		return nil, wrapConfigErr(UsageName, err)
 	}
 
-	return &Usage{
-		launchers: launchers,
-		ssh:       usageSSHCommand(opts.SSH),
-		version:   usageVersion(opts.Version),
-		hosts:     opts.Hosts,
-		lookup:    opts.Lookup,
-		sleep:     usageSleeper(opts.Sleep),
-		timeout:   timeout,
-		claudeGap: claudeGap,
-	}, nil
+	usage.launchers, err = decodeUsageLaunchers(cfg)
+	if err != nil {
+		return nil, wrapConfigErr(UsageName, err)
+	}
+
+	return usage, nil
 }
 
 // UsageFactory adapts the runner to the registry contract, closing over the
@@ -246,6 +279,10 @@ func (u *Usage) Report(ctx context.Context, task *runner.Task) (UsageReport, err
 		return UsageReport{}, err
 	}
 
+	if u.script != nil {
+		return u.readReport(ctx, task)
+	}
+
 	host, _ := task.Params[paramUsageHost].(string)
 	probes := u.probeAll(ctx, task, host, u.selected(task))
 
@@ -255,8 +292,7 @@ func (u *Usage) Report(ctx context.Context, task *runner.Task) (UsageReport, err
 		report.Logins = append(report.Logins, probes[index].login)
 	}
 
-	report.Summary = markdownTable(report.Rows())
-	report.HasErrors = slices.ContainsFunc(report.Logins, func(login UsageLogin) bool { return login.Error != "" })
+	report.finish()
 
 	return report, usageOutcome(probes)
 }
@@ -279,7 +315,7 @@ func (u *Usage) ClaudeGap(task *runner.Task) (time.Duration, int) {
 // Map renders the report as the JSON object it serializes to, which is the
 // shape every other structured built-in returns and the only shape a workflow
 // reference can read a field out of.
-func (r UsageReport) Map() (map[string]any, error) {
+func (r *UsageReport) Map() (map[string]any, error) {
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return nil, fmt.Errorf("encode %s report: %w", UsageName, err)
@@ -296,10 +332,15 @@ func (r UsageReport) Map() (map[string]any, error) {
 
 // String renders one line per login, the compact form a log line or a preview
 // cell reads without any table layout.
-func (r UsageReport) String() string {
-	lines := make([]string, 0, len(r.Logins))
+func (r *UsageReport) String() string {
+	lines := make([]string, 0, len(r.Logins)+1)
 
-	for _, login := range r.Logins {
+	if r.Notice != "" {
+		lines = append(lines, r.Notice)
+	}
+
+	for index := range r.Logins {
+		login := &r.Logins[index]
 		lines = append(lines, r.prefix()+login.Launcher+": "+login.summary())
 	}
 
@@ -308,20 +349,43 @@ func (r UsageReport) String() string {
 
 // Rows lays the report out header first, one row per window. A login with no
 // windows gets a short row whose last cell says why and spans the window columns.
-func (r UsageReport) Rows() [][]string {
+// The score and credit columns appear only when some login carries them, so a
+// probe's table keeps its old width.
+func (r *UsageReport) Rows() [][]string {
+	header := []string{"LOGIN", "PLAN", "WINDOW", "USED", "RESETS"}
+
+	ranked := slices.ContainsFunc(r.Logins, func(login UsageLogin) bool {
+		return login.Score != nil || len(login.ResetCredits) > 0
+	})
+	if ranked {
+		header = append(header, "SCORE", "CREDITS")
+	}
+
 	rows := make([][]string, 0, len(r.Logins)+1)
-	rows = append(rows, []string{"LOGIN", "PLAN", "WINDOW", "USED", "RESETS"})
+	rows = append(rows, header)
 
 	for index := range r.Logins {
-		rows = append(rows, r.Logins[index].rows()...)
+		rows = append(rows, r.Logins[index].rows(ranked)...)
 	}
 
 	return rows
 }
 
+// finish fills the fields derived from the logins, so a probe and a report file
+// render the same summary. A notice leads it, where a reader meets it first.
+func (r *UsageReport) finish() {
+	r.Summary = markdownTable(r.Rows())
+
+	if r.Notice != "" {
+		r.Summary = r.Notice + "\n" + r.Summary
+	}
+
+	r.HasErrors = slices.ContainsFunc(r.Logins, func(login UsageLogin) bool { return login.Error != "" })
+}
+
 // prefix names the host on every line rather than on a header of its own, so a
 // truncated preview still says which machine the numbers came from.
-func (r UsageReport) prefix() string {
+func (r *UsageReport) prefix() string {
 	if r.Host == "" {
 		return ""
 	}
@@ -349,9 +413,10 @@ func (l *UsageLogin) summary() string {
 	return strings.Join(parts, " ")
 }
 
-// rows names the launcher and plan on the first window only, so one login reads
-// as one block. The base name drops an install path that would only widen the column.
-func (l *UsageLogin) rows() [][]string {
+// rows names the launcher, plan, score and credits on the first window only, so
+// one login reads as one block. The base name drops an install path that would
+// only widen the column.
+func (l *UsageLogin) rows(ranked bool) [][]string {
 	name := path.Base(l.Launcher)
 
 	if len(l.Windows) == 0 {
@@ -360,17 +425,35 @@ func (l *UsageLogin) rows() [][]string {
 
 	rows := make([][]string, 0, len(l.Windows))
 	plan := l.Plan
+	rank := l.rankCells()
 
 	for _, window := range l.Windows {
-		rows = append(rows, []string{
+		row := []string{
 			name, plan, window.Name, formatPercent(window.UsedPercent) + "%",
 			window.ResetsAt.UTC().Format(usageResetLayout),
-		})
+		}
 
-		name, plan = "", ""
+		if ranked {
+			row = append(row, rank...)
+		}
+
+		rows = append(rows, row)
+		name, plan, rank = "", "", []string{"", ""}
 	}
 
 	return rows
+}
+
+// rankCells renders the score to one decimal, the precision the pick's own
+// reasons use, and the credits as a count; their expiry times ride in the JSON.
+// A login the pick left unscored shows a dash rather than a misleading zero.
+func (l *UsageLogin) rankCells() []string {
+	score := "-"
+	if l.Score != nil {
+		score = strconv.FormatFloat(*l.Score, 'f', 1, 64)
+	}
+
+	return []string{score, strconv.Itoa(len(l.ResetCredits))}
 }
 
 // markdownTable renders rows as a padded pipe table inside a code fence, because
@@ -483,6 +566,11 @@ func (u *Usage) validateHost(task *runner.Task) error {
 		return nil
 	}
 
+	if u.script != nil && name != u.script.host {
+		return runner.NewError(runner.ClassPermanent, codeUsageUnknownHost,
+			"["+"runner."+UsageName+"] reads its report from "+u.script.where()+", so it has none for host "+name)
+	}
+
 	host, known := u.hosts[name]
 	if !known {
 		return runner.NewError(runner.ClassPermanent, codeUsageUnknownHost,
@@ -539,9 +627,10 @@ func (u *Usage) validateLaunchers(task *runner.Task) error {
 }
 
 // checkKnownLauncher refuses one name the config never listed, deferring while
-// it still carries a reference.
+// it still carries a reference. A script's report names its own launchers, so
+// in that mode the name is checked against the file when it is read.
 func (u *Usage) checkKnownLauncher(task *runner.Task, name string) error {
-	if !task.Resolved && containsRefDelimiter(name) {
+	if u.script != nil || (!task.Resolved && containsRefDelimiter(name)) {
 		return nil
 	}
 
@@ -705,7 +794,8 @@ func usageOutcome(probes []usageProbe) error {
 	reasons := make([]string, 0, len(probes))
 	settled := true
 
-	for _, probe := range probes {
+	for index := range probes {
+		probe := &probes[index]
 		if probe.login.Error == "" {
 			return nil
 		}
@@ -742,17 +832,17 @@ func isMissingCommand(err error) bool {
 	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
 }
 
-// decodeUsageTimeout reads the per-launcher wall-clock bound in seconds. A
-// probe that never returns would hold the action open past its schedule, so the
-// bound applies whether or not the operator wrote one.
-func decodeUsageTimeout(cfg map[string]any) (time.Duration, error) {
+// decodeUsageTimeout reads the wall-clock bound on one launcher probe or one
+// script run, in seconds. A probe that never returns would hold the action open past its
+// schedule, so the bound applies whether or not the operator wrote one.
+func decodeUsageTimeout(cfg map[string]any, fallback time.Duration) (time.Duration, error) {
 	seconds, present, err := configInt(cfg, cfgKeyTimeout)
 	if err != nil {
 		return 0, err
 	}
 
 	if !present {
-		return defaultUsageTimeout, nil
+		return fallback, nil
 	}
 
 	if seconds <= 0 {

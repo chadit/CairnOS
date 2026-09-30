@@ -20,6 +20,7 @@ import (
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/rules"
+	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/secrets"
 	"github.com/chadit/CairnOS/internal/store"
@@ -367,8 +368,8 @@ type serveRuntime struct {
 	secrets  secrets.Source
 }
 
-// serveAndDrain starts the retention sweep, hive subscribe, and chat bridge
-// background loops, serves until ctx cancels, then drains every loop and
+// serveAndDrain starts the retention sweep, hive subscribe, usage refresh, and
+// chat bridge background loops, serves until ctx cancels, then drains every loop and
 // flushes telemetry. Split out of runServe so that composition root stays under
 // the maintainability ceiling. The local cancel is what a requested restart
 // pulls, so a drain stops every loop the way a SIGTERM would.
@@ -385,6 +386,7 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 
 	sweepDone := startSweep(ctx, cfg, stores.db, stores.keyStore, logger)
 	hiveDone := startHiveSubscribe(ctx, cfg, deps.secrets, stores.db, stores.scheds, logger)
+	usageDone := a.startUsageRefresh(ctx, deps.registry, logger)
 
 	a.announceHiveSubscribe(hiveDone)
 
@@ -404,6 +406,10 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 
 	if hiveDone != nil {
 		<-hiveDone
+	}
+
+	if usageDone != nil {
+		<-usageDone
 	}
 
 	<-bridgeDone
@@ -647,6 +653,38 @@ func runHiveSubscribeLoop(ctx context.Context, coord scheduler.Coordinator, clie
 			}
 		}
 	}
+}
+
+// startUsageRefresh runs the [runner.usage] report script on its interval, on
+// its own goroutine, closing the returned channel once the loop exits. It starts
+// nothing and returns nil when the block probes launchers. The workflow
+// scheduler doesn't fit: it fires stored workflows through the run queue, and
+// this is one config interval with no workflow behind it.
+func (a *App) startUsageRefresh(ctx context.Context, registry *runner.Registry, logger *slog.Logger) <-chan struct{} {
+	built, registered := registry.Get(builtins.UsageName)
+	if !registered {
+		return nil
+	}
+
+	usage, isUsage := built.(*builtins.Usage)
+	if !isUsage || usage.RefreshInterval() <= 0 {
+		return nil
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(usage.RefreshInterval())
+		defer ticker.Stop()
+
+		usage.RunRefresh(ctx, ticker.C, logger)
+	}()
+
+	a.printOutf("usage report script running every %s\n", usage.RefreshInterval())
+
+	return done
 }
 
 // startSweep runs the retention prune loop on its own goroutine, closing

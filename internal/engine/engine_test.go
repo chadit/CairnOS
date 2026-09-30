@@ -1168,14 +1168,23 @@ func sequentialIDs() func() string {
 func newTestEngine(t *testing.T, cfg *engine.Config, funcs map[string]builtins.Func) (*engine.Engine, *fakeStore) {
 	t.Helper()
 
+	return newEngineWithRunners(t, cfg, map[string]runner.Factory{
+		builtins.MockName:    builtins.MockFactory,
+		builtins.LocalFnName: builtins.LocalFnFactory(funcs),
+	})
+}
+
+// newEngineWithRunners wires an engine over the given runner factories and the
+// in-memory store fake, for a test that needs a runner beyond mock and local_fn.
+func newEngineWithRunners(t *testing.T, cfg *engine.Config, factories map[string]runner.Factory) (*engine.Engine, *fakeStore) {
+	t.Helper()
+
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
-		t.Fatalf("register mock: %v", err)
-	}
-
-	if err := registry.Register(builtins.LocalFnName, builtins.LocalFnFactory(funcs)); err != nil {
-		t.Fatalf("register local_fn: %v", err)
+	for name, factory := range factories {
+		if err := registry.Register(name, factory); err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
 	}
 
 	if err := registry.BuildAll(nil); err != nil {

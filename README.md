@@ -744,6 +744,48 @@ their SDKs, through your launcher. It never opens a credential file, never sets
 `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and never calls the vendors' HTTP endpoints
 itself. Whichever login your launcher picks is the login it reports on.
 
+#### Reading a report file instead
+
+A host that already runs `account_pick.py` keeps the same numbers in the report
+file that script writes, and the runner can read that file instead of probing
+each login. Set `script`, `output`, and `interval` in place of the launcher
+lists:
+
+```toml
+[runner.usage]
+script   = ["python3", "~/source_repos/github.com/chadit/toolkit/scripts/account_pick.py", "usage", "--out", "{output}"]
+output   = "~/.cache/cairnos/usage.json"
+interval = 900
+```
+
+`serve` runs `script` when it starts and again every `interval` seconds, and the
+script writes `output`. An element that is exactly `{output}` stands for the
+`output` path, so the path is written once. `timeout` bounds each run and
+defaults to 300 seconds here, since the script reads every account in turn
+before it writes anything. A request reads the file and never runs the script,
+so `cairnos usage` and the chat tool answer at once, even while serve is down.
+
+Set `host` to a `[host.<name>]` block to run the script there over ssh, through
+that host's `wrapper` the way a launcher runs. The file stays on that host, and a
+request reads it over the same hop. A request's own `host` param then has to name
+that block or be left out.
+
+Each account carries the time it was read, and `account_pick.py` keeps the
+entries a run didn't read, so one file can hold fresh codex numbers beside old
+claude ones. An account read longer ago than two intervals plus `timeout` still
+comes back, with a `notice` line above the table naming it and how old its
+reading is, because the refresh is failing or serve isn't running. `notice` is
+empty otherwise, so a condition can test `${{ windows.output.notice }} != ''`. A
+missing file fails the request with a message naming the path. The file has to
+carry `"schema": "account-pick.usage.v1"`, and any other schema is refused
+rather than guessed at. When some account has a score or an unexpired banked
+reset, the table gains `SCORE` for the pick's score and `CREDITS` for how many
+of those resets are left.
+
+The two modes don't mix. `script`, `output`, `interval`, and `host` can't sit
+beside `claude`, `codex`, or `claude_gap`, and config load names the keys that
+collide. `launchers` narrows the report to wrappers named in the file.
+
 ### Schedule syntax
 
 A workflow's `schedule` key takes `@hourly`, `@daily`, `@weekly`, `@monthly`, a

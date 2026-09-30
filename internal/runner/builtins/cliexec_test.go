@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/runner/builtins"
+	"github.com/chadit/CairnOS/internal/shellquote"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
@@ -100,7 +102,7 @@ exit 1`)
 		wantCode  string
 		wantClass runner.ErrorClass
 	}{
-		{name: "non-zero exit is permanent", binary: failing, wantClass: runner.ClassPermanent, wantCode: "codex.exit"},
+		{name: "non-zero exit is permanent", binary: failing, wantClass: runner.ClassPermanent, wantCode: codexExit},
 		{name: "missing binary is permanent", binary: filepath.Join(tmpDir, "missing"), wantClass: runner.ClassPermanent, wantCode: "codex.not_found"},
 	}
 
@@ -127,30 +129,86 @@ exit 1`)
 	}
 }
 
-func TestCLIClassifiesReauthAndRateLimit(t *testing.T) {
-	tmpDir := t.TempDir()
-	reauth := writeShim(t, tmpDir, "reauth", `echo "error: invalid_grant" >&2
-exit 1`)
-	throttled := writeShim(t, tmpDir, "throttled", `echo "429 too many requests; exceeded retry limit" >&2
-exit 1`)
+// Messages the CLIs print when they turn a call away, read out of the Claude
+// Code 2.1.284 and codex 0.157 binaries. Codex's apostrophe is U+2019.
+const (
+	codexUsageLimit    = "You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 3:05 PM."
+	claudeSessionLimit = "You've hit your session limit · resets 3pm (America/Denver)"
+	claudeWeeklyLimit  = "You've hit your weekly limit · resets Oct 6, 1pm (America/Denver)"
+	claudeUsageLimit   = "Usage limit reached"
+)
 
-	t.Parallel()
+// Runner codes the classification tables expect on several rows.
+const (
+	codexRateLimited  = "codex.rate_limited"
+	claudeRateLimited = "claude.rate_limited"
+	codexExit         = "codex.exit"
+)
+
+// failOnStdout and failOnStderr are shim bodies that print message on one
+// stream and exit 1.
+func failOnStdout(message string) string {
+	return "printf '%s\\n' " + shellquote.Word(message) + "\nexit 1"
+}
+
+func failOnStderr(message string) string {
+	return "printf '%s\\n' " + shellquote.Word(message) + " >&2\nexit 1"
+}
+
+func TestCLIClassifiesExitOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	var written int
+
+	// shim writes every case's script before t.Parallel below; see writeShim.
+	shim := func(script string) string {
+		written++
+
+		return writeShim(t, tmpDir, "shim"+strconv.Itoa(written), script)
+	}
 
 	cases := []struct {
 		name      string
+		tool      string
 		binary    string
 		wantCode  string
 		wantClass runner.ErrorClass
 	}{
-		{name: "invalid_grant is needs-reauth", binary: reauth, wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
-		{name: "rate-limit text wins over reauth", binary: throttled, wantClass: runner.ClassRateLimited, wantCode: "codex.rate_limited"},
+		{name: "codex usage limit on stderr", tool: builtins.CodexName, binary: shim(failOnStderr(codexUsageLimit)), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
+		{name: "codex usage limit on stdout", tool: builtins.CodexName, binary: shim(failOnStdout(codexUsageLimit)), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
+		{name: "codex out of credits", tool: builtins.CodexName, binary: shim(failOnStderr("Your workspace is out of credits. Ask your workspace owner to refill in order to continue.")), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
+		{name: "insufficient_quota", tool: builtins.CodexName, binary: shim(failOnStderr("stream error: insufficient_quota")), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
+		{name: "claude session limit on stdout", tool: builtins.ClaudeName, binary: shim(failOnStdout(claudeSessionLimit)), wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited},
+		{name: "claude session limit on stderr", tool: builtins.ClaudeName, binary: shim(failOnStderr(claudeSessionLimit)), wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited},
+		{name: "claude weekly limit on stdout", tool: builtins.ClaudeName, binary: shim(failOnStdout(claudeWeeklyLimit)), wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited},
+		{name: "claude usage limit reached on stdout", tool: builtins.ClaudeName, binary: shim(failOnStdout(claudeUsageLimit)), wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited},
+		{name: "claude credit balance on stdout", tool: builtins.ClaudeName, binary: shim(failOnStdout("Your credit balance is too low to access the Anthropic API.")), wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited},
+		{
+			name: "limit notice after a transcript longer than the captured output",
+			tool: builtins.ClaudeName,
+			// 250000 lines of "transcript" run past the 1 MiB transcript cap, so
+			// only a true stdout tail still holds the final line.
+			binary:    shim("yes transcript | head -n 250000\n" + failOnStdout(claudeUsageLimit)),
+			wantClass: runner.ClassRateLimited, wantCode: claudeRateLimited,
+		},
+		{name: "rate-limit text wins over reauth", tool: builtins.CodexName, binary: shim(failOnStderr("429 too many requests; exceeded retry limit")), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
+		{name: "claude overloaded 529 is transient", tool: builtins.ClaudeName, binary: shim(failOnStdout(`API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)), wantClass: runner.ClassTransient, wantCode: "claude.overloaded"},
+		{name: "invalid_grant is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("error: invalid_grant")), wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
+		{name: "claude not logged in on stdout is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Not logged in · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: "claude.needs_reauth"},
+		{name: "claude invalid api key is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Invalid API key · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: "claude.needs_reauth"},
+		{name: "codex not logged in is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("Not logged in")), wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
+		{name: "quotation is not quota", tool: builtins.CodexName, binary: shim(failOnStderr("error: unterminated quotation in config.toml")), wantClass: runner.ClassPermanent, wantCode: codexExit},
+		{name: "rate limiter log line is not a limit", tool: builtins.CodexName, binary: shim(failOnStderr("client rate limiter delayed a request")), wantClass: runner.ClassPermanent, wantCode: codexExit},
+		{name: "unrelated stdout failure is permanent", tool: builtins.ClaudeName, binary: shim(failOnStdout("compilation failed: 3 errors")), wantClass: runner.ClassPermanent, wantCode: "claude.exit"},
 	}
+
+	t.Parallel()
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: tt.binary}, nil)
+			cli, err := builtins.NewCLI(tt.tool, builtins.CLITool{Binary: tt.binary}, nil)
 			if err != nil {
 				t.Fatalf("new cli: %v", err)
 			}

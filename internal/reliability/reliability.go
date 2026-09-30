@@ -39,10 +39,10 @@ type Policy struct {
 // Retry runs call until it succeeds, the policy is exhausted, or the failure is
 // not retryable.
 //
-// It retries only an idempotent action failing with a Transient or RateLimited
-// *runner.Error. A plain or Permanent failure stops at once:
-// the engine must never repeat a side effect a runner did not declare safe.
-// RateLimited waits at least its RetryAfter hint.
+// A Transient *runner.Error retries only on an idempotent action, a
+// RateLimited one on any action (see retryable), waiting at least its
+// RetryAfter hint. A plain or Permanent failure stops at once: the engine
+// never repeats a side effect a runner did not declare safe.
 func Retry(ctx context.Context, policy Policy, idempotent bool, call func(context.Context) (runner.Result, error)) (runner.Result, int, error) {
 	maxAttempts := max(policy.MaxAttempts, 1)
 
@@ -64,19 +64,22 @@ func Retry(ctx context.Context, policy Policy, idempotent bool, call func(contex
 	}
 }
 
-// retryable applies the spec's safety property: only an idempotent action
-// with a classified Transient or RateLimited failure may run again.
+// retryable applies the spec's safety property: a Transient failure runs
+// again only on an idempotent action, since the call may have landed before it
+// failed. RateLimited skips that gate: a usage-limit refusal means the account
+// would not run the call, and a CLI wrapper picks its account per launch, so
+// the retry lands on one with budget left.
 func retryable(idempotent bool, err error) bool {
-	if !idempotent {
-		return false
-	}
-
 	classified, isClassified := errors.AsType[*runner.Error](err)
 	if !isClassified {
 		return false
 	}
 
-	return classified.Class == runner.ClassTransient || classified.Class == runner.ClassRateLimited
+	if classified.Class == runner.ClassRateLimited {
+		return true
+	}
+
+	return idempotent && classified.Class == runner.ClassTransient
 }
 
 // delayFor picks the wait before the next try, preferring a rate-limited

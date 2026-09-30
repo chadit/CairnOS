@@ -63,6 +63,25 @@ func TestUsageDescribesTwoOptionalParams(t *testing.T) {
 	}
 }
 
+func TestUsageReportModeOffersOnlyTheLaunchersParam(t *testing.T) {
+	t.Parallel()
+
+	spec := newUsage(t, reportConfig("/bin/true", "/tmp/usage.json"), builtins.UsageOptions{}).Describe()
+
+	properties, _ := spec.InputSchema["properties"].(map[string]any)
+	if _, offered := properties[usageHostKey]; offered {
+		t.Fatalf("properties = %#v, want no host: the report is read where the script runs", properties)
+	}
+
+	if launchers := schemaProperty(t, spec, usageLaunchers); launchers[jsonSchemaType] != "array" {
+		t.Fatalf("launchers schema = %#v, want an array", launchers)
+	}
+
+	if !strings.Contains(spec.Description, "the usage script wrote") {
+		t.Fatalf("description = %q, want the report-reading wording", spec.Description)
+	}
+}
+
 func TestUsageToolCallWithNoArgumentsProbesEveryLauncher(t *testing.T) {
 	dir := pairedShims(t, claudeScript, codexScript)
 

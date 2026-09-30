@@ -92,13 +92,9 @@ func (u *Usage) command(host, launcher string, dialog usageDialog) (string, []st
 // entry expands against the same environment's HOME, which is the one home a
 // local probe can mean.
 func (u *Usage) resolveLocal(launcher string) (string, error) {
-	if rest, found := strings.CutPrefix(launcher, usageHomePrefix); found {
-		home := u.lookup.Get("HOME")
-		if home == "" {
-			return "", fmt.Errorf("%w: %s needs HOME to expand %q", errUsageNoHome, UsageName, launcher)
-		}
-
-		launcher = filepath.Join(home, rest)
+	launcher, err := u.expandHome(launcher)
+	if err != nil {
+		return "", err
 	}
 
 	path, err := environ.LookPath(u.lookup, launcher)
@@ -109,11 +105,31 @@ func (u *Usage) resolveLocal(launcher string) (string, error) {
 	return path, nil
 }
 
+// expandHome resolves a leading "~/" against the HOME this runner was handed,
+// which is the one home a command run on this machine can mean.
+func (u *Usage) expandHome(name string) (string, error) {
+	rest, found := strings.CutPrefix(name, usageHomePrefix)
+	if !found {
+		return name, nil
+	}
+
+	home := u.lookup.Get("HOME")
+	if home == "" {
+		return "", fmt.Errorf("%w: %s needs HOME to expand %q", errUsageNoHome, UsageName, name)
+	}
+
+	return filepath.Join(home, rest), nil
+}
+
 // remoteCommand builds the ssh invocation. The launcher's own stdio is the
 // protocol stream, so ssh runs it with exec and nothing else writes to the pipe.
 func (u *Usage) remoteCommand(host, launcher string, dialog usageDialog) (string, []string, error) {
-	entry := u.hosts[host]
+	return u.sshCommand(host, remoteScript(u.hosts[host].Wrapper, launcher, dialog.args))
+}
 
+// sshCommand builds the ssh invocation that runs one command line on a
+// configured host.
+func (u *Usage) sshCommand(host, commandLine string) (string, []string, error) {
 	path, err := environ.LookPath(u.lookup, u.ssh)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve %s: %w", u.ssh, err)
@@ -123,9 +139,9 @@ func (u *Usage) remoteCommand(host, launcher string, dialog usageDialog) (string
 		sshNoTTY,
 		sshOption, sshBatchMode,
 		sshOption, sshConnectTimeout,
-		entry.SSH,
+		u.hosts[host].SSH,
 		argTerminator,
-		remoteScript(entry.Wrapper, launcher, dialog.args),
+		commandLine,
 	}
 
 	return path, argv, nil
@@ -133,7 +149,8 @@ func (u *Usage) remoteCommand(host, launcher string, dialog usageDialog) (string
 
 // remoteScript renders the single command the remote login shell runs. A
 // wrapper takes the launcher as its own argv and execs it, so exec here leaves
-// no extra process between ssh and the protocol either way.
+// no extra process between ssh and the protocol either way. Arguments go
+// through remoteWord too, because a report script's path may start with "~/".
 func remoteScript(wrapper, launcher string, args []string) string {
 	var script strings.Builder
 
@@ -149,7 +166,7 @@ func remoteScript(wrapper, launcher string, args []string) string {
 
 	for _, arg := range args {
 		script.WriteByte(' ')
-		script.WriteString(shellquote.Word(arg))
+		script.WriteString(remoteWord(arg))
 	}
 
 	return script.String()

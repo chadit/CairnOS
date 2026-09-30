@@ -110,7 +110,7 @@ func newUsage(t *testing.T, cfg map[string]any, opts builtins.UsageOptions) *bui
 
 // report reads the runner's output back as a report, failing when the runner
 // handed back anything but the JSON-shaped map a workflow reference reads.
-func report(t *testing.T, result runner.Result) builtins.UsageReport {
+func report(t *testing.T, result runner.Result) *builtins.UsageReport {
 	t.Helper()
 
 	fields, isMap := result.Output.(map[string]any)
@@ -129,16 +129,16 @@ func report(t *testing.T, result runner.Result) builtins.UsageReport {
 		t.Fatalf("decode output %s: %v", encoded, err)
 	}
 
-	return typed
+	return &typed
 }
 
 // findLogin locates one launcher's entry, failing when the report skipped it.
-func findLogin(t *testing.T, got builtins.UsageReport, launcher string) builtins.UsageLogin {
+func findLogin(t *testing.T, got *builtins.UsageReport, launcher string) builtins.UsageLogin {
 	t.Helper()
 
-	for _, login := range got.Logins {
-		if login.Launcher == launcher {
-			return login
+	for index := range got.Logins {
+		if got.Logins[index].Launcher == launcher {
+			return got.Logins[index]
 		}
 	}
 
@@ -553,7 +553,7 @@ func pairedShims(t *testing.T, claudeBody, codexBody string) string {
 // pairedProbe runs both shims and returns the report. Pairing a failing
 // launcher with a working one keeps the action green, so the failure is
 // readable in the report rather than folded into a swept-up error.
-func pairedProbe(t *testing.T, dir string) builtins.UsageReport {
+func pairedProbe(t *testing.T, dir string) *builtins.UsageReport {
 	t.Helper()
 
 	usage := newUsage(t, map[string]any{
