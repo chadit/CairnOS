@@ -820,20 +820,33 @@ func unitMainPID(ctx context.Context, install service.Install) int {
 func (a *App) buildBinary(ctx context.Context, dir string) error {
 	a.logger.Info("update: building", "dir", dir, "binary", updateBinaryRel)
 
-	if makeBin, err := environ.LookPath(a.envLookup(), "make"); err == nil {
-		return runInDir(ctx, dir, makeBin, "--no-print-directory", "build")
-	}
-
 	goBin, err := lookGoToolchain(a.envLookup())
 	if err != nil {
 		return err
 	}
 
-	if err := runInDir(ctx, dir, goBin, "tool", "buf", "generate"); err != nil {
+	if makeBin, err := environ.LookPath(a.envLookup(), "make"); err == nil {
+		return runInDir(ctx, dir, pathWithGo(a.envLookup(), goBin), makeBin, "--no-print-directory", "build")
+	}
+
+	if err := runInDir(ctx, dir, nil, goBin, "tool", "buf", "generate"); err != nil {
 		return err
 	}
 
-	return runInDir(ctx, dir, goBin, "build", "-o", updateBinaryRel, "./cmd/cairnos")
+	return runInDir(ctx, dir, nil, goBin, "build", "-o", updateBinaryRel, "./cmd/cairnos")
+}
+
+// pathWithGo is the environment make builds in. The Makefile calls go by name,
+// and a toolchain found through goFallbackPath is missing from PATH, so a
+// systemd session or bare ssh build fails with "go: No such file or
+// directory". exec keeps the last of a repeated key, so this PATH wins.
+func pathWithGo(lookup environ.Lookup, goBin string) []string {
+	path := filepath.Dir(goBin)
+	if current := lookup.Get("PATH"); current != "" {
+		path += string(os.PathListSeparator) + current
+	}
+
+	return append(os.Environ(), "PATH="+path)
 }
 
 // lookGoToolchain finds go on PATH and falls back to the tarball's install
@@ -851,14 +864,16 @@ func lookGoToolchain(lookup environ.Lookup) (string, error) {
 }
 
 // runInDir runs one build or pull command inside dir and folds the command's
-// own output into the failure, so a broken build says what broke.
-func runInDir(ctx context.Context, dir, name string, args ...string) error {
+// own output into the failure, so a broken build says what broke. A nil env
+// inherits this process's environment.
+func runInDir(ctx context.Context, dir string, env []string, name string, args ...string) error {
 	output, err := execretry.CombinedOutput(ctx, func() (*exec.Cmd, error) {
 		// #nosec G204 -- name is make, the go toolchain, or the binary this command
 		// just built, and every argument is compiled in. No workflow, config, or
 		// network input reaches here.
 		command := exec.CommandContext(ctx, name, args...)
 		command.Dir = dir
+		command.Env = env
 		command.WaitDelay = buildWaitDelay
 		killGroupOnCancel(command)
 
@@ -885,7 +900,7 @@ func (a *App) pullSecrets(ctx context.Context, binary, home string) (bool, error
 
 	a.logger.Info("update: pulling secrets", "home", home)
 
-	if pullErr := runInDir(ctx, filepath.Dir(binary), binary,
+	if pullErr := runInDir(ctx, filepath.Dir(binary), nil, binary,
 		"secrets", "pull", "--"+flagDir, home); pullErr != nil {
 		return false, fmt.Errorf("secrets pull: %w", pullErr)
 	}

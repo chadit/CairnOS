@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 )
 
 const (
@@ -380,6 +382,33 @@ func TestUpdateStopsWhenTheSecretsPullFails(t *testing.T) {
 	}
 }
 
+// TestUpdateBuildPutsGoOnMakesPath pins the build a systemd session or a bare
+// ssh command runs: the Makefile calls go by name, so make has to start with
+// the toolchain the update found on its PATH, not whatever PATH this process
+// inherited. The make stub fails unless go resolves to the staged toolchain.
+func TestUpdateBuildPutsGoOnMakesPath(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("the make stub is a shell script")
+	}
+
+	goDir := t.TempDir()
+	goBin := filepath.Join(goDir, "go")
+	writeExecutable(t, goBin, "#!/bin/sh\nexit 0\n")
+
+	makeDir := t.TempDir()
+	writeExecutable(t, filepath.Join(makeDir, "make"),
+		"#!/bin/sh\nfound=$(command -v go)\n[ \"$found\" = \""+goBin+"\" ] || { echo \"go resolved to '$found'\" >&2; exit 1; }\n")
+
+	app := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
+		WithEnv(environ.Map(map[string]string{"PATH": makeDir + string(os.PathListSeparator) + goDir}))
+
+	if err := app.UpdateBuild(t.Context(), t.TempDir()); err != nil {
+		t.Fatalf("UpdateBuild() error = %v, want make to find the staged go", err)
+	}
+}
+
 func TestUpdateLink(t *testing.T) {
 	t.Parallel()
 
@@ -606,6 +635,15 @@ func writeFile(t *testing.T, path, content string) {
 	}
 
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// writeExecutable writes one staged stub the test runs as a command.
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte(content), 0o700); err != nil { // #nosec G306 -- an executable fixture
 		t.Fatalf("write %s: %v", path, err)
 	}
 }

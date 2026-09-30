@@ -100,6 +100,12 @@ func (a *App) UpdateFastForward(ctx context.Context, dir string) error {
 	return a.syncCheckout(ctx, dir)
 }
 
+// UpdateBuild runs the update's build step, so a test can stage stub make and
+// go executables through WithEnv and see the environment make is started with.
+func (a *App) UpdateBuild(ctx context.Context, dir string) error {
+	return a.buildBinary(ctx, dir)
+}
+
 // UpdateLink runs the update's link step against a given directory, so a test
 // uses a temporary one rather than the invoking user's ~/.local/bin.
 func UpdateLink(binary, linkDir string) error {
