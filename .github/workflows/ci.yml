@@ -11,6 +11,11 @@ permissions:
 jobs:
   build:
     runs-on: [self-hosted, Linux, X64, cairnos]
+    # Public repo, self-hosted runner: a pull request gets this job only when
+    # its author is the owner or a collaborator. A PR can rewrite this file, so
+    # the repo setting that holds outside contributors' runs for approval is
+    # the real gate. This one covers runs approved without a workflow change.
+    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +65,9 @@ jobs:
   # web/src, which is the only coverage this tree has for the front end.
   web:
     runs-on: [self-hosted, Linux, X64, cairnos]
+    # Same guard as build: an outside contributor's pull request never gets
+    # the self-hosted runner.
+    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     timeout-minutes: 20
     defaults:
       run:
@@ -78,6 +86,9 @@ jobs:
 
   lint:
     runs-on: [self-hosted, Linux, X64, cairnos]
+    # Same guard as build: an outside contributor's pull request never gets
+    # the self-hosted runner.
+    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
