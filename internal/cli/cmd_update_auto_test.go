@@ -178,20 +178,26 @@ func TestAutoUpdateDoesNotRetryAFailedRevision(t *testing.T) {
 	}
 }
 
-// TestAutoUpdateRefusesACheckoutItCannotFastForward covers the two checkouts
-// whose build would not be the upstream revision. Either would read as stale
-// after the restart and be rebuilt on every start, so neither is built.
-func TestAutoUpdateRefusesACheckoutItCannotFastForward(t *testing.T) {
+// TestAutoUpdateResetsACheckoutItCannotFastForward covers the two checkouts a
+// fast-forward cannot carry. The loop resets each onto the upstream, warns with
+// what it discarded, and builds a binary stamped with the upstream commit, so
+// the drain goes ahead. An untracked file left behind would stamp that build
+// "+dirty" and stop it at the restart.
+func TestAutoUpdateResetsACheckoutItCannotFastForward(t *testing.T) {
 	t.Parallel()
-	requireGit(t)
+	requireGoBuild(t)
 
 	cases := []struct {
 		stage func(t *testing.T, work string)
 		name  string
 	}{
 		{
-			name:  "a dirty working tree",
-			stage: func(t *testing.T, work string) { t.Helper(); writeFile(t, filepath.Join(work, "scratch.txt"), "wip\n") },
+			name: "a dirty working tree",
+			stage: func(t *testing.T, work string) {
+				t.Helper()
+				writeFile(t, filepath.Join(work, "main.go"), stagedModuleMain+"// wip\n")
+				writeFile(t, filepath.Join(work, "scratch.txt"), "wip\n")
+			},
 		},
 		{
 			name:  "local commits the upstream lacks",
@@ -204,7 +210,7 @@ func TestAutoUpdateRefusesACheckoutItCannotFastForward(t *testing.T) {
 			t.Parallel()
 
 			work, upstream := stageClonePair(t)
-			commitAndPush(t, upstream, "upstream.txt")
+			wanted := commitAndPush(t, upstream, "upstream.txt")
 			testCase.stage(t, work)
 
 			var (
@@ -212,26 +218,74 @@ func TestAutoUpdateRefusesACheckoutItCannotFastForward(t *testing.T) {
 				stderr bytes.Buffer
 			)
 
-			drain := api.NewDrain()
 			steps := recordingSteps(t, &order, "")
+			steps.Build = func(ctx context.Context, dir string) error {
+				order = append(order, stepBuild)
+
+				return goBuildStamped(ctx, dir, filepath.Join(dir, "bin", updateLinkName))
+			}
+
+			drain := api.NewDrain()
 			loop := cli.New(&bytes.Buffer{}, &stderr).NewAutoUpdateLoop(sourceRun(t, work, staleRevision), drain, steps)
 
-			if loop.Tick(t.Context()) || drain.Draining() {
-				t.Fatal("the loop drained after refusing the checkout")
+			if !loop.Tick(t.Context()) || !drain.Draining() {
+				t.Fatalf("the reset checkout was not built through to the drain:\n%s", stderr.String())
 			}
 
-			if len(order) != 0 {
-				t.Errorf("steps ran on a checkout the loop cannot fast-forward: %v", order)
+			if head := gitOut(t, work, "rev-parse", "HEAD"); head != wanted {
+				t.Errorf("HEAD = %s, want the upstream commit %s", head, wanted)
 			}
 
-			if !strings.Contains(stderr.String(), "step=checkout") {
-				t.Errorf("the failure log does not name the checkout step:\n%s", stderr.String())
-			}
-
-			if strings.Contains(stderr.String(), "auto-update: updating") {
-				t.Errorf("an update was announced for a checkout the loop refused:\n%s", stderr.String())
+			for _, want := range []string{"level=WARN", "checkout reset onto its upstream"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Errorf("the reset log is missing %q:\n%s", want, stderr.String())
+				}
 			}
 		})
+	}
+}
+
+// TestAutoUpdateRefusesADirtyCheckoutWithNoUpstream covers the one checkout the
+// loop still refuses. With no upstream to reset onto, its build would be stamped
+// "+dirty" and read as stale after every restart, so nothing is built and the
+// tree is left as it is.
+func TestAutoUpdateRefusesADirtyCheckoutWithNoUpstream(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
+
+	work, _ := stageClonePair(t)
+	gitOut(t, work, "remote", "remove", "origin")
+
+	scratch := filepath.Join(work, "scratch.txt")
+	writeFile(t, scratch, "wip\n")
+
+	var (
+		order  []string
+		stderr bytes.Buffer
+	)
+
+	drain := api.NewDrain()
+	steps := recordingSteps(t, &order, "")
+	loop := cli.New(&bytes.Buffer{}, &stderr).NewAutoUpdateLoop(sourceRun(t, work, staleRevision), drain, steps)
+
+	if loop.Tick(t.Context()) || drain.Draining() {
+		t.Fatal("the loop drained after refusing the checkout")
+	}
+
+	if len(order) != 0 {
+		t.Errorf("steps ran on a checkout the loop refused: %v", order)
+	}
+
+	if !strings.Contains(stderr.String(), "step=checkout") {
+		t.Errorf("the failure log does not name the checkout step:\n%s", stderr.String())
+	}
+
+	if strings.Contains(stderr.String(), "auto-update: updating") {
+		t.Errorf("an update was announced for a checkout the loop refused:\n%s", stderr.String())
+	}
+
+	if _, err := os.Stat(scratch); err != nil {
+		t.Errorf("the refused checkout lost its untracked file: %v", err)
 	}
 }
 

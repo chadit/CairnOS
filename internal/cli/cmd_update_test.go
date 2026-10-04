@@ -74,58 +74,234 @@ func TestUpdateSourceDiscovery(t *testing.T) {
 	})
 }
 
-func TestUpdateFastForward(t *testing.T) {
+// syncCheckoutCase is one shape a host's clone can be found in before the
+// checkout step runs.
+type syncCheckoutCase struct {
+	// stage puts the clone in the case's shape and returns what the reset
+	// warning must name, which can depend on the commits it makes.
+	stage func(t *testing.T, work string) []string
+
+	name string
+
+	// unlogged is what the warning must not name, because the reset kept it.
+	unlogged []string
+
+	wantReset bool
+}
+
+// TestUpdateSyncCheckout covers the checkout step on each shape a host's clone
+// can be found in. A clean clone behind its upstream is fast-forwarded with no
+// warning. Anything else is reset onto the upstream branch, and the warning
+// names what went. Every case ends on main at the upstream commit with a clean
+// tree, and the ignored bin/ survives.
+func TestUpdateSyncCheckout(t *testing.T) {
 	t.Parallel()
 	requireGit(t)
 
-	t.Run("a checkout that is behind is fast-forwarded", func(t *testing.T) {
-		t.Parallel()
+	cases := []syncCheckoutCase{
+		{
+			name:  "a clean checkout behind its upstream is fast-forwarded",
+			stage: func(*testing.T, string) []string { return nil },
+		},
+		{
+			name:      "uncommitted changes are discarded and named",
+			wantReset: true,
+			stage: func(t *testing.T, work string) []string {
+				t.Helper()
 
-		work, upstream := stageClonePair(t)
-		wanted := commitAndPush(t, upstream, "upstream.txt")
+				writeFile(t, filepath.Join(work, "main.go"), stagedModuleMain+"// wip\n")
+				writeFile(t, filepath.Join(work, "scratch.txt"), "wip\n")
+				// The upstream commit adds this path, so it stands in the reset's way.
+				writeFile(t, filepath.Join(work, "upstream.txt"), "a local copy\n")
 
-		if err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-			UpdateFastForward(t.Context(), work); err != nil {
-			t.Fatalf("UpdateFastForward() error = %v", err)
+				return []string{" M main.go", "?? scratch.txt", "?? upstream.txt"}
+			},
+		},
+		{
+			name:      "a local commit is dropped and named",
+			wantReset: true,
+			stage: func(t *testing.T, work string) []string {
+				t.Helper()
+
+				commit := commitLocal(t, work, "local.txt")
+
+				return []string{gitOut(t, work, "rev-parse", "--short", commit) + " add local.txt"}
+			},
+		},
+		{
+			name:      "a detached HEAD is put back on the upstream branch",
+			wantReset: true,
+			stage: func(t *testing.T, work string) []string {
+				t.Helper()
+
+				gitOut(t, work, "checkout", "--quiet", "--detach")
+				commit := commitLocal(t, work, "detached.txt")
+
+				return []string{"HEAD is detached", gitOut(t, work, "rev-parse", "--short", commit) + " add detached.txt"}
+			},
+		},
+		{
+			name:      "another branch is left for the upstream branch",
+			wantReset: true,
+			unlogged:  []string{"add feature.txt"},
+			stage: func(t *testing.T, work string) []string {
+				t.Helper()
+
+				gitOut(t, work, "checkout", "--quiet", "-b", "feature")
+				commitLocal(t, work, "feature.txt")
+
+				return []string{"HEAD is on branch feature, not main"}
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			checkSyncCheckout(t, &testCase)
+		})
+	}
+}
+
+// checkSyncCheckout runs one case: the upstream moves one commit ahead, the
+// case stages the clone, and the checkout step has to land it on that commit.
+func checkSyncCheckout(t *testing.T, testCase *syncCheckoutCase) {
+	t.Helper()
+
+	work, upstream := stageClonePair(t)
+	wanted := commitAndPush(t, upstream, "upstream.txt")
+	binary := filepath.Join(work, "bin", updateLinkName)
+
+	writeFile(t, binary, "#!/bin/sh\n")
+
+	logged := testCase.stage(t, work)
+
+	var stderr bytes.Buffer
+
+	if err := cli.New(&bytes.Buffer{}, &stderr).UpdateSyncCheckout(t.Context(), work); err != nil {
+		t.Fatalf("UpdateSyncCheckout() error = %v\nstderr: %s", err, stderr.String())
+	}
+
+	assertOnUpstream(t, work, wanted)
+
+	if _, err := os.Stat(binary); err != nil {
+		t.Errorf("the ignored binary did not survive: %v", err)
+	}
+
+	log := stderr.String()
+
+	if reset := strings.Contains(log, "level=WARN"); reset != testCase.wantReset {
+		t.Errorf("reset warning = %t, want %t:\n%s", reset, testCase.wantReset, log)
+	}
+
+	for _, want := range logged {
+		if !strings.Contains(log, want) {
+			t.Errorf("the reset warning does not name %q:\n%s", want, log)
 		}
+	}
 
-		if head := gitOut(t, work, "rev-parse", "HEAD"); head != wanted {
-			t.Errorf("HEAD = %s, want the upstream commit %s", head, wanted)
+	for _, kept := range testCase.unlogged {
+		if strings.Contains(log, kept) {
+			t.Errorf("the reset warning names %q, which the reset kept:\n%s", kept, log)
 		}
-	})
+	}
+}
 
-	t.Run("a checkout with local commits is left alone", func(t *testing.T) {
-		t.Parallel()
+// assertOnUpstream checks that work sits on main at wanted, tracking
+// origin/main, with a clean tree: where every update leaves a host's clone, and
+// the shape the next update fast-forwards from.
+func assertOnUpstream(t *testing.T, work, wanted string) {
+	t.Helper()
 
-		work, _ := stageClonePair(t)
-		wanted := commitLocal(t, work, "local.txt")
+	if head := gitOut(t, work, "rev-parse", "HEAD"); head != wanted {
+		t.Errorf("HEAD = %s, want the upstream commit %s", head, wanted)
+	}
 
-		if err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-			UpdateFastForward(t.Context(), work); err != nil {
-			t.Fatalf("UpdateFastForward() error = %v", err)
-		}
+	if branch := gitOut(t, work, "symbolic-ref", "--short", "HEAD"); branch != "main" {
+		t.Errorf("HEAD is on %s, want main", branch)
+	}
 
-		if head := gitOut(t, work, "rev-parse", "HEAD"); head != wanted {
-			t.Errorf("HEAD = %s, want the local commit %s", head, wanted)
-		}
-	})
+	if tracked := gitOut(t, work, "rev-parse", "--abbrev-ref", "main@{upstream}"); tracked != "origin/main" {
+		t.Errorf("main tracks %q, want origin/main", tracked)
+	}
 
-	t.Run("a diverged checkout is left alone", func(t *testing.T) {
-		t.Parallel()
+	if status := gitOut(t, work, "status", "--porcelain"); status != "" {
+		t.Errorf("the tree still carries changes:\n%s", status)
+	}
+}
 
-		work, upstream := stageClonePair(t)
-		wanted := commitLocal(t, work, "local.txt")
-		commitAndPush(t, upstream, "upstream.txt")
+// TestUpdateCheckReportsACheckoutAnUpdateWouldReset covers --check on a clone
+// the update would reset. The service already runs the upstream commit, so only
+// the reset can make the check report behind, and the reset line has to say
+// why. The check itself leaves HEAD and the tree as they were.
+func TestUpdateCheckReportsACheckoutAnUpdateWouldReset(t *testing.T) {
+	t.Parallel()
+	requireGit(t)
 
-		if err := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-			UpdateFastForward(t.Context(), work); err != nil {
-			t.Fatalf("UpdateFastForward() error = %v", err)
-		}
+	cases := []struct {
+		stage  func(t *testing.T, work string)
+		name   string
+		reason string
+	}{
+		{
+			name:   "uncommitted changes",
+			reason: "1 changed or untracked path(s)",
+			stage: func(t *testing.T, work string) {
+				t.Helper()
+				writeFile(t, filepath.Join(work, "main.go"), stagedModuleMain+"// wip\n")
+			},
+		},
+		{
+			name:   "a local commit the upstream lacks",
+			reason: "1 commit(s) not on origin/main",
+			stage:  func(t *testing.T, work string) { t.Helper(); commitLocal(t, work, "local.txt") },
+		},
+	}
 
-		if head := gitOut(t, work, "rev-parse", "HEAD"); head != wanted {
-			t.Errorf("HEAD = %s, want the local commit %s", head, wanted)
-		}
-	})
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			work, _ := stageClonePair(t)
+			running := gitOut(t, work, "rev-parse", "origin/main")
+
+			testCase.stage(t, work)
+
+			head := gitOut(t, work, "rev-parse", "HEAD")
+			status := gitOut(t, work, "status", "--porcelain")
+
+			var stdout, stderr bytes.Buffer
+
+			code, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(), &cli.UpdateRun{
+				Executable: filepath.Join(work, "bin", updateLinkName),
+				Home:       t.TempDir(),
+				Running:    running,
+				Check:      true,
+				NoRelease:  true,
+			}, failingSteps(t))
+			if err != nil {
+				t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
+			}
+
+			if code != cli.ExitBehind {
+				t.Fatalf("exit = %d, want %d\nstdout: %s", code, cli.ExitBehind, stdout.String())
+			}
+
+			for _, want := range []string{"wanted:  " + running, "reset:   " + testCase.reason} {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("stdout is missing %q:\n%s", want, stdout.String())
+				}
+			}
+
+			if after := gitOut(t, work, "rev-parse", "HEAD"); after != head {
+				t.Errorf("the check moved HEAD to %s, want it left at %s", after, head)
+			}
+
+			if after := gitOut(t, work, "status", "--porcelain"); after != status {
+				t.Errorf("the check changed the tree:\nbefore:\n%s\nafter:\n%s", status, after)
+			}
+		})
+	}
 }
 
 // TestUpdateCheckExitsBehind pins the exit code a scheduled check elsewhere
@@ -546,7 +722,9 @@ func stageCheckout(t *testing.T) string {
 }
 
 // stageClonePair builds a bare origin with one commit and two clones of it, so
-// a case can move one side and leave the other where it was.
+// a case can move one side and leave the other where it was. The seed ignores
+// bin/ the way the real repository does, so a build or the running binary there
+// never reads as a change and a reset leaves it in place.
 func stageClonePair(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -562,6 +740,7 @@ func stageClonePair(t *testing.T) (string, string) {
 	// The seed commit is a module that builds: source discovery refuses a
 	// directory without go.mod, and a case that runs serve's loop through to
 	// the drain builds the clone for real.
+	writeFile(t, filepath.Join(seed, ".gitignore"), "bin/\n")
 	writeFile(t, filepath.Join(seed, "go.mod"), stagedModuleGoMod)
 	writeFile(t, filepath.Join(seed, "main.go"), stagedModuleMain)
 	gitOut(t, seed, "add", ".")

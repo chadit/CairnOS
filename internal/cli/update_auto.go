@@ -75,11 +75,13 @@ type autoUpdate struct {
 
 // updateTarget is the build one tick would install and where it comes from: a
 // published release, or the upstream commit of the checkout the running binary
-// was built from.
+// was built from. upstream is nil for a checkout that tracks nothing, which
+// builds its own HEAD.
 type updateTarget struct {
-	release *releaseBuild
-	dir     string
-	wanted  string
+	release  *releaseBuild
+	upstream *checkoutTarget
+	dir      string
+	wanted   string
 }
 
 // origin names where the target comes from, for the line that starts an update.
@@ -468,42 +470,35 @@ func upstreamTarget(ctx context.Context, opts *updateOptions) (updateTarget, err
 		return updateTarget{}, err
 	}
 
-	ref, err := wantedRef(ctx, dir)
+	target := updateTarget{dir: dir}
+	ref := headRef
+
+	if upstream, found := resolveTarget(ctx, dir); found {
+		if fetchErr := fetchTarget(ctx, dir, &upstream); fetchErr != nil {
+			return updateTarget{}, fetchErr
+		}
+
+		target.upstream = &upstream
+		ref = upstream.ref
+	}
+
+	target.wanted, err = commitOf(ctx, dir, ref)
 	if err != nil {
 		return updateTarget{}, err
 	}
 
-	wanted, err := commitOf(ctx, dir, ref)
-	if err != nil {
-		return updateTarget{}, err
-	}
-
-	return updateTarget{dir: dir, wanted: wanted}, nil
-}
-
-// wantedRef names the ref the loop builds: the upstream after a fetch, or HEAD
-// for a checkout that tracks nothing and so has nothing to fetch.
-func wantedRef(ctx context.Context, dir string) (string, error) {
-	ref := upstreamRef(ctx, dir)
-	if ref == "" {
-		return "HEAD", nil
-	}
-
-	if err := fetchUpstream(ctx, dir); err != nil {
-		return "", err
-	}
-
-	return ref, nil
+	return target, nil
 }
 
 // ready refuses a target the loop cannot turn into the wanted build. A release
-// is always ready; a checkout has to fast-forward cleanly.
+// is always ready, and so is a checkout with an upstream, which the install
+// fast-forwards or resets onto it; one tracking nothing has to be clean.
 func (t *updateTarget) ready(ctx context.Context) error {
-	if t.release != nil {
+	if t.release != nil || t.upstream != nil {
 		return nil
 	}
 
-	return requireFastForward(ctx, t.dir)
+	return requireClean(ctx, t.dir)
 }
 
 // install runs the sequence `cairnos update` runs for the target, with this
@@ -515,19 +510,19 @@ func (u *autoUpdate) install(ctx context.Context, target *updateTarget) error {
 		return withStep(stepDownload, u.app.applyRelease(ctx, target.release, u.opts, u.steps))
 	}
 
-	if err := u.app.fastForward(ctx, target.dir); err != nil {
-		return withStep(stepCheckout, err)
+	if target.upstream != nil {
+		if err := u.app.alignCheckout(ctx, target.dir, target.upstream); err != nil {
+			return withStep(stepCheckout, err)
+		}
 	}
 
 	return withStep(stepCheckout, applyUpdate(ctx, target.dir, u.opts, u.steps))
 }
 
-// requireFastForward refuses a checkout the loop cannot turn into the upstream
-// build. A dirty tree builds "+dirty" and local commits build a revision the
-// upstream lacks; either would read as stale after the restart and be rebuilt
-// on every start. `cairnos update` builds both, since an operator running it is
-// there to read the result.
-func requireFastForward(ctx context.Context, dir string) error {
+// requireClean refuses a dirty checkout that tracks no upstream. With nothing
+// to reset onto, its build would be stamped "+dirty", read as stale after the
+// restart, and be rebuilt on every start.
+func requireClean(ctx context.Context, dir string) error {
 	dirty, err := treeDirty(ctx, dir)
 	if err != nil {
 		return err
@@ -535,15 +530,6 @@ func requireFastForward(ctx context.Context, dir string) error {
 
 	if dirty {
 		return fmt.Errorf("%w: %s", errDirtyCheckout, dir)
-	}
-
-	gap, err := upstreamGapOf(ctx, dir)
-	if err != nil {
-		return err
-	}
-
-	if gap.ahead > 0 {
-		return fmt.Errorf("%w: %s holds %d commit(s) %s lacks", errDivergedCheckout, dir, gap.ahead, gap.ref)
 	}
 
 	return nil

@@ -94,9 +94,10 @@ func UpdateSourceDir(override, executable string) (string, error) {
 	return discoverSource(override, executable)
 }
 
-// UpdateFastForward runs the update's fetch-and-fast-forward step against a
-// real checkout, which is the only way to exercise the decision honestly.
-func (a *App) UpdateFastForward(ctx context.Context, dir string) error {
+// UpdateSyncCheckout runs the update's fetch, then fast-forward or reset, step
+// against a real checkout, which is the only way to exercise the decision
+// honestly.
+func (a *App) UpdateSyncCheckout(ctx context.Context, dir string) error {
 	return a.syncCheckout(ctx, dir)
 }
 

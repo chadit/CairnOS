@@ -32,10 +32,13 @@ import (
 const updateUsage = `usage: cairnos update [flags]
 
 Update this host in place. A binary built from a checkout, which lives at
-<checkout>/bin/cairnos, follows that checkout: it is fast-forwarded onto its
-upstream and rebuilt. Only a binary with no checkout around it installs the
-latest GitHub release for this platform, whose asset is downloaded, checked
-against the published sha256, and written over the running binary. Either way
+<checkout>/bin/cairnos, follows that checkout: it is put on its remote's default
+branch and rebuilt. A clean checkout on that branch is fast-forwarded; any other
+is reset there, discarding uncommitted changes, untracked files git does not
+ignore, and local commits, all named in a warning. Only a binary with no
+checkout around it installs the latest GitHub release for this platform, whose
+asset is downloaded, checked against the published sha256, and written over
+the running binary. Either way
 the new build pulls secrets, the service restarts when the revision or the
 secrets moved, and ~/.local/bin/cairnos ends up pointing at the result.
 
@@ -45,12 +48,15 @@ secrets moved, and ~/.local/bin/cairnos ends up pointing at the result.
   --check         report the running and the wanted revision and exit 3 when
                   they differ; on the checkout path it fetches the upstream's
                   remote first, so commits that landed there count, while the
-                  release path asks the release API and fetches nothing; it
-                  moves the checkout, builds, pulls and restarts nothing
+                  release path asks the release API and fetches nothing; a
+                  checkout an update would reset adds a reset: line naming why
+                  and also exits 3; it moves the checkout, builds, pulls and
+                  restarts nothing
   --restart-now   restart the service immediately instead of letting it finish
                   its in-flight runs first
-  --no-fetch      build what is already checked out, reaching no release; with
-                  --check, compare against the local HEAD without fetching
+  --no-fetch      build what is already checked out, leaving the checkout as it
+                  is and reaching no release; with --check, compare against the
+                  local HEAD without fetching
   --no-release    skip the release lookup a binary with no checkout around it
                   would make, which leaves --source to name what to build
   --no-link       leave ~/.local/bin/cairnos alone
@@ -262,9 +268,10 @@ func (a *App) runRelease(ctx context.Context, build *releaseBuild, opts *updateO
 	return ExitOK, a.applyRelease(ctx, build, opts, steps)
 }
 
-// runSource is the path for any binary built from a checkout: fast-forward it
-// the running binary was built from and rebuild it. --check stops at the
-// report, which is what makes it safe on a host somebody only wants to look at.
+// runSource is the path for any binary built from a checkout: put the checkout
+// the running binary was built from on its upstream and rebuild it. --check
+// stops at the report, which is what makes it safe on a host somebody only
+// wants to look at.
 func (a *App) runSource(ctx context.Context, opts *updateOptions, steps UpdateSteps) (int, error) {
 	dir, err := discoverSource(opts.source, opts.executable)
 	if err != nil {
@@ -381,40 +388,52 @@ func applyUpdate(ctx context.Context, dir string, opts *updateOptions, steps Upd
 
 // reportSource prints what the service runs beside what an update would build.
 // Without --no-fetch the remote-tracking refs are fetched first, so a checkout
-// nobody fetches still shows the commits waiting upstream instead of reporting
-// current forever. The working tree is left as it is either way.
+// nobody fetches still shows the commits waiting upstream. A checkout the
+// update would reset is behind even when the revisions match, and the reset
+// line says why. The working tree is left as it is.
 func (a *App) reportSource(ctx context.Context, dir string, opts *updateOptions) (int, error) {
-	wanted, err := checkRevision(ctx, dir, opts.fetch)
+	wanted, resets, err := checkRevision(ctx, dir, opts.fetch)
 	if err != nil {
 		return ExitFailure, err
 	}
 
-	return a.reportRevisionPair(opts.running, wanted), nil
+	code := a.reportRevisionPair(opts.running, wanted)
+	if len(resets) == 0 {
+		return code, nil
+	}
+
+	a.printOutf("reset:   %s\n", strings.Join(resets, "; "))
+
+	return ExitBehind, nil
 }
 
-// checkRevision spells the revision an update would build. After a fetch that
-// is the upstream commit when the checkout would fast-forward onto it, and HEAD
-// when the update would leave the checkout alone. Without one it is HEAD,
-// because --no-fetch builds what is checked out.
-func checkRevision(ctx context.Context, dir string, fetch bool) (string, error) {
-	if !fetch {
-		return wantedRevision(ctx, dir)
+// checkRevision spells the revision an update would build and names what would
+// make it reset the checkout. After a fetch the revision is the upstream
+// commit, which a fast-forward and a reset both leave clean. Without one, or
+// with no upstream, it is HEAD, because that is what the update builds then.
+func checkRevision(ctx context.Context, dir string, fetch bool) (string, []string, error) {
+	target, found := resolveTarget(ctx, dir)
+	if !fetch || !found {
+		wanted, err := wantedRevision(ctx, dir)
+
+		return wanted, nil, err
 	}
 
-	if err := fetchUpstream(ctx, dir); err != nil {
-		return "", err
+	if err := fetchTarget(ctx, dir, &target); err != nil {
+		return "", nil, err
 	}
 
-	gap, err := upstreamGapOf(ctx, dir)
+	state, err := readCheckoutState(ctx, dir, &target)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	if !gap.fastForwards() {
-		return wantedRevision(ctx, dir)
+	wanted, err := commitOf(ctx, dir, target.ref)
+	if err != nil {
+		return "", nil, err
 	}
 
-	return revisionAt(ctx, dir, gap.ref)
+	return wanted, state.reasons(&target), nil
 }
 
 // reportRevisionPair prints the running build beside the one the update would
@@ -469,60 +488,21 @@ func checkoutDir(dir string) (string, error) {
 	return abs, nil
 }
 
-// upstreamGap is how far a checkout sits from the branch it tracks.
-type upstreamGap struct {
-	ref    string
-	behind int
-	ahead  int
-}
-
-// fastForwards reports whether the checkout is strictly behind its upstream,
-// the one shape an update moves rather than leaves alone.
-func (g upstreamGap) fastForwards() bool {
-	return g.ref != "" && g.behind > 0 && g.ahead == 0
-}
-
 // syncCheckout is the command's checkout step. Serve's loop runs its two halves
-// apart, because it fetches to decide and fast-forwards only once it has.
+// apart, because it fetches to decide and moves the checkout only once it has.
 func (a *App) syncCheckout(ctx context.Context, dir string) error {
-	if err := fetchUpstream(ctx, dir); err != nil {
-		return err
-	}
+	target, found := resolveTarget(ctx, dir)
+	if !found {
+		a.logger.Info("update: the checkout tracks no upstream, leaving it as is", "dir", dir)
 
-	return a.fastForward(ctx, dir)
-}
-
-// fetchUpstream updates the remote-tracking refs of the remote the branch
-// tracks and nothing else, so learning what landed upstream never touches the
-// working tree. A checkout tracking nothing has nothing to fetch.
-func fetchUpstream(ctx context.Context, dir string) error {
-	remote := upstreamRemote(ctx, dir)
-	if remote == "" {
 		return nil
 	}
 
-	if _, err := source.GitCommand(ctx, dir, "fetch", "--quiet", "--", remote); err != nil {
-		return fmt.Errorf("fetch %s in %s: %w", remote, dir, err)
+	if err := fetchTarget(ctx, dir, &target); err != nil {
+		return err
 	}
 
-	return nil
-}
-
-// upstreamRemote names the remote the checkout's branch tracks, which need not
-// be origin, and answers empty for a detached HEAD or a branch tracking
-// nothing. As with upstreamRef, git's non-zero exit is the answer.
-func upstreamRemote(ctx context.Context, dir string) string {
-	branch, err := source.GitCommand(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil {
-		return ""
-	}
-
-	remote, err := source.GitCommand(ctx, dir, "config", "--get", "branch."+branch+".remote")
-	if err != nil {
-		return ""
-	}
-
-	return remote
+	return a.alignCheckout(ctx, dir, &target)
 }
 
 // updateLockName is the file under the CairnOS home that `cairnos update` and
@@ -551,60 +531,6 @@ func lockUpdate(home string) (func(), error) {
 	}
 
 	return func() { _ = lock.Unlock() }, nil
-}
-
-// fastForward moves only a checkout that is strictly behind onto its upstream.
-// One that has diverged or carries local commits is left alone, since this
-// command updates a host rather than resolving anyone's history. A dirty tree
-// is fine: the build stamps "+dirty" and the revision line shows it.
-func (a *App) fastForward(ctx context.Context, dir string) error {
-	gap, err := upstreamGapOf(ctx, dir)
-	if err != nil {
-		return err
-	}
-
-	if gap.ref == "" {
-		a.logger.Info("update: the checkout tracks no upstream, leaving it as is", "dir", dir)
-
-		return nil
-	}
-
-	if !gap.fastForwards() {
-		a.logger.Info("update: checkout left as is",
-			"upstream", gap.ref, "behind", gap.behind, "ahead", gap.ahead)
-
-		return nil
-	}
-
-	if _, err := source.GitCommand(ctx, dir, "merge", "--ff-only", gap.ref); err != nil {
-		return fmt.Errorf("fast-forward %s onto %s: %w", dir, gap.ref, err)
-	}
-
-	a.logger.Info("update: fast-forwarded", "upstream", gap.ref, "commits", gap.behind)
-
-	return nil
-}
-
-// upstreamGapOf counts the commits each side holds that the other does not. An
-// empty ref means the branch tracks nothing, which is not a failure: a host can
-// sit on a detached HEAD and still deserve a build.
-func upstreamGapOf(ctx context.Context, dir string) (upstreamGap, error) {
-	ref := upstreamRef(ctx, dir)
-	if ref == "" {
-		return upstreamGap{}, nil
-	}
-
-	counts, err := source.GitCommand(ctx, dir, "rev-list", "--left-right", "--count", "HEAD..."+ref)
-	if err != nil {
-		return upstreamGap{}, fmt.Errorf("count commits against %s in %s: %w", ref, dir, err)
-	}
-
-	ahead, behind, err := parseGapCounts(counts)
-	if err != nil {
-		return upstreamGap{}, err
-	}
-
-	return upstreamGap{ref: ref, behind: behind, ahead: ahead}, nil
 }
 
 // upstreamRef names the branch the checkout tracks, empty when it tracks none.
@@ -643,7 +569,7 @@ func parseGapCounts(line string) (int, int, error) {
 
 // wantedRevision spells the checkout's HEAD the way cmd/go stamps it.
 func wantedRevision(ctx context.Context, dir string) (string, error) {
-	return revisionAt(ctx, dir, "HEAD")
+	return revisionAt(ctx, dir, headRef)
 }
 
 // revisionAt spells the commit ref names the way cmd/go would stamp a build of

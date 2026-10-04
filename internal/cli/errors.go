@@ -100,7 +100,7 @@ var (
 	errNoHomeDir = errors.New("the environment names no home directory")
 
 	// errGitCountShape reports output from `git rev-list --left-right --count`
-	// that is not the two numbers the fast-forward decision reads.
+	// that is not the two numbers the fast-forward or reset decision reads.
 	errGitCountShape = errors.New("unexpected git commit-count output")
 
 	// errLinkNotASymlink reports a regular file where the ~/.local/bin entry
@@ -120,15 +120,11 @@ var (
 	// or replacing the same binary at once.
 	errUpdateBusy = errors.New("another update is already running on this host")
 
-	// errDirtyCheckout reports a working tree carrying changes, which serve's
-	// update loop refuses to build: the result would be stamped "+dirty" and read
-	// as stale again after the restart.
+	// errDirtyCheckout reports changes in a checkout that tracks no upstream,
+	// which serve's update loop refuses to build: with nothing to reset onto,
+	// the result would be stamped "+dirty" and read as stale again after the
+	// restart.
 	errDirtyCheckout = errors.New("the checkout carries uncommitted changes")
-
-	// errDivergedCheckout reports a checkout holding commits its upstream lacks,
-	// which serve's update loop refuses to build because the result would not be
-	// the upstream revision it wanted.
-	errDivergedCheckout = errors.New("the checkout has commits its upstream lacks")
 
 	// errBuildStamp reports a new binary whose stamp is not the revision the
 	// update wanted. Serve's update loop stops there rather than restart onto a

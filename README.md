@@ -154,7 +154,7 @@ is fine and the binary reading it is old, and it stays that way until the binary
 changes. The recovery is the deploy that should have come first:
 
 ```sh
-cairnos update                # fast-forward, rebuild, pull secrets, restart on change
+cairnos update                # sync the clone, rebuild, pull secrets, restart on change
 journalctl --user -u cairnos -n 50
 ```
 
@@ -168,10 +168,25 @@ binary lives.
 
 **A binary built from a clone follows that clone.** The binary lives at
 `<clone>/bin/cairnos`, so the clone is one directory up. The update fetches the
-remote the clone's branch tracks, fast-forwards onto it, and rebuilds. A clone
-that has diverged or carries local commits is left exactly as it is, and the
-update says so and builds what is checked out. A published release is never
-consulted here, so a host tracking main is never moved back onto an older tag.
+clone's remote, the one its branch tracks or `origin`, and puts the clone on
+that remote's default branch as `git clone` recorded it in
+`refs/remotes/<remote>/HEAD`. Then it rebuilds. A clean clone already on that
+branch is fast-forwarded, which is the normal case.
+
+Anything else is reset onto the default branch. Uncommitted changes and
+untracked files git doesn't ignore are thrown away, and so are local commits. A
+detached HEAD or another checked-out branch goes back to the default branch,
+whose local copy is recreated at the fetched tip. One WARN line names the reason,
+every discarded path as a `git status --short` line, and every dropped commit by
+short sha and subject, so the journal shows what went. Ignored files stay, `bin/`
+and the running binary included. Treat the clone as the host's copy of upstream
+rather than somewhere to work: `scripts/deploy.sh` and `make deploy` pass
+`--no-fetch`, which leaves the clone alone. A remote with no recorded default
+branch falls back to the branch's own upstream, and a clone that tracks nothing
+is built as it is.
+
+A published release is never consulted for a clone, so a host tracking main is
+never moved back onto an older tag.
 
 **A binary with no clone around it installs the latest GitHub release.** The
 latest release is asked for the asset matching this host's `GOOS` and `GOARCH`,
@@ -239,12 +254,12 @@ interval = "15m"   # default 15m, how often serve checks
 
 Every interval, serve works out the wanted revision the same way
 `cairnos update` does. For a binary built from a clone that's the commit the
-clone's upstream sits on, read after a `git fetch` of the tracked remote that
-moves only remote-tracking refs. For a binary with no clone around it, it's the
+remote's default branch sits on, read after a `git fetch` that moves only
+remote-tracking refs. For a binary with no clone around it, it's the
 commit the latest release's tag points at. When it matches the revision stamped into the running
 binary, nothing happens. When it doesn't, serve logs one line naming both
 revisions and runs the sequence the command runs: install the release, or
-fast-forward the clone and `make build`, then `secrets pull` and the link. It
+fast-forward or reset the clone and `make build`, then `secrets pull` and the link. It
 checks the new binary carries the wanted stamp, then drains itself the way
 `cairnos update` drains it. In-flight runs finish, bounded at 15 minutes, and
 the process exits for systemd to start the new binary.
@@ -256,17 +271,21 @@ A few things differ from running the command by hand:
   exited serve back. The launchd agent restarts a crash only, and a serve run by
   hand has nothing behind it, so serve logs one warning at startup and leaves
   the loop off.
-- A clone with uncommitted changes or local commits isn't built. Its build
-  wouldn't be the upstream revision, so it would look stale again right after
-  the restart. A clone that tracks no upstream wants its own HEAD, as it does
-  for `cairnos update`.
+- A clone with uncommitted changes or local commits is reset onto the upstream
+  before the build, the same way `cairnos update` resets it, and the WARN line
+  lands in the journal. The loop only acts when the wanted revision differs from
+  the running one, so a clone dirtied under a current build waits for the next
+  upstream commit. A clone that tracks no upstream wants its own HEAD, as it
+  does for `cairnos update`. With uncommitted changes it isn't built, because
+  there's nothing to reset it onto and a `+dirty` build would look stale again
+  right after the restart.
 - The command and the loop take the same lock, `update.lock` in the CairnOS
   home, around an install. A `cairnos update` started while the loop is
   installing stops at once with "another update is already running on this
   host", and the loop waits for the next interval while the command holds it.
-- A failed step (a dirty or diverged clone, a build failure, a bad checksum, a
-  failed secrets pull) is logged at ERROR with the step and the wanted
-  revision, and the running build keeps serving. That revision isn't tried
+- A failed step (a dirty clone with no upstream, a failed reset, a build
+  failure, a bad checksum, a failed secrets pull) is logged at ERROR with the
+  step and the wanted revision, and the running build keeps serving. That revision isn't tried
   again until the wanted revision moves, so a broken build costs one attempt
   rather than one per interval.
 - The revision is written to `auto-update-attempt` in the CairnOS home before
@@ -284,7 +303,7 @@ A few things differ from running the command by hand:
 
 `cairnos update --check` compares the build the service is running against what
 an update would put there: what the clone would build once the update
-fast-forwards it, and the commit the latest release's tag points at for a
+fast-forwards or resets it, and the commit the latest release's tag points at for a
 binary with no clone around it. It reads the revision Go stamps into every binary,
 through `/proc`, so a file replaced on disk is not mistaken for the process in
 memory:
@@ -295,7 +314,16 @@ running: 7929e3e8a1...
 wanted:  625fb2e4c9...
 ```
 
-It exits 3 when the two differ and 0 when they match. On the clone path it
+It exits 3 when the two differ and 0 when they match. A clone the update would
+reset also exits 3, even when the revisions match, and a third line says why:
+
+```sh
+running: 625fb2e4c9...
+wanted:  625fb2e4c9...
+reset:   2 changed or untracked path(s); 1 commit(s) not on origin/main
+```
+
+On the clone path it
 fetches the tracked remote first, which moves only remote-tracking refs, so a
 clone nobody has fetched in days still reports the commits waiting upstream. `--no-fetch`
 skips the fetch and compares against the local HEAD. Either way the check
