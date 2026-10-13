@@ -20,12 +20,11 @@ concurrency:
 
 jobs:
   check:
-    runs-on: [self-hosted, Linux, X64, cairnos]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The runner host has a Go toolchain, but not on the runner account's
-      # PATH. setup-go puts a known version there and reads the same go.mod
-      # the rest of CI does.
+      # go.mod decides the toolchain, so the check runs on the same Go that
+      # `make` resolves locally instead of whatever the runner image ships.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

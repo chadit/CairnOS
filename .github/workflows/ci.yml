@@ -1,27 +1,29 @@
 name: ci
 
+# Push only, every branch, no pull_request trigger: a fork cannot push here,
+# so nobody without write access can start a run. Your own branches still get
+# checks on each push, and branch protection reads those check runs.
+# The repository setting that holds fork pull request runs for approval is the
+# backstop should a pull_request trigger ever return. It is a setting, not a
+# file, and GitHub only accepts it once the repository is public.
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ['**']
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: [self-hosted, Linux, X64, cairnos]
-    # Public repo, self-hosted runner: a pull request gets this job only when
-    # its author is the owner or a collaborator. A PR can rewrite this file, so
-    # the repo setting that holds outside contributors' runs for approval is
-    # the real gate. This one covers runs approved without a workflow change.
-    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    # GitHub-hosted on purpose: standard runners are free for a public
+    # repository, and nothing of the owner's sits on the machine that runs
+    # the job.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # The runner host has a Go toolchain, but not on the runner account's
-      # PATH. setup-go puts a known version there and reads the same go.mod
-      # the rest of CI does.
+      # go.mod decides the toolchain, so CI builds with the same Go that `make`
+      # resolves locally instead of whatever the runner image ships.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -44,9 +46,9 @@ jobs:
 
   # Scoped deliberately to the plugin packages. The plugin subsystem is the one
   # part of CairnOS whose contract cannot be verified by cross-compilation: a
-  # process-tree kill either works on real Windows or it does not. This is the
-  # only job on GitHub-hosted runners, and the 2x Windows multiplier is why it
-  # stays this small. Do not widen it.
+  # process-tree kill either works on real Windows or it does not. Windows
+  # runners are the slowest to start, so the job stays this small. Do not
+  # widen it.
   windows-plugin:
     runs-on: windows-latest
     steps:
@@ -66,10 +68,7 @@ jobs:
   # is worth checking is that the bundle still lints, tests, and builds from
   # web/src, which is the only coverage this tree has for the front end.
   web:
-    runs-on: [self-hosted, Linux, X64, cairnos]
-    # Same guard as build: an outside contributor's pull request never gets
-    # the self-hosted runner.
-    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
       run:
@@ -90,16 +89,11 @@ jobs:
       - run: npm run build
 
   lint:
-    runs-on: [self-hosted, Linux, X64, cairnos]
-    # Same guard as build: an outside contributor's pull request never gets
-    # the self-hosted runner.
-    if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      # The runner host has a Go toolchain, but not on the runner account's
-      # PATH. setup-go puts a known version there and reads the same go.mod
-      # the rest of CI does.
+      # Same toolchain rule as build: go.mod decides, not the runner image.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
