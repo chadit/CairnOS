@@ -6,8 +6,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// printFlag is the print-and-exit flag claude, qwen, and the omp family
-// share for one-shot runs.
+// printFlag is the print-and-exit flag claude, qwen, and omp share for
+// one-shot runs.
 const printFlag = "-p"
 
 // Registry names of the wrapped command-line tools.
@@ -16,9 +16,6 @@ const (
 	CodexName       = "codex"
 	QwenName        = "qwen"
 	OMPName         = "omp"
-	OMPCodexName    = "omp_codex"
-	OMPQwenName     = "omp_qwen"
-	OMPGLMName      = "omp_glm"
 	AntigravityName = "antigravity"
 )
 
@@ -29,20 +26,20 @@ type CLITool struct {
 	Args   []string
 }
 
-// CLIDefaults maps each built-in CLI runner name to its launch defaults. The
-// omp_* names differ from their binaries because those carry a dash while
-// runner names use underscores. Every argv template picks the tool's headless
-// one-shot mode, because a workflow action can never answer an interactive UI:
-// a bare `claude <prompt>` opens the tool's TUI and hangs the run.
+// CLIDefaults maps each built-in CLI runner name to its launch defaults. Every
+// key is both a runner name workflows use and a type value [runner.<name>]
+// blocks set, so removing one breaks the configs and workflows that name it.
+// Every argv template picks the tool's headless one-shot mode, because a
+// workflow can never answer an interactive UI: a bare `claude <prompt>` opens
+// the tool's TUI and hangs the run. configuredRunnerFactory in
+// internal/cli/wiring.go starts a wrapper script's block from the defaults its
+// type names.
 func CLIDefaults() map[string]CLITool {
 	return map[string]CLITool{
 		ClaudeName:      {Binary: "claude", Args: []string{printFlag, promptToken}},
 		CodexName:       {Binary: "codex", Args: []string{"exec", promptToken}},
 		QwenName:        {Binary: "qwen", Args: []string{printFlag, promptToken}},
 		OMPName:         {Binary: "omp", Args: []string{printFlag, promptToken}},
-		OMPCodexName:    {Binary: "omp-codex", Args: []string{printFlag, promptToken}},
-		OMPQwenName:     {Binary: "omp-qwen", Args: []string{printFlag, promptToken}},
-		OMPGLMName:      {Binary: "omp-glm", Args: []string{printFlag, promptToken}},
 		AntigravityName: {Binary: "antigravity"},
 	}
 }

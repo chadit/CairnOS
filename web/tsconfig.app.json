@@ -11,6 +11,8 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    // tsc -b writes build info even with noEmit; keep it out of the source tree.
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "jsx": "react-jsx",
 
     "strict": true,
@@ -24,7 +26,6 @@
 
     "types": ["vitest/globals", "@testing-library/jest-dom"],
 
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }

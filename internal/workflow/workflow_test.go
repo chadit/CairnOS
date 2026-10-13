@@ -1125,3 +1125,28 @@ func TestParseRejectsCycleWithPathDetail(t *testing.T) {
 
 	t.Fatalf("no %s in %v", workflow.CodeCycleDetected, list)
 }
+
+func TestInputDeclMustBeSupplied(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		decl workflow.InputDecl
+		want bool
+	}{
+		{name: "required with no default", decl: workflow.InputDecl{Required: true}, want: true},
+		{name: "required with an empty-string default", decl: workflow.InputDecl{Required: true, HasDefault: true, Default: ""}, want: false},
+		{name: "optional with no default", decl: workflow.InputDecl{}, want: false},
+		{name: "optional with a default", decl: workflow.InputDecl{HasDefault: true, Default: "x"}, want: false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := testCase.decl.MustBeSupplied(); got != testCase.want {
+				t.Fatalf("MustBeSupplied() = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}

@@ -10,9 +10,11 @@ import (
 	"syscall"
 )
 
-// groupProcess gives the probe its own process group and signals that group on
-// cancellation. A launcher is usually a wrapper script, so signaling the
-// wrapper alone would leave the CLI it started running past the deadline.
+// groupProcess gives a child its own process group and kills that group on
+// cancel, since every caller may run a wrapper script that forks its CLI.
+// Neither launchd's job-exit sweep nor a terminal hangup reaches the new group,
+// so cmd/cairnos turns SIGTERM and SIGHUP into a cancel. A SIGKILL to the
+// parent still leaves the group running.
 func groupProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -34,7 +36,7 @@ func killProcessGroup(cmd *exec.Cmd) error {
 			return os.ErrProcessDone
 		}
 
-		return fmt.Errorf("kill launcher process group: %w", err)
+		return fmt.Errorf("kill process group: %w", err)
 	}
 
 	return nil

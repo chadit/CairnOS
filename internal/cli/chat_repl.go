@@ -74,7 +74,9 @@ func newChatREPL(app *App, client chatClient, sessionID, personality string) *ch
 
 // run reads lines until /quit, /exit, stdin EOF, or a scanner error. Parent
 // cancellation deliberately does not end the loop (cmdChat detaches it with
-// context.WithoutCancel), so those four exits are the whole shutdown story.
+// context.WithoutCancel). A SIGTERM or SIGHUP ends the session from cmdChat
+// instead, which returns while this loop is still blocked on stdin and lets
+// the process exit take it down.
 func (r *chatREPL) run(ctx context.Context, interrupts <-chan os.Signal) int {
 	done := make(chan struct{})
 	watcherStopped := make(chan struct{})

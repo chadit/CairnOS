@@ -18,7 +18,7 @@ const usageToolDescription = "Report how much of each configured Claude Code and
 // report: the call is instant, and a stale warning must reach the reply.
 const usageReportToolDescription = "Report how much of each Claude Code and Codex account's rate limits is used, " +
 	"from the latest report the usage script wrote: the 5-hour and weekly windows with the share used and the reset time, " +
-	"plus each account's pick score and banked reset credits, as a Markdown table. " +
+	"plus each account's ranking score and banked reset credits, as a Markdown table. " +
 	"Read-only and spends no quota. Put the table in your reply verbatim, with the stale warning above it when there is one."
 
 // Describe implements runner.Describer, which is what lets the chat agent offer

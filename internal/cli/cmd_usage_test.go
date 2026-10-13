@@ -18,8 +18,8 @@ import (
 const (
 	usageCmd            = "usage"
 	usageClaudeLauncher = "claude-agent"
-	usageCodexLauncher  = "codex-work"
-	usageSecondClaude   = "claude-work"
+	usageCodexLauncher  = "codex-agent"
+	usageSecondClaude   = "claude-alt"
 )
 
 // usageClaudeShim drains the request lines, then answers the way Claude Code
@@ -56,18 +56,9 @@ func usageHome(t *testing.T, usageBlock string) (string, string) {
 		}
 	}
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n" + usageBlock + "\n[host.build_box]\ntype = \"worker\"\nssh  = \"build-box\"\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with the usage block: %v", err)
-	}
+	appendConfig(t, dir, block)
 
 	return dir, shims
 }
@@ -88,7 +79,7 @@ func TestUsagePrintsOneRowPerWindow(t *testing.T) {
 	want := "LOGIN         PLAN     WINDOW  USED  RESETS\n" +
 		"claude-agent  max      5h      2%    2026-09-22 18:50 UTC\n" +
 		"                       7d      23%   2026-09-24 12:00 UTC\n" +
-		"codex-work    prolite  7d      24%   2026-09-26 10:01 UTC\n"
+		"codex-agent   prolite  7d      24%   2026-09-26 10:01 UTC\n"
 
 	if stdout != want {
 		t.Fatalf("stdout =\n%s\nwant\n%s", stdout, want)
@@ -119,7 +110,7 @@ func TestUsageJSONRoundTripsToTheReport(t *testing.T) {
 		t.Fatalf("logins = %+v, want max then prolite", report.Logins)
 	}
 
-	if report.HasErrors || !strings.Contains(report.Summary, "| codex-work ") {
+	if report.HasErrors || !strings.Contains(report.Summary, "| codex-agent ") {
 		t.Fatalf("report = %+v, want a clean report whose summary names both logins", report)
 	}
 }
@@ -203,18 +194,16 @@ func TestUsageFailsWhenNoLoginReports(t *testing.T) {
 	}
 }
 
-// usageReportFile is a one-account account_pick.py report. The verb fills
+// usageReportFile is a one-account cairnos.usage.v1 report. The verb fills
 // written_at and the account's read_at.
-const usageReportFile = `{"schema": "account-pick.usage.v1", "written_at": %[1]d, "host": "agent-box", "accounts": [
- {"tool": "codex", "account": "work", "wrapper": "codex-work", "read_at": %[1]d, "plan": "prolite",
-  "rate_limit_reached": null, "error": null,
-  "windows": [{"name": "weekly", "window_minutes": 10080, "used_percent": 24, "remaining_percent": 76,
-   "resets_at": 1790416865, "resets_in_seconds": 1000}],
+const usageReportFile = `{"schema": "cairnos.usage.v1", "written_at": %[1]d, "accounts": [
+ {"tool": "codex", "wrapper": "codex-agent", "read_at": %[1]d, "plan": "prolite", "error": null,
+  "windows": [{"name": "weekly", "used_percent": 24, "resets_at": 1790416865}],
   "reset_credit_expiries": [4102444800], "score": 14.3}]}`
 
 func TestUsageReadsAStaleScriptReportWithoutRunningTheScript(t *testing.T) {
 	files := t.TempDir()
-	script := filepath.Join(files, "account-pick")
+	script := filepath.Join(files, "usage-report")
 	output := filepath.Join(files, "usage.json")
 
 	// #nosec G306 -- the script must be executable; it lives in t.TempDir.
@@ -243,8 +232,8 @@ func TestUsageReadsAStaleScriptReportWithoutRunningTheScript(t *testing.T) {
 		t.Fatalf("first line = %q, want the stale notice above the table", notice)
 	}
 
-	want := "LOGIN       PLAN     WINDOW  USED  RESETS                SCORE  CREDITS\n" +
-		"codex-work  prolite  weekly  24%   2026-09-26 10:01 UTC  14.3   1\n"
+	want := "LOGIN        PLAN     WINDOW  USED  RESETS                SCORE  CREDITS\n" +
+		"codex-agent  prolite  weekly  24%   2026-09-26 10:01 UTC  14.3   1\n"
 
 	if table != want {
 		t.Fatalf("table =\n%s\nwant\n%s", table, want)

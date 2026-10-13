@@ -59,8 +59,6 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 		builtins.LanguageRulesName,
 		builtins.MCPClientName,
 		builtins.OMPName,
-		builtins.OMPCodexName,
-		builtins.OMPQwenName,
 		builtins.OpenAIName,
 		builtins.QwenName,
 		builtins.SandboxExecName,

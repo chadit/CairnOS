@@ -1,22 +1,20 @@
 # release_monitor.toml: watch upstream releases and open a roadmap issue when
 # one of them lines up with where CairnOS is headed.
 #
-# Run it:
-#   cairnos run examples/agents/release_monitor/release_monitor.toml
-# Put it on the daily schedule:
+# Run it, naming the repo that receives triage issues:
+#   cairnos run examples/agents/release_monitor/release_monitor.toml \
+#     --input issues_repo=your-org/your-issues-repo
+# Put it on the daily schedule. A scheduled run supplies no inputs, so first
+# give issues_repo a default in your copy of this file:
 #   cairnos schedule add examples/agents/release_monitor/release_monitor.toml
 #
-# Fan-out limit (read the README): each github op=releases action pulls ONE
-# repo, and the schema has no foreach yet (it is reserved for a later phase in
-# .agents/spec/02-workflow-schema.md). So this file pulls two representative
-# repos through two parallel actions and fans them into one judging step. To
-# watch more, copy a release_* action, point its repo at the next entry, and
-# add that action to the compare step's depends_on and prompt. The `repos`
-# input below documents the intended watched set; it does not drive the actions
-# on its own until foreach lands.
-#
-# S6 note (.agents/spec/14-open-decisions.md): the issues repo is CairnOS-Issues
-# (corrected from the vision's CairOS-Issues).
+# Fan-out (read the README): each github op=releases action pulls ONE repo, so
+# this file pulls two representative repos through two parallel actions and
+# fans them into one judging step. To watch more, copy releases_otel under a
+# new name, point its repo at the next entry, and add the new action to
+# format_releases: its depends_on and one line in its releases table. The
+# `repos` input below documents the intended watched set and drives none of the
+# actions.
 
 [workflow]
 name        = "release_monitor"
@@ -29,12 +27,14 @@ timeout     = "15m"
 [workflow.inputs.repos]
 type        = "string[]"
 default     = ["open-telemetry/opentelemetry-go", "modelcontextprotocol/go-sdk"]
-description = "Upstream owner/name repos to watch. Documents the intended set; with no foreach yet, the actions below name their repos directly (see the fan-out note at the top)."
+description = "Upstream owner/name repos to watch. Documents the intended set; the actions below name their repos directly (see the fan-out note at the top)."
 
+# Required with no default: a guessed repo would only fail on the day a release
+# matches, while a missing input stops the run before any step does work.
 [workflow.inputs.issues_repo]
 type        = "string"
-default     = "chadit/CairnOS-Issues"
-description = "Private issues repo that receives triage drafts. Corrected to CairnOS-Issues per S6."
+required    = true
+description = "owner/name of the issues repo that receives triage drafts. The github token needs write access to it."
 
 [workflow.inputs.roadmap_summary]
 type        = "string"
@@ -53,7 +53,7 @@ description = "Plain-text roadmap summary the compare step judges releases again
 
 # One repo per action: the github runner's op=releases takes a single repo, so
 # each watched repo is its own root action. They share no dependency, so the
-# engine runs them in parallel and the compare step fans them back in.
+# engine runs them in parallel and the format_releases step fans them back in.
 [action.releases_otel]
 runner     = "github"
 idempotent = true
@@ -76,12 +76,42 @@ backoff      = "exponential"
 base_delay   = "2s"
 max_delay    = "30s"
 
+# Each releases output is a list of {tag, name, published_at, body} tables, and
+# a reference embedded in prompt text must resolve to a single value, so this
+# step renders every list into one text block. Its releases table maps each
+# watched repo to its action's output, which a whole-value reference passes
+# through as the list itself.
+[action.format_releases]
+runner     = "code"
+depends_on = ["releases_otel", "releases_mcp"]
+
+[action.format_releases.params]
+script = '''
+def render(repo, releases):
+    lines = ["Recent %s releases:" % repo]
+    for release in releases:
+        title = release["tag"]
+        if release["name"]:
+            title += " (%s)" % release["name"]
+        lines.append("%s, published %s" % (title, release["published_at"]))
+        if release["body"]:
+            lines.append(release["body"])
+    return "\n".join(lines)
+
+watched = params["releases"]
+output = "\n\n".join([render(repo, watched[repo]) for repo in sorted(watched)])
+'''
+
+[action.format_releases.params.releases]
+"open-telemetry/opentelemetry-go" = "${{ releases_otel.output }}"
+"modelcontextprotocol/go-sdk"     = "${{ releases_mcp.output }}"
+
 # The judging step. The LLM returns plain text, so the prompt pins a one-word
 # verdict on the first line: MATCH or NONE. The create_issue step gates on that
 # sentinel, the same trick career_scout uses with NO_MATCHES.
 [action.compare]
 runner     = "anthropic"
-depends_on = ["releases_otel", "releases_mcp"]
+depends_on = ["format_releases"]
 
 [action.compare.params]
 system = """
@@ -100,13 +130,7 @@ write nothing after the first line.
 You will see false positives. When unsure, lean toward MATCH and let the human
 triage. The body you write becomes a draft issue, not a decision.
 """
-prompt = """
-Recent open-telemetry/opentelemetry-go releases:
-${{ releases_otel.output }}
-
-Recent modelcontextprotocol/go-sdk releases:
-${{ releases_mcp.output }}
-"""
+prompt = "${{ format_releases.output }}"
 
 [action.compare.retry]
 max_attempts = 2

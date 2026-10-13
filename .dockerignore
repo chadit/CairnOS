@@ -8,6 +8,8 @@ bin/
 .claude
 .claude-lint-skip
 .agents
+bwpin
+tools/bwpin/bwpin
 *.db
 *.db-wal
 *.db-shm
@@ -15,6 +17,6 @@ Dockerfile
 .dockerignore
 
 # The Go binary does not build or embed the SPA (it is a separate static bundle
-# served outside the image), so the whole web/ tree — node_modules included —
+# served outside the image), so the whole web/ tree, node_modules included,
 # stays out of the build context.
 web/

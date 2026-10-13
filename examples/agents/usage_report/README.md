@@ -46,7 +46,7 @@ The launchers to probe, grouped by the protocol they speak:
 
 ```toml
 [runner.usage]
-claude = ["~/.local/bin/claude-agent", "~/.local/bin/claude-work"]
+claude = ["~/.local/bin/claude-agent", "~/.local/bin/claude-alt"]
 codex  = ["~/.local/bin/codex-agent"]
 ```
 

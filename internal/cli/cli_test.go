@@ -203,6 +203,23 @@ func initDir(t *testing.T) string {
 	return dir
 }
 
+// appendConfig adds a block to the scaffolded config, keeping what init wrote so
+// the block sits beside the defaults the way an operator's edit would.
+func appendConfig(t *testing.T, dir, block string) {
+	t.Helper()
+
+	cfgPath := filepath.Join(dir, cli.ConfigFileName)
+
+	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
+	if err != nil {
+		t.Fatalf("read scaffolded config: %v", err)
+	}
+
+	if err := os.WriteFile(cfgPath, append(existing, block...), 0o600); err != nil {
+		t.Fatalf("append to the scaffolded config: %v", err)
+	}
+}
+
 // writeWorkflow drops a workflow fixture into the home's workflows folder.
 func writeWorkflow(t *testing.T, dir, content string) string {
 	t.Helper()
@@ -231,6 +248,27 @@ func openRunStore(t *testing.T, dir string) *sqlite.Store {
 	})
 
 	return db
+}
+
+// onlyActionOutput returns the stored output of the single action in the single
+// run the home holds. It fails unless that run is stored as succeeded, because
+// a zero exit alone does not prove the store recorded the outcome.
+func onlyActionOutput(t *testing.T, dir string) any {
+	t.Helper()
+
+	db := openRunStore(t, dir)
+
+	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
+	if err != nil || len(runs) != 1 || runs[0].Status != store.RunSucceeded {
+		t.Fatalf("list runs = %+v, %v; want one succeeded run", runs, err)
+	}
+
+	results, err := db.ListActionResults(t.Context(), runs[0].ID)
+	if err != nil || len(results) != 1 {
+		t.Fatalf("action results = %+v, %v; want one result", results, err)
+	}
+
+	return results[0].Output
 }
 
 // TestInitScaffoldsRunnableLayout checks that the rendered config round-trips

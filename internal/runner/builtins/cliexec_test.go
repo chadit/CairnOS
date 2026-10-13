@@ -25,6 +25,10 @@ const (
 	// literal, hoisted so the template assertions share one spelling.
 	promptArg   = "{prompt}"
 	codexBinary = "codex"
+
+	// qwenTimeoutCode is the code every deadline case expects from the qwen
+	// runner the timeout tests drive.
+	qwenTimeoutCode = builtins.QwenName + ".timeout"
 )
 
 // writeShim drops an executable script into dir and returns its path. Tests
@@ -227,6 +231,56 @@ func TestCLIClassifiesExitOutput(t *testing.T) {
 	}
 }
 
+// TestCLIDeclaredWrapperReauthNamesItsType covers a [runner.<name>] block that
+// wraps a built-in. The scheduler reads the credential to hold a job on from
+// the re-auth code, so that code carries the wrapped built-in's name, while
+// every other code keeps the block's own name.
+func TestCLIDeclaredWrapperReauthNamesItsType(t *testing.T) {
+	const blockName = "summarize"
+
+	tmpDir := t.TempDir()
+	notLoggedIn := writeShim(t, tmpDir, "not-logged-in", failOnStdout("Not logged in · Please run /login"))
+	failing := writeShim(t, tmpDir, "failing", failOnStderr("compilation failed: 3 errors"))
+
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		binary    string
+		wantCode  string
+		wantClass runner.ErrorClass
+	}{
+		{name: "re-auth carries the wrapped type", binary: notLoggedIn, wantClass: runner.ClassNeedsReauth, wantCode: builtins.ClaudeName + ".needs_reauth"},
+		{name: "other failures keep the block name", binary: failing, wantClass: runner.ClassPermanent, wantCode: blockName + ".exit"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Wiring builds a type = "claude" block from claude's launch
+			// template, and the block's own binary key points it at the shim.
+			claudeTemplate := builtins.CLIDefaults()[builtins.ClaudeName]
+
+			cli, err := builtins.NewCLI(blockName, claudeTemplate, map[string]any{binaryKey: tt.binary})
+			if err != nil {
+				t.Fatalf("new cli: %v", err)
+			}
+
+			_, err = cli.Execute(t.Context(), cliTask())
+
+			classified, isClassified := errors.AsType[*runner.Error](err)
+			if !isClassified {
+				t.Fatalf("error %v is not a runner.Error", err)
+			}
+
+			if classified.Class != tt.wantClass || classified.Code != tt.wantCode {
+				t.Fatalf("class/code = %v/%q, want %v/%q", classified.Class, classified.Code, tt.wantClass, tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 	// The exec keeps sleep from surviving as an orphan that holds the
 	// stdout pipe open past the kill.
@@ -247,7 +301,7 @@ func TestCLIDeadlineIsTransientTimeout(t *testing.T) {
 	_, err = cli.Execute(t.Context(), task)
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
-	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != "qwen.timeout" {
+	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != qwenTimeoutCode {
 		t.Fatalf("error = %v, want transient qwen.timeout", err)
 	}
 
@@ -277,7 +331,7 @@ func TestCLIDeadlineAtStartIsTransientTimeout(t *testing.T) {
 	_, err = cli.Execute(t.Context(), task)
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
-	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != "qwen.timeout" {
+	if !isClassified || classified.Class != runner.ClassTransient || classified.Code != qwenTimeoutCode {
 		t.Fatalf("error = %v, want transient qwen.timeout", err)
 	}
 }

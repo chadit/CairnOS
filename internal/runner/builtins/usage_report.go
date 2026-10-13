@@ -16,9 +16,9 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Config keys of the report-file source. A script such as toolkit's
-// account_pick.py writes a report on an interval, and a request reads that file
-// instead of probing every login, which suits a host that already keeps one.
+// Config keys of the report-file source. Serve runs a script that writes a
+// cairnos.usage.v1 report on an interval, and a request reads that file
+// instead of probing every login, so it answers at once.
 const (
 	cfgKeyUsageScript   = "script"
 	cfgKeyUsageOutput   = "output"
@@ -30,15 +30,15 @@ const (
 // the block names the path once and the script and the reader cannot disagree.
 const usageOutputToken = "{output}"
 
-// usageReportSchema is the one account_pick.py layout this build reads. A newer
-// layout may move fields this parser relies on, so it is refused, not guessed at.
-const usageReportSchema = "account-pick.usage.v1"
+// usageReportSchema is the one report layout this build reads. A newer layout
+// may move fields this parser relies on, so it is refused, not guessed at.
+const usageReportSchema = "cairnos.usage.v1"
 
 // usageStaleIntervals is how many refresh intervals an account's reading may
 // age, plus one run's timeout, before a request flags it. One missed run is
-// tolerated; a second means the script is failing or serve is not running it.
-// The timeout is added because account_pick.py stamps a reading when its run
-// starts, and the file lands only when the run ends.
+// tolerated; a second means the refresh is broken. The timeout is added because
+// a script may stamp a reading when its run starts, and the file lands only
+// when the run ends.
 const usageStaleIntervals = 2
 
 // codeUsageBadReport marks a report file this build cannot read.
@@ -54,8 +54,8 @@ type usageScript struct {
 	interval time.Duration
 }
 
-// usageReportFile is the account_pick.py report. Epochs decode as float64
-// because Python writes time.time() with a fraction.
+// usageReportFile is the cairnos.usage.v1 report. Epochs decode as float64
+// because a script may write fractional seconds, as Python's time.time() does.
 type usageReportFile struct {
 	Schema    string               `json:"schema"`
 	Accounts  []usageReportAccount `json:"accounts"`
@@ -224,8 +224,8 @@ func (s *usageScript) args() []string {
 
 // staleNotice names the accounts whose reading is older than the bound, so a
 // reader is told which numbers are old instead of trusting them. It goes by each
-// account's read_at rather than the file's written_at, because account_pick.py
-// merges a run's readings into the file and keeps the entries it did not read.
+// account's read_at rather than the file's written_at, because a script may
+// merge a run's readings into the file and keep the entries it did not read.
 func (u *Usage) staleNotice(logins []UsageLogin, now time.Time) string {
 	bound := usageStaleIntervals*u.script.interval + u.timeout
 
@@ -442,9 +442,12 @@ func runUsageCommand(ctx context.Context, path string, argv []string) (string, e
 	return stdout, nil
 }
 
-// parseUsageReport decodes an account_pick.py report into the probe's report
+// parseUsageReport decodes a cairnos.usage.v1 report into the probe's report
 // shape. A reset credit that expired before now is dropped, since the file may
-// be read long after it was written.
+// be read long after it was written. An account missing a name refuses the
+// whole file instead of becoming one errored login the way a failed read does:
+// a failed read is one dead account, while a missing name means the writer
+// itself is broken, and without a wrapper there is no name to report under.
 func parseUsageReport(data []byte, now time.Time) (UsageReport, error) {
 	var file usageReportFile
 
@@ -460,15 +463,40 @@ func parseUsageReport(data []byte, now time.Time) (UsageReport, error) {
 	report := UsageReport{WrittenAt: epochTime(file.WrittenAt), Logins: make([]UsageLogin, 0, len(file.Accounts))}
 
 	for index := range file.Accounts {
-		report.Logins = append(report.Logins, file.Accounts[index].login(report.WrittenAt, now))
+		account := &file.Accounts[index]
+		if err := account.validate(index); err != nil {
+			return UsageReport{}, err
+		}
+
+		report.Logins = append(report.Logins, account.login(report.WrittenAt, now))
 	}
 
 	return report, nil
 }
 
+// validate refuses an account missing one of the two names the format requires.
+// launchers selects by wrapper, so an account without one loads but can never
+// be picked, and a blank tool leaves the login's protocol empty. The index
+// names the entry because neither name can.
+func (a *usageReportAccount) validate(index int) error {
+	if strings.TrimSpace(a.Wrapper) == "" {
+		return fmt.Errorf("%w: accounts[%d] (tool %q) has an empty wrapper; wrapper must be non-empty",
+			errUsageBadReport, index, a.Tool)
+	}
+
+	if strings.TrimSpace(a.Tool) == "" {
+		return fmt.Errorf("%w: accounts[%d] (wrapper %q) has an empty tool; tool must be non-empty",
+			errUsageBadReport, index, a.Wrapper)
+	}
+
+	return nil
+}
+
 // login maps one account onto a report entry: the wrapper is what a caller
-// launches, so it plays the launcher, and the tool names the protocol. An entry
-// without read_at counts as read when the file was written.
+// launches, so it plays the launcher, and the tool names the protocol. Both are
+// trimmed, as validate judged them, because launchers matches names exactly and
+// a padded wrapper could never be picked. An entry without read_at counts as
+// read when the file was written.
 func (a *usageReportAccount) login(writtenAt, now time.Time) UsageLogin {
 	readAt := writtenAt
 	if a.ReadAt > 0 {
@@ -477,8 +505,8 @@ func (a *usageReportAccount) login(writtenAt, now time.Time) UsageLogin {
 
 	login := UsageLogin{
 		ReadAt:   readAt,
-		Launcher: a.Wrapper,
-		Protocol: a.Tool,
+		Launcher: strings.TrimSpace(a.Wrapper),
+		Protocol: strings.TrimSpace(a.Tool),
 		Plan:     a.Plan,
 		Error:    a.Error,
 		Score:    a.Score,

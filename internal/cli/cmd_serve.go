@@ -38,9 +38,9 @@ const serveUsage = "usage: cairnos serve [--dir D]\n"
 const serveShutdownTimeout = 10 * time.Second
 
 // cmdServe is the Phase 1a long-lived process: the gRPC and HTTP API plus
-// the scheduler daemon in one process, stopping cleanly on interrupt. The auth
-// store opens only with auth on, and the tenancy store only with OAuth login on,
-// so a nil store keeps that whole path out of the process.
+// the scheduler daemon in one process, stopping cleanly on interrupt, SIGTERM,
+// or SIGHUP. The auth store opens only with auth on, and the tenancy store only
+// with OAuth login on, so a nil store keeps that whole path out of the process.
 func (a *App) cmdServe(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)

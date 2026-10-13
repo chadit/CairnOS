@@ -42,7 +42,7 @@ func TestEnvTokenUpperCasesAndReplacesEverythingElse(t *testing.T) {
 		{name: "build_box", want: "BUILD_BOX"},
 		{name: "build-box", want: "BUILD_BOX"},
 		{name: "box.example.com", want: "BOX_EXAMPLE_COM"},
-		{name: "omp-glm", want: "OMP_GLM"},
+		{name: "cursor-agent", want: "CURSOR_AGENT"},
 		{name: "node2", want: "NODE2"},
 	}
 
@@ -61,8 +61,8 @@ func TestLoadHostParsesBlockAndDefaults(t *testing.T) {
 		`ssh  = "build-box"`,
 	) + "\n[host." + hostName + ".harness." + cliClaude + "]\n" +
 		"name = \"claude-agent\"\n" +
-		"\n[host." + hostName + ".harness.omp-glm]\n" +
-		"provider = \"zai\"\n"
+		"\n[host." + hostName + ".harness.cursor-agent]\n" +
+		"provider = \"cursor\"\n"
 
 	cfg, err := config.Load(writeConfig(t, toml))
 	if err != nil {
@@ -75,7 +75,7 @@ func TestLoadHostParsesBlockAndDefaults(t *testing.T) {
 	}
 
 	if host.Type != config.HostTypeWorker || host.SSH != "build-box" {
-		t.Fatalf("host = %+v, want the worker type and the nas alias", host)
+		t.Fatalf("host = %+v, want the worker type and the ssh alias", host)
 	}
 
 	// claude names a binary, so only the path falls back to the default.
@@ -84,10 +84,10 @@ func TestLoadHostParsesBlockAndDefaults(t *testing.T) {
 		t.Fatalf("claude = %+v, want the default path and the configured name", claude)
 	}
 
-	// omp-glm names neither, so the key itself is the binary name.
-	glm := host.Harnesses["omp-glm"]
-	if glm.Path != config.DefaultHarnessPath || glm.Name != "omp-glm" || glm.Provider != "zai" {
-		t.Fatalf("omp-glm = %+v, want both defaults and the provider label", glm)
+	// cursor-agent names neither, so the key itself is the binary name.
+	cursor := host.Harnesses["cursor-agent"]
+	if cursor.Path != config.DefaultHarnessPath || cursor.Name != "cursor-agent" || cursor.Provider != "cursor" {
+		t.Fatalf("cursor-agent = %+v, want both defaults and the provider label", cursor)
 	}
 }
 
@@ -239,9 +239,9 @@ func TestLoadHostRejectsBadBlocks(t *testing.T) {
 		{
 			name: "two tools rendering one variable",
 			toml: hostTOML(`type = "worker"`) +
-				"\n[host." + hostName + ".harness.omp-glm]\n" +
-				"\n[host." + hostName + ".harness.omp_glm]\n",
-			want: "both render as _HARNESS_OMP_GLM",
+				"\n[host." + hostName + ".harness.cursor-agent]\n" +
+				"\n[host." + hostName + ".harness.cursor_agent]\n",
+			want: "both render as _HARNESS_CURSOR_AGENT",
 		},
 	}
 

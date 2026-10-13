@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -54,10 +55,14 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 		return a.runChatSearch(bearerContext(ctx, opts.token), client, &opts)
 	}
 
-	// WithoutCancel detaches the conversation from main's NotifyContext:
-	// SIGINT must interrupt one turn, not the whole session, so the REPL's
-	// only exits are /quit, /exit, stdin EOF, and a scanner error.
-	callCtx := bearerContext(context.WithoutCancel(ctx), opts.token)
+	// WithoutCancel detaches the conversation from main's NotifyContext, since
+	// SIGINT must interrupt one turn, not the whole session. main cancels on
+	// SIGTERM and SIGHUP too, for serve's drain, so this context watches those
+	// two again and kill or a closed terminal still ends the session.
+	sessionCtx, stopSession := signal.NotifyContext(context.WithoutCancel(ctx), syscall.SIGTERM, syscall.SIGHUP)
+	defer stopSession()
+
+	callCtx := bearerContext(sessionCtx, opts.token)
 
 	sessionID, personality, err := resolveSession(callCtx, client, &opts)
 	if err != nil {
@@ -79,7 +84,30 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 		interrupts = signals
 	}
 
-	return newChatREPL(a, client, sessionID, personality).run(callCtx, interrupts)
+	repl := newChatREPL(a, client, sessionID, personality)
+
+	return a.untilStopped(sessionCtx, func() int { return repl.run(callCtx, interrupts) })
+}
+
+// untilStopped returns the REPL's exit code, or ExitOK once a stop signal ends
+// ctx. The REPL blocks on a stdin read no context can interrupt, so a stop
+// leaves its goroutine parked there, and main exits right after this returns.
+func (a *App) untilStopped(ctx context.Context, repl func() int) int {
+	exited := make(chan int, 1)
+
+	go func() {
+		exited <- repl()
+	}()
+
+	select {
+	case code := <-exited:
+		return code
+	case <-ctx.Done():
+		// End the "> " prompt line the way a stdin EOF does.
+		a.printOutf("\n")
+
+		return ExitOK
+	}
 }
 
 // chatOptions holds the parsed chat flags.

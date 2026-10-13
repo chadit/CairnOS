@@ -22,11 +22,11 @@ jobs:
   check:
     runs-on: [self-hosted, Linux, X64, cairnos]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The runner host has a Go toolchain, but not on the runner account's
       # PATH. setup-go puts a known version there and reads the same go.mod
       # the rest of CI does.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: check pinned runtime and models against upstream

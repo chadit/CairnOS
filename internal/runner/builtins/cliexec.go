@@ -54,14 +54,23 @@ const (
 	// tail, not the head, because the cause of a CLI failure is usually the
 	// last thing it printed.
 	stderrTailKeep = 4096
+
+	// cliWaitDelay bounds the wait on the pipes after the deadline or the
+	// tool's exit. A helper that left the process group through setsid survives
+	// the group kill, and on Windows every child of the tool does, so either can
+	// hold stdout open until os/exec closes the pipes.
+	cliWaitDelay = 2 * time.Second
 )
 
 // Refusal markers for a failed CLI exit, matched on lowercased output inside
 // non-alphanumeric boundaries so "quotation" is not "quota" and a "rate
-// limiter" log line is not a rate limit. The set is toolkit login-fallback's,
-// plus caps the Claude Code 2.1.284 and codex 0.157 binaries word without
-// "usage limit": "You've hit your session limit", "out of credits".
+// limiter" log line is not a rate limit.
 var (
+	// cliLimitPattern joins two sets: the 429, rate-limit, too-many-requests,
+	// usage-limit, and quota wording rate-limited APIs and CLIs share, and the
+	// cap and credit phrases Claude Code 2.1.284 and codex 0.157 print that
+	// don't contain "usage limit": "You've hit your session limit", "out of
+	// credits", "out of extra usage", "credit balance is too low".
 	cliLimitPattern = regexp.MustCompile(`(^|[^a-z0-9])(429|rate.?limit(ed|s)?|too many requests|usage limits?|hit your [a-z' -]{0,30}(limit|budget|spend cap)|quota|out of credits|out of extra usage|credit balance (is )?too low)([^a-z0-9]|$)`)
 
 	// cliOverloadPattern is kept apart from the limit set because a 529 is
@@ -74,13 +83,20 @@ var (
 // are thin wrappers over this helper, per the spec's build-the-helper-once
 // guidance (.agents/spec/03-runner-interface.md, "Built-in runners").
 //
-// Known limit: a wrapped tool that hands its stdout pipe to a long-lived
-// child can delay EOF past the tool's own exit. Process-group cleanup is
-// Phase 1b material; the wrapped CLIs today are single-process.
+// A deadline kills the whole process group, since a wrapper's forked CLI can
+// hold stdout open. cliWaitDelay closes the pipes on a child that escaped the
+// group through setsid.
 type cliExec struct {
 	name   string
 	binary string
-	args   []string
+
+	// reauthProvider is the built-in whose launch template this runner started
+	// from. The re-auth code carries it instead of name, because the scheduler
+	// holds a job on the credential named before the code's last dot, and a
+	// [runner.summarize] block wrapping claude needs the claude credential.
+	reauthProvider string
+
+	args []string
 
 	// env carries the rendered host table. Nil is the ordinary case and keeps
 	// cmd.Env unset, so the child inherits serve's environment exactly as it did
@@ -134,7 +150,23 @@ func newCLIExec(name string, tool CLITool, cfg map[string]any) (cliExec, error) 
 		args = []string{promptToken}
 	}
 
-	return cliExec{name: name, binary: binary, args: args, stdin: useStdin, allowDashedPrompt: allowDashed}, nil
+	return cliExec{
+		name: name, binary: binary, args: args, stdin: useStdin, allowDashedPrompt: allowDashed,
+		reauthProvider: templateOwner(name, tool),
+	}, nil
+}
+
+// templateOwner names the built-in whose launch template tool is, which is the
+// type wiring built a declared wrapper block from. A template no built-in owns,
+// such as a test shim, falls back to the runner's own name.
+func templateOwner(name string, tool CLITool) string {
+	for builtin, template := range CLIDefaults() {
+		if template.Binary == tool.Binary && slices.Equal(template.Args, tool.Args) {
+			return builtin
+		}
+	}
+
+	return name
 }
 
 // run launches the configured binary for one task, optionally forwarding
@@ -161,6 +193,8 @@ func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runn
 		// #nosec G204 -- the binary and argv template come from the operator's
 		// own runner config block, not from workflow params or network input.
 		cmd := exec.CommandContext(runCtx, c.binary, substitutePrompt(c.args, prompt)...)
+		cmd.WaitDelay = cliWaitDelay
+		groupProcess(cmd)
 
 		// A nil Env inherits serve's environment, which is what these runners have
 		// always done and what the wrapped tools' own logins depend on. Setting it is
@@ -197,6 +231,13 @@ func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runn
 
 	waitErr := cmd.Wait()
 	latency := time.Since(start)
+
+	// WaitDelay also cuts the wait short when the tool exits cleanly but leaves
+	// a helper holding stderr. stdout already reached EOF, so the result is
+	// whole and only the stderr tail can come up short.
+	if errors.Is(waitErr, exec.ErrWaitDelay) && runCtx.Err() == nil {
+		waitErr = nil
+	}
 
 	if waitErr != nil {
 		return runner.Result{}, c.classifyWait(runCtx, waitErr, stderr.Text(), stdoutTail.Text())
@@ -280,7 +321,8 @@ func (c *cliExec) promptAfterTerminator() bool {
 	return true
 }
 
-// code builds a stable machine code under this runner's name.
+// code builds a stable machine code under this runner's name. The re-auth code
+// is the one exception and uses reauthProvider.
 func (c *cliExec) code(suffix string) string {
 	return c.name + "." + suffix
 }
@@ -359,7 +401,7 @@ func (c *cliExec) classifyExitOutput(output, message string, cause error) error 
 	case looksReauth(lowered):
 		return &runner.Error{
 			Class:   runner.ClassNeedsReauth,
-			Code:    c.code("needs_reauth"),
+			Code:    c.reauthProvider + ".needs_reauth",
 			Message: message + " (re-authenticate the " + c.binary + " CLI)",
 			Cause:   cause,
 		}

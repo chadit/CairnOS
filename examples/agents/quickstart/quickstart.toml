@@ -5,10 +5,10 @@
 # Run it:
 #   cairnos run examples/agents/quickstart/quickstart.toml
 #
-# The codex runner launches `codex exec` under the hood (every CLI runner
-# defaults to its tool's headless one-shot mode). Swap the runner line for
-# whichever tool is logged in on this machine: "claude", "qwen", "omp",
-# "omp_glm", or an API runner like "anthropic"/"openai" if a key is set.
+# The codex runner launches `codex exec` under the hood, and the claude, qwen,
+# and omp runners default to their own headless one-shot modes too. Swap the
+# runner line for whichever of those is logged in on this machine, or for an
+# API runner like "anthropic"/"openai" if a key is set.
 
 [workflow]
 name        = "quickstart"

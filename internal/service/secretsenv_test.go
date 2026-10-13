@@ -14,10 +14,10 @@ const (
 	userSecretsFile = "/home/operator/.cairnos/secrets.env"
 )
 
-// TestSystemdUserUnitLoadsBothEnvironmentFiles covers FR10 for the mode the NAS
-// runs. The generated file is a second EnvironmentFile rather than being merged
-// into the first, so a pull can replace it whole without touching an operator's
-// own lines.
+// TestSystemdUserUnitLoadsBothEnvironmentFiles covers a systemd user-unit
+// install, where both files live under the operator's home. The generated file
+// is a second EnvironmentFile rather than being merged into the first, so a
+// pull can replace it whole without touching an operator's own lines.
 func TestSystemdUserUnitLoadsBothEnvironmentFiles(t *testing.T) {
 	t.Parallel()
 
@@ -71,7 +71,7 @@ func TestSystemdSystemUnitLoadsBothEnvironmentFiles(t *testing.T) {
 	}
 }
 
-// TestLaunchdPreambleSourcesBothEnvironmentFiles covers the macOS half of FR10.
+// TestLaunchdPreambleSourcesBothEnvironmentFiles is the same guarantee on macOS.
 // launchd has no EnvironmentFile, so the preamble has to guard each source the
 // way systemd's dash does, or a host without a vault fails to start.
 func TestLaunchdPreambleSourcesBothEnvironmentFiles(t *testing.T) {

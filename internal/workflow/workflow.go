@@ -263,6 +263,14 @@ type InputDecl struct {
 	HasDefault  bool
 }
 
+// MustBeSupplied reports whether a run fails unless its caller passes this
+// input: it is required and has no default to fall back on. `cairnos schedule
+// add` and the engine's run-time input check both ask this, so the add-time
+// refusal cannot drift from the rule that rejects the run.
+func (decl InputDecl) MustBeSupplied() bool {
+	return decl.Required && !decl.HasDefault
+}
+
 // Load reads and parses a workflow file, stamping Hash with the file's
 // SHA-256 so run records can identify the exact definition. The returned
 // error is a cairnerr.Errors carrying every problem found, not just the

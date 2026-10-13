@@ -2,7 +2,9 @@ package poll_test
 
 import (
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,6 +76,20 @@ func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 		event.Inputs["body"] != "found it" || event.Inputs["url"] != "https://github.test/o/r/issues/10" ||
 		event.Inputs["author"] != "octocat" || event.Inputs["created_at"] != "2026-06-20T00:00:00Z" {
 		t.Fatalf("event inputs = %#v", event.Inputs)
+	}
+
+	// schedule add trusts this list to say which required inputs a fire fills.
+	emitted, known := poll.BuiltinSourceInputs(poll.GitHubSourceName)
+	if got := slices.Sorted(maps.Keys(event.Inputs)); !known || !slices.Equal(got, slices.Sorted(slices.Values(emitted))) {
+		t.Fatalf("event input keys = %v, BuiltinSourceInputs = %v (known %t)", got, emitted, known)
+	}
+}
+
+func TestBuiltinSourceInputsUnknownSource(t *testing.T) {
+	t.Parallel()
+
+	if keys, known := poll.BuiltinSourceInputs("not_a_real_source"); known || keys != nil {
+		t.Fatalf("BuiltinSourceInputs(unknown) = %v, %t; want nil, false", keys, known)
 	}
 }
 

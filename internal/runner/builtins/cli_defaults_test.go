@@ -16,8 +16,8 @@ const printArg = "-p"
 
 // TestCLIDefaultsUseHeadlessTemplates pins each built-in wrapper's binary and
 // argv template: codex routes through its exec subcommand, claude, qwen, and
-// the omp family print-and-exit with -p, and antigravity keeps the bare
-// positional fallback (nil template).
+// omp print-and-exit with -p, and antigravity keeps the bare positional
+// fallback (nil template).
 func TestCLIDefaultsUseHeadlessTemplates(t *testing.T) {
 	t.Parallel()
 
@@ -26,9 +26,6 @@ func TestCLIDefaultsUseHeadlessTemplates(t *testing.T) {
 		builtins.CodexName:       {Binary: codexBinary, Args: []string{"exec", promptArg}},
 		builtins.QwenName:        {Binary: "qwen", Args: []string{printArg, promptArg}},
 		builtins.OMPName:         {Binary: "omp", Args: []string{printArg, promptArg}},
-		builtins.OMPCodexName:    {Binary: "omp-codex", Args: []string{printArg, promptArg}},
-		builtins.OMPQwenName:     {Binary: "omp-qwen", Args: []string{printArg, promptArg}},
-		builtins.OMPGLMName:      {Binary: "omp-glm", Args: []string{printArg, promptArg}},
 		builtins.AntigravityName: {Binary: "antigravity"},
 	}
 

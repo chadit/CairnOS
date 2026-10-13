@@ -48,10 +48,14 @@ func (s Sources) Get(name string) (Source, error) {
 	return src, nil
 }
 
-// BuiltinSourceNames lists the poll sources the wiring builds from the runner
-// registry, so `cairnos schedule add` can warn at add time when a
-// [workflow.poll] names a source no wiring will register. It is the add-time
-// counterpart to the registry-built source map the fire path resolves through.
-func BuiltinSourceNames() []string {
-	return []string{GitHubSourceName}
+// BuiltinSourceInputs returns the input keys every event from the named source
+// carries, and false when no wiring builds a source under that name. A poll
+// fire supplies only those keys, so `cairnos schedule add` uses this to warn on
+// an unknown source and to refuse a required input the source never emits.
+func BuiltinSourceInputs(name string) ([]string, bool) {
+	if name != GitHubSourceName {
+		return nil, false
+	}
+
+	return []string{keyNumber, keyTitle, keyBody, keyURL, keyAuthor, keyCreatedAt}, true
 }

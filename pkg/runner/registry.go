@@ -45,6 +45,18 @@ func (r *Registry) Register(name string, factory Factory) error {
 	return nil
 }
 
+// Registered reports whether a factory is registered under name. It reads the
+// factories, not the built instances Get reads, so unlike Get it answers true
+// before BuildAll, and wiring can check a config block's name at startup.
+func (r *Registry) Registered(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, exists := r.factories[name]
+
+	return exists
+}
+
 // Build constructs the named runner from its config block and caches the
 // instance for Get.
 func (r *Registry) Build(name string, cfg map[string]any) error {

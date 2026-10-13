@@ -1,13 +1,10 @@
 package cli_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/store"
 )
 
 // execWorkflow names the exec runner and an action the config block allows, so
@@ -36,21 +33,12 @@ params = { command = "/bin/true" }
 func appendExecBlock(t *testing.T, dir string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner.exec]\n" +
 		"allow_actions = [\"reconcile\"]\n" +
 		"timeout       = 30\n" +
 		"env           = { CAIRNOS_EXEC_MARKER = \"from-config\" }\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with exec block: %v", err)
-	}
+	appendConfig(t, dir, block)
 }
 
 func TestRunExecutesHostExecRunnerFromConfig(t *testing.T) {
@@ -69,24 +57,8 @@ func TestRunExecutesHostExecRunnerFromConfig(t *testing.T) {
 		t.Fatalf("summary missing success:\n%s", stdout)
 	}
 
-	db := openRunStore(t, dir)
-
-	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
-
-	if len(runs) != 1 {
-		t.Fatalf("persisted runs = %+v, want one row", runs)
-	}
-
-	results, err := db.ListActionResults(t.Context(), runs[0].ID)
-	if err != nil {
-		t.Fatalf("list action results: %v", err)
-	}
-
-	if len(results) != 1 || results[0].Output != "from-config" {
-		t.Fatalf("stored results = %+v, want the config env value", results)
+	if got := onlyActionOutput(t, dir); got != "from-config" {
+		t.Fatalf("stored output = %#v, want the config env value", got)
 	}
 }
 

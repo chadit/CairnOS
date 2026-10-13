@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	pgImage = "postgres:16-alpine"
+	pgImage = "postgres:18-alpine"
 
 	// pgIdentity is the disposable database name, user, and password for the
 	// throwaway container, a local-only credential rather than a real secret.

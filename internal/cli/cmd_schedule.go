@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/chadit/CairnOS/internal/agentloop"
 	"github.com/chadit/CairnOS/internal/engine"
@@ -47,9 +49,10 @@ func (a *App) cmdSchedule(ctx context.Context, args []string) int {
 
 // cmdScheduleAdd stores a workflow file's schedule key
 // (.agents/spec/02-workflow-schema.md) as an absolute path, so the daemon can
-// load it from any directory. An unregistered poll source parses fine and fails
-// at every fire, so it warns while the operator is watching rather than only in
-// the daemon log.
+// load it from any directory. Two mistakes parse fine and then fail at every
+// fire: a required input with no default that the fire never supplies, and an
+// unregistered poll source. Add refuses the first and warns on the second while
+// the operator is watching, rather than leaving both to the daemon log.
 func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("schedule add", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -80,8 +83,17 @@ func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	if flow.Poll != nil && !slices.Contains(poll.BuiltinSourceNames(), flow.Poll.Source) {
-		a.printErrf("schedule add: warning: unknown poll source %q; the schedule will fail at fire time\n", flow.Poll.Source)
+	if missing := requiredInputsWithoutDefault(flow); len(missing) > 0 {
+		a.printErrf("schedule add: %s: required input(s) with no default that no scheduled fire supplies: %s; give each one a default\n",
+			path, strings.Join(missing, ", "))
+
+		return ExitUsage
+	}
+
+	if flow.Poll != nil {
+		if _, known := poll.BuiltinSourceInputs(flow.Poll.Source); !known {
+			a.printErrf("schedule add: warning: unknown poll source %q; the schedule will fail at fire time\n", flow.Poll.Source)
+		}
 	}
 
 	absPath, err := filepath.Abs(path)
@@ -328,6 +340,34 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 
 	return ExitOK
+}
+
+// requiredInputsWithoutDefault lists, sorted, the required inputs with no
+// default that a fire of flow never supplies, so the engine rejects every run
+// until each one gets a default. A plain scheduled fire supplies no inputs, and
+// a poll fire supplies only the keys its source emits. A poll source no wiring
+// builds is not checked, since its keys are unknown; add warns about it instead.
+func requiredInputsWithoutDefault(flow *workflow.Workflow) []string {
+	var supplied []string
+
+	if flow.Poll != nil {
+		emitted, known := poll.BuiltinSourceInputs(flow.Poll.Source)
+		if !known {
+			return nil
+		}
+
+		supplied = emitted
+	}
+
+	var missing []string
+
+	for _, name := range slices.Sorted(maps.Keys(flow.Inputs)) {
+		if flow.Inputs[name].MustBeSupplied() && !slices.Contains(supplied, name) {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing
 }
 
 // engineFireRunner adapts the engine to the scheduler's Runner: each fire

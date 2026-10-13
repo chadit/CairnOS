@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -9,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/store"
 )
 
 // pluginWorkflow references the runner name only the [runner.echotest]
@@ -45,18 +43,9 @@ func buildEchoBinary(t *testing.T) string {
 func appendPluginBlock(t *testing.T, dir, command string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner.echotest]\ntype = \"plugin\"\ncommand = [" + strconv.Quote(command) + "]\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with plugin block: %v", err)
-	}
+	appendConfig(t, dir, block)
 }
 
 func TestRunExecutesPluginBackedRunnerFromConfig(t *testing.T) {
@@ -75,29 +64,11 @@ func TestRunExecutesPluginBackedRunnerFromConfig(t *testing.T) {
 		t.Fatalf("summary missing success:\n%s", stdout)
 	}
 
-	db := openRunStore(t, dir)
+	got := onlyActionOutput(t, dir)
 
-	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
-
-	if len(runs) != 1 || runs[0].Status != store.RunSucceeded {
-		t.Fatalf("persisted runs = %+v, want one succeeded row", runs)
-	}
-
-	results, err := db.ListActionResults(t.Context(), runs[0].ID)
-	if err != nil {
-		t.Fatalf("list action results: %v", err)
-	}
-
-	if len(results) != 1 {
-		t.Fatalf("results = %+v, want the one bounce action", results)
-	}
-
-	output, isMap := results[0].Output.(map[string]any)
+	output, isMap := got.(map[string]any)
 	if !isMap || output["note"] != "wired" {
-		t.Fatalf("stored output = %#v, want the echoed params", results[0].Output)
+		t.Fatalf("stored output = %#v, want the echoed params", got)
 	}
 }
 

@@ -29,7 +29,7 @@ func TestServeRunsTheUsageReportScriptOnStart(t *testing.T) {
 		t.Fatalf("make fifo: %v", err)
 	}
 
-	script := filepath.Join(files, "account-pick")
+	script := filepath.Join(files, "usage-report")
 
 	// #nosec G306 -- the script must be executable; it lives in t.TempDir.
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ran\\n' > \"$(dirname \"$0\")/ran\"\n"), 0o700); err != nil {

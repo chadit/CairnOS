@@ -84,6 +84,28 @@ func TestCodeStepCapClassifiesByCount(t *testing.T) {
 	assertCodeError(t, err, wantTooManySteps)
 }
 
+func TestCodeDefaultStepBudgetBoundary(t *testing.T) {
+	t.Parallel()
+
+	// Each iteration costs 30 weighted steps (the back edge plus step()'s entry
+	// and return) and the run adds 40, so 16,500 iterations spend 99% of the
+	// 500,000 default and 16,850 spend 101%. The per-instruction counting
+	// starlark used before v0.0.0-20261005163335 charged both runs about
+	// 270,000 and passed them, so a release that reweights steps fails here
+	// instead of silently moving every script's headroom.
+	script := "def step(i):\n    return i % 7\n\ndef spin(n):\n    total = 0\n" +
+		"    for i in range(n):\n        total += step(i)\n    return total\n\noutput = spin(params[\"n\"])"
+
+	code := builtins.NewCode()
+
+	if _, err := code.Execute(t.Context(), codeTask(script, map[string]any{"n": int64(16_500)}, nil)); err != nil {
+		t.Fatalf("run at 99%% of the default budget: %v, want success", err)
+	}
+
+	_, err := code.Execute(t.Context(), codeTask(script, map[string]any{"n": int64(16_850)}, nil))
+	assertCodeError(t, err, wantTooManySteps)
+}
+
 func TestCodeRejectsOversizedScript(t *testing.T) {
 	t.Parallel()
 

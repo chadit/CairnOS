@@ -18,7 +18,7 @@ const (
 	usageHostKey     = "host"
 	usageLaunchers   = "launchers"
 	claudeLauncher   = "claude-agent"
-	codexLauncher    = "codex-work"
+	codexLauncher    = "codex-agent"
 	usageAction      = "windows"
 	buildBox         = "build_box"
 	buildBoxAlias    = "build-box"
@@ -637,7 +637,7 @@ func TestUsageSummaryIsAFencedTableOfEveryWindow(t *testing.T) {
 		"|--------------|---------|--------|------|----------------------|\n" +
 		"| claude-agent | max     | 5h     | 4%   | 2026-09-22 18:09 UTC |\n" +
 		"|              |         | 7d     | 41%  | 2026-09-26 06:59 UTC |\n" +
-		"| codex-work   | prolite | 7d     | 24%  | 2026-09-26 10:01 UTC |\n" +
+		"| codex-agent  | prolite | 7d     | 24%  | 2026-09-26 10:01 UTC |\n" +
 		"```"
 
 	if got.Summary != want {
@@ -665,7 +665,7 @@ func TestUsageSummaryCarriesAFailedLoginAcrossTheWindowColumns(t *testing.T) {
 		t.Fatalf("summary =\n%s\nwant a row starting %q that ends with the CLI's reason", got.Summary, errorRow)
 	}
 
-	if !strings.Contains(got.Summary, "| codex-work   | prolite | 7d     | 24%  |") {
+	if !strings.Contains(got.Summary, "| codex-agent  | prolite | 7d     | 24%  |") {
 		t.Fatalf("summary =\n%s\nwant the working login's window row", got.Summary)
 	}
 }

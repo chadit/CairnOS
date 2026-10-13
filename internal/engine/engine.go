@@ -438,7 +438,7 @@ func validateInputs(decls map[string]workflow.InputDecl, supplied map[string]any
 				continue
 			}
 
-			if decl.Required {
+			if decl.MustBeSupplied() {
 				errs = append(errs, errf(workflow.CodeInvalid, "required input %q was not supplied", name))
 			}
 

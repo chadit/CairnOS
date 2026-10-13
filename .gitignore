@@ -18,6 +18,9 @@ bin/
 /echo
 examples/a2a/a2a
 examples/plugins/echo/echo
+# tools/bwpin names its binary the same way, so `go build ./tools/bwpin` leaves a `bwpin`.
+/bwpin
+tools/bwpin/bwpin
 
 # Test binary, built with `go test -c`
 *.test
@@ -41,3 +44,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# The linter config stays tracked. A global ignore for `.golangci.yml` on a
+# contributor's machine would otherwise keep it out of the checkout CI lints,
+# so CI and `make lint` would run different rule sets.
+!.golangci.yml
+
+# Local agent working directories (specs, scratch, review output). They hold
+# machine-specific notes and never belong in the public tree, whatever a
+# contributor's global ignore says.
+.claude/
+.agents/

@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,7 +11,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/store"
 )
 
 // mcpEchoWorkflow references the runner name only the [runner.remote_echo]
@@ -80,22 +77,13 @@ func newMCPEchoServerURL(t *testing.T) string {
 func appendMCPBlock(t *testing.T, dir, name, serverURL string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner." + name + "]\n" +
 		"type                  = \"mcp_client\"\n" +
 		"server_url            = " + strconv.Quote(serverURL) + "\n" +
 		"tool                  = \"echo\"\n" +
 		"allow_private_targets = true\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with mcp_client block: %v", err)
-	}
+	appendConfig(t, dir, block)
 }
 
 func TestRunExecutesImportedMCPRunnerFromConfig(t *testing.T) {
@@ -114,28 +102,8 @@ func TestRunExecutesImportedMCPRunnerFromConfig(t *testing.T) {
 		t.Fatalf("summary missing success:\n%s", stdout)
 	}
 
-	db := openRunStore(t, dir)
-
-	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
-
-	if len(runs) != 1 || runs[0].Status != store.RunSucceeded {
-		t.Fatalf("persisted runs = %+v, want one succeeded row", runs)
-	}
-
-	results, err := db.ListActionResults(t.Context(), runs[0].ID)
-	if err != nil {
-		t.Fatalf("list action results: %v", err)
-	}
-
-	if len(results) != 1 {
-		t.Fatalf("results = %+v, want the one bounce action", results)
-	}
-
-	if results[0].Output != "echo: wired" {
-		t.Fatalf("stored output = %#v, want the echoed text", results[0].Output)
+	if got := onlyActionOutput(t, dir); got != "echo: wired" {
+		t.Fatalf("stored output = %#v, want the echoed text", got)
 	}
 }
 

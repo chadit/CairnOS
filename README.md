@@ -16,12 +16,10 @@ From a clone (also what `make build` wraps):
 go install ./cmd/cairnos    # installs cairnos into $GOBIN (default ~/go/bin)
 ```
 
-Or straight from the module path, no clone needed. The repo is private, so
-tell the Go toolchain to fetch it over your git auth instead of the public
-proxy:
+Or straight from the module path, no clone needed:
 
 ```sh
-GOPRIVATE=github.com/chadit go install github.com/chadit/CairnOS/cmd/cairnos@latest
+go install github.com/chadit/CairnOS/cmd/cairnos@latest
 ```
 
 Either way you get the full binary: engine, CLI, serve, chat, MCP, web UI.
@@ -37,7 +35,7 @@ cairnos run examples/agents/quickstart/quickstart.toml
 
 The quickstart workflow sends one prompt through a CLI tool you have already
 logged into on this machine (it ships pointing at `codex`; swap the runner
-line for `claude`, `omp_glm`, or any other logged-in tool, see
+line for `claude`, `omp`, or any other logged-in tool, see
 [examples/agents/quickstart](./examples/agents/quickstart/README.md)). If the
 run prints a reply, your install, runner wiring, and tool auth all work.
 `cairnos init --dir <path>` picks a different home.
@@ -145,7 +143,7 @@ the file again at every fire, and every fire fails at the load:
 
 ```text
 level=ERROR msg="scheduled run failed" schedule=sch_01J... workflow=heartbeat
-  error="load /srv/automation/workflows/heartbeat.toml: 1 error(s): workflow.invalid:
+  error="load /srv/team-workflows/workflows/heartbeat.toml: 1 error(s): workflow.invalid:
   schedule \"*/30 * * * * *\" must be a 5-field cron expression or an @-shorthand"
 ```
 
@@ -208,10 +206,9 @@ on a host. When the commit the service already runs is the release's commit,
 nothing is downloaded and the secrets pull still runs, because a vault value can
 move without the code moving.
 
-The repository is private right now, so the lookup needs `GITHUB_TOKEN` or
-`GH_TOKEN` in the environment. Without one the API answers 404, which reads as
-"no release", and with no clone around the binary there is nothing to install.
-`--source <dir>` names a clone to build instead.
+Set `GITHUB_TOKEN` or `GH_TOKEN` in the environment to authenticate the lookup,
+which lifts GitHub's unauthenticated API rate limit of 60 requests an hour per
+IP address. `--source <dir>` names a clone to build instead.
 
 Either way, the new build runs its own `secrets pull` and only then does the
 service restart. Secrets before the restart is the part worth keeping straight:
@@ -350,7 +347,7 @@ file afterwards leaves the stored expression where it was. Replace the entry:
 ```sh
 cairnos schedule list
 cairnos schedule remove heartbeat     # the id from the ID column, or the workflow name
-cairnos schedule add /srv/automation/workflows/heartbeat.toml
+cairnos schedule add /srv/team-workflows/workflows/heartbeat.toml
 cairnos schedule list                 # the CRON column now reads the new expression
 ```
 
@@ -571,22 +568,24 @@ needs nothing beyond the Go toolchain; the first run downloads them.
 ### Upgrading dependencies
 
 ```sh
-make update-dep
+make update-deps
 ```
 
 It moves the Go modules, the `go.mod` tool directives, the Go toolchain line,
-the buf registry dependency, the npm packages under `web/`, and the two linter
-versions the Makefile pins, then regenerates the protobuf code. It writes files
-and stops there: no commit, no push, no tests. At the end it prints
-`git status --short` along with what it left alone on purpose, which is the two
-`FROM` lines in the Dockerfile (both carry float markers), the postgres image
-the integration tests start, and the action versions in the GitHub workflows,
-which you bump by hand.
+the buf registry dependency, the npm packages under `web/`, the `gosec`
+version the Makefile pins, the major of every action the GitHub workflows use,
+the postgres image the integration tests start, and the Bitwarden CLI pin, then
+regenerates the protobuf code. It writes files and stops there: no commit, no
+push, no tests. At the end it prints `git status --short`. The builder `FROM`
+line in the Dockerfile and the Node version CI installs float on purpose, so
+they need no bump. The runtime `FROM` floats only within its Debian major: the
+`static-debian12` tag pins that major, so moving to the next Debian release
+means editing the tag by hand.
 
 Run `make test` and `make lint` before committing any of it. `make lint`
-installs `golangci-lint` and `gosec` into `bin/tools` at the versions the
-Makefile names, so a developer machine and CI run the same linters instead of
-whatever each happens to have on PATH.
+installs both linters into `bin/tools` instead of using whatever is on PATH:
+`golangci-lint` at its newest release, which CI also asks for, and `gosec` at
+the version the Makefile names.
 
 The Bitwarden CLI pin is the slow part of a bump, and it runs on its own too:
 
@@ -633,11 +632,13 @@ compatible API is reached.
 
 **CLI runners** wrap a tool that carries its own subscription login, so no API
 key touches CairnOS at all. Built-ins: `claude`, `codex`, `qwen`, `omp`,
-`omp_codex`, `omp_qwen`, `omp_glm`, `antigravity`. Each launches its tool's
-headless one-shot mode out of the box (`codex exec`, `claude -p`, `omp-glm
--p`, and so on), so a workflow action never opens an interactive UI. Say you
-have a Codex subscription: log in once on the host that runs serve
-(`codex login`), then use it from a workflow:
+`antigravity`. The first four launch their tools' headless one-shot modes out of
+the box (`codex exec`, `claude -p`, `qwen -p`, `omp -p`), so a workflow action
+never opens an interactive UI. `antigravity` has no default template and takes
+the prompt as a bare positional argument, so give it `args` (shown below) when
+your build needs a flag for one-shot mode. Say you have a Codex subscription:
+log in once on the host that runs serve (`codex login`), then use it from a
+workflow:
 
 ```toml
 [action.plan]
@@ -645,15 +646,64 @@ runner = "codex"
 params = { prompt = "Draft the migration plan for ..." }
 ```
 
-Or route through an OMP wrapper. Each CLI runner finds its binary on PATH by
-default (`omp_glm` launches `omp-glm`); override the path or argv when yours
-differs:
+Each CLI runner finds its binary on PATH by default; override the path or argv
+when yours differs:
 
 ```toml
-[runner.omp_glm]
-binary = "/usr/local/bin/omp-glm"
-# args = ["-p", "{prompt}"]   # the default; override to add flags
+[runner.codex]
+binary = "/usr/local/bin/codex"
+# args = ["exec", "{prompt}"]   # the default; override to add flags
 ```
+
+A wrapper script around one of these tools, such as one that pins a model or
+picks a login before it runs the real binary, becomes a runner of its own from
+config alone. Set `type` to the built-in whose argv template the script
+accepts and point `binary` at the script. The block's name is the runner name a
+workflow uses:
+
+```toml
+[runner.claude_sonnet]
+type   = "claude"                        # start from claude's -p {prompt} template
+binary = "/usr/local/bin/claude-sonnet"  # your script: adds --model sonnet, then runs claude
+```
+
+For a tool unrelated to the built-ins, pick any of them as the `type` and
+replace the template with `args` or `stdin = true`:
+
+```toml
+[runner.summarize]
+# Any built-in works as the type; args replaces its -p {prompt} template.
+type                = "omp"
+binary              = "/usr/local/bin/summarize"
+# {prompt} becomes the action's prompt param.
+args                = ["--format", "markdown", "{prompt}"]
+# The default: refuse a prompt that starts with a dash.
+allow_dashed_prompt = false
+```
+
+A prompt that starts with a dash would reach the binary as a flag, so it is
+refused unless `"{prompt}"` follows a `"--"` in `args`, or the block sets
+`allow_dashed_prompt = true` for a binary that reads that argument as text.
+With `stdin = true` the prompt goes to the binary's standard input instead of
+its argv, the dash check no longer applies, and a block with no `args` starts
+the binary with no arguments.
+
+A declared runner gets what the built-ins get: its child inherits serve's whole
+environment with the `CAIRNOS_HOSTS` and `CAIRNOS_HOST_*` variables added, a
+rate-limit refusal retries, and an expired login holds the job. The hold resumes
+by itself only for `claude`, `codex`, and `qwen`, so a job held on any other
+runner waits for you to resume it.
+
+Warning: that environment carries every secret serve runs with, such as the
+runner API keys and, under the installed service, everything in `secrets.env`,
+so point `binary` only at a script you trust.
+
+A block can't take a different built-in's name: `[runner.codex]` with
+`type = "omp"` stops at startup. A block with no `type` under a name no built-in
+owns stops startup too, with an error that names the block and the keys to add:
+`type = "<built-in>"`, plus `binary` when the block sets none. A stale or
+misspelled block is caught the first time CairnOS starts, not the first time a
+workflow uses it.
 
 When a CLI tool's login expires mid-schedule, the job is held rather than
 failed. You get a webhook alert on Discord (`CAIRNOS_NOTIFY_DISCORD_WEBHOOK`),
@@ -665,7 +715,7 @@ stop a workflow:
 
 ```toml
 [engine.fallback]
-codex = ["omp_qwen", "anthropic"]
+codex = ["qwen", "anthropic"]
 ```
 
 ### Local model
@@ -768,7 +818,7 @@ another box, and schedule it like anything else.
 timeout    = 60
 claude_gap = 65
 claude     = ["claude-agent"]
-codex      = ["codex-work"]
+codex      = ["codex-agent"]
 ```
 
 Both lists default to the bare tool name (`claude`, `codex`), so a host that
@@ -823,7 +873,7 @@ $ cairnos usage --host build_box
 LOGIN         PLAN     WINDOW  USED  RESETS
 claude-agent  max      5h      2%    2026-09-22 18:50 UTC
                        7d      23%   2026-09-24 12:00 UTC
-codex-work    prolite  7d      24%   2026-09-26 10:01 UTC
+codex-agent   prolite  7d      24%   2026-09-26 10:01 UTC
 ```
 
 A login that failed prints its error across the window columns. When the Claude
@@ -837,14 +887,14 @@ itself. Whichever login your launcher picks is the login it reports on.
 
 #### Reading a report file instead
 
-A host that already runs `account_pick.py` keeps the same numbers in the report
-file that script writes, and the runner can read that file instead of probing
+A host that already tracks its logins with a script of its own can have that
+script write a report file, and the runner reads the file instead of probing
 each login. Set `script`, `output`, and `interval` in place of the launcher
 lists:
 
 ```toml
 [runner.usage]
-script   = ["python3", "~/source_repos/github.com/chadit/toolkit/scripts/account_pick.py", "usage", "--out", "{output}"]
+script   = ["/usr/local/bin/usage-report", "--out", "{output}"]
 output   = "~/.cache/cairnos/usage.json"
 interval = 900
 ```
@@ -861,17 +911,50 @@ that host's `wrapper` the way a launcher runs. The file stays on that host, and 
 request reads it over the same hop. A request's own `host` param then has to name
 that block or be left out.
 
-Each account carries the time it was read, and `account_pick.py` keeps the
-entries a run didn't read, so one file can hold fresh codex numbers beside old
-claude ones. An account read longer ago than two intervals plus `timeout` still
+Each account carries the time it was read, so a script that keeps the entries a
+run didn't read can hold fresh codex numbers beside old claude ones in one
+file. An account read longer ago than two intervals plus `timeout` still
 comes back, with a `notice` line above the table naming it and how old its
 reading is, because the refresh is failing or serve isn't running. `notice` is
 empty otherwise, so a condition can test `${{ windows.output.notice }} != ''`. A
 missing file fails the request with a message naming the path. The file has to
-carry `"schema": "account-pick.usage.v1"`, and any other schema is refused
+carry `"schema": "cairnos.usage.v1"`, and any other schema is refused
 rather than guessed at. When some account has a score or an unexpired banked
-reset, the table gains `SCORE` for the pick's score and `CREDITS` for how many
+reset, the table gains `SCORE` for the script's score and `CREDITS` for how many
 of those resets are left.
+
+The file is CairnOS's own `cairnos.usage.v1` format, and any script can write
+it. Every time in it (`written_at`, `read_at`, `resets_at`, and each
+`reset_credit_expiries` entry) is epoch seconds, fractions allowed. Each account
+names the `tool` behind it, the `wrapper` a caller launches (what `launchers`
+matches and the `LOGIN` column shows), and its `windows`. `tool` and `wrapper`
+are required and must be non-empty, because no caller could select an account
+without them, so a file holding such an account is refused. `plan`, `error`,
+`score`, `read_at`, and `reset_credit_expiries` are optional, and an account
+without `read_at` counts as read when the file was written:
+
+```json
+{
+  "schema": "cairnos.usage.v1",
+  "written_at": 1790000000,
+  "accounts": [
+    {
+      "tool": "codex",
+      "wrapper": "codex-agent",
+      "plan": "prolite",
+      "read_at": 1790000000,
+      "windows": [{"name": "7d", "used_percent": 24, "resets_at": 1790416865}],
+      "reset_credit_expiries": [1790500000],
+      "score": 14.3
+    },
+    {"tool": "claude", "wrapper": "claude-agent", "error": "HTTP 401: token expired", "windows": []}
+  ]
+}
+```
+
+Every time in the sample is a placeholder that has already passed. Copied
+as-is, the file comes back with a `notice` naming stale accounts and `CREDITS`
+at 0, so put in current epoch seconds before testing with it.
 
 The two modes don't mix. `script`, `output`, `interval`, and `host` can't sit
 beside `claude`, `codex`, or `claude_gap`, and config load names the keys that
@@ -936,21 +1019,21 @@ deploy step. Name the repository and where it goes, and serve clones it at
 startup when the path is missing:
 
 ```toml
-[source.automation]
-repo = "https://github.com/example/automation.git"
-dest = "/srv/automation"
+[source.team]
+repo = "https://github.com/example/team-workflows.git"
+dest = "/srv/team-workflows"
 ref  = "main"
 
 # Let workflows reach the checkout by name instead of by path.
 [env]
-allowlist = ["AUTOMATION_ROOT"]
+allowlist = ["TEAM_WORKFLOWS"]
 ```
 
 Give the serve process the same path in its environment file, the one
 `EnvironmentFile=` points at:
 
 ```sh
-AUTOMATION_ROOT=/srv/automation
+TEAM_WORKFLOWS=/srv/team-workflows
 ```
 
 Workflows then name the variable rather than the path:
@@ -958,7 +1041,7 @@ Workflows then name the variable rather than the path:
 ```toml
 [action.reconcile]
 runner = "exec"
-params = { command = "${{ env.AUTOMATION_ROOT }}/engines/pr-worker/scripts/reconcile.py" }
+params = { command = "${{ env.TEAM_WORKFLOWS }}/scripts/reconciler.py" }
 ```
 
 The workflow file lives in the repository and every host that clones it reads the
@@ -997,7 +1080,7 @@ The sync is an ordinary runner action, so you decide when it runs:
 ```toml
 [action.sync]
 runner = "source"
-params = { source = "automation" }
+params = { source = "team" }
 ```
 
 Its output is empty when nothing moved and `<old>..<new>` when HEAD did, which is
@@ -1015,13 +1098,13 @@ urls = ["https://github.com"]
 
 [action.sync]
 runner = "source"
-params = { source = "automation" }
+params = { source = "team" }
 
 [action.announce]
 runner     = "message"
 depends_on = ["sync"]
 condition  = "${{ sync.output }} != ''"
-params     = { identity = "ops", to = "#ops", text = "automation moved ${{ sync.output }} on agent-box" }
+params     = { identity = "ops", to = "#ops", text = "team-workflows moved ${{ sync.output }} on agent-box" }
 ```
 
 That file can live inside the tree it syncs. Point `cairnos schedule add` at its
@@ -1033,9 +1116,9 @@ HEAD, or holds commits the remote cannot fast-forward past, `dirty_reset`
 decides what happens next:
 
 ```toml
-[source.automation]
-repo = "https://github.com/example/automation.git"
-dest = "/srv/automation"
+[source.team]
+repo = "https://github.com/example/team-workflows.git"
+dest = "/srv/team-workflows"
 ref  = "main"
 # Default. false makes a blocked sync report the problem instead of fixing it.
 dirty_reset = true
@@ -1111,8 +1194,8 @@ name = "codex-agent"
 
 [host.build_box.harness.copilot]
 
-[host.build_box.harness.omp-glm]
-provider = "zai"
+[host.build_box.harness.cursor-agent]
+provider = "cursor"
 ```
 
 `type` is `worker` for a machine that runs the CLIs or `agent` for one that
@@ -1138,12 +1221,12 @@ CAIRNOS_HOSTS=build_box
 CAIRNOS_HOST_BUILD_BOX_TYPE=worker
 CAIRNOS_HOST_BUILD_BOX_SSH=build-box
 CAIRNOS_HOST_BUILD_BOX_WRAPPER=~/.local/bin/agent-env
-CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude codex copilot omp-glm
+CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude codex copilot cursor-agent
 CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent
 CAIRNOS_HOST_BUILD_BOX_HARNESS_CODEX=~/.local/bin/codex-agent
 CAIRNOS_HOST_BUILD_BOX_HARNESS_COPILOT=~/.local/bin/copilot
-CAIRNOS_HOST_BUILD_BOX_HARNESS_OMP_GLM=~/.local/bin/omp-glm
-CAIRNOS_HOST_BUILD_BOX_HARNESS_OMP_GLM_PROVIDER=zai
+CAIRNOS_HOST_BUILD_BOX_HARNESS_CURSOR_AGENT=~/.local/bin/cursor-agent
+CAIRNOS_HOST_BUILD_BOX_HARNESS_CURSOR_AGENT_PROVIDER=cursor
 ```
 
 The name after `CAIRNOS_HOST_` is the block name upper-cased with every dot and

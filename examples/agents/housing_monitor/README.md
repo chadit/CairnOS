@@ -65,6 +65,10 @@ Environment:
 
 ## Run it
 
+A scheduled run supplies no inputs, and `cairnos schedule add` refuses a file
+whose required input has no default, so before you schedule your copy, give
+`listings_url`, `region`, and `notify_to` each a `default`.
+
 ```sh
 cairnos validate examples/agents/housing_monitor/housing_monitor.toml
 
@@ -73,6 +77,6 @@ cairnos run examples/agents/housing_monitor/housing_monitor.toml \
   --input region=austin-tx \
   --input notify_to=me@example.com
 
-# put it on the 7:30am schedule
+# put it on the 7:30am schedule, once each required input has a default
 cairnos schedule add examples/agents/housing_monitor/housing_monitor.toml
 ```

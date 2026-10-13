@@ -19,36 +19,38 @@ import (
 
 // Config keys and values of the report-file source.
 const (
-	usageScriptKey    = "script"
-	usageOutputKey    = "output"
-	usageIntervalKey  = "interval"
-	usageReportHost   = "host"
-	reportInterval    = int64(900)
-	reportFileName    = "usage.json"
-	personalLauncher  = "claude-personal"
-	quietBox          = "quiet_box"
-	codeUsageNoReport = "usage.unavailable"
+	usageScriptKey     = "script"
+	usageOutputKey     = "output"
+	usageIntervalKey   = "interval"
+	usageReportHost    = "host"
+	reportInterval     = int64(900)
+	reportFileName     = "usage.json"
+	reportScriptName   = "usage-report"
+	remoteReportScript = "/usr/local/bin/usage-report"
+	altLauncher        = "claude-alt"
+	quietBox           = "quiet_box"
+	codeUsageNoReport  = "usage.unavailable"
+	claudeTool         = "claude"
 )
 
-// usageReportJSON is an account_pick.py report in the v1 layout: a codex account
-// with one banked reset still to expire and one long gone, a claude account,
-// and one the script could not read. The verb fills written_at and every
-// read_at, as one run that read all three accounts would.
-const usageReportJSON = `{"schema": "account-pick.usage.v1", "written_at": %[1]d, "host": "agent-box",
+// usageReportJSON is a cairnos.usage.v1 report: a codex account with one
+// banked reset still to expire and one long gone, a claude account, and one
+// the script could not read. The verb fills written_at and every read_at. The
+// codex 5h window's remaining_percent is the one field the format leaves out,
+// so a reader that refused unknown fields fails here.
+const usageReportJSON = `{"schema": "cairnos.usage.v1", "written_at": %[1]d,
  "accounts": [
-  {"tool": "codex", "account": "work", "wrapper": "codex-work", "read_at": %[1]d.5, "plan": "prolite",
-   "rate_limit_reached": null, "error": null,
+  {"tool": "codex", "wrapper": "codex-agent", "read_at": %[1]d.5, "plan": "prolite", "error": null,
    "windows": [
-    {"name": "5h", "window_minutes": 300, "used_percent": 12.5, "remaining_percent": 87.5, "resets_at": 1790010000, "resets_in_seconds": 10000},
-    {"name": "weekly", "window_minutes": 10080, "used_percent": 40, "remaining_percent": 60, "resets_at": 1790400000, "resets_in_seconds": 400000}],
+    {"name": "5h", "used_percent": 12.5, "remaining_percent": 87.5, "resets_at": 1790010000},
+    {"name": "weekly", "used_percent": 40, "resets_at": 1790400000}],
    "reset_credit_expiries": [4102444800, 1700000000], "score": 14.3},
-  {"tool": "claude", "account": "agent", "wrapper": "claude-agent", "read_at": %[1]d, "plan": "max",
-   "rate_limit_reached": null, "error": null,
+  {"tool": "claude", "wrapper": "claude-agent", "read_at": %[1]d, "plan": "max", "error": null,
    "windows": [
-    {"name": "5h", "window_minutes": 300, "used_percent": 3, "remaining_percent": 97, "resets_at": 1790005000, "resets_in_seconds": 5000}],
+    {"name": "5h", "used_percent": 3, "resets_at": 1790005000}],
    "reset_credit_expiries": [], "score": 9.5},
-  {"tool": "claude", "account": "personal", "wrapper": "claude-personal", "read_at": %[1]d, "plan": null,
-   "rate_limit_reached": null, "error": "HTTP 401: token expired", "windows": [], "reset_credit_expiries": [], "score": null}]}`
+  {"tool": "claude", "wrapper": "claude-alt", "read_at": %[1]d, "plan": null,
+   "error": "HTTP 401: token expired", "windows": [], "reset_credit_expiries": [], "score": null}]}`
 
 // recordRunScript is a report script that only notes that it ran, so a case can
 // tell whether a request started it.
@@ -93,9 +95,9 @@ func assertRunnerError(t *testing.T, err error, class runner.ErrorClass, code st
 	return classified.Message
 }
 
-func TestUsageReadsAnAccountPickReport(t *testing.T) {
+func TestUsageReadsAReportFile(t *testing.T) {
 	dir := t.TempDir()
-	script := writeShim(t, dir, "account-pick", recordRunScript)
+	script := writeShim(t, dir, reportScriptName, recordRunScript)
 	writtenAt := time.Now().Truncate(time.Second)
 	output := writeUsageReport(t, dir, writtenAt)
 
@@ -138,7 +140,7 @@ func TestUsageReadsAnAccountPickReport(t *testing.T) {
 		t.Fatalf("claude login = %+v, want the claude protocol on a max plan", claude)
 	}
 
-	if failed := findLogin(t, got, personalLauncher); failed.Error != "HTTP 401: token expired" || len(failed.Windows) != 0 {
+	if failed := findLogin(t, got, altLauncher); failed.Error != "HTTP 401: token expired" || len(failed.Windows) != 0 {
 		t.Fatalf("failed login = %+v, want its error and no windows", failed)
 	}
 
@@ -151,7 +153,7 @@ func TestUsageReadsAnAccountPickReport(t *testing.T) {
 
 func TestUsageRequestReadsTheFileWithoutRunningTheScript(t *testing.T) {
 	dir := t.TempDir()
-	script := writeShim(t, dir, "account-pick", recordRunScript)
+	script := writeShim(t, dir, reportScriptName, recordRunScript)
 	output := writeUsageReport(t, dir, time.Now())
 
 	t.Parallel()
@@ -218,13 +220,14 @@ func TestUsageFlagsAReadingOlderThanTwoIntervalsAndATimeout(t *testing.T) {
 	}
 }
 
-// mergedReportJSON is a file a codex pick just rewrote: written_at and the codex
-// reading fill the first verb, and the claude entry it kept fills the second.
-const mergedReportJSON = `{"schema": "account-pick.usage.v1", "written_at": %[1]d, "host": "agent-box", "accounts": [
- {"tool": "codex", "account": "work", "wrapper": "codex-work", "read_at": %[1]d, "plan": "prolite",
-  "rate_limit_reached": null, "error": null, "windows": [], "reset_credit_expiries": [], "score": 12.0},
- {"tool": "claude", "account": "agent", "wrapper": "claude-agent", "read_at": %[2]d, "plan": "max",
-  "rate_limit_reached": null, "error": null, "windows": [], "reset_credit_expiries": [], "score": 9.5}]}`
+// mergedReportJSON is a file a codex-only run just rewrote: written_at and the
+// codex reading fill the first verb, and the claude entry it kept fills the
+// second.
+const mergedReportJSON = `{"schema": "cairnos.usage.v1", "written_at": %[1]d, "accounts": [
+ {"tool": "codex", "wrapper": "codex-agent", "read_at": %[1]d, "plan": "prolite",
+  "error": null, "windows": [], "reset_credit_expiries": [], "score": 12.0},
+ {"tool": "claude", "wrapper": "claude-agent", "read_at": %[2]d, "plan": "max",
+  "error": null, "windows": [], "reset_credit_expiries": [], "score": 9.5}]}`
 
 func TestUsageFlagsOnlyTheAccountsReadTooLongAgo(t *testing.T) {
 	t.Parallel()
@@ -244,7 +247,7 @@ func TestUsageFlagsOnlyTheAccountsReadTooLongAgo(t *testing.T) {
 		t.Fatalf("report: %v", err)
 	}
 
-	// A fresh written_at must not hide the claude reading the pick kept.
+	// A fresh written_at must not hide the claude reading the script kept.
 	if !strings.HasPrefix(got.Notice, "stale: "+claudeLauncher+" last read 3h0m0s ago") ||
 		strings.Contains(got.Notice, codexLauncher) {
 		t.Fatalf("notice = %q, want only %s flagged", got.Notice, claudeLauncher)
@@ -266,6 +269,9 @@ func TestUsageReportsAMissingFile(t *testing.T) {
 }
 
 func TestUsageRefusesAReportItCannotRead(t *testing.T) {
+	emptyWrapper := fmt.Sprintf("accounts[1] (tool %q) has an empty wrapper", claudeTool)
+	emptyTool := fmt.Sprintf("accounts[1] (wrapper %q) has an empty tool", claudeLauncher)
+
 	cases := []struct {
 		name     string
 		body     string
@@ -273,11 +279,31 @@ func TestUsageRefusesAReportItCannotRead(t *testing.T) {
 	}{
 		{
 			name:     "unknown schema",
-			body:     `{"schema": "account-pick.usage.v2", "written_at": 1790000000, "accounts": []}`,
-			wantText: `"account-pick.usage.v2"`,
+			body:     `{"schema": "cairnos.usage.v2", "written_at": 1790000000, "accounts": []}`,
+			wantText: `"cairnos.usage.v2"`,
 		},
 		{name: "missing schema", body: `{"written_at": 1790000000, "accounts": []}`, wantText: `schema ""`},
-		{name: "not json", body: `usage: account_pick.py [-h]`, wantText: "invalid character"},
+		{name: "not json", body: `usage: usage-report [-h]`, wantText: "invalid character"},
+		{
+			name:     "account without a wrapper",
+			body:     reportWithSecondAccount(fmt.Sprintf(`{"tool": %q, "windows": []}`, claudeTool)),
+			wantText: emptyWrapper,
+		},
+		{
+			name:     "account with a blank wrapper",
+			body:     reportWithSecondAccount(fmt.Sprintf(`{"tool": %q, "wrapper": "  ", "windows": []}`, claudeTool)),
+			wantText: emptyWrapper,
+		},
+		{
+			name:     "account without a tool",
+			body:     reportWithSecondAccount(fmt.Sprintf(`{"wrapper": %q, "windows": []}`, claudeLauncher)),
+			wantText: emptyTool,
+		},
+		{
+			name:     "account with a blank tool",
+			body:     reportWithSecondAccount(fmt.Sprintf(`{"tool": " ", "wrapper": %q, "windows": []}`, claudeLauncher)),
+			wantText: emptyTool,
+		},
 	}
 
 	t.Parallel()
@@ -302,6 +328,36 @@ func TestUsageRefusesAReportItCannotRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUsageReportSelectsAnAccountWithPaddedNames(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	output := filepath.Join(dir, reportFileName)
+	padded := fmt.Sprintf(`{"tool": " %s ", "wrapper": "  %s ", "windows": []}`, claudeTool, claudeLauncher)
+
+	if err := os.WriteFile(output, []byte(reportWithSecondAccount(padded)), 0o600); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+
+	got, err := usage.Report(t.Context(), usageTask(map[string]any{usageLaunchers: []any{claudeLauncher}}))
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+
+	if len(got.Logins) != 1 || got.Logins[0].Launcher != claudeLauncher || got.Logins[0].Protocol != claudeTool {
+		t.Fatalf("logins = %+v, want only %s speaking %s", got.Logins, claudeLauncher, claudeTool)
+	}
+}
+
+// reportWithSecondAccount is a report whose first account is valid, so
+// whatever the reader does with second comes from second itself.
+func reportWithSecondAccount(second string) string {
+	return `{"schema": "cairnos.usage.v1", "written_at": 1790000000, "accounts": [
+ {"tool": "codex", "wrapper": "codex-agent", "windows": []}, ` + second + `]}`
 }
 
 func TestUsageReportNarrowsToTheNamedLaunchers(t *testing.T) {
@@ -378,7 +434,7 @@ func TestUsageConfigKeepsTheTwoSourcesApart(t *testing.T) {
 	}
 }
 
-// writingScript stands in for account_pick.py: it records the run, then writes
+// writingScript stands in for a report script: it records the run, then writes
 // the fixture report to the path after --out through a rename, so a run the test
 // cuts short never leaves half a file behind.
 func writingScript(writtenAt time.Time) string {
@@ -388,7 +444,7 @@ func writingScript(writtenAt time.Time) string {
 
 func TestUsageRefreshRunsTheScriptOnEveryTick(t *testing.T) {
 	dir := t.TempDir()
-	script := writeShim(t, dir, "account-pick", writingScript(time.Now()))
+	script := writeShim(t, dir, reportScriptName, writingScript(time.Now()))
 
 	t.Parallel()
 
@@ -438,7 +494,7 @@ printf '%s' `+shellquote.Word(fmt.Sprintf(usageReportJSON, time.Now().Unix())))
 	t.Parallel()
 
 	cfg := map[string]any{
-		usageScriptKey:   []any{"python3", "~/toolkit/scripts/account_pick.py", "usage", "--out", "{output}"},
+		usageScriptKey:   []any{remoteReportScript, "--out", "{output}"},
 		usageOutputKey:   "~/.cache/" + reportFileName,
 		usageIntervalKey: reportInterval,
 		usageReportHost:  buildBox,
@@ -481,7 +537,9 @@ printf '%s' `+shellquote.Word(fmt.Sprintf(usageReportJSON, time.Now().Unix())))
 	}
 
 	wantRead := `exec cat -- "$HOME"/'.cache/usage.json'`
-	wantRefresh := "exec '" + remoteWrapper + `' 'python3' "$HOME"/'toolkit/scripts/account_pick.py' 'usage' '--out' "$HOME"/'.cache/usage.json'`
+	// The absolute script path is quoted whole while the output's "~/" becomes
+	// "$HOME", so the remote shell expands only the part meant for it.
+	wantRefresh := "exec '" + remoteWrapper + "' '" + remoteReportScript + `' '--out' "$HOME"/'.cache/usage.json'`
 
 	if argv[5] != buildBoxAlias || argv[7] != wantRead || argv[15] != wantRefresh {
 		t.Fatalf("ssh calls = %#v, want the read %q then the refresh %q on %s", argv, wantRead, wantRefresh, buildBoxAlias)

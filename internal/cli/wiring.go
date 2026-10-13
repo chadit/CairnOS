@@ -929,10 +929,10 @@ func newServeRegistry(
 	return registry, notifier, nil
 }
 
-// newRegistry wires every built-in runner, plus a plugin-backed runner per
-// type = "plugin" block and a per-name mcp_client per type = "mcp_client"
-// block. BuildAll hands each factory its [runner.<name>] block and spawns
-// plugin child processes, so ctx bounds construction.
+// newRegistry wires every built-in runner, plus one runner under its own name
+// for each [runner.<name>] block whose type selects one (see
+// registerConfiguredRunners). BuildAll hands each factory its [runner.<name>]
+// block and spawns plugin child processes, so ctx bounds construction.
 //
 // msgSender, msgThreads, and sourceObs are seams only serve fills; with nil the
 // message runner refuses and the source runner only logs.
@@ -974,7 +974,8 @@ func newRegistry(
 		}
 	}
 
-	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, env, credLookup); err != nil {
+	deps := configuredRunnerDeps{hostEnv: hostEnv, env: env, credLookup: credLookup}
+	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, deps); err != nil {
 		return nil, err
 	}
 
@@ -1069,43 +1070,109 @@ func alreadyRegisteredAsBuiltin(name, kind string) bool {
 	return name == kind
 }
 
+// configuredRunnerDeps carries what a config-declared runner shares with the
+// built-ins: the rendered host table, the environment, and the credential
+// lookup.
+type configuredRunnerDeps struct {
+	env        environ.Lookup
+	credLookup builtins.TokenLookup
+	hostEnv    []string
+}
+
 // registerConfiguredRunners registers a runner for every [runner.<name>] block
-// whose type selects a registration path: "plugin" for an out-of-process runner
-// (Phase 1b), "mcp_client" for a per-name MCP client, and "openai" or
-// "anthropic" for a chat-completions runner under its own name. Blocks with no
-// type, or another value, stay plain config for the built-in of that name.
+// whose type selects a registration path: "plugin" for an out-of-process
+// runner, "mcp_client" for a per-name MCP client, "openai" or "anthropic" for a
+// chat-completions runner under its own name, and any builtins.CLIDefaults name
+// for another command-line tool, such as a wrapper script, launched from that
+// runner's defaults. Blocks with no type, or another value, stay plain config
+// for the built-in of that name, and stop startup when no built-in has that
+// name, because no runner would ever read them. That check relies on every
+// built-in being registered before this runs.
 func registerConfiguredRunners(
 	ctx context.Context,
 	registry *runner.Registry,
 	runnerCfgs map[string]map[string]any,
-	env environ.Lookup,
-	credLookup builtins.TokenLookup,
+	deps configuredRunnerDeps,
 ) error {
 	for _, name := range slices.Sorted(maps.Keys(runnerCfgs)) {
-		kind, _ := runnerCfgs[name]["type"].(string)
+		block := runnerCfgs[name]
+		kind, _ := block["type"].(string)
 
-		switch kind {
-		case "plugin":
-			if err := registry.Register(name, plugin.Factory(ctx, name, env)); err != nil {
-				return fmt.Errorf("register plugin runner %q: %w", name, err)
-			}
-		case builtins.MCPClientName:
-			if alreadyRegisteredAsBuiltin(name, kind) {
-				continue
-			}
-
-			if err := registry.Register(name, builtins.MCPClientFactoryForWithCredentials(name, credLookup)); err != nil {
-				return fmt.Errorf("register mcp_client runner %q: %w", name, err)
-			}
-		case builtins.OpenAIName, builtins.AnthropicName:
-			if alreadyRegisteredAsBuiltin(name, kind) {
-				continue
-			}
-
-			if err := registry.Register(name, namedLLMFactory(kind, name, env)); err != nil {
-				return fmt.Errorf("register %s runner %q: %w", kind, name, err)
-			}
+		factory := configuredRunnerFactory(ctx, kind, name, deps)
+		if factory == nil && !registry.Registered(name) {
+			return unclaimedBlockError(name, kind, block)
 		}
+
+		if factory == nil {
+			continue
+		}
+
+		if err := registry.Register(name, factory); err != nil {
+			return fmt.Errorf("register %s runner %q: %w", kind, name, err)
+		}
+	}
+
+	return nil
+}
+
+// unclaimedBlockError explains a [runner.<name>] block that neither a built-in's
+// name nor its type claims. It stops startup, so the message names the keys
+// that fix the block instead of sending the operator to the docs.
+func unclaimedBlockError(name, kind string, block map[string]any) error {
+	types := strings.Join(configuredRunnerTypes(), ", ")
+
+	if kind != "" {
+		return fmt.Errorf("%w: [runner.%s] sets type = %q, which is not a runner type, and no built-in runner has that name; set type to one of %s",
+			runner.ErrUnknownRunner, name, kind, types)
+	}
+
+	var binaryFix string
+	if _, hasBinary := block["binary"]; !hasBinary {
+		binaryFix = `, and binary = "<path>" for the program to launch`
+	}
+
+	return fmt.Errorf(`%w: [runner.%s] sets no type and no built-in runner has that name; add type = "<built-in>" for the tool it wraps%s (type is one of %s)`,
+		runner.ErrUnknownRunner, name, binaryFix, types)
+}
+
+// pluginRunnerType is the type value that loads an out-of-process runner.
+const pluginRunnerType = "plugin"
+
+// configuredRunnerTypes lists, sorted, every type value configuredRunnerFactory
+// turns into a runner, for the startup error to offer. A type added there
+// belongs here too, or the error stops offering it.
+func configuredRunnerTypes() []string {
+	types := append(slices.Collect(maps.Keys(builtins.CLIDefaults())),
+		pluginRunnerType, builtins.MCPClientName, builtins.OpenAIName, builtins.AnthropicName)
+	slices.Sort(types)
+
+	return types
+}
+
+// configuredRunnerFactory returns the factory a block's type selects, or nil
+// when the type selects nothing: a block named after its own non-plugin type,
+// an empty type, or a value no branch knows. Such a block configures the
+// built-in of the same name, or stops startup when there is none. A CLI type
+// hands the child the same host table and environment the built-in CLI runners
+// get, so a wrapper declared in config sees what its parent tool would.
+func configuredRunnerFactory(ctx context.Context, kind, name string, deps configuredRunnerDeps) runner.Factory {
+	if kind == pluginRunnerType {
+		return plugin.Factory(ctx, name, deps.env)
+	}
+
+	if alreadyRegisteredAsBuiltin(name, kind) {
+		return nil
+	}
+
+	switch kind {
+	case builtins.MCPClientName:
+		return builtins.MCPClientFactoryForWithCredentials(name, deps.credLookup)
+	case builtins.OpenAIName, builtins.AnthropicName:
+		return namedLLMFactory(kind, name, deps.env)
+	}
+
+	if tool, isCLI := builtins.CLIDefaults()[kind]; isCLI {
+		return builtins.CLIFactory(name, tool, deps.hostEnv, os.Environ())
 	}
 
 	return nil

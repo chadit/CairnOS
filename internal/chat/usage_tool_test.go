@@ -19,7 +19,7 @@ const usageTable = "```\n" +
 	"| LOGIN        | PLAN    | WINDOW | USED | RESETS               |\n" +
 	"|--------------|---------|--------|------|----------------------|\n" +
 	"| claude-agent |         | error: login expired                 |\n" +
-	"| codex-work   | prolite | 7d     | 24%  | 2026-09-26 10:01 UTC |\n" +
+	"| codex-agent  | prolite | 7d     | 24%  | 2026-09-26 10:01 UTC |\n" +
 	"```"
 
 // cannedUsage stands in for the usage runner with the output shape its Execute
@@ -47,7 +47,7 @@ func newCannedUsage(t *testing.T) *cannedUsage {
 		HasErrors: true,
 		Logins: []builtins.UsageLogin{
 			{Launcher: "claude-agent", Protocol: "claude", Error: "login expired"},
-			{Launcher: "codex-work", Protocol: "codex", Plan: "prolite"},
+			{Launcher: "codex-agent", Protocol: "codex", Plan: "prolite"},
 		},
 	}).Map()
 	if err != nil {

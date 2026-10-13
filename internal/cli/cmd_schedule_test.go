@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -197,5 +198,142 @@ func TestScheduleAddAcceptsKnownPollSourceQuietly(t *testing.T) {
 
 	if strings.TrimSpace(stdout) == "" {
 		t.Fatal("schedule add printed no id for a valid poll workflow")
+	}
+}
+
+// The workflow template and the assertions that look for them share these
+// required-input fixture names. title is a key every github_issues event
+// carries, and issues_repo is not.
+const (
+	requiredInputFlowName = "needs_input"
+	emittedInputName      = "title"
+	unemittedInputName    = "issues_repo"
+	githubIssuesPoll      = "[workflow.poll]\nsource = \"github_issues\"\n"
+)
+
+// inputsWorkflow is an hourly workflow. The verbs take the workflow name and
+// the TOML tables that set up the case, such as input declarations and a poll
+// source.
+const inputsWorkflow = `
+[workflow]
+name     = %q
+schedule = "@hourly"
+
+%s
+[action.tick]
+runner = "mock"
+params = { output = "tick" }
+`
+
+// requiredInput declares a required string input, appending extraKeys such as
+// a default to its table.
+func requiredInput(name, extraKeys string) string {
+	return fmt.Sprintf("[workflow.inputs.%s]\ntype = \"string\"\nrequired = true\n%s\n", name, extraKeys)
+}
+
+// writeInputsWorkflow writes an inputsWorkflow built from tables into a fresh
+// data dir and returns the dir and the workflow path.
+func writeInputsWorkflow(t *testing.T, tables ...string) (string, string) {
+	t.Helper()
+
+	dir := initDir(t)
+
+	return dir, writeWorkflow(t, dir, fmt.Sprintf(inputsWorkflow, requiredInputFlowName, strings.Join(tables, "\n")))
+}
+
+// TestScheduleAddRejectsInputsNoFireSupplies covers workflows every fire would
+// fail: a plain scheduled run supplies no inputs, and a github_issues poll fire
+// supplies only the issue fields. Add refuses each, names every missing input
+// in sorted order, and stores nothing.
+func TestScheduleAddRejectsInputsNoFireSupplies(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		missing string
+		tables  []string
+	}{
+		{
+			name:    "plain schedule with a required input",
+			missing: unemittedInputName,
+			tables:  []string{requiredInput(unemittedInputName, "")},
+		},
+		{
+			name:    "plain schedule names every missing input sorted",
+			missing: "alpha, zeta",
+			tables:  []string{requiredInput("zeta", ""), requiredInput("alpha", "")},
+		},
+		{
+			name:    "poll source never emits the input",
+			missing: unemittedInputName,
+			tables:  []string{requiredInput(emittedInputName, ""), requiredInput(unemittedInputName, ""), githubIssuesPoll},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir, path := writeInputsWorkflow(t, testCase.tables...)
+
+			code, _, stderr := runCLI(t, scheduleCmd, scheduleArgAdd, path, flagDirArg, dir)
+			if code != cli.ExitUsage {
+				t.Fatalf("schedule add exited %d, want %d (stderr: %s)", code, cli.ExitUsage, stderr)
+			}
+
+			if !strings.Contains(stderr, ": "+testCase.missing+"; give each one a default") {
+				t.Fatalf("stderr does not name exactly %q and the default fix:\n%s", testCase.missing, stderr)
+			}
+
+			code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+			if code != cli.ExitOK || strings.Contains(stdout, requiredInputFlowName) {
+				t.Fatalf("rejected workflow was stored (exit %d):\n%s", code, stdout)
+			}
+		})
+	}
+}
+
+// TestScheduleAddAcceptsInputsAFireFills covers inputs that never fail a fire:
+// one with a default, an optional one, and one the poll source emits. A poll
+// source no wiring builds is not checked, since add cannot know its keys; add
+// warns about that source instead.
+func TestScheduleAddAcceptsInputsAFireFills(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		tables []string
+	}{
+		{
+			name:   "required input with a default",
+			tables: []string{requiredInput(unemittedInputName, `default = "owner/repo"`)},
+		},
+		{
+			name:   "optional input with no default",
+			tables: []string{"[workflow.inputs.note]\ntype = \"string\"\n"},
+		},
+		{
+			name:   "poll source emits the input",
+			tables: []string{requiredInput(emittedInputName, ""), githubIssuesPoll},
+		},
+		{
+			name:   "unknown poll source is not checked",
+			tables: []string{requiredInput(unemittedInputName, ""), "[workflow.poll]\nsource = \"not_a_real_source\"\n"},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir, path := writeInputsWorkflow(t, testCase.tables...)
+
+			addSchedule(t, dir, path)
+
+			code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+			if code != cli.ExitOK || !strings.Contains(stdout, requiredInputFlowName) {
+				t.Fatalf("schedule list (exit %d) missing the workflow:\n%s", code, stdout)
+			}
+		})
 	}
 }

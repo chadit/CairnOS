@@ -107,6 +107,8 @@ func issueParams(params map[string]any, cursor string) map[string]any {
 
 // eventFrom projects one list_issues output row onto an Event: the issue number
 // is the stable dedup id, and the six declared input values ride in Inputs.
+// BuiltinSourceInputs lists the same keys for add-time checks, so a key added
+// here goes there too.
 func eventFrom(fields map[string]any) (Event, string) {
 	createdAt, _ := fields[keyCreatedAt].(string)
 

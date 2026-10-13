@@ -1,13 +1,10 @@
 package cli_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/store"
 )
 
 // hostWorkflow prints the rendered launch path for one tool on one host. A pass
@@ -33,13 +30,6 @@ const wantLaunchPath = "~/.local/bin/claude-agent"
 func appendHostBlocks(t *testing.T, dir string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner.exec]\n" +
 		"allow_actions = [\"reconcile\"]\n" +
 		"timeout       = 30\n" +
@@ -49,9 +39,7 @@ func appendHostBlocks(t *testing.T, dir string) {
 		"\n[host.build_box.harness.claude]\n" +
 		"name = \"claude-agent\"\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with host blocks: %v", err)
-	}
+	appendConfig(t, dir, block)
 }
 
 // TestRunPassesTheHostTableToAnExecAction is the end-to-end case for FR5 and
@@ -73,23 +61,7 @@ func TestRunPassesTheHostTableToAnExecAction(t *testing.T) {
 		t.Fatalf("summary missing success:\n%s", stdout)
 	}
 
-	db := openRunStore(t, dir)
-
-	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
-
-	if len(runs) != 1 {
-		t.Fatalf("persisted runs = %+v, want one row", runs)
-	}
-
-	results, err := db.ListActionResults(t.Context(), runs[0].ID)
-	if err != nil {
-		t.Fatalf("list action results: %v", err)
-	}
-
-	if len(results) != 1 || results[0].Output != wantLaunchPath {
-		t.Fatalf("stored results = %+v, want the rendered launch path %q", results, wantLaunchPath)
+	if got := onlyActionOutput(t, dir); got != wantLaunchPath {
+		t.Fatalf("stored output = %#v, want the rendered launch path %q", got, wantLaunchPath)
 	}
 }

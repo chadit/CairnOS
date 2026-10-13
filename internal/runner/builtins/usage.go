@@ -43,9 +43,11 @@ const usageResetLayout = "2006-01-02 15:04 MST"
 const (
 	defaultUsageTimeout = 60 * time.Second
 
-	// defaultUsageScriptTimeout bounds a report script, which reads every
-	// account in turn and writes only at the end: account_pick.py allows 20
-	// seconds an account, so the probe's minute would cut off a slow fifth.
+	// defaultUsageScriptTimeout bounds a report script that reads every account
+	// in turn and writes only at the end. It is sized on the assumption that one
+	// account read, a slow login probe included, takes up to about 20 seconds:
+	// at that rate five minutes covers about 15 accounts, where the probe's
+	// one-minute default would stop the script after the third.
 	defaultUsageScriptTimeout = 5 * time.Minute
 
 	// defaultUsageClaudeGap outlasts the roughly 60-second cache described on
@@ -145,9 +147,9 @@ type UsageReport struct {
 
 // UsageLogin is one launcher's answer. A failed probe fills Error and leaves
 // the rest zero, because one dead login must not cost the report the others.
-// ReadAt, Score and ResetCredits come only from an account_pick.py report: when
-// the account was read, the pick's ranking score, and the expiry of each banked
-// reset still unexpired.
+// ReadAt, Score and ResetCredits come only from a report file: when the account
+// was read, the script's ranking score, and the expiry of each banked reset
+// still unexpired.
 type UsageLogin struct {
 	ReadAt       time.Time     `json:"read_at,omitzero"`
 	Score        *float64      `json:"score,omitempty"`
@@ -444,9 +446,9 @@ func (l *UsageLogin) rows(ranked bool) [][]string {
 	return rows
 }
 
-// rankCells renders the score to one decimal, the precision the pick's own
-// reasons use, and the credits as a count; their expiry times ride in the JSON.
-// A login the pick left unscored shows a dash rather than a misleading zero.
+// rankCells shows the credits as a count because their expiry times ride in
+// the JSON. A login the script left unscored shows a dash rather than a
+// misleading zero.
 func (l *UsageLogin) rankCells() []string {
 	score := "-"
 	if l.Score != nil {

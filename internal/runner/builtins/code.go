@@ -31,7 +31,8 @@ const (
 )
 
 // Config keys for the [runner.code] block. cfgKeyTimeout is shared with http
-// (wall-clock backstop, seconds); cfgKeyMaxSteps bounds Starlark computation.
+// (wall-clock backstop, seconds); cfgKeyMaxSteps bounds Starlark computation in
+// the interpreter's weighted steps, described at defaultCodeMaxSteps.
 const cfgKeyMaxSteps = "max_steps"
 
 // Caps. Every one is a backstop; the engine's action and workflow deadlines are
@@ -41,7 +42,16 @@ const (
 	// defaultCodeTimeout backstops a run when ctx carries no tighter deadline.
 	defaultCodeTimeout = 10 * time.Second
 
-	// defaultCodeMaxSteps bounds Starlark computation steps per run.
+	// defaultCodeMaxSteps bounds Starlark computation per run in weighted
+	// steps. Since go.starlark.net v0.0.0-20261005163335 a step is no longer
+	// one bytecode instruction: the interpreter charges 10 at each loop back
+	// edge, Starlark function entry, and call return. A loop iteration
+	// therefore costs 10, plus 20 per Starlark function and 10 per builtin it
+	// calls. Measured over six loop-heavy script shapes, the weighted count
+	// averaged 1.02 times the old instruction count, so the value stayed put.
+	// Single scripts moved further: call-heavy string loops cost up to 1.5
+	// times as much and dict-building loops about 0.7 times. A starlark release
+	// that reweights steps again fails TestCodeDefaultStepBudgetBoundary.
 	defaultCodeMaxSteps = 500000
 
 	// maxScriptBytes caps the script text at 64 KiB, checked in both Validate
@@ -56,7 +66,8 @@ const (
 // printTruncatedMarker terminates a print capture that hit maxPrintCapture.
 const printTruncatedMarker = "[print truncated]"
 
-// Meta keys: the print capture (when non-empty) and the executed step count.
+// Meta keys: the print capture (when non-empty) and the weighted step count the
+// run spent against max_steps.
 const (
 	metaPrint = "print"
 	metaSteps = "steps"

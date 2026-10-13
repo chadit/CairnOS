@@ -7,11 +7,11 @@ package cli
 // inside that archive. Upstream publishes no checksum file for these assets, so
 // tools/bwpin downloads both archives and hashes them.
 const (
-	bwVersion = "2026.8.0"
+	bwVersion = "2026.9.1"
 
-	bwLinuxArchiveSHA256 = "367f618e9fcccaac4980ec12c7bafd01df739b5f3cb1af31bc9045cf75eea1d6"
-	bwLinuxBinarySHA256  = "73b6e9b5706b6ba315974ada6723b5bb3e54b51b99583a58d9968925b607cd9c"
+	bwLinuxArchiveSHA256 = "84289eaf59d691f04242605112f21b00e8dba65acdedbc60dde001a2860f2097"
+	bwLinuxBinarySHA256  = "36a952f0632814b79ee4a125b3dacb85d11be20c8b63eb19ca42b686cc90e20b"
 
-	bwMacOSArchiveSHA256 = "c5d57f70d5394f8c348f6c3bf53683ad6d15e6acfe55e7c1e0a8f376482d8e71"
-	bwMacOSBinarySHA256  = "16219f8c8e5fd1bc8211ea1294cb866fc6a100d7bb43b79814afeabfbe1c11eb"
+	bwMacOSArchiveSHA256 = "7996558e562a7e5d1ef167f625e4dfde0230fe87246e01caf647aff5501ca658"
+	bwMacOSBinarySHA256  = "1f505d93a52201b34e66b61d5b6f7eb60ef611755206564c2c397d739cbbeb6c"
 )

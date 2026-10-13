@@ -21,8 +21,10 @@ function dropSignal(): void {
 
 // One MSW server backs every test. Tests override handlers per case; the
 // reset after each keeps cases isolated. No request ever leaves the process.
+// MSW 3 drops an unknown option key without a word and defaults to 'warn',
+// which lets an unmatched request out, so vitest.setup.test.ts pins this.
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' });
+  server.listen({ onUnhandledFrame: 'error' });
   // After listen, so the wrapper sits in front of MSW's interceptor.
   dropSignal();
 });

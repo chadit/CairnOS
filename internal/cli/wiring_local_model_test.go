@@ -3,14 +3,11 @@ package cli_test
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/store"
 )
 
 // localModelWorkflow names the runner only the [runner.local] block defines,
@@ -61,20 +58,8 @@ func TestRunExecutesLocalModelRunnerWithoutAnAPIKey(t *testing.T) {
 		t.Fatalf("summary missing success:\n%s", stdout)
 	}
 
-	db := openRunStore(t, dir)
-
-	runs, err := db.ListRuns(t.Context(), store.ListFilter{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
-
-	results, err := db.ListActionResults(t.Context(), runs[0].ID)
-	if err != nil {
-		t.Fatalf("list action results: %v", err)
-	}
-
-	if len(results) != 1 || results[0].Output != "hello back" {
-		t.Fatalf("results = %+v, want the local model's answer", results)
+	if got := onlyActionOutput(t, dir); got != "hello back" {
+		t.Fatalf("stored output = %#v, want the local model's answer", got)
 	}
 }
 
@@ -127,21 +112,12 @@ func localModelServer(t *testing.T) string {
 func appendLocalModelBlock(t *testing.T, dir, baseURL string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner.local]\n" +
 		"type     = \"openai\"\n" +
 		"model    = \"gemma-4-e4b\"\n" +
 		"base_url = " + strconv.Quote(baseURL) + "\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with the local model block: %v", err)
-	}
+	appendConfig(t, dir, block)
 }
 
 // openaiBuiltinWorkflow references the built-in runner name, so a pass proves a
@@ -185,19 +161,10 @@ func TestRunOpenAINamedBlockConfiguresBuiltin(t *testing.T) {
 func appendOpenAIBlock(t *testing.T, dir, baseURL string) {
 	t.Helper()
 
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	existing, err := os.ReadFile(cfgPath) // #nosec G304 -- test-owned scaffold path
-	if err != nil {
-		t.Fatalf("read scaffolded config: %v", err)
-	}
-
 	block := "\n[runner.openai]\n" +
 		"type     = \"openai\"\n" +
 		"model    = \"gemma-4-e4b\"\n" +
 		"base_url = " + strconv.Quote(baseURL) + "\n"
 
-	if err := os.WriteFile(cfgPath, append(existing, []byte(block)...), 0o600); err != nil {
-		t.Fatalf("write config with the openai block: %v", err)
-	}
+	appendConfig(t, dir, block)
 }

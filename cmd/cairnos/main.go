@@ -6,16 +6,13 @@ package main
 import (
 	"context"
 	"os"
-	"os/signal"
 
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
 func main() {
-	// Interrupt cancels the context so an in-flight workflow finalizes its
-	// run record instead of dying mid-write. context.Background is allowed
-	// only here, where no caller context exists.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// context.Background is allowed only here, where no caller context exists.
+	ctx, stop := cli.StopContext(context.Background())
 
 	code := cli.New(os.Stdout, os.Stderr).Run(ctx, os.Args[1:])
 

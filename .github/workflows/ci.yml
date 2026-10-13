@@ -18,11 +18,11 @@ jobs:
     if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The runner host has a Go toolchain, but not on the runner account's
       # PATH. setup-go puts a known version there and reads the same go.mod
       # the rest of CI does.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go build ./...
@@ -37,6 +37,8 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/cairnos
       - name: unit tests
         run: make test-unit
+      - name: script tests
+        run: make test-scripts
       - name: integration tests
         run: make test-integration
 
@@ -48,8 +50,8 @@ jobs:
   windows-plugin:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # internal/runner/plugin holds the host-side lifetime tests, which is
@@ -73,10 +75,13 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # Node floats at the newest LTS on purpose, the same way golangci-lint
+          # floats at latest: the web build runs on the newest LTS line instead
+          # of a major somebody has to bump.
+          node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
@@ -91,23 +96,20 @@ jobs:
     if: github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The runner host has a Go toolchain, but not on the runner account's
       # PATH. setup-go puts a known version there and reads the same go.mod
       # the rest of CI does.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # The Makefile is the one place the linter versions are written down, so
-      # CI and a developer machine cannot drift apart. Without this the action
-      # picks its own default and nothing declares which version ran.
-      - name: read the pinned linter version
-        id: pins
-        run: echo "golangci=$(sed -n 's/^GOLANGCI_LINT_VERSION *:= *//p' Makefile)" >> "$GITHUB_OUTPUT"
+      # golangci-lint is deliberately unpinned. `latest` here matches the
+      # Makefile's `go install ...@latest`, so CI and a developer machine both
+      # run the newest release instead of a version somebody has to bump.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: ${{ steps.pins.outputs.golangci }}
+          version: latest
       # gosec runs standalone because its golangci integration deadlocks on
       # multi-package runs; the make target holds the exclude list.
       - name: gosec

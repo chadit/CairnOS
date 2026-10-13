@@ -111,7 +111,9 @@ describe('builder run panel', () => {
   });
 
   it('runs one selected action inline, carrying the definition as toml', async () => {
-    let runBody: { inputs: Record<string, string>; toml?: string } | null = null;
+    // Only the handler assigns runBody, which flow analysis cannot see, so the
+    // assertion keeps the declared type from narrowing to null.
+    let runBody = null as { inputs: Record<string, string>; toml?: string } | null;
     server.use(
       http.post('/v1/workflows/hello/runs', async ({ request }) => {
         runBody = (await request.json()) as { inputs: Record<string, string>; toml?: string };

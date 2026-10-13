@@ -1,0 +1,164 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - "integration"
+    - "livetest"
+linters:
+  default: all
+  disable:
+    # Explicitly disabled linters (as per requirements)
+    - forbidigo # Forbid identifiers - too restrictive
+    - exhaustruct # Exhaustive struct initialization - design choice (deprecated)
+    - exhaustruct_v5 # Exhaustive struct initialization - design choice
+    - depguard # Import restrictions - not needed
+    - lll # Line length - handled by gofmt
+    - cyclop # Cyclomatic complexity - duplicate of gocyclo
+    - funlen # Function length - overly strict
+    - noinlineerr # Inline error handling | Community error handling (makes no sense why we would want this)
+    - wsl # Deprecated - replaced by wsl_v5
+    - gomodguard # Deprecated since v2.12.0 - replaced by gomodguard_v2 (auto-enabled via default: all)
+    - ireturn # Flags generic T returns as interface - false positive for Go generics
+    - gosec # Deadlocks on multi-package ./... runs (securego/gosec#1610). Run standalone via `make gosec` instead.
+
+  exclusions:
+    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters:
+          - err113
+          - gosec
+          - dupl
+          - testpackage
+
+  settings:
+    staticcheck:
+      checks: ["all", "-ST1000"]
+    wrapcheck:
+      # Allow our custom error wrappers and common patterns
+      ignore-sigs:
+        - errors.New(
+        - fmt.Errorf(
+      ignore-package-globs:
+        - "*.test"
+        - "test/*"
+        - "*_test.go"
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - unnamedResult
+        - ruleguard
+    govet:
+      enable:
+        - nilness
+        - unusedwrite
+        - sortslice
+        - reflectvaluecompare
+        - shadow
+        - fieldalignment
+    revive:
+      enable-default-rules: true
+      rules:
+        # Non-default rules to add on top of revive's 23 defaults
+        - name: indent-error-flow
+        - name: import-shadowing
+        - name: early-return
+        - name: deep-exit
+        - name: waitgroup-by-value
+        - name: confusing-naming
+        - name: unused-parameter
+        - name: unused-receiver
+    mnd:
+      checks:
+        - argument
+        - case
+        - condition
+        - return
+      # Allow common patterns
+      ignored-numbers:
+        - "60" # seconds/minutes
+        - "130" # SIGINT exit code
+        - "1024" # common buffer size
+        - "4096" # common buffer size
+      ignored-functions:
+        - "make" # make([]int, 10)
+        - "time.Sleep" # time.Sleep(5 * time.Second)
+        - "time.Duration" # time.Duration(100)
+        - "strconv.*" # strconv function
+        - strings.SplitN
+      ignored-files:
+        - "_test.go" # Tests often have test data numbers
+    nestif:
+      min-complexity: 5
+    nolintlint:
+      allow-unused: false # report any unused nolint directives
+      require-explanation: true # require an explanation for nolint directives
+      require-specific: true # require nolint directives to be specific about which linter is being skipped
+    gocognit:
+      min-complexity: 30
+    gocyclo:
+      min-complexity: 20
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    godox:
+      keywords:
+        - FIXME
+        - TODO
+        - BUG
+        - HACK
+        - NOTE
+        - OPTIMIZE
+        - TEST
+    misspell:
+      locale: US
+      ignore-rules:
+        - "importas" # linter name
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+    varnamelen:
+      # specific variable names to ignore (defaults are usually i, k, v)
+      ignore-names:
+        - err
+        - wg
+        - db
+        - tx
+        - id
+        - ctx
+        - tt
+      # strictly enforce length for other variables
+      min-name-length: 3
+      # allow short variables in these specific contexts
+      ignore-decls:
+        - t *testing.T
+        - w http.ResponseWriter
+        - r *http.Request
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+        clothe-returns: true
+        balance-calls: true
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -44,6 +44,10 @@ Environment:
 
 ## Run it
 
+A scheduled run supplies no inputs, and `cairnos schedule add` refuses a file
+whose required input has no default, so before you schedule your copy, give
+`feed_url`, `resume_summary`, and `notify_to` each a `default`.
+
 ```sh
 cairnos validate examples/agents/career_scout/career_scout.toml
 
@@ -52,6 +56,6 @@ cairnos run examples/agents/career_scout/career_scout.toml \
   --input resume_summary="Senior Go engineer, distributed systems" \
   --input notify_to=me@example.com
 
-# put it on the daily schedule
+# put it on the daily schedule, once each required input has a default
 cairnos schedule add examples/agents/career_scout/career_scout.toml
 ```

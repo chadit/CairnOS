@@ -139,12 +139,11 @@ func (a *App) lookupLogger(opts *updateOptions) *slog.Logger {
 	return a.logger
 }
 
-// findRelease answers with the release to install when one fits this platform
-// and no checkout sits around the running binary. A binary built from a
-// checkout follows that checkout's upstream instead, so a host on a newer main
-// commit is never moved onto an older tag. --no-fetch, --source and
-// --no-release each skip the lookup too, so a developer deploying the tree in
-// front of them is never clobbered.
+// findRelease returns the release to install when one fits this platform and no
+// checkout surrounds the running binary. A checkout build follows its upstream
+// instead, so a host on a newer main commit never moves to an older tag.
+// --no-fetch, --source and --no-release skip the lookup too, so a developer's
+// local tree is never clobbered.
 func (a *App) findRelease(ctx context.Context, opts *updateOptions) (releaseBuild, bool, error) {
 	if !opts.fetch || opts.source != "" || !opts.release {
 		return releaseBuild{}, false, nil
@@ -191,9 +190,10 @@ func releaseAssetName(goos, goarch string) string {
 	return name
 }
 
-// releaseToken reads the token the API calls authenticate with. The repository
-// is private, so without one every lookup answers 404 and the update builds the
-// checkout instead.
+// releaseToken reads the token the API calls authenticate with. Without one the
+// lookup is unauthenticated and shares GitHub's 60-requests-an-hour limit, and a
+// lookup past that limit fails the update. A private fork read without a token
+// answers 404, which reads the same as a repository with no published release.
 func releaseToken(lookup environ.Lookup) string {
 	for _, key := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
 		if value := strings.TrimSpace(lookup.Get(key)); value != "" {
@@ -217,7 +217,8 @@ func (c *releaseClient) latestRelease(ctx context.Context, owner, repo string) (
 	}
 
 	if !found {
-		c.logger.Info("update: no release is published for this repository, building the checkout")
+		c.logger.Info("update: no release is published for this repository and no checkout " +
+			"surrounds the binary, so the update stops")
 
 		return releaseBuild{}, false, nil
 	}
@@ -226,7 +227,8 @@ func (c *releaseClient) latestRelease(ctx context.Context, owner, repo string) (
 
 	asset, sums, found := pickAssets(payload.Assets, wanted)
 	if !found {
-		c.logger.Info("update: the latest release carries no asset for this platform, building the checkout",
+		c.logger.Info("update: the latest release carries no asset for this platform and no "+
+			"checkout surrounds the binary, so the update stops",
 			"tag", payload.TagName, "asset", wanted)
 
 		return releaseBuild{}, false, nil

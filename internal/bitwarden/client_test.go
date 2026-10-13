@@ -259,10 +259,9 @@ func TestFieldsReportsAnItemThatIsNotThere(t *testing.T) {
 }
 
 // TestFieldsGivesUpWhenServeNeverAnswers bounds the one step with no natural
-// limit. The fake stays alive without listening, which is what a daemon that
-// fails to bind looks like from here. A one-poll budget ends each wait on the
-// first miss, so the case proves the whole thing ends without the suite sitting
-// through it.
+// limit. The fake stays alive on its port and answers nothing, so no amount of
+// waiting gets a reply. A one-poll budget ends each wait on the first miss, so
+// the case proves the whole thing ends without the suite sitting through it.
 func TestFieldsGivesUpWhenServeNeverAnswers(t *testing.T) {
 	t.Parallel()
 
@@ -293,9 +292,9 @@ func TestFieldsGivesUpWhenServeNeverAnswers(t *testing.T) {
 const silentPolls = 20
 
 // TestFieldsMovesOnFromAPortThatGoesQuiet covers the other unusable port: the
-// child is up and holding nothing, which is how a port the host stopped
-// carrying traffic for looks from here. Waiting longer on it never helped, so
-// the budget running out has to start over somewhere else.
+// child is up on its port and answers nothing, which is how a port the host
+// stopped carrying traffic for looks from here. Waiting longer on it never
+// helped, so the budget running out has to start over somewhere else.
 func TestFieldsMovesOnFromAPortThatGoesQuiet(t *testing.T) {
 	t.Parallel()
 

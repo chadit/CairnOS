@@ -17,13 +17,15 @@ output, and records the run in history (`cairnos runs list`).
 
 ## Pick your runner
 
-The file ships pointing at `codex`. Every built-in CLI runner already launches
-its tool's headless one-shot mode (`codex exec`, `claude -p`, `omp-glm -p`),
-so the only edit is the runner name:
+The file ships pointing at `codex`. Each CLI runner below already launches
+its tool's headless one-shot mode (`codex exec`, `claude -p`, `omp -p`),
+so the edit is the runner line, plus a `[runner.<name>]` block for a wrapper:
 
 - `runner = "claude"` for a Claude Code login
-- `runner = "omp_glm"` for the omp GLM wrapper
-- `runner = "qwen"` / `"omp"` / `"omp_codex"` / `"omp_qwen"` likewise
+- `runner = "qwen"` / `"omp"` likewise
+- the name of a `[runner.<name>]` block you declared for a wrapper script
+  around one of those tools (see
+  [CLI runners](../../../README.md#model-setup) in the top-level README)
 - `runner = "anthropic"` or `"openai"` to use an API key instead
   (`CAIRNOS_RUNNER_ANTHROPIC_API_KEY` / `CAIRNOS_RUNNER_OPENAI_API_KEY`)
 

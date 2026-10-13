@@ -27,18 +27,47 @@ const fakeName = "bw"
 // for the same reason: a file survives the environment scrub.
 const fakeSettingsFile = "fake.json"
 
-// Modes the fixtures write.
+// These are the file modes the fixtures write.
 const (
 	fixtureExecPerm = 0o700
 	fixtureFilePerm = 0o600
 )
 
+// These are the exit statuses the fake returns. exitStatusUsage and
+// exitStatusNoSettings mean the fixture itself is broken, not that the case's
+// scenario played out.
+const (
+	exitStatusOK         = 0
+	exitStatusFailed     = 1
+	exitStatusUsage      = 2
+	exitStatusNoSettings = 3
+)
+
+// The fake's daemons bind loopback only, on the port the client passes with
+// portFlag, the same flag a real `bw serve` takes.
+const (
+	portFlag        = "--port"
+	loopbackNetwork = "tcp"
+	loopbackIP      = "127.0.0.1"
+)
+
+// loopbackAddr joins a port onto the loopback IP, the one address the fake binds
+// and the cases dial.
+func loopbackAddr(port string) string {
+	return net.JoinHostPort(loopbackIP, port)
+}
+
+// fakeServeErrFormat puts the kernel's own error on stderr, because that text is
+// what the client folds into the failure it reports.
+const fakeServeErrFormat = "fake serve: %v\n"
+
 // headerTimeout bounds how long the fake daemon waits for a request header,
 // so a stalled test cannot leave the child holding its port forever.
 const headerTimeout = 30 * time.Second
 
-// The three fixture files, all beside the symlink under fixed names that both
-// sides derive, so the settings carry no path the fake could resolve for itself.
+// These are the three fixture files. All sit beside the symlink under fixed names
+// that both sides derive, so the settings carry no path the fake could resolve
+// for itself.
 // items.json is the list endpoint's body; the other two are the records a case
 // reads back.
 const (
@@ -58,8 +87,9 @@ type fakeSettings struct {
 	BusyPort   int `json:"busy_port"`
 	BusyServes int `json:"busy_serves"`
 
-	// SilentServes is how many serve invocations stay up without ever binding or
-	// answering, the shape of a daemon whose port stopped carrying traffic.
+	// SilentServes is how many serve invocations bind their port and then never
+	// answer, the shape of a daemon whose port stopped carrying traffic. One that
+	// loses the bind exits at once, as every fake daemon does.
 	SilentServes int `json:"silent_serves"`
 
 	// LoginFails makes `bw login` exit non-zero.
@@ -87,20 +117,23 @@ func isFakeInvocation() bool {
 // host that happens to lack one. It returns the process exit code.
 func runFakeBW(argv []string) int {
 	if len(argv) == 0 {
-		return 2
+		return exitStatusUsage
 	}
 
 	// serve runs its own settings read, because what it does with them decides
 	// whether it ever binds.
 	if argv[0] == "serve" {
-		return runFakeServe(argv)
+		// The child's root context. Nothing ever cancels it: the client ends this
+		// process with SIGKILL, which exec.CommandContext sends by default and no
+		// handler can observe, so there is no cancel for a ctx.Err check to see.
+		return runFakeServe(context.Background(), argv) //nolint:contextbackground // the re-executed fake child has no *testing.T to take t.Context() from
 	}
 
 	settings, err := loadFakeSettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
 
-		return 3
+		return exitStatusNoSettings
 	}
 
 	appendLine(fakeDirFile(fakeArgvFileName), strings.Join(argv, " "))
@@ -113,7 +146,7 @@ func runFakeBW(argv []string) int {
 	default:
 		fmt.Fprintf(os.Stderr, "unexpected subcommand: %s\n", argv[0])
 
-		return 2
+		return exitStatusUsage
 	}
 }
 
@@ -144,7 +177,7 @@ func reportStatus(settings fakeSettings) int {
 
 	fmt.Printf("{%q:%q}\n", "status", status)
 
-	return 0
+	return exitStatusOK
 }
 
 // reportLogin answers `bw login --apikey`.
@@ -152,12 +185,12 @@ func reportLogin(settings fakeSettings) int {
 	if settings.LoginFails {
 		fmt.Fprintln(os.Stderr, "login refused")
 
-		return 1
+		return exitStatusFailed
 	}
 
 	fmt.Println("logged-in")
 
-	return 0
+	return exitStatusOK
 }
 
 // runFakeServe binds a real port because this runs in a re-executed child
@@ -165,44 +198,54 @@ func reportLogin(settings fakeSettings) int {
 // records every path it answers, so a case can assert that /lock ran even on a
 // failure. Nothing here has to hurry: the client's probe decides when this
 // daemon is up.
-func runFakeServe(argv []string) int {
+func runFakeServe(ctx context.Context, argv []string) int {
 	settings, err := loadFakeSettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fake bw: %v\n", err)
 
-		return 3
+		return exitStatusNoSettings
 	}
 
 	attempt := serveAttempt(fakeDirFile(fakeArgvFileName))
 	appendLine(fakeDirFile(fakeArgvFileName), strings.Join(argv, " "))
 
 	if attempt <= settings.BusyServes {
-		return refuseBind(settings.BusyPort)
+		return refuseBind(ctx, settings.BusyPort)
 	}
 
 	if attempt <= settings.BusyServes+settings.SilentServes {
-		// Up, holding no port, and never answering: the client's budget is what
-		// must end its wait, and its cancel is what kills this process.
-		select {}
+		return holdPortSilently(ctx, flagValue(argv, portFlag))
 	}
 
-	//nolint:noctx // this runs in the re-executed fake process, which has no context to cancel
-	listener, err := net.Listen("tcp", "127.0.0.1:"+flagValue(argv, "--port"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
-
-		return 1
+	listener, bound := listenLoopback(ctx, flagValue(argv, portFlag))
+	if !bound {
+		return exitStatusFailed
 	}
 
 	server := &http.Server{Handler: fakeHandler(settings), ReadHeaderTimeout: headerTimeout}
 
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
+		fmt.Fprintf(os.Stderr, fakeServeErrFormat, err)
 
-		return 1
+		return exitStatusFailed
 	}
 
-	return 0
+	return exitStatusOK
+}
+
+// listenLoopback binds the given loopback port and, when the bind is lost,
+// reports the kernel's refusal on stderr for the client to quote.
+func listenLoopback(ctx context.Context, port string) (net.Listener, bool) {
+	var config net.ListenConfig
+
+	listener, err := config.Listen(ctx, loopbackNetwork, loopbackAddr(port))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, fakeServeErrFormat, err)
+
+		return nil, false
+	}
+
+	return listener, true
 }
 
 // serveAttempt counts the serve invocations already recorded, so the fake knows
@@ -225,24 +268,50 @@ func serveAttempt(argvFile string) int {
 	return count
 }
 
+// holdPortSilently binds its port and drops every connection unanswered until
+// the client kills this process at the end of its budget. A lost bind or a
+// failed Accept exits at once with the kernel's error on stderr. The port stays
+// bound so no parallel case's daemon can take it, or the client would read that
+// vault as its own.
+func holdPortSilently(ctx context.Context, port string) int {
+	// A parallel case can still take the port between the client releasing it and
+	// this bind, and the start then reads as exited instead of never answered.
+	// That window is one child's startup, while a port left free stays open for
+	// the whole budget.
+	listener, bound := listenLoopback(ctx, port)
+	if !bound {
+		return exitStatusFailed
+	}
+
+	defer func() { _ = listener.Close() }()
+
+	for {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			fmt.Fprintf(os.Stderr, fakeServeErrFormat, acceptErr)
+
+			return exitStatusFailed
+		}
+
+		_ = conn.Close()
+	}
+}
+
 // refuseBind reproduces the race the client retries around: the port this child
 // was given went to something else on the way here. Binding a port the case
 // holds open puts the kernel's own refusal on stderr, which is what the client
 // has to report.
-func refuseBind(port int) int {
-	//nolint:noctx // this runs in the re-executed fake process, which has no context to cancel
-	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fake serve: %v\n", err)
-
-		return 1
+func refuseBind(ctx context.Context, port int) int {
+	listener, bound := listenLoopback(ctx, strconv.Itoa(port))
+	if !bound {
+		return exitStatusFailed
 	}
 
 	_ = listener.Close()
 
 	fmt.Fprintf(os.Stderr, "fake serve: port %d was free after all\n", port)
 
-	return 1
+	return exitStatusFailed
 }
 
 // stallCap is the backstop for a client disconnect this process never notices.
@@ -424,7 +493,7 @@ func recorded(t *testing.T, path string) string {
 func listening(ctx context.Context, port string) bool {
 	dialer := net.Dialer{Timeout: time.Second}
 
-	conn, err := dialer.DialContext(ctx, "tcp", "127.0.0.1:"+port)
+	conn, err := dialer.DialContext(ctx, loopbackNetwork, loopbackAddr(port))
 	if err != nil {
 		return false
 	}
@@ -444,7 +513,7 @@ func servePorts(argvRecord string) []string {
 			continue
 		}
 
-		if port := flagValue(strings.Fields(line), "--port"); port != "" {
+		if port := flagValue(strings.Fields(line), portFlag); port != "" {
 			ports = append(ports, port)
 		}
 	}
@@ -472,7 +541,7 @@ func occupiedPort(t *testing.T) int {
 
 	var config net.ListenConfig
 
-	listener, err := config.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	listener, err := config.Listen(t.Context(), loopbackNetwork, loopbackAddr("0"))
 	if err != nil {
 		t.Fatalf("hold a loopback port: %v", err)
 	}
