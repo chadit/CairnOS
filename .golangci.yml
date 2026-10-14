@@ -14,17 +14,21 @@ linters:
     - exhaustruct # Exhaustive struct initialization - design choice (deprecated)
     - exhaustruct_v5 # Exhaustive struct initialization - design choice
     - depguard # Import restrictions - not needed
-    - lll # Line length - handled by gofmt
+    - lll # Line length - not enforced
     - cyclop # Cyclomatic complexity - duplicate of gocyclo
-    - funlen # Function length - overly strict
-    - noinlineerr # Inline error handling | Community error handling (makes no sense why we would want this)
+    - funlen # Function length - counts blank lines and data literals as length
+    - noinlineerr # Inline error handling | Community errror handling (makes no sense why we would want this)
     - wsl # Deprecated - replaced by wsl_v5
     - gomodguard # Deprecated since v2.12.0 - replaced by gomodguard_v2 (auto-enabled via default: all)
-    - ireturn # Flags generic T returns as interface - false positive for Go generics
-    - gosec # Deadlocks on multi-package ./... runs (securego/gosec#1610). Run standalone via `make gosec` instead.
+    - gosec # Deadlocks on multi-package ./... runs (securego/gosec#1610). Run standalone via lint.sh instead.
 
   exclusions:
     warn-unused: true
+    paths:
+      - "internal/genpb"
+      - "testdata"
+      - "vendor"
+      - "third_party"
     rules:
       - path: _test\.go
         linters:
@@ -32,19 +36,42 @@ linters:
           - gosec
           - dupl
           - testpackage
+          - wrapcheck
+      - linters:
+          - errcheck
+        text: 'Error return value of .*\.Close. is not checked' # a deferred Close() on a read-only handle is cleanup, not error handling
+      - path: internal/config/
+        linters:
+          - tagliatelle
 
   settings:
     staticcheck:
-      checks: ["all", "-ST1000"]
+      checks: ["all", "-ST1000"] # revive package-comments reports the same thing
+    errcheck:
+      check-blank: true
+    ireturn:
+      allow:
+        - anon
+        - error
+        - empty
+        - stdlib
+        - generic
+    interfacebloat:
+      max: 4
+    usetesting:
+      os-temp-dir: true
     wrapcheck:
-      # Allow our custom error wrappers and common patterns
+      # Setting ignore-sigs replaces the defaults, so they are restated here
       ignore-sigs:
+        - .Errorf(
         - errors.New(
-        - fmt.Errorf(
-      ignore-package-globs:
-        - "*.test"
-        - "test/*"
-        - "*_test.go"
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
     gocritic:
       enabled-tags:
         - diagnostic
@@ -75,22 +102,14 @@ linters:
         - name: confusing-naming
         - name: unused-parameter
         - name: unused-receiver
+        - name: max-control-nesting
+          arguments:
+            - 2
     mnd:
-      checks:
-        - argument
-        - case
-        - condition
-        - return
-      # Allow common patterns
       ignored-numbers:
         - "60" # seconds/minutes
         - "130" # SIGINT exit code
-        - "1024" # common buffer size
-        - "4096" # common buffer size
       ignored-functions:
-        - "make" # make([]int, 10)
-        - "time.Sleep" # time.Sleep(5 * time.Second)
-        - "time.Duration" # time.Duration(100)
         - "strconv.*" # strconv function
         - strings.SplitN
       ignored-files:
@@ -107,7 +126,7 @@ linters:
       min-complexity: 20
     goconst:
       min-len: 2
-      min-occurrences: 3
+      min-occurrences: 2
     godox:
       keywords:
         - FIXME
