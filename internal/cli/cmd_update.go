@@ -95,10 +95,6 @@ const dirtySuffix = "+dirty"
 // systemd user session often starts with a PATH that omits it.
 const goFallbackPath = "/usr/local/go/bin/go"
 
-// goosLinux is the only platform that exposes a running process image, which
-// is where the revision comparison reads the running build from.
-const goosLinux = "linux"
-
 // procExeFormat spells the running process image's path. It is a format rather
 // than a filepath.Join because those components are separators the host fixes,
 // not a path this command assembles.
@@ -238,7 +234,7 @@ func (a *App) runUpdate(ctx context.Context, opts *updateOptions, steps UpdateSt
 			return ExitFailure, err
 		}
 
-		defer unlock()
+		defer a.runCloser("update lock", unlock)
 	}
 
 	build, found, err := a.findRelease(ctx, opts)
@@ -338,7 +334,11 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts *upd
 		return fmt.Errorf("create a staging directory: %w", err)
 	}
 
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			a.logger.Warn("update staging directory left behind", "dir", dir, "error", removeErr)
+		}
+	}()
 
 	staged, err := a.releaseClient(opts).stageAsset(ctx, build, dir)
 	if err != nil {
@@ -513,13 +513,13 @@ const updateLockName = "update.lock"
 // another update holds it. A home that does not exist has no serve and so no
 // loop to contend with, so the update goes ahead unlocked. The OS drops the
 // lock with the process, so a killed update never leaves it stuck.
-func lockUpdate(home string) (func(), error) {
+func lockUpdate(home string) (func() error, error) {
 	path := filepath.Join(home, updateLockName)
 	lock := flock.New(path)
 
 	locked, err := lock.TryLock()
 	if errors.Is(err, fs.ErrNotExist) {
-		return func() {}, nil
+		return func() error { return nil }, nil
 	}
 
 	if err != nil {
@@ -530,7 +530,13 @@ func lockUpdate(home string) (func(), error) {
 		return nil, fmt.Errorf("%w: %s is held", errUpdateBusy, path)
 	}
 
-	return func() { _ = lock.Unlock() }, nil
+	return func() error {
+		if err := lock.Unlock(); err != nil {
+			return fmt.Errorf("release the update lock %s: %w", path, err)
+		}
+
+		return nil
+	}, nil
 }
 
 // upstreamRef names the branch the checkout tracks, empty when it tracks none.
@@ -949,7 +955,7 @@ func (a *App) verifyRunning(pid int, wanted string) error {
 // runs what this command just made. Windows has no such entry on PATH, so the
 // step is skipped there.
 func (a *App) linkBinary(binary string) error {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		return nil
 	}
 

@@ -26,14 +26,11 @@ type CLITool struct {
 	Args   []string
 }
 
-// CLIDefaults maps each built-in CLI runner name to its launch defaults. Every
-// key is both a runner name workflows use and a type value [runner.<name>]
-// blocks set, so removing one breaks the configs and workflows that name it.
-// Every argv template picks the tool's headless one-shot mode, because a
-// workflow can never answer an interactive UI: a bare `claude <prompt>` opens
-// the tool's TUI and hangs the run. configuredRunnerFactory in
-// internal/cli/wiring.go starts a wrapper script's block from the defaults its
-// type names.
+// CLIDefaults maps each built-in CLI runner name to its launch defaults. Each
+// key is a runner name and a [runner.<name>] type value, so removing one breaks
+// the configs and workflows that name it. Every argv template picks headless
+// one-shot mode: a bare `claude <prompt>` opens a TUI no workflow can answer.
+// Wrapper-script blocks start from these defaults too.
 func CLIDefaults() map[string]CLITool {
 	return map[string]CLITool{
 		ClaudeName:      {Binary: "claude", Args: []string{printFlag, promptToken}},
@@ -44,23 +41,52 @@ func CLIDefaults() map[string]CLITool {
 	}
 }
 
-// CLI wraps one prompt-driven command-line tool as a runner.
+// CLI wraps one prompt-driven command-line tool as a runner. Every named CLI
+// built-in is one CLI over its own launch template
+// (.agents/spec/03-runner-interface.md, "Built-in runners").
 //
 // Config keys (all optional): binary overrides the launched executable, args
 // is the argv template where {prompt} substitutes the prompt param, and
 // stdin = true sends the prompt on standard input instead. Params: prompt.
 type CLI struct {
-	exec cliExec
+	name   string
+	binary string
+
+	// reauthProvider is the built-in whose launch template this runner started
+	// from. The re-auth code carries it instead of name, because the scheduler
+	// holds a job on the credential named before the code's last dot, and a
+	// [runner.summarize] block wrapping claude needs the claude credential.
+	reauthProvider string
+
+	args []string
+
+	// env carries the rendered host table. Nil is the ordinary case and keeps
+	// cmd.Env unset, so the child inherits serve's environment exactly as it did
+	// before hosts existed; a non-empty slice is appended to that same
+	// environment rather than replacing it.
+	env []string
+
+	// inherited is the environment the child starts from. Nil leaves cmd.Env
+	// unset, so the child inherits this process's environment exactly as it did
+	// before hosts existed; wiring passes os.Environ().
+	inherited []string
+
+	stdin bool
+
+	// allowDashedPrompt opts out of the dashed-prompt guard, for operators who
+	// have vetted the wrapped binary and want a prompt that may begin with a
+	// dash to ride a bare positional anyway (spec M3).
+	allowDashedPrompt bool
 }
 
-// NewCLI builds a named CLI runner over the shared subprocess helper.
+// NewCLI builds a named CLI runner from its launch template and config block.
 func NewCLI(name string, tool CLITool, cfg map[string]any) (*CLI, error) {
-	helper, err := newCLIExec(name, tool, cfg)
+	built, err := decodeCLI(name, tool, cfg)
 	if err != nil {
 		return nil, wrapConfigErr(name, err)
 	}
 
-	return &CLI{exec: helper}, nil
+	return built, nil
 }
 
 // CLIFactory adapts one named tool to the registry contract, handing its
@@ -74,8 +100,8 @@ func CLIFactory(name string, tool CLITool, hostEnv, inherited []string) runner.F
 			return nil, err
 		}
 
-		built.exec.env = hostEnv
-		built.exec.inherited = inherited
+		built.env = hostEnv
+		built.inherited = inherited
 
 		return built, nil
 	}
@@ -83,21 +109,10 @@ func CLIFactory(name string, tool CLITool, hostEnv, inherited []string) runner.F
 
 // Name implements runner.Runner.
 func (c *CLI) Name() string {
-	return c.exec.name
-}
-
-// Validate implements runner.Runner: params must carry a string prompt.
-func (c *CLI) Validate(task *runner.Task) error {
-	return c.exec.validate(task)
+	return c.name
 }
 
 // Execute implements runner.Runner.
 func (c *CLI) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	return c.exec.run(ctx, task, nil)
-}
-
-// ExecuteStream implements runner.Streamer, forwarding stdout lines as
-// chunks while the transcript still accumulates into Result.Output.
-func (c *CLI) ExecuteStream(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	return c.exec.run(ctx, task, out)
+	return c.ExecuteStream(ctx, task, nil)
 }

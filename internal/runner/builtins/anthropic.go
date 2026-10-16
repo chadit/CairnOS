@@ -49,13 +49,13 @@ const (
 // anthropicBlockToolUse is the content-block type carrying a tool call.
 const anthropicBlockToolUse = "tool_use"
 
-// Anthropic calls the Anthropic Messages API, one of the Phase 1a API
-// runners in the built-ins table (.agents/spec/03-runner-interface.md).
+// Anthropic calls the Messages API, a Phase 1a API runner
+// (.agents/spec/03-runner-interface.md).
 //
-// Config: model (required to run), base_url, max_tokens (default 4096; the
-// API requires the field), temperature, and price_in/price_out in USD per
-// million tokens. Params: prompt (required), system, and model (overrides
-// config). The API key is read at call time from the block's own
+// Config: model (required to run), base_url, max_tokens (the API requires it;
+// default 4096), temperature, and price_in/price_out in USD per million
+// tokens. Params: prompt (required), system, and model (overrides config). The
+// API key is read at call time from the block's own
 // CAIRNOS_RUNNER_<NAME>_API_KEY, falling back to AnthropicKeyEnv (see
 // config.RunnerKeyEnvs).
 type Anthropic struct {
@@ -119,13 +119,7 @@ func (a *Anthropic) Validate(task *runner.Task) error {
 
 // Execute implements runner.Runner.
 func (a *Anthropic) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	return a.run(ctx, task, nil)
-}
-
-// ExecuteStream implements runner.Streamer over the API's SSE mode, sending
-// text deltas as chunks while the full text still lands in Result.Output.
-func (a *Anthropic) ExecuteStream(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	return a.run(ctx, task, out)
+	return a.ExecuteStream(ctx, task, nil)
 }
 
 // ExecuteWithTools implements runner.ToolCaller over the Messages tools
@@ -153,9 +147,10 @@ func (a *Anthropic) ExecuteWithTools(ctx context.Context, task *runner.Task, too
 	return a.decodeToolResponse(response.Body, start)
 }
 
-// run drives one Messages call. A nil stream means plain Execute; a non-nil
-// stream flips the request into SSE mode.
-func (a *Anthropic) run(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
+// ExecuteStream implements runner.Streamer over the API's SSE mode, sending
+// text deltas as chunks while the full text still lands in Result.Output. A
+// nil stream, which Execute passes, keeps the Messages call out of SSE mode.
+func (a *Anthropic) ExecuteStream(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
 	if err := a.Validate(task); err != nil {
 		return runner.Result{}, err
 	}

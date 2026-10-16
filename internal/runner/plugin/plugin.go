@@ -37,6 +37,10 @@ const (
 
 	// socketFileName is the socket's name inside the per-plugin temp dir.
 	socketFileName = "plugin.sock"
+
+	// timeoutMessage reads the same whether the process exit or the transport
+	// noticed first that the caller canceled or let the call expire.
+	timeoutMessage = "plugin call canceled or timed out"
 )
 
 // Config configures one plugin-backed runner.
@@ -73,11 +77,16 @@ func (c Config) env() environ.Lookup {
 // may call Execute from multiple goroutines at once and gRPC multiplexes the
 // calls over the one connection.
 type Plugin struct {
-	toolSpec  runner.ToolSpec
-	client    pluginv1.RunnerPluginClient
-	cmd       *exec.Cmd
-	conn      *grpc.ClientConn
-	exited    chan struct{}
+	toolSpec runner.ToolSpec
+	client   pluginv1.RunnerPluginClient
+	cmd      *exec.Cmd
+	conn     *grpc.ClientConn
+	exited   chan struct{}
+
+	// waitErr is how the child exited. The reaper writes it before closing
+	// exited, so it is safe to read once exited is closed and never before.
+	waitErr error
+
 	name      string
 	socketDir string
 	tree      processTree
@@ -120,15 +129,27 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 		// operator's log instead of vanishing with the child.
 		built.Stderr = os.Stderr
 
+		// Wait closes this pipe only after reaping the child, so EOF reaches a
+		// plugin only when its host died without stopping it, SIGKILL included.
+		// A plugin built on this SDK then stops itself. Its children, and
+		// plugins built on an older SDK or in another language, are not covered.
+		if _, pipeErr := built.StdinPipe(); pipeErr != nil {
+			return nil, fmt.Errorf("open plugin stdin pipe: %w", pipeErr)
+		}
+
 		plug.cmd = built
 		plug.configureProcessTree()
 
 		return built, nil
 	})
 	if err != nil {
-		_ = os.RemoveAll(socketDir)
+		startErr := fmt.Errorf("start plugin %q: %w", cfg.Command[0], err)
 
-		return nil, fmt.Errorf("start plugin %q: %w", cfg.Command[0], err)
+		if removeErr := os.RemoveAll(socketDir); removeErr != nil {
+			startErr = errors.Join(startErr, fmt.Errorf("remove plugin socket directory: %w", removeErr))
+		}
+
+		return nil, startErr
 	}
 
 	plug.cmd = cmd
@@ -136,7 +157,7 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 	go func() {
 		// Wait reaps the child no matter how it ends; the closed channel is
 		// the one exit signal every other goroutine watches.
-		_ = cmd.Wait()
+		plug.waitErr = cmd.Wait()
 
 		close(plug.exited)
 	}()
@@ -211,13 +232,43 @@ func (p *Plugin) Describe() runner.ToolSpec {
 // Execute implements runner.Runner over the Execute stream, discarding any
 // chunk events the plugin emits.
 func (p *Plugin) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	return p.run(ctx, task, nil)
+	return p.ExecuteStream(ctx, task, nil)
 }
 
-// ExecuteStream implements runner.Streamer, forwarding the plugin's chunk
-// events to out as they arrive.
+// ExecuteStream implements runner.Streamer: one Execute RPC, chunks forwarded
+// to out, the terminal event translated back. Execute passes a nil out.
+//
+// Crash isolation: only a received result or classified-error event ends the
+// call cleanly. Every other exit is a plugin_down: a broken stream, or the
+// process-exit watcher firing, even while a chunk forward is parked on a
+// stalled consumer.
 func (p *Plugin) ExecuteStream(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	return p.run(ctx, task, out)
+	protoTask, err := taskToProto(task)
+	if err != nil {
+		return runner.Result{}, p.encodeError(err)
+	}
+
+	stream, err := p.client.Execute(ctx, &pluginv1.ExecuteRequest{Task: protoTask})
+	if err != nil {
+		return runner.Result{}, p.transportError(ctx, err)
+	}
+
+	// One receive goroutine owns stream.Recv for the stream's whole life, so
+	// the loop can select it against the process-exit watcher without spawning
+	// a goroutine per event. The buffer of one lets a Recv that is unblocking
+	// after a process death finish its send and exit even when the loop has
+	// already returned on p.exited, so nothing leaks.
+	recv := make(chan recvResult, 1)
+	go receiveLoop(stream, recv)
+
+	for {
+		outcome := p.awaitEvent(ctx, recv, out)
+		if outcome.terminal {
+			return outcome.value, outcome.err
+		}
+
+		out = outcome.out
+	}
 }
 
 // Name implements runner.Runner.
@@ -321,64 +372,36 @@ func (p *Plugin) encodeError(cause error) *runner.Error {
 }
 
 // recvResult carries one stream.Recv outcome from the receive goroutine back
-// to the run loop, so the loop can select the process-exit watcher against it.
+// to ExecuteStream's loop, so the loop can select the process-exit watcher
+// against it.
 type recvResult struct {
 	event *pluginv1.ExecuteEvent
 	err   error
 }
 
-// run is the shared Execute/ExecuteStream body: one Execute RPC, chunks
-// forwarded to any consumer, the terminal event translated back.
-//
-// Crash isolation: only a received result or classified-error event ends the
-// call cleanly. Every other exit is a plugin_down: a broken stream, or the
-// process-exit watcher firing, even while a chunk forward is parked on a
-// consumer that stopped reading.
-func (p *Plugin) run(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	protoTask, err := taskToProto(task)
-	if err != nil {
-		return runner.Result{}, p.encodeError(err)
-	}
-
-	stream, err := p.client.Execute(ctx, &pluginv1.ExecuteRequest{Task: protoTask})
-	if err != nil {
-		return runner.Result{}, p.transportError(ctx, err)
-	}
-
-	// One receive goroutine owns stream.Recv for the stream's whole life, so
-	// the loop can select it against the process-exit watcher without spawning
-	// a goroutine per event. The buffer of one lets a Recv that is unblocking
-	// after a process death finish its send and exit even when the loop has
-	// already returned on p.exited, so nothing leaks.
-	recv := make(chan recvResult, 1)
-	go receiveLoop(stream, recv)
-
-	for {
-		select {
-		case <-p.exited:
-			// The process died before a terminal event arrived. Whatever was
-			// on the wire is from a corpse; surface plugin_down.
-			return runner.Result{}, p.processExitedError(ctx)
-		case got := <-recv:
-			if got.err != nil {
-				// Covers io.EOF before any terminal event too: a stream that
-				// just ends means the plugin died mid-task.
-				return runner.Result{}, p.transportError(ctx, got.err)
-			}
-
-			outcome := p.handleEvent(ctx, got.event, out)
-			if outcome.terminal {
-				return outcome.value, outcome.err
-			}
-
-			out = outcome.out
+// awaitEvent takes whichever comes first, the next stream event or the process
+// exit, and decodes it. It is the body of ExecuteStream's loop, split out so the
+// loop reads as "until terminal" and the select stays within the nesting limit.
+func (p *Plugin) awaitEvent(ctx context.Context, recv <-chan recvResult, out chan<- runner.Chunk) eventOutcome {
+	select {
+	case <-p.exited:
+		// The process died before a terminal event arrived. Whatever was on
+		// the wire is from a corpse; surface plugin_down.
+		return eventOutcome{terminal: true, err: p.processExitedError(ctx)}
+	case got := <-recv:
+		if got.err != nil {
+			// Covers io.EOF before any terminal event too: a stream that just
+			// ends means the plugin died mid-task.
+			return eventOutcome{terminal: true, err: p.transportError(ctx, got.err)}
 		}
+
+		return p.handleEvent(ctx, got.event, out)
 	}
 }
 
 // receiveLoop pumps stream events to recv until the stream ends or errors,
 // then sends the terminating error and stops. It runs as the single owner of
-// stream.Recv so the run loop never calls Recv concurrently.
+// stream.Recv so ExecuteStream's loop never calls Recv concurrently.
 func receiveLoop(stream grpc.ServerStreamingClient[pluginv1.ExecuteEvent], recv chan<- recvResult) {
 	for {
 		event, err := stream.Recv()
@@ -402,8 +425,8 @@ type eventOutcome struct {
 }
 
 // handleEvent translates one ExecuteEvent, marking result and classified-error
-// events terminal so the run loop stops. A chunk forwards inside an exit-aware
-// select, so a plugin that dies while the consumer stalls surfaces as
+// events terminal so ExecuteStream's loop stops. A chunk forwards inside an
+// exit-aware select, so a plugin that dies while the consumer stalls surfaces as
 // plugin_down. An unknown oneof is skipped: a newer plugin's event kinds must
 // not wedge an older host, and an empty event must never read as success.
 func (p *Plugin) handleEvent(ctx context.Context, event *pluginv1.ExecuteEvent, out chan<- runner.Chunk) eventOutcome {
@@ -443,22 +466,28 @@ func (p *Plugin) forwardChunk(ctx context.Context, out chan<- runner.Chunk, chun
 // processExitedError reports the plugin process exiting before a terminal
 // event arrived. A caller that canceled the call still reads as a timeout;
 // otherwise the process died on its own, surfaced as the same transient
-// plugin_down the engine handles for any dead-plugin call.
+// plugin_down the engine handles for any dead-plugin call, with how it exited
+// in the cause. Call it only once exited is closed.
 func (p *Plugin) processExitedError(ctx context.Context) *runner.Error {
 	if ctx.Err() != nil {
 		return &runner.Error{
 			Class:   runner.ClassTransient,
 			Code:    p.code("timeout"),
-			Message: "plugin call canceled or timed out",
+			Message: timeoutMessage,
 			Cause:   ctx.Err(),
 		}
+	}
+
+	cause := ErrProcessExited
+	if p.waitErr != nil {
+		cause = fmt.Errorf("%w: %w", ErrProcessExited, p.waitErr)
 	}
 
 	return &runner.Error{
 		Class:   runner.ClassTransient,
 		Code:    p.code("plugin_down"),
 		Message: "plugin process exited before returning a result",
-		Cause:   ErrProcessExited,
+		Cause:   cause,
 	}
 }
 
@@ -472,7 +501,7 @@ func (p *Plugin) transportError(ctx context.Context, cause error) *runner.Error 
 		return &runner.Error{
 			Class:   runner.ClassTransient,
 			Code:    p.code("timeout"),
-			Message: "plugin call canceled or timed out",
+			Message: timeoutMessage,
 			Cause:   cause,
 		}
 	}

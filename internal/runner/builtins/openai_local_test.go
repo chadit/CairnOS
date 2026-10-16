@@ -102,7 +102,7 @@ func TestOpenAISendsTheConfiguredModelToALocalServer(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotModel = decodeRequestModel(t, r)
 
-		_, _ = w.Write([]byte(openaiSuccessBody))
+		writeBody(t, w, openaiSuccessBody)
 	})
 
 	llm, err := builtins.NewOpenAI(map[string]any{

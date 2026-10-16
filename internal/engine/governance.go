@@ -168,6 +168,9 @@ func (e *Engine) notifyBudgetDenied(ctx context.Context, workflowName string, sp
 	e.cfg.Notifier.BudgetDenied(ctx, workflowName, spend, limitUSD)
 }
 
+// daysPerWeek wraps the weekday shift that starts a budget week on Monday.
+const daysPerWeek = 7
+
 // PeriodStart returns the inclusive lower bound of the budget period
 // containing now, in now's location: midnight for day, the most recent Monday
 // for week, the first of the month for month. The engine's injected clock
@@ -181,9 +184,9 @@ func PeriodStart(period string, now time.Time) time.Time {
 
 	switch period {
 	case workflow.BudgetPeriodWeek:
-		// Go's Weekday has Sunday at 0; shift so Monday is the week start and
-		// Sunday lands six days in.
-		offset := (int(now.Weekday()) + 6) % 7
+		// Go's Weekday has Sunday at 0; shift back a day so Monday is the week
+		// start and Sunday lands six days in.
+		offset := (int(now.Weekday()) + daysPerWeek - 1) % daysPerWeek
 
 		return midnight.AddDate(0, 0, -offset)
 	case workflow.BudgetPeriodMonth:

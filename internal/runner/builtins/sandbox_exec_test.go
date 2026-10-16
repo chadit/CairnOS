@@ -28,6 +28,9 @@ const (
 	sampleCmd      = "echo hello"
 	testDockerHost = "tcp://x"
 	dockerHostVar  = "DOCKER_HOST"
+	pathVar        = "PATH"
+	customWorkdir  = "/custom"
+	rwMount        = "/host:/ctr:rw"
 
 	cfgAllow    = "allow_actions"
 	cfgImageKey = "image"
@@ -50,6 +53,14 @@ const (
 	// containerNamePattern is the injection-safe shape every generated name
 	// must hold: cairnos, a sanitized run id, and 8 hex random characters.
 	containerNamePattern = `^cairnos-[A-Za-z0-9_.-]+-[0-9a-f]{8}$`
+)
+
+// The flags harden=true adds to the run argv and harden=false leaves out.
+const (
+	flagCapDrop    = "--cap-drop=ALL"
+	flagNoNewPrivs = "--security-opt=no-new-privileges"
+	flagReadOnly   = "--read-only"
+	flagTmpfs      = "--tmpfs=/tmp"
 )
 
 // probeFor builds a detection probe from a set of on-PATH binaries, a
@@ -139,7 +150,7 @@ func stageRecordingStub(t *testing.T) (string, string) {
 // whatever the machine running the suite has exported.
 func stubProbe(dir string) builtins.SandboxProbe {
 	return builtins.SandboxProbe{
-		Env: environ.Map(map[string]string{"PATH": dir, dockerHostVar: ""}),
+		Env: environ.Map(map[string]string{pathVar: dir, dockerHostVar: ""}),
 	}
 }
 
@@ -306,10 +317,10 @@ func TestSandboxArgvHardenedByDefault(t *testing.T) {
 
 	wantFlags := []string{
 		"--network=none",
-		"--cap-drop=ALL",
-		"--security-opt=no-new-privileges",
-		"--read-only",
-		"--tmpfs=/tmp",
+		flagCapDrop,
+		flagNoNewPrivs,
+		flagReadOnly,
+		flagTmpfs,
 		"--pids-limit=128",
 		"--memory=512m",
 		"--cpus=1",
@@ -361,7 +372,7 @@ func TestSandboxArgvHardenOptOut(t *testing.T) {
 
 	argv := executeRecording(t, dir, sandboxConfig(map[string]any{cfgHarden: false}), sandboxTask(), argvFile)
 
-	for _, flag := range []string{"--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only", "--tmpfs=/tmp"} {
+	for _, flag := range []string{flagCapDrop, flagNoNewPrivs, flagReadOnly, flagTmpfs} {
 		if slices.Contains(argv, flag) {
 			t.Fatalf("harden=false still emitted %q: %v", flag, argv)
 		}
@@ -393,12 +404,12 @@ func TestSandboxArgvWorkdirParamOverride(t *testing.T) {
 	t.Parallel()
 
 	task := sandboxTask()
-	task.Params[wdKey] = "/custom"
+	task.Params[wdKey] = customWorkdir
 
 	argv := executeRecording(t, dir, sandboxConfig(nil), task, argvFile)
 
-	if workdir, found := flagValue(argv, "-w"); !found || workdir != "/custom" {
-		t.Fatalf("workdir flag = %q (found %v), want /custom", workdir, found)
+	if workdir, found := flagValue(argv, "-w"); !found || workdir != customWorkdir {
+		t.Fatalf("workdir flag = %q (found %v), want %q", workdir, found, customWorkdir)
 	}
 }
 
@@ -764,8 +775,8 @@ func TestSandboxMountValidation(t *testing.T) {
 		{name: "relative container path refused", mounts: []any{"/host:relative"}, wantErr: true},
 		{name: "unknown mode refused", mounts: []any{"/host:/ctr:z"}, wantErr: true},
 		{name: "too many parts refused", mounts: []any{"/host:/ctr:ro:extra"}, wantErr: true},
-		{name: "rw without allow refused", mounts: []any{"/host:/ctr:rw"}, wantErr: true},
-		{name: "rw with allow accepted", mounts: []any{"/host:/ctr:rw"}, allowRW: true, wantErr: false},
+		{name: "rw without allow refused", mounts: []any{rwMount}, wantErr: true},
+		{name: "rw with allow accepted", mounts: []any{rwMount}, allowRW: true, wantErr: false},
 		{name: "missing mode accepted", mounts: []any{"/host:/ctr"}, wantErr: false},
 		{name: "explicit ro accepted", mounts: []any{"/host:/ctr:ro"}, wantErr: false},
 	}

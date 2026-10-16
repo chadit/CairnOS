@@ -56,7 +56,7 @@ func (s *Store) ListAudit(ctx context.Context, filter store.AuditFilter) ([]*sto
 	args := []any{store.WorkspaceFromContext(ctx)}
 
 	if filter.Limit > 0 {
-		query += " LIMIT $2"
+		query += limitAfterWorkspace
 
 		args = append(args, filter.Limit)
 	}

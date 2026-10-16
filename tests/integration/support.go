@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -109,8 +110,10 @@ func startPostgres() {
 
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "pool_max_conns="+pgPoolMaxConns)
 	if err != nil {
-		pgShared.err = fmt.Errorf("postgres connection string: %w", err)
-		_ = container.Terminate(ctx)
+		pgShared.err = errors.Join(
+			fmt.Errorf("postgres connection string: %w", err),
+			container.Terminate(ctx),
+		)
 
 		return
 	}

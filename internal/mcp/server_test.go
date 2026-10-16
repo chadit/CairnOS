@@ -27,6 +27,12 @@ const (
 	argLanguage          = "language"
 )
 
+// Resource URIs the server must list; the runs resource is also read back.
+const (
+	workflowsURI = "cairnos://workflows"
+	runsURI      = "cairnos://runs"
+)
+
 // codeForbidden and codeUnauthenticated are the canonical auth codes a denied
 // MCP call carries, the same strings the gRPC interceptor answers with.
 const (
@@ -287,7 +293,7 @@ func TestListResourcesDiscoversWorkflowsAndRuns(t *testing.T) {
 		uris = append(uris, resource.URI)
 	}
 
-	for _, want := range []string{"cairnos://workflows", "cairnos://runs"} {
+	for _, want := range []string{workflowsURI, runsURI} {
 		if !slices.Contains(uris, want) {
 			t.Errorf("resources/list missing %q; got %v", want, uris)
 		}
@@ -300,7 +306,7 @@ func TestReadWorkflowsResourceListsDeclaredInputs(t *testing.T) {
 	fix := startFixture(t, fixtureOptions{})
 	session := fix.connect(t, "")
 
-	result, err := session.ReadResource(t.Context(), &sdk.ReadResourceParams{URI: "cairnos://workflows"})
+	result, err := session.ReadResource(t.Context(), &sdk.ReadResourceParams{URI: workflowsURI})
 	if err != nil {
 		t.Fatalf("read workflows resource: %v", err)
 	}
@@ -335,7 +341,7 @@ func TestReadRunsResourceReflectsStartedRun(t *testing.T) {
 
 	decodeStructured(t, started.StructuredContent, &out)
 
-	result, err := session.ReadResource(t.Context(), &sdk.ReadResourceParams{URI: "cairnos://runs"})
+	result, err := session.ReadResource(t.Context(), &sdk.ReadResourceParams{URI: runsURI})
 	if err != nil {
 		t.Fatalf("read runs resource: %v", err)
 	}

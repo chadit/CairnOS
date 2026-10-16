@@ -47,12 +47,15 @@ func (s *Service) SendMessage(
 	ctx context.Context,
 	req *cairnosv1.MessagingServiceSendMessageRequest,
 ) (*cairnosv1.MessagingServiceSendMessageResponse, error) {
-	sender, target, err := s.resolve(req)
+	identity, target, err := parseSendRequest(req)
 	if err != nil {
 		return nil, err
 	}
 
-	identity := strings.TrimSpace(req.GetIdentity())
+	sender, known := s.registry.Get(identity)
+	if !known {
+		return nil, wireIdentityNotFound(identity)
+	}
 
 	ref, err := sender.Send(ctx, target, req.GetText(), req.GetThreadId())
 	if err != nil {
@@ -96,29 +99,25 @@ func (s *Service) ListIdentities(
 	return &cairnosv1.ListIdentitiesResponse{Identities: identities}, nil
 }
 
-// resolve validates one send request and returns the sender it addresses, so
-// SendMessage holds only the call and its two outcomes.
-func (s *Service) resolve(req *cairnosv1.MessagingServiceSendMessageRequest) (Sender, Target, error) {
+// parseSendRequest validates one send request and returns the trimmed
+// identity name and the parsed target. It runs before the registry lookup, so
+// a malformed request is rejected as invalid whether or not its identity exists.
+func parseSendRequest(req *cairnosv1.MessagingServiceSendMessageRequest) (string, Target, error) {
 	identity := strings.TrimSpace(req.GetIdentity())
 	if identity == "" {
-		return nil, Target{}, wireInvalidArgument("identity is required")
-	}
-
-	sender, known := s.registry.Get(identity)
-	if !known {
-		return nil, Target{}, wireIdentityNotFound(identity)
+		return "", Target{}, wireInvalidArgument("identity is required")
 	}
 
 	if strings.TrimSpace(req.GetText()) == "" {
-		return nil, Target{}, wireInvalidArgument("text is required")
+		return "", Target{}, wireInvalidArgument("text is required")
 	}
 
 	target, err := ParseTarget(req.GetTo())
 	if err != nil {
-		return nil, Target{}, wireInvalidArgument("%s", err.Error())
+		return "", Target{}, wireInvalidArgument("%s", err.Error())
 	}
 
-	return sender, target, nil
+	return identity, target, nil
 }
 
 // record feeds one attempted send to telemetry when a recorder is wired.

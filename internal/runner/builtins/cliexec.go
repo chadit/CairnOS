@@ -79,65 +79,27 @@ var (
 	cliOverloadPattern = regexp.MustCompile(`(^|[^a-z0-9])(529|overloaded)([^a-z0-9]|$)`)
 )
 
-// cliExec runs one configured command line per task. The named CLI runners
-// are thin wrappers over this helper, per the spec's build-the-helper-once
-// guidance (.agents/spec/03-runner-interface.md, "Built-in runners").
-//
-// A deadline kills the whole process group, since a wrapper's forked CLI can
-// hold stdout open. cliWaitDelay closes the pipes on a child that escaped the
-// group through setsid.
-type cliExec struct {
-	name   string
-	binary string
-
-	// reauthProvider is the built-in whose launch template this runner started
-	// from. The re-auth code carries it instead of name, because the scheduler
-	// holds a job on the credential named before the code's last dot, and a
-	// [runner.summarize] block wrapping claude needs the claude credential.
-	reauthProvider string
-
-	args []string
-
-	// env carries the rendered host table. Nil is the ordinary case and keeps
-	// cmd.Env unset, so the child inherits serve's environment exactly as it did
-	// before hosts existed; a non-empty slice is appended to that same
-	// environment rather than replacing it.
-	env []string
-
-	// inherited is the environment the child starts from. Nil leaves cmd.Env
-	// unset, so the child inherits this process's environment exactly as it did
-	// before hosts existed; wiring passes os.Environ().
-	inherited []string
-
-	stdin bool
-
-	// allowDashedPrompt opts out of the dashed-prompt guard, for operators who
-	// have vetted the wrapped binary and want a prompt that may begin with a
-	// dash to ride a bare positional anyway (spec M3).
-	allowDashedPrompt bool
-}
-
-// newCLIExec decodes the shared CLI config keys (binary, args, stdin) with
+// decodeCLI decodes the shared CLI config keys (binary, args, stdin) with
 // per-runner defaults from the tool's launch template.
-func newCLIExec(name string, tool CLITool, cfg map[string]any) (cliExec, error) {
+func decodeCLI(name string, tool CLITool, cfg map[string]any) (*CLI, error) {
 	binary, err := configValue(cfg, cfgKeyBinary, tool.Binary)
 	if err != nil {
-		return cliExec{}, err
+		return nil, err
 	}
 
 	useStdin, err := configValue(cfg, cfgKeyStdin, false)
 	if err != nil {
-		return cliExec{}, err
+		return nil, err
 	}
 
 	args, err := configStrings(cfg, cfgKeyArgs)
 	if err != nil {
-		return cliExec{}, err
+		return nil, err
 	}
 
 	allowDashed, err := configValue(cfg, cfgKeyAllowDashedPrompt, false)
 	if err != nil {
-		return cliExec{}, err
+		return nil, err
 	}
 
 	if args == nil && !useStdin {
@@ -150,7 +112,7 @@ func newCLIExec(name string, tool CLITool, cfg map[string]any) (cliExec, error) 
 		args = []string{promptToken}
 	}
 
-	return cliExec{
+	return &CLI{
 		name: name, binary: binary, args: args, stdin: useStdin, allowDashedPrompt: allowDashed,
 		reauthProvider: templateOwner(name, tool),
 	}, nil
@@ -169,10 +131,11 @@ func templateOwner(name string, tool CLITool) string {
 	return name
 }
 
-// run launches the configured binary for one task, optionally forwarding
-// stdout lines to a chunk stream. A nil stream means plain Execute.
-func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
-	if err := c.validate(task); err != nil {
+// ExecuteStream implements runner.Streamer, launching the configured binary for
+// one task and forwarding stdout lines as chunks while the transcript still
+// accumulates into Result.Output. Execute passes a nil stream.
+func (c *CLI) ExecuteStream(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
+	if err := c.Validate(task); err != nil {
 		return runner.Result{}, err
 	}
 
@@ -260,10 +223,11 @@ func (c *cliExec) run(ctx context.Context, task *runner.Task, stream chan<- runn
 	}, nil
 }
 
-// validate enforces the shared CLI params contract: a string prompt, and the
-// dashed-prompt guard. An unresolved reference still reads as a string, so the
-// load-time pass lets it through and the launch-time pass sees the final value.
-func (c *cliExec) validate(task *runner.Task) error {
+// Validate implements runner.Runner, enforcing the CLI params contract: a
+// string prompt, and the dashed-prompt guard. An unresolved reference still
+// reads as a string, so the load-time pass lets it through and the launch-time
+// pass sees the final value.
+func (c *CLI) Validate(task *runner.Task) error {
 	if err := requireStringParam(task, paramPrompt, c.name); err != nil {
 		return err
 	}
@@ -276,7 +240,7 @@ func (c *cliExec) validate(task *runner.Task) error {
 // read it as a flag (spec M3). An unresolved reference defers to launch. The
 // guard steps aside for allow_dashed_prompt, a template placing {prompt} after
 // a -- terminator, or a stdin prompt, which never reaches argv.
-func (c *cliExec) guardDashedPrompt(task *runner.Task) error {
+func (c *CLI) guardDashedPrompt(task *runner.Task) error {
 	if c.allowDashedPrompt || c.stdin || c.promptAfterTerminator() {
 		return nil
 	}
@@ -303,7 +267,7 @@ func (c *cliExec) guardDashedPrompt(task *runner.Task) error {
 // template sits after a -- terminator, the position where a dash-leading value
 // can no longer be parsed as a flag. A template with no {prompt} (the prompt
 // rides elsewhere) is treated as safe.
-func (c *cliExec) promptAfterTerminator() bool {
+func (c *CLI) promptAfterTerminator() bool {
 	var seenTerminator bool
 
 	for _, arg := range c.args {
@@ -323,7 +287,7 @@ func (c *cliExec) promptAfterTerminator() bool {
 
 // code builds a stable machine code under this runner's name. The re-auth code
 // is the one exception and uses reauthProvider.
-func (c *cliExec) code(suffix string) string {
+func (c *CLI) code(suffix string) string {
 	return c.name + "." + suffix
 }
 
@@ -332,7 +296,7 @@ func (c *cliExec) code(suffix string) string {
 // expired deadline is the exception: it is the transient timeout classifyWait
 // reports once the process runs, and calling it permanent would deny a retry a
 // fresh deadline could clear.
-func (c *cliExec) classifyStart(runCtx context.Context, err error) error {
+func (c *CLI) classifyStart(runCtx context.Context, err error) error {
 	if runCtx.Err() != nil {
 		return &runner.Error{
 			Class:   runner.ClassTransient,
@@ -360,7 +324,7 @@ func (c *cliExec) classifyStart(runCtx context.Context, err error) error {
 // classifyWait maps a finished-but-failed process. A done context wins over
 // the exit status because CommandContext kills the child on cancellation, so
 // the non-zero exit is an effect of the timeout, not the tool's verdict.
-func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, stderrTail, stdoutTail string) error {
+func (c *CLI) classifyWait(runCtx context.Context, waitErr error, stderrTail, stdoutTail string) error {
 	if runCtx.Err() != nil {
 		return &runner.Error{
 			Class:   runner.ClassTransient,
@@ -390,7 +354,7 @@ func (c *cliExec) classifyWait(runCtx context.Context, waitErr error, stderrTail
 // picks its account per launch) instead of holding the job for a human (D12,
 // .agents/spec/14-open-decisions.md). An unexplained non-zero exit is
 // permanent: it is not safe to repeat.
-func (c *cliExec) classifyExitOutput(output, message string, cause error) error {
+func (c *CLI) classifyExitOutput(output, message string, cause error) error {
 	lowered := strings.ToLower(output)
 
 	switch {

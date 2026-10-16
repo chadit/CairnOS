@@ -45,9 +45,9 @@ func (a *App) cmdMCP(ctx context.Context, args []string) int {
 	}
 
 	switch args[0] {
-	case "serve":
+	case subcmdServe:
 		return a.cmdMCPServe(ctx, args[1:])
-	case "publish":
+	case subcmdPublish:
 		return a.cmdMCPPublish(ctx, args[1:])
 	case subcmdImport:
 		return a.cmdMCPImport(ctx, args[1:])
@@ -87,19 +87,19 @@ func (a *App) cmdMCPServe(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "mcp serve", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "mcp serve", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(db)
 
-	mem, code, proceed := a.openMemoryAt(ctx, "mcp serve", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "mcp serve", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(mem)
 
-	rulesSvc, code, proceed := a.openRulesAt(ctx, "mcp serve", *dirFlag)
+	rulesSvc, _, code, proceed := openAt(ctx, a, "mcp serve", *dirFlag, rulesBackends())
 	if !proceed {
 		return code
 	}
@@ -120,7 +120,7 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 
 		return ExitFailure
 	}
-	defer func() { _ = closeSource() }()
+	defer a.runCloser("secret source", closeSource)
 
 	credManager, err := buildCredentialManager(ctx, cfg, source)
 	if err != nil {

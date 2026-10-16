@@ -17,7 +17,7 @@ func (a *App) cmdHealth(ctx context.Context, args []string) int {
 		return code
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "health", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "health", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

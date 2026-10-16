@@ -21,7 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # No step talks to the remote with git, so no checkout in this file
+      # leaves the token in .git/config for later steps to read.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # go.mod decides the toolchain, so CI builds with the same Go that `make`
       # resolves locally instead of whatever the runner image ships.
       - uses: actions/setup-go@v7
@@ -53,15 +57,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # internal/runner/plugin holds the host-side lifetime tests, which is
       # what needs a real Windows kernel: the job object either takes the whole
-      # process tree down or it does not. pkg/plugin's own server tests bind a
-      # unix socket and stay Unix-only, so they are not run here.
+      # process tree down or it does not. pkg/plugin checks that the SDK reads
+      # a closed stdin pipe as a dead host, and Windows reports pipes its own way.
       - name: plugin lifetime tests
-        run: go test -race ./internal/runner/plugin/...
+        run: go test -race ./internal/runner/plugin/... ./pkg/plugin/...
 
   # The SPA is a separate static bundle served outside the image, not something
   # the Go binary embeds, so there is no committed build to check for drift. What
@@ -75,6 +81,8 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           # Node floats at the newest LTS on purpose, the same way golangci-lint
@@ -93,15 +101,18 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # Same toolchain rule as build: go.mod decides, not the runner image.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # golangci-lint is deliberately unpinned. `latest` here matches the
-      # Makefile's `go install ...@latest`, so CI and a developer machine both
-      # run the newest release instead of a version somebody has to bump.
+      # The action is pinned to a commit, but golangci-lint itself is
+      # deliberately unpinned. `latest` here matches the Makefile's
+      # `go install ...@latest`, so CI and a developer machine both run the
+      # newest release instead of a version somebody has to bump.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
       # gosec runs standalone because its golangci integration deadlocks on

@@ -210,15 +210,6 @@ func (c *Client) Read(
 	return Item{Name: found.Name, Fields: byName}, nil
 }
 
-// clock resolves the readiness wait's view of time.
-func (c *Client) clock() Clock {
-	if c.Clock == nil {
-		return realClock{}
-	}
-
-	return c.Clock
-}
-
 // timeout resolves the per-call bound.
 func (c *Client) timeout() time.Duration {
 	if c.Timeout > 0 {
@@ -491,28 +482,33 @@ func (c *Client) startServe(ctx context.Context) (*daemon, error) {
 
 	logStep(c.Logger, "bitwarden serve started", "port", port)
 
-	exited := make(chan struct{})
+	clock := c.Clock
+	if clock == nil {
+		clock = realClock{}
+	}
 
-	// One reaper rather than a Wait on the way out: waitReady watches this
-	// channel, so a child that dies during startup ends the wait at once
-	// instead of leaving the readiness budget to run out on a dead process.
-	go func() {
-		defer close(exited)
-
-		_ = cmd.Wait()
-	}()
-
-	return &daemon{
+	started := &daemon{
 		base:    "http://127.0.0.1:" + strconv.Itoa(port),
 		cmd:     cmd,
 		cancel:  cancel,
-		exited:  exited,
-		clock:   c.clock(),
+		exited:  make(chan struct{}),
+		clock:   clock,
 		client:  newDaemonClient(c.timeout()),
 		stderr:  &stderr,
 		port:    port,
 		timeout: c.timeout(),
-	}, nil
+	}
+
+	// One reaper rather than a Wait on the way out: waitReady watches exited,
+	// so a child that dies during startup ends the wait at once instead of
+	// leaving the readiness budget to run out on a dead process.
+	go func() {
+		defer close(started.exited)
+
+		started.waitErr = cmd.Wait()
+	}()
+
+	return started, nil
 }
 
 // newDaemonClient gives one daemon its own connection pool. The default
@@ -539,6 +535,10 @@ type daemon struct {
 	// Reading it is safe only once exited is closed: until Wait returns, the
 	// copy into it is still running.
 	stderr *bytes.Buffer
+
+	// waitErr is how the child exited, written by the reaper before it closes
+	// exited, so it is safe to read on the same terms as stderr.
+	waitErr error
 
 	base    string
 	port    int
@@ -603,12 +603,23 @@ func (d *daemon) waitReady(ctx context.Context) error {
 		case <-ctx.Done():
 			return cairnerr.Wrapf(ctx.Err(), CodeReady, "canceled while waiting for bw serve: %v", ctx.Err())
 		case <-d.exited:
-			return fmt.Errorf("%w on port %d: %s", errServeExited, d.port, d.stderrTail())
+			return d.exitError()
 		case <-d.clock.After(readyInterval):
 		}
 	}
 
 	return fmt.Errorf("%w on port %d within %s", errServeSilent, d.port, readyTimeout)
+}
+
+// exitError reports a child that died before it answered, with how it exited
+// and the tail of what it wrote. A child that exited cleanly has no wait error
+// to wrap.
+func (d *daemon) exitError() error {
+	if d.waitErr == nil {
+		return fmt.Errorf("%w on port %d: %s", errServeExited, d.port, d.stderrTail())
+	}
+
+	return fmt.Errorf("%w on port %d (%w): %s", errServeExited, d.port, d.waitErr, d.stderrTail())
 }
 
 // unlock opens the vault. The master key travels in the request body because
@@ -755,4 +766,9 @@ type statusError int
 
 func (s statusError) Error() string {
 	return "HTTP " + strconv.Itoa(int(s))
+}
+
+// Is reports a statusError as errAnswered: any status at all is a reply.
+func (statusError) Is(target error) bool {
+	return target == errAnswered
 }

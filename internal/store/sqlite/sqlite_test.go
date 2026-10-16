@@ -16,10 +16,8 @@ import (
 )
 
 // openStore opens a fresh database under t.TempDir and closes it when the
-// case finishes; every case exercises schema creation on a real file. It
-// returns the store.Store interface so the shared conformance suite drives
-// it the same way it drives the postgres backend.
-func openStore(t *testing.T) store.Store {
+// case finishes; every case exercises schema creation on a real file.
+func openStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 
 	db, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))

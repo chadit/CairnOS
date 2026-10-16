@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -197,8 +198,10 @@ func (e *Email) send(ctx context.Context, recipient, subject, body string) error
 	}
 
 	// The server accepted the message when the data writer closed; a failed
-	// QUIT after that point is not a delivery failure.
-	_ = client.Quit()
+	// QUIT after that point is not a delivery failure, so it is only logged.
+	if err := client.Quit(); err != nil {
+		slog.WarnContext(ctx, "smtp quit after delivery", "host", e.host, "error", err)
+	}
 
 	return nil
 }

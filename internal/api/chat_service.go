@@ -19,17 +19,28 @@ import (
 // gRPC send drains it.
 const chatEventBuffer = 32
 
-// ChatAgent is the slice of the chat package the service drives; *chat.Agent
-// satisfies it. Defined here so the service stays testable against a fake and
-// the dependency direction is the api package depending on a narrow surface.
-type ChatAgent interface {
-	CreateSession(ctx context.Context, personality string) (*store.ChatSession, error)
+// ChatHistory reads what a workspace has said: its sessions and their messages.
+type ChatHistory interface {
 	GetSession(ctx context.Context, id string) (*store.ChatSession, error)
 	ListSessions(ctx context.Context, limit int) ([]*store.ChatSession, error)
 	ListMessages(ctx context.Context, sessionID string) ([]*store.ChatMessage, error)
 	SearchMessages(ctx context.Context, query store.ChatSearchQuery) ([]*store.ChatMessage, error)
+}
+
+// ChatConversation opens a session and runs its turns, streaming each turn's
+// events into out.
+type ChatConversation interface {
+	CreateSession(ctx context.Context, personality string) (*store.ChatSession, error)
 	SendMessage(ctx context.Context, sessionID, userMessage string, out chan<- chat.Event) error
 	ConfirmAction(ctx context.Context, sessionID string, approve bool, out chan<- chat.Event) error
+}
+
+// ChatAgent is the slice of the chat package the service drives; *chat.Agent
+// satisfies it. Defined here so the service stays testable against a fake and
+// the dependency direction is the api package depending on a narrow surface.
+type ChatAgent interface {
+	ChatHistory
+	ChatConversation
 }
 
 // chatService implements cairnos.v1.ChatService over the chat agent.
@@ -125,7 +136,7 @@ func (s *chatService) SendMessage(req *cairnosv1.SendMessageRequest, stream cair
 }
 
 // ConfirmAction resolves a pending workflow proposal. An approval is the D9
-// trigger, so it additionally requires write:workflow on the token, checked
+// trigger, so it also requires write:workflow on the token, checked
 // here from the stamped scopes since the method table grants one scope per
 // method (.agents/spec/14-open-decisions.md, D9). A denial needs only
 // chat:session, since nothing runs.

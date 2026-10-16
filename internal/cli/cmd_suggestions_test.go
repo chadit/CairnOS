@@ -18,6 +18,11 @@ const (
 	repeatWorkflow = "repeat-wf"
 	repeatAction   = "fetch"
 	repeatOutput   = "same answer"
+
+	// cachingRationale and cachingRunner fill the caching suggestions the
+	// apply and hive tests seed straight into the store.
+	cachingRationale = "repeated identical call"
+	cachingRunner    = "openai"
 )
 
 // seedRepeatRuns stages runCount runs whose fetch action always saw the same
@@ -40,7 +45,7 @@ func seedRepeatRuns(t *testing.T, home string, runCount int) {
 			WorkflowHash: "hash-repeat",
 			Status:       store.RunSucceeded,
 			Inputs:       inputs,
-			Trigger:      "cli",
+			Trigger:      cliTrigger,
 			CreatedAt:    created,
 		})
 		if err != nil {
@@ -221,7 +226,7 @@ func TestSuggestionsUsageErrors(t *testing.T) {
 		{name: "no subcommand", args: []string{suggestionsCmd}},
 		{name: "unknown subcommand", args: []string{suggestionsCmd, "bogus"}},
 		{name: "approve without id", args: []string{suggestionsCmd, "approve", flagDirArg, home}},
-		{name: "list with invalid status", args: []string{suggestionsCmd, "list", "--status", "bogus", flagDirArg, home}},
+		{name: "list with invalid status", args: []string{suggestionsCmd, "list", "--status", "maybe", flagDirArg, home}},
 	}
 
 	for _, tt := range tests {

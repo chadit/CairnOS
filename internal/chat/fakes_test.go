@@ -20,6 +20,11 @@ const (
 	memScope      = "ops"
 	memNote       = "deploys need a VPN"
 	turnCost      = 0.1
+
+	// The memory tool's arguments and the search operation the tests call.
+	argMemoryOp    = "op"
+	argMemoryQuery = "query"
+	memoryOpSearch = "search"
 )
 
 // errDriverScriptEmpty guards an exhausted driver script.

@@ -213,7 +213,7 @@ func (a *App) resetCheckout(ctx context.Context, dir string, target *checkoutTar
 // branch the reset moves. Another branch HEAD sat on keeps its own commits. The
 // ref probe's non-zero exit means the local branch does not exist yet.
 func droppedCommits(ctx context.Context, dir string, state *checkoutState, target *checkoutTarget) ([]string, error) {
-	tips := make([]string, 0, 2)
+	var tips []string
 
 	if state.branch == "" {
 		tips = append(tips, headRef)

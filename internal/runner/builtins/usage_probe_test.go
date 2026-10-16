@@ -245,11 +245,12 @@ func waitForFile(t *testing.T, path string) {
 	deadline := time.After(30 * time.Second)
 
 	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+
 		select {
 		case <-ticker.C:
-			if _, err := os.Stat(path); err == nil {
-				return
-			}
 		case <-deadline:
 			t.Fatalf("%s never appeared, so the shim did not start", path)
 		}

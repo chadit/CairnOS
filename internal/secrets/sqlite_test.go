@@ -43,10 +43,10 @@ func sealerFromKeys(t *testing.T, keys secretstest.KeySet) *secrets.Sealer {
 // openSQLiteAt opens (or reopens) a store at path under keys and closes it on
 // cleanup. The conformance suite reopens the same path under different keys to
 // exercise rotation, so path stays stable per subtest.
-func openSQLiteAt(t *testing.T, path string, keys secretstest.KeySet) secrets.Store {
+func openSQLiteAt(t *testing.T, path string, keys secretstest.KeySet) *secrets.SQLite {
 	t.Helper()
 
-	secretStore, err := secrets.OpenSQLite(path, sealerFromKeys(t, keys))
+	secretStore, err := secrets.OpenSQLite(t.Context(), path, sealerFromKeys(t, keys))
 	if err != nil {
 		t.Fatalf("open sqlite secret store: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestSQLiteRefusesAFileThatIsNotADatabase(t *testing.T) {
 		t.Fatalf("write the corrupt database: %v", err)
 	}
 
-	secretStore, err := secrets.OpenSQLite(path, sealerFromKeys(t, secretstest.KeySet{Primary: randomKey(t)}))
+	secretStore, err := secrets.OpenSQLite(t.Context(), path, sealerFromKeys(t, secretstest.KeySet{Primary: randomKey(t)}))
 	if err == nil {
 		t.Cleanup(func() { _ = secretStore.Close() })
 		t.Fatal("OpenSQLite accepted a file that is not a database")

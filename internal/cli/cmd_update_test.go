@@ -21,6 +21,7 @@ const (
 	flagCheckArg   = "--check"
 	flagSourceArg  = "--source"
 	updateLinkName = "cairnos"
+	goosWindows    = "windows"
 )
 
 // errPullBroken stands in for any failure the secrets pull can end in: a vault
@@ -164,7 +165,8 @@ func TestUpdateSyncCheckout(t *testing.T) {
 }
 
 // checkSyncCheckout runs one case: the upstream moves one commit ahead, the
-// case stages the clone, and the checkout step has to land it on that commit.
+// case stages the clone, and a source update has to land it on that commit
+// before the substituted build runs.
 func checkSyncCheckout(t *testing.T, testCase *syncCheckoutCase) {
 	t.Helper()
 
@@ -176,10 +178,15 @@ func checkSyncCheckout(t *testing.T, testCase *syncCheckoutCase) {
 
 	logged := testCase.stage(t, work)
 
-	var stderr bytes.Buffer
+	var (
+		stderr bytes.Buffer
+		order  []string
+	)
 
-	if err := cli.New(&bytes.Buffer{}, &stderr).UpdateSyncCheckout(t.Context(), work); err != nil {
-		t.Fatalf("UpdateSyncCheckout() error = %v\nstderr: %s", err, stderr.String())
+	app := cli.New(&bytes.Buffer{}, &stderr)
+
+	if _, err := app.DriveUpdate(t.Context(), sourceRun(t, work, ""), recordingSteps(t, &order, "")); err != nil {
+		t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
 	}
 
 	assertOnUpstream(t, work, wanted)
@@ -345,7 +352,12 @@ func TestUpdateRefusesWhileAnotherUpdateHoldsTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HoldUpdateLock() error = %v", err)
 	}
-	defer release()
+
+	t.Cleanup(func() {
+		if releaseErr := release(); releaseErr != nil {
+			t.Errorf("release the update lock: %v", releaseErr)
+		}
+	})
 
 	var order []string
 
@@ -565,7 +577,7 @@ func TestUpdateStopsWhenTheSecretsPullFails(t *testing.T) {
 func TestUpdateBuildPutsGoOnMakesPath(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		t.Skip("the make stub is a shell script")
 	}
 
@@ -578,7 +590,7 @@ func TestUpdateBuildPutsGoOnMakesPath(t *testing.T) {
 		"#!/bin/sh\nfound=$(command -v go)\n[ \"$found\" = \""+goBin+"\" ] || { echo \"go resolved to '$found'\" >&2; exit 1; }\n")
 
 	app := cli.New(&bytes.Buffer{}, &bytes.Buffer{}).
-		WithEnv(environ.Map(map[string]string{"PATH": makeDir + string(os.PathListSeparator) + goDir}))
+		WithEnv(environ.Map(map[string]string{pathEnvKey: makeDir + string(os.PathListSeparator) + goDir}))
 
 	if err := app.UpdateBuild(t.Context(), t.TempDir()); err != nil {
 		t.Fatalf("UpdateBuild() error = %v, want make to find the staged go", err)

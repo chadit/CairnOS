@@ -53,10 +53,13 @@ const (
 	schemaRequired   = "required"
 )
 
-// Output keys shared across the built-in tools.
+// Object keys shared across the built-in tools' outputs and the wire messages
+// they send.
 const (
-	keyEntries = "entries"
-	keyID      = "id"
+	keyEntries  = "entries"
+	keyFallback = "fallback"
+	keyID       = "id"
+	keyName     = "name"
 )
 
 // Memory is the built-in agent-loop tool over the memory store
@@ -192,8 +195,8 @@ func (m *Memory) search(ctx context.Context, scope string, task *runner.Task) (a
 	}
 
 	return map[string]any{
-		keyEntries: renderEntries(found.Entries),
-		"fallback": found.Fallback,
+		keyEntries:  renderEntries(found.Entries),
+		keyFallback: found.Fallback,
 	}, nil
 }
 
@@ -249,7 +252,7 @@ func renderEntries(entries []memory.Entry) []map[string]any {
 
 	for idx := range entries {
 		out = append(out, map[string]any{
-			"id":            entries[idx].ID,
+			keyID:           entries[idx].ID,
 			paramContent:    entries[idx].Content,
 			paramImportance: entries[idx].Importance,
 			paramTags:       entries[idx].Tags,

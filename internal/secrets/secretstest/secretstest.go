@@ -93,12 +93,12 @@ func newKey(t *testing.T) []byte {
 	return key
 }
 
-// oneKey opens a store under a single fresh primary key, the setup the cases
-// that never rotate share.
-func oneKey(t *testing.T, openFn OpenFunc) secrets.Store {
+// oneKey is the key set the cases that never rotate open their store under: a
+// single fresh primary key.
+func oneKey(t *testing.T) KeySet {
 	t.Helper()
 
-	return openFn(t, KeySet{Primary: newKey(t)})
+	return KeySet{Primary: newKey(t)}
 }
 
 // set stages one secret, failing the test on error.
@@ -125,7 +125,7 @@ func mustGet(t *testing.T, secretStore secrets.Store, name string) string {
 func testSetGetRoundTrip(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 
 	set(t, secretStore, secretName, secretValue)
 
@@ -141,7 +141,7 @@ func testSetGetRoundTrip(t *testing.T, openFn OpenFunc) {
 func testOverwriteKeepsCreatedAt(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 
 	set(t, secretStore, secretName, secretValue)
 	before := onlyMetadata(t, secretStore)
@@ -167,7 +167,7 @@ func testOverwriteKeepsCreatedAt(t *testing.T, openFn OpenFunc) {
 func testMissingIsNotFound(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 
 	if _, err := secretStore.Get(t.Context(), "ghost"); !errors.Is(err, secrets.ErrNotFound) {
 		t.Errorf("get missing = %v, want ErrNotFound", err)
@@ -181,7 +181,7 @@ func testMissingIsNotFound(t *testing.T, openFn OpenFunc) {
 func testListIsMetadataOnly(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 
 	set(t, secretStore, secretName, secretValue)
 	set(t, secretStore, otherName, otherValue)
@@ -214,7 +214,7 @@ func testListIsMetadataOnly(t *testing.T, openFn OpenFunc) {
 func testWorkspaceIsolation(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 	alpha := store.ContextWithWorkspace(t.Context(), wsAlpha)
 	beta := store.ContextWithWorkspace(t.Context(), wsBeta)
 
@@ -243,7 +243,7 @@ func testWorkspaceIsolation(t *testing.T, openFn OpenFunc) {
 func testNameNormalization(t *testing.T, openFn OpenFunc) {
 	t.Helper()
 
-	secretStore := oneKey(t, openFn)
+	secretStore := openFn(t, oneKey(t))
 
 	// db-password and db_password are one secret in both sources.
 	set(t, secretStore, styledName, secretValue)

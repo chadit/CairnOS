@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,10 @@ const (
 	// containerRandBytes seeds the container-name suffix; 4 bytes render as 8
 	// hex characters, enough to make a leaked container attributable to its run.
 	containerRandBytes = 4
+
+	// containerNameFallback is the middle name segment for a run id that
+	// sanitizes to nothing.
+	containerNameFallback = "run"
 
 	// dockerSocketPath is the well-known Docker API socket the detection probe
 	// checks (step 3), matching scripts/integration.sh resolve_runtime.
@@ -221,8 +226,8 @@ func NewSandboxExecWithProbe(cfg map[string]any, probe SandboxProbe) (*SandboxEx
 }
 
 // SandboxExecFactory adapts the runner to the registry contract.
-func SandboxExecFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewSandboxExec(cfg)
+func SandboxExecFactory() runner.Factory {
+	return asFactory(NewSandboxExec)
 }
 
 // sandboxLimits is the decoded set of value-typed caps and the runtime override.
@@ -469,13 +474,53 @@ func (s *SandboxExec) Validate(task *runner.Task) error {
 
 // Execute implements runner.Runner.
 func (s *SandboxExec) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	return s.run(ctx, task, nil)
+	return s.ExecuteStream(ctx, task, nil)
 }
 
 // ExecuteStream implements runner.Streamer, forwarding stdout lines as chunks
-// while the transcript still accumulates into Result.Output.
-func (s *SandboxExec) ExecuteStream(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	return s.run(ctx, task, out)
+// while the transcript still accumulates into Result.Output. Execute passes a
+// nil stream.
+func (s *SandboxExec) ExecuteStream(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
+	if err := s.Validate(task); err != nil {
+		return runner.Result{}, err
+	}
+
+	runtimeName, runtimeBin, err := s.detectRuntime()
+	if err != nil {
+		return runner.Result{}, err
+	}
+
+	name, err := containerName(task.RunID)
+	if err != nil {
+		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart,
+			"generate container name: "+err.Error())
+	}
+
+	command, _ := task.Params[paramCommand].(string)
+
+	workdir := s.workdir
+	if override, isString := task.Params[keyWorkdir].(string); isString && override != "" {
+		workdir = override
+	}
+
+	argv := buildRunArgv(&runArgs{
+		runtime:       runtimeName,
+		containerName: name,
+		image:         s.image,
+		workdir:       workdir,
+		command:       command,
+		mounts:        s.mounts,
+		network:       s.network,
+		harden:        s.harden,
+		pidsLimit:     s.pidsLimit,
+		memory:        s.memory,
+		cpus:          s.cpus,
+	})
+
+	runCtx, cancel := s.runContext(ctx, task)
+	defer cancel()
+
+	return s.launch(ctx, runCtx, &launchArgs{runtime: runtimeName, binary: runtimeBin, container: name}, argv, stream)
 }
 
 // Describe implements runner.Describer, so an agent action listing sandbox_exec
@@ -541,51 +586,6 @@ func (s *SandboxExec) gate(task *runner.Task) error {
 		"action "+task.ActionName+" is not in sandbox_exec allow_actions")
 }
 
-// run validates, resolves the runtime, builds the argv, and executes one
-// container. A nil stream means plain Execute.
-func (s *SandboxExec) run(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
-	if err := s.Validate(task); err != nil {
-		return runner.Result{}, err
-	}
-
-	runtimeName, runtimeBin, err := s.detectRuntime()
-	if err != nil {
-		return runner.Result{}, err
-	}
-
-	name, err := containerName(task.RunID)
-	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart,
-			"generate container name: "+err.Error())
-	}
-
-	command, _ := task.Params[paramCommand].(string)
-
-	workdir := s.workdir
-	if override, isString := task.Params[keyWorkdir].(string); isString && override != "" {
-		workdir = override
-	}
-
-	argv := buildRunArgv(&runArgs{
-		runtime:       runtimeName,
-		containerName: name,
-		image:         s.image,
-		workdir:       workdir,
-		command:       command,
-		mounts:        s.mounts,
-		network:       s.network,
-		harden:        s.harden,
-		pidsLimit:     s.pidsLimit,
-		memory:        s.memory,
-		cpus:          s.cpus,
-	})
-
-	runCtx, cancel := s.runContext(ctx, task)
-	defer cancel()
-
-	return s.launch(ctx, runCtx, &launchArgs{runtime: runtimeName, binary: runtimeBin, container: name}, argv, stream)
-}
-
 // runContext derives the effective deadline: Task.Deadline when set, else
 // now+timeout as the backstop, the earlier winning. timeout is always positive
 // (amendment 3), so a hung container always has a bound.
@@ -635,7 +635,7 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 	}
 
 	if waitErr != nil {
-		return runner.Result{}, s.classifyWait(runCtx, waitErr, cmd.ProcessState.ExitCode(), stderr.Text())
+		return runner.Result{}, s.classifyWait(runCtx, waitErr, stderr.Text())
 	}
 
 	if scanErr != nil {
@@ -656,9 +656,9 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 }
 
 // killContainer best-effort stops a container the client-process SIGKILL left
-// running. It runs under its own short context, detached from the dead run
-// context, and ignores errors: --rm handles removal and an already-gone
-// container is not a failure. runtimeName comes from detection and name is
+// running, under its own short context detached from the dead run. A failure
+// logs at debug only: --rm handles removal and an already-gone container is not
+// a failure. The binary comes from detection and the container name is
 // sanitized, so a hostile RunID cannot steer the kill argv.
 func (*SandboxExec) killContainer(parent context.Context, target *launchArgs) {
 	killCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), sandboxKillTimeout)
@@ -667,7 +667,9 @@ func (*SandboxExec) killContainer(parent context.Context, target *launchArgs) {
 	// #nosec G204 -- the binary is the path detection resolved and the container
 	// name is this package's sanitized one; both are single argv elements, so no
 	// shell parsing occurs.
-	_ = exec.CommandContext(killCtx, target.binary, "kill", target.container).Run()
+	if err := exec.CommandContext(killCtx, target.binary, "kill", target.container).Run(); err != nil {
+		slog.DebugContext(parent, "kill sandbox container", "container", target.container, "error", err)
+	}
 }
 
 // launchArgs names the resolved runtime one run uses: the reported name, the
@@ -703,14 +705,14 @@ func (*SandboxExec) classifyStart(runCtx context.Context, err error) error {
 // the kill path already ran. A non-zero exit is permanent, carrying the stderr
 // tail. First-run image pulls ride the deadline, so a pull failure lands here as
 // a permanent exit (accepted for v1; the docs advise pre-pulling images).
-func (*SandboxExec) classifyWait(runCtx context.Context, waitErr error, exitCode int, stderrTail string) error {
+func (*SandboxExec) classifyWait(runCtx context.Context, waitErr error, stderrTail string) error {
 	if runCtx.Err() != nil {
 		return runner.NewError(runner.ClassTransient, codeSandboxTimeout,
 			"container run canceled or timed out")
 	}
 
-	if _, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
-		message := fmt.Sprintf("container exited with code %d", exitCode)
+	if exitErr, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
+		message := fmt.Sprintf("container exited with code %d", exitErr.ExitCode())
 		if stderrTail != "" {
 			message += ": " + stderrTail
 		}
@@ -850,8 +852,8 @@ func containerName(runID string) (string, error) {
 }
 
 // sanitizeName drops every rune outside [A-Za-z0-9_.-] from the run identifier,
-// falling back to "run" when nothing survives so the name always carries a
-// middle segment.
+// falling back to containerNameFallback when nothing survives so the name
+// always carries a middle segment.
 func sanitizeName(runID string) string {
 	var builder strings.Builder
 
@@ -868,7 +870,7 @@ func sanitizeName(runID string) string {
 	}
 
 	if builder.Len() == 0 {
-		return "run"
+		return containerNameFallback
 	}
 
 	return builder.String()

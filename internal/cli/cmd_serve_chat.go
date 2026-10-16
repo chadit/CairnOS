@@ -76,9 +76,21 @@ func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, *chat.Pers
 		return nil, nil, nil
 	}
 
-	driver, err := chatDriver(deps.registry, cfg.Chat.Driver)
-	if err != nil {
-		return nil, nil, err
+	if cfg.Chat.Driver == "" {
+		return nil, nil, fmt.Errorf("%w: chat.driver must name an LLM runner when chat is enabled", config.ErrInvalidConfig)
+	}
+
+	// The agent loop's run-start check, carried to chat: a driver that is not a
+	// registered ToolCaller fails wiring rather than failing the first turn.
+	registered, found := deps.registry.Get(cfg.Chat.Driver)
+	if !found {
+		return nil, nil, fmt.Errorf("%w: chat.driver %q is not a registered runner", config.ErrInvalidConfig, cfg.Chat.Driver)
+	}
+
+	driver, capable := registered.(runner.ToolCaller)
+	if !capable {
+		return nil, nil, fmt.Errorf("%w: chat.driver %q does not support tool calling; use anthropic or openai",
+			config.ErrInvalidConfig, cfg.Chat.Driver)
 	}
 
 	// One adapter feeds both the system-prompt listing (via Config.Skills) and
@@ -158,28 +170,6 @@ type chatDeps struct {
 	workflowsDir string
 	skillsDir    string
 	contextDir   string
-}
-
-// chatDriver resolves the configured driver name to a runner.ToolCaller, the
-// run-start check from the agent loop carried to chat: a driver that is not a
-// registered ToolCaller fails wiring rather than failing the first turn.
-func chatDriver(registry *runner.Registry, name string) (runner.ToolCaller, error) {
-	if name == "" {
-		return nil, fmt.Errorf("%w: chat.driver must name an LLM runner when chat is enabled", config.ErrInvalidConfig)
-	}
-
-	rnr, registered := registry.Get(name)
-	if !registered {
-		return nil, fmt.Errorf("%w: chat.driver %q is not a registered runner", config.ErrInvalidConfig, name)
-	}
-
-	caller, capable := rnr.(runner.ToolCaller)
-	if !capable {
-		return nil, fmt.Errorf("%w: chat.driver %q does not support tool calling; use anthropic or openai",
-			config.ErrInvalidConfig, name)
-	}
-
-	return caller, nil
 }
 
 // chatReadTools builds the read tools the chat agent runs inline: memory, vault

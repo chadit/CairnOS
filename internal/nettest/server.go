@@ -2,6 +2,7 @@ package nettest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -41,7 +42,12 @@ func NewServer(t *testing.T, handler http.Handler) *Server {
 	listener := bufconn.Listen(memBufferBytes)
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: headerTimeout}
 
-	go func() { _ = server.Serve(listener) }()
+	go func() {
+		// Close in the cleanup below is the one expected way Serve returns.
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("serve in-memory fixture: %v", err)
+		}
+	}()
 
 	t.Cleanup(func() { _ = server.Close() })
 

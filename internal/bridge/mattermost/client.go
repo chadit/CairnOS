@@ -57,6 +57,28 @@ const (
 	maxRateLimitRetries = 1
 )
 
+// The schemes a base URL may use. Plain http needs the InsecureHTTP opt-in, and
+// the event socket dials the WebSocket twin of whichever one the URL names.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// Each REST method's name as an APIError reports it. It is the Client method's
+// own name, so an operator reading a failure sees which call broke without
+// seeing the URL.
+const (
+	methodConnect        = "Connect"
+	methodCreatePost     = "CreatePost"
+	methodDirectChannel  = "DirectChannel"
+	methodUserByUsername = "UserByUsername"
+	methodUser           = "User"
+	methodChannelByName  = "ChannelByName"
+	methodTyping         = "Typing"
+	methodAddReaction    = "AddReaction"
+	methodListen         = "Listen"
+)
+
 // ClientConfig builds a Client. URL and Token are required; everything else has
 // a working default.
 type ClientConfig struct {
@@ -64,8 +86,8 @@ type ClientConfig struct {
 	// limiter throttles nothing, which is what the unit tests want.
 	Limiter *Bucket
 
-	// Log receives the one warning this client emits, about an unreadable post
-	// size. nil means slog.Default.
+	// Log receives the client's own lines: a warning about an unreadable post
+	// size and debug lines from the event socket. nil means slog.Default.
 	Log *slog.Logger
 
 	URL   string
@@ -213,11 +235,11 @@ func parseServerURL(raw string, insecure bool) (*url.URL, error) {
 // scheme. Plain http needs the explicit opt-in, because the token would be on
 // the wire in the clear.
 func allowedScheme(scheme string, insecure bool) bool {
-	if scheme == "https" {
+	if scheme == schemeHTTPS {
 		return true
 	}
 
-	return insecure && scheme == "http"
+	return insecure && scheme == schemeHTTP
 }
 
 // Me returns the identity this client authenticates as, zero until Connect.
@@ -242,7 +264,7 @@ func (c *Client) MaxPostSize() int {
 func (c *Client) Connect(ctx context.Context) error {
 	var identity User
 
-	call := &apiRequest{Method: "Connect", Verb: http.MethodGet, Path: "/users/me"}
+	call := &apiRequest{Method: methodConnect, Verb: http.MethodGet, Path: "/users/me"}
 	if err := c.do(ctx, call, &identity); err != nil {
 		return err
 	}
@@ -272,7 +294,7 @@ type createPostRequest struct {
 // thread root, never another reply.
 func (c *Client) CreatePost(ctx context.Context, channelID, rootID, message string) (Post, error) {
 	call := &apiRequest{
-		Method: "CreatePost",
+		Method: methodCreatePost,
 		Verb:   http.MethodPost,
 		Path:   "/posts",
 		Body:   createPostRequest{ChannelID: channelID, RootID: rootID, Message: message},
@@ -292,11 +314,11 @@ func (c *Client) CreatePost(ctx context.Context, channelID, rootID, message stri
 func (c *Client) DirectChannel(ctx context.Context, otherUserID string) (Channel, error) {
 	identity := c.Me()
 	if identity.ID == "" {
-		return Channel{}, &APIError{Class: ClassPermanent, Method: "DirectChannel", Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
+		return Channel{}, &APIError{Class: ClassPermanent, Method: methodDirectChannel, Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
 	}
 
 	call := &apiRequest{
-		Method: "DirectChannel",
+		Method: methodDirectChannel,
 		Verb:   http.MethodPost,
 		Path:   "/channels/direct",
 		Body:   []string{identity.ID, otherUserID},
@@ -315,7 +337,7 @@ func (c *Client) DirectChannel(ctx context.Context, otherUserID string) (Channel
 // round trip.
 func (c *Client) UserByUsername(ctx context.Context, name string) (User, error) {
 	call := &apiRequest{
-		Method: "UserByUsername",
+		Method: methodUserByUsername,
 		Verb:   http.MethodGet,
 		Path:   "/users/username/" + url.PathEscape(name),
 	}
@@ -343,7 +365,7 @@ func (c *Client) User(ctx context.Context, id string) (User, error) {
 		return cached, nil
 	}
 
-	call := &apiRequest{Method: "User", Verb: http.MethodGet, Path: "/users/" + url.PathEscape(id)}
+	call := &apiRequest{Method: methodUser, Verb: http.MethodGet, Path: "/users/" + url.PathEscape(id)}
 
 	var user User
 	if err := c.do(ctx, call, &user); err != nil {
@@ -359,7 +381,7 @@ func (c *Client) User(ctx context.Context, id string) (User, error) {
 // an operator writes a send target ("#alerts" on a named team).
 func (c *Client) ChannelByName(ctx context.Context, teamName, name string) (Channel, error) {
 	call := &apiRequest{
-		Method: "ChannelByName",
+		Method: methodChannelByName,
 		Verb:   http.MethodGet,
 		Path:   "/teams/name/" + url.PathEscape(teamName) + "/channels/name/" + url.PathEscape(name),
 	}
@@ -380,16 +402,16 @@ type typingRequest struct {
 }
 
 // Typing shows the bot as typing. The server drops the request while it is
-// marked busy, so callers ignore the error: a missing indicator is cosmetic and
-// must never fail a turn (FR17).
+// marked busy, so callers log the error at debug and never fail the turn: a
+// missing indicator is cosmetic (FR17).
 func (c *Client) Typing(ctx context.Context, channelID, parentID string) error {
 	identity := c.Me()
 	if identity.ID == "" {
-		return &APIError{Class: ClassPermanent, Method: "Typing", Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
+		return &APIError{Class: ClassPermanent, Method: methodTyping, Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
 	}
 
 	call := &apiRequest{
-		Method: "Typing",
+		Method: methodTyping,
 		Verb:   http.MethodPost,
 		Path:   "/users/" + url.PathEscape(identity.ID) + "/typing",
 		Body:   typingRequest{ChannelID: channelID, ParentID: parentID},
@@ -411,11 +433,11 @@ type reactionRequest struct {
 func (c *Client) AddReaction(ctx context.Context, postID, emojiName string) error {
 	identity := c.Me()
 	if identity.ID == "" {
-		return &APIError{Class: ClassPermanent, Method: "AddReaction", Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
+		return &APIError{Class: ClassPermanent, Method: methodAddReaction, Message: ErrNotConnected.Error(), Cause: ErrNotConnected}
 	}
 
 	call := &apiRequest{
-		Method: "AddReaction",
+		Method: methodAddReaction,
 		Verb:   http.MethodPost,
 		Path:   "/reactions",
 		Body:   reactionRequest{UserID: identity.ID, PostID: postID, EmojiName: emojiName},
@@ -432,7 +454,7 @@ func (c *Client) AddReaction(ctx context.Context, postID, emojiName string) erro
 func (c *Client) readMaxPostSize(ctx context.Context) int {
 	var clientCfg map[string]string
 
-	call := &apiRequest{Method: "Connect", Verb: http.MethodGet, Path: "/config/client", Query: "format=old"}
+	call := &apiRequest{Method: methodConnect, Verb: http.MethodGet, Path: "/config/client", Query: "format=old"}
 	if err := c.do(ctx, call, &clientCfg); err != nil {
 		c.log.Warn("mattermost client config unreadable, using the default post size",
 			"error", err.Error(), "max_post_size", defaultMaxPostSize)
@@ -568,7 +590,9 @@ func decodeBody(method string, body io.Reader, out any) error {
 	limited := io.LimitReader(body, maxResponseBytes)
 
 	if out == nil {
-		_, _ = io.Copy(io.Discard, limited)
+		if _, err := io.Copy(io.Discard, limited); err != nil {
+			return &APIError{Class: ClassTransient, Method: method, Message: "drain response: " + err.Error(), Cause: err}
+		}
 
 		return nil
 	}

@@ -16,12 +16,10 @@ import (
 
 // BuildFanout builds the event fan-out over every configured destination: a
 // Discord sink when the webhook env is set, a Mattermost sink when
-// [notify.mattermost] names an identity, and both when both (FR34). Neither
-// gives a nil fan-out, which disables every producer. A nil registry is the
-// standalone `schedule run` worker, which holds no identities to send through.
-// webhookTransport carries the Discord sink, the one client this function
-// builds itself; nil means the default one. The Mattermost sink sends through
-// a client the registry already holds.
+// [notify.mattermost] names an identity (FR34). Neither gives a nil fan-out,
+// which disables every producer. A nil registry is the standalone `schedule
+// run` worker, which holds no identities. webhookTransport carries the Discord
+// client; nil means the default.
 func BuildFanout(
 	cfg *config.Config,
 	registry *messaging.Registry,
@@ -29,7 +27,7 @@ func BuildFanout(
 	logger *slog.Logger,
 	webhookTransport http.RoundTripper,
 ) *notify.Fanout {
-	sinks := make([]notify.Sink, 0, 2)
+	var sinks []notify.Sink
 
 	// The webhook URL is a credential, so it is read only from the environment
 	// and never from a config key.

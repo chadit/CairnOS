@@ -37,6 +37,7 @@ const minHS256SecretBytes = 32
 // Material carries the immutable signing and verification keys for the
 // configured algorithm. Exactly one branch is populated.
 type Material struct {
+	method     jwt.SigningMethod
 	alg        string
 	hmacSecret []byte
 	privateKey ed25519.PrivateKey
@@ -77,15 +78,6 @@ func (m *Material) EdDSAKeys() (ed25519.PrivateKey, ed25519.PublicKey, bool) {
 	return m.privateKey, m.publicKey, true
 }
 
-// signingMethod maps the algorithm onto the jwt library's method.
-func (m *Material) signingMethod() jwt.SigningMethod {
-	if m.alg == AlgEdDSA {
-		return jwt.SigningMethodEdDSA
-	}
-
-	return jwt.SigningMethodHS256
-}
-
 // signingKey is the private half used to mint tokens.
 func (m *Material) signingKey() any {
 	if m.alg == AlgEdDSA {
@@ -115,7 +107,7 @@ func loadHS256(getenv func(string) string) (*Material, error) {
 		return nil, fmt.Errorf("%w: %s holds %d bytes", ErrSecretTooShort, hs256SecretEnv, len(secret))
 	}
 
-	return &Material{alg: AlgHS256, hmacSecret: []byte(secret)}, nil
+	return &Material{method: jwt.SigningMethodHS256, alg: AlgHS256, hmacSecret: []byte(secret)}, nil
 }
 
 // loadEdDSA reads the ed25519 key pair from the configured PEM files. Both
@@ -151,7 +143,7 @@ func loadEdDSA(getenv func(string) string) (*Material, error) {
 		return nil, fmt.Errorf("%w: %s does not match the private key in %s", ErrKeyPairMismatch, publicPath, privatePath)
 	}
 
-	return &Material{alg: AlgEdDSA, privateKey: privateKey, publicKey: publicKey}, nil
+	return &Material{method: jwt.SigningMethodEdDSA, alg: AlgEdDSA, privateKey: privateKey, publicKey: publicKey}, nil
 }
 
 // groupOtherPermBits masks the group and other permission bits; a private key

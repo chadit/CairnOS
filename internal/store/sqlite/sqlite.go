@@ -21,8 +21,19 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// limitClause is the SQL LIMIT suffix shared by the paginated list queries.
-const limitClause = " LIMIT ?"
+// SQL fragments the filtered list queries share.
+const (
+	// limitClause is the SQL LIMIT suffix shared by the paginated list queries.
+	limitClause = " LIMIT ?"
+
+	// workspaceClause is the first WHERE clause of every list, so a token bound
+	// to one workspace never sees another's rows.
+	workspaceClause = "workspace_id = ?"
+
+	// newestFirst orders by created_at with the ULID id as tie-break, so rows
+	// created in the same instant still list deterministically.
+	newestFirst = " ORDER BY created_at DESC, id DESC"
+)
 
 // timeLayout is RFC 3339 UTC with fixed-width nanoseconds. The zero padding
 // matters: trailing-zero truncation (time.RFC3339Nano) breaks the

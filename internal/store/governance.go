@@ -49,13 +49,25 @@ type WorkflowPause struct {
 // read. Split out so the engine and the governance API depend on this narrow
 // surface instead of all of Store.
 type GovernanceStore interface {
+	AuditLog
+	WorkflowPauseStore
+	SpendLedger
+}
+
+// AuditLog is the append-only record of governance actions. It has no update
+// or delete, so a written row is never rewritten.
+type AuditLog interface {
 	// AppendAudit persists one audit row. A zero ID is stamped with a fresh
 	// ULID and a zero CreatedAt with the current time.
 	AppendAudit(ctx context.Context, entry *AuditEntry) error
 
 	// ListAudit returns audit rows newest-first, narrowed by the filter.
 	ListAudit(ctx context.Context, filter AuditFilter) ([]*AuditEntry, error)
+}
 
+// WorkflowPauseStore holds the per-workflow pause flags the engine checks
+// before it starts a run.
+type WorkflowPauseStore interface {
 	// SetWorkflowPause records (or overwrites) the pause flag for one
 	// workflow name.
 	SetWorkflowPause(ctx context.Context, pause *WorkflowPause) error
@@ -70,7 +82,11 @@ type GovernanceStore interface {
 
 	// ListWorkflowPauses returns every paused workflow, newest pause first.
 	ListWorkflowPauses(ctx context.Context) ([]*WorkflowPause, error)
+}
 
+// SpendLedger answers the budget question: how much a workflow has spent in
+// the current period.
+type SpendLedger interface {
 	// SpendSince sums the estimated cost_usd of every action result of the
 	// named workflow's runs created at or after since. It is the budget
 	// accumulator: a soft ceiling on the estimated cost runners report, not a

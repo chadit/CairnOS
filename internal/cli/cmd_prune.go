@@ -22,7 +22,7 @@ func (a *App) cmdPrune(ctx context.Context, args []string) int {
 		return code
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "prune", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "prune", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

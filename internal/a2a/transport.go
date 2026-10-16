@@ -5,8 +5,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
-
-	"google.golang.org/grpc/credentials"
 )
 
 // TLSConfig is the [a2a] mTLS block (.agents/spec/09-a2a-and-hive.md,
@@ -27,13 +25,12 @@ func (c TLSConfig) Configured() bool {
 	return c.CertFile != "" || c.KeyFile != "" || c.ClientCAFile != ""
 }
 
-// ServerCredentials builds the gRPC transport credentials for the A2A
-// listener from the mTLS trio: the node's own certificate and key, plus the
-// client CA bundle it requires every caller's certificate to chain to
-// (RequireAndVerifyClientCert). TLS 1.2 is the floor. A partial config is
-// refused so a missing client CA can never silently leave the listener
-// accepting any client.
-func (c TLSConfig) ServerCredentials() (credentials.TransportCredentials, error) {
+// ServerTLSConfig builds the TLS config for the A2A listener from the mTLS
+// trio: the node's own certificate and key, plus the client CA bundle it
+// requires every caller's certificate to chain to (RequireAndVerifyClientCert).
+// TLS 1.2 is the floor. A partial config is refused so a missing client CA can
+// never silently leave the listener accepting any client.
+func (c TLSConfig) ServerTLSConfig() (*tls.Config, error) {
 	if c.CertFile == "" || c.KeyFile == "" || c.ClientCAFile == "" {
 		return nil, fmt.Errorf("%w: cert=%q key=%q client_ca=%q",
 			ErrTLSConfigIncomplete, c.CertFile, c.KeyFile, c.ClientCAFile)
@@ -49,23 +46,21 @@ func (c TLSConfig) ServerCredentials() (credentials.TransportCredentials, error)
 		return nil, err
 	}
 
-	tlsCfg := &tls.Config{
+	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clientCAs,
 		MinVersion:   tls.VersionTLS12,
-	}
-
-	return credentials.NewTLS(tlsCfg), nil
+	}, nil
 }
 
-// ClientCredentials builds the credentials the local HTTP gateway dials the
-// mTLS listener with. The node presents its own certificate and trusts the
+// ClientTLSConfig builds the TLS config the local HTTP gateway dials the mTLS
+// listener with. The node presents its own certificate and trusts the
 // same CA bundle, so the loopback hop passes the listener's
 // RequireAndVerifyClientCert. ServerName is left to the dial target: the
 // gateway dials by loopback address, so the node's own cert must satisfy
 // hostname verification against the connection IP.
-func (c TLSConfig) ClientCredentials() (credentials.TransportCredentials, error) {
+func (c TLSConfig) ClientTLSConfig() (*tls.Config, error) {
 	if c.CertFile == "" || c.KeyFile == "" || c.ClientCAFile == "" {
 		return nil, fmt.Errorf("%w: cert=%q key=%q client_ca=%q",
 			ErrTLSConfigIncomplete, c.CertFile, c.KeyFile, c.ClientCAFile)
@@ -81,13 +76,11 @@ func (c TLSConfig) ClientCredentials() (credentials.TransportCredentials, error)
 		return nil, err
 	}
 
-	tlsCfg := &tls.Config{
+	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      roots,
 		MinVersion:   tls.VersionTLS12,
-	}
-
-	return credentials.NewTLS(tlsCfg), nil
+	}, nil
 }
 
 // loadCertPool reads a PEM bundle into an x509 pool, failing when the file

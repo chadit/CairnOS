@@ -88,7 +88,7 @@ func (s *Service) runsResource(token string) mcp.ResourceHandler {
 			return nil, err
 		}
 
-		runs, err := s.store.ListRuns(s.scopedContext(ctx, workspace), store.ListFilter{Limit: runsResourceLimit})
+		runs, err := s.store.ListRuns(store.ContextWithWorkspace(ctx, workspace), store.ListFilter{Limit: runsResourceLimit})
 		if err != nil {
 			return nil, fmt.Errorf("list runs: %w", err)
 		}
@@ -182,12 +182,4 @@ func jsonResource(uri string, value any) (*mcp.ReadResourceResult, error) {
 			Text:     string(encoded),
 		}},
 	}, nil
-}
-
-// scopedContext stamps the caller's workspace onto the context so the store
-// queries a handler runs filter by the right tenant, the same property the gRPC
-// guard gives every handler (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
-func (*Service) scopedContext(ctx context.Context, workspace string) context.Context {
-	return store.ContextWithWorkspace(ctx, workspace)
 }

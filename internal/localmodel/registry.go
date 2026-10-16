@@ -80,6 +80,17 @@ func buildURL(b *Build, base string) string {
 	return fmt.Sprintf("%s/%s/releases/download/%s/%s", base, llamaRepo, PinnedBuild, b.Asset)
 }
 
+// Upstream's published size in bytes for each pinned build archive, which the
+// download progress percentage measures against. Each one moves with
+// PinnedBuild, alongside its SHA-256.
+const (
+	bytesLinuxAMD64   = 16734586
+	bytesLinuxARM64   = 13380118
+	bytesDarwinARM64  = 11123196
+	bytesDarwinAMD64  = 11175330
+	bytesWindowsAMD64 = 18407457
+)
+
 // builds is the pinned asset table, one entry per platform upstream ships a
 // CPU build for. It is a function rather than a package variable because the
 // linter forbids mutable globals, and five entries cost nothing to rebuild.
@@ -92,35 +103,35 @@ func builds() []Build {
 			GOOS: OSLinux, GOARCH: ArchAMD64,
 			Asset:  "llama-" + PinnedBuild + "-bin-ubuntu-x64.tar.gz",
 			SHA256: "5e34434ddc6d03cd1584f403201aff0d4bd1a5793a72ff7e286532dfd1e4b941",
-			Bytes:  16734586,
+			Bytes:  bytesLinuxAMD64,
 			Format: FormatTarGz, Prefix: ArchivePrefix, Binary: ServerBinary,
 		},
 		{
 			GOOS: OSLinux, GOARCH: ArchARM64,
 			Asset:  "llama-" + PinnedBuild + "-bin-ubuntu-arm64.tar.gz",
 			SHA256: "f2b7333971e1b7b42e9268bfdbfa30f5f56e2897156084d2251385df94aec358",
-			Bytes:  13380118,
+			Bytes:  bytesLinuxARM64,
 			Format: FormatTarGz, Prefix: ArchivePrefix, Binary: ServerBinary,
 		},
 		{
 			GOOS: OSDarwin, GOARCH: ArchARM64,
 			Asset:  "llama-" + PinnedBuild + "-bin-macos-arm64.tar.gz",
 			SHA256: "7d692df9e1e386e62f1c12b843903218041e6cd74c9415aa39a7ed3176f9eaa2",
-			Bytes:  11123196,
+			Bytes:  bytesDarwinARM64,
 			Format: FormatTarGz, Prefix: ArchivePrefix, Binary: ServerBinary,
 		},
 		{
 			GOOS: OSDarwin, GOARCH: ArchAMD64,
 			Asset:  "llama-" + PinnedBuild + "-bin-macos-x64.tar.gz",
 			SHA256: "13b34aa8a5d87341a21065a83f54a8167e1aaa6fe0d66065de01632a1ed64be6",
-			Bytes:  11175330,
+			Bytes:  bytesDarwinAMD64,
 			Format: FormatTarGz, Prefix: ArchivePrefix, Binary: ServerBinary,
 		},
 		{
 			GOOS: OSWindows, GOARCH: ArchAMD64,
 			Asset:  "llama-" + PinnedBuild + "-bin-win-cpu-x64.zip",
 			SHA256: "9df3158ed228a641a4b127942d7f459f24c9e13f04682659d05c00c80099b6b5",
-			Bytes:  18407457,
+			Bytes:  bytesWindowsAMD64,
 			Format: FormatZip, Prefix: "", Binary: ServerBinaryWin,
 		},
 	}
@@ -186,6 +197,10 @@ func (m *Model) CommitsURL() string {
 	return fmt.Sprintf("%s/%s/commits/main", HuggingFaceBase, m.Repo)
 }
 
+// bytesDefaultModel is the default model file's size in bytes at its pinned
+// revision, which the download progress percentage measures against.
+const bytesDefaultModel = 4590807392
+
 // Catalog builds the models setup can install. Every entry is ungated and
 // permissively licensed, because a gated repo needs an interactive token grant
 // that breaks unattended install.
@@ -201,7 +216,7 @@ func Catalog() []Model {
 			File:     "gemma-4-E4B-it-Q4_0.gguf",
 			SHA256:   "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
 			Revision: "b8093469224f83f5c38f691eb906c380e9e63114",
-			Bytes:    4590807392,
+			Bytes:    bytesDefaultModel,
 			Quant:    "Q4_0",
 			Params:   "E4B",
 			License:  "apache-2.0",

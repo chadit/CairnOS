@@ -12,6 +12,8 @@ import (
 const (
 	jsonSchemaType   = "type"
 	jsonSchemaString = "string"
+	jsonSchemaObject = "object"
+	jsonSchemaArray  = "array"
 )
 
 // schemaProperty reads one property's schema out of a tool spec, failing when
@@ -41,7 +43,7 @@ func TestUsageDescribesTwoOptionalParams(t *testing.T) {
 		t.Fatalf("name = %q, want %q", spec.Name, builtins.UsageName)
 	}
 
-	if spec.InputSchema[jsonSchemaType] != "object" {
+	if spec.InputSchema[jsonSchemaType] != jsonSchemaObject {
 		t.Fatalf("schema type = %v, want object", spec.InputSchema[jsonSchemaType])
 	}
 
@@ -52,7 +54,7 @@ func TestUsageDescribesTwoOptionalParams(t *testing.T) {
 	launchers := schemaProperty(t, spec, usageLaunchers)
 	items, _ := launchers["items"].(map[string]any)
 
-	if launchers[jsonSchemaType] != "array" || items[jsonSchemaType] != jsonSchemaString {
+	if launchers[jsonSchemaType] != jsonSchemaArray || items[jsonSchemaType] != jsonSchemaString {
 		t.Fatalf("launchers schema = %#v, want an array of strings", launchers)
 	}
 
@@ -66,14 +68,14 @@ func TestUsageDescribesTwoOptionalParams(t *testing.T) {
 func TestUsageReportModeOffersOnlyTheLaunchersParam(t *testing.T) {
 	t.Parallel()
 
-	spec := newUsage(t, reportConfig("/bin/true", "/tmp/usage.json"), builtins.UsageOptions{}).Describe()
+	spec := newUsage(t, reportConfig(binTrue, reportOutputPath), builtins.UsageOptions{}).Describe()
 
 	properties, _ := spec.InputSchema["properties"].(map[string]any)
 	if _, offered := properties[usageHostKey]; offered {
 		t.Fatalf("properties = %#v, want no host: the report is read where the script runs", properties)
 	}
 
-	if launchers := schemaProperty(t, spec, usageLaunchers); launchers[jsonSchemaType] != "array" {
+	if launchers := schemaProperty(t, spec, usageLaunchers); launchers[jsonSchemaType] != jsonSchemaArray {
 		t.Fatalf("launchers schema = %#v, want an array", launchers)
 	}
 

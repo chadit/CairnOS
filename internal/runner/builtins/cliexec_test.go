@@ -26,6 +26,16 @@ const (
 	promptArg   = "{prompt}"
 	codexBinary = "codex"
 
+	// flagArg is a flag-shaped argv element and argTerminator the POSIX
+	// end-of-options marker, for the argv and template cases.
+	flagArg       = "--flag"
+	argTerminator = "--"
+
+	// actionCLI is the action the CLI tasks run, and shimStderr the line the
+	// echo shims print to stderr for stderr_tail to carry back.
+	actionCLI  = "cli"
+	shimStderr = "warn"
+
 	// qwenTimeoutCode is the code every deadline case expects from the qwen
 	// runner the timeout tests drive.
 	qwenTimeoutCode = builtins.QwenName + ".timeout"
@@ -53,7 +63,7 @@ func writeShim(t *testing.T, dir, name, script string) string {
 func cliTask() *runner.Task {
 	return &runner.Task{
 		RunID:      testRunID,
-		ActionName: "cli",
+		ActionName: actionCLI,
 		Params:     map[string]any{promptKey: testPrompt},
 		Resolved:   true,
 	}
@@ -84,7 +94,7 @@ echo "warn" >&2`)
 		t.Fatalf("exit_code = %q, want 0", result.Meta["exit_code"])
 	}
 
-	if result.Meta["stderr_tail"] != "warn" {
+	if result.Meta["stderr_tail"] != shimStderr {
 		t.Fatalf("stderr_tail = %q, want warn", result.Meta["stderr_tail"])
 	}
 
@@ -147,6 +157,8 @@ const (
 	codexRateLimited  = "codex.rate_limited"
 	claudeRateLimited = "claude.rate_limited"
 	codexExit         = "codex.exit"
+	codexNeedsReauth  = "codex.needs_reauth"
+	claudeNeedsReauth = "claude.needs_reauth"
 )
 
 // failOnStdout and failOnStderr are shim bodies that print message on one
@@ -197,10 +209,10 @@ func TestCLIClassifiesExitOutput(t *testing.T) {
 		},
 		{name: "rate-limit text wins over reauth", tool: builtins.CodexName, binary: shim(failOnStderr("429 too many requests; exceeded retry limit")), wantClass: runner.ClassRateLimited, wantCode: codexRateLimited},
 		{name: "claude overloaded 529 is transient", tool: builtins.ClaudeName, binary: shim(failOnStdout(`API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)), wantClass: runner.ClassTransient, wantCode: "claude.overloaded"},
-		{name: "invalid_grant is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("error: invalid_grant")), wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
-		{name: "claude not logged in on stdout is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Not logged in · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: "claude.needs_reauth"},
-		{name: "claude invalid api key is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Invalid API key · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: "claude.needs_reauth"},
-		{name: "codex not logged in is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("Not logged in")), wantClass: runner.ClassNeedsReauth, wantCode: "codex.needs_reauth"},
+		{name: "invalid_grant is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("error: invalid_grant")), wantClass: runner.ClassNeedsReauth, wantCode: codexNeedsReauth},
+		{name: "claude not logged in on stdout is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Not logged in · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: claudeNeedsReauth},
+		{name: "claude invalid api key is needs-reauth", tool: builtins.ClaudeName, binary: shim(failOnStdout("Invalid API key · Please run /login")), wantClass: runner.ClassNeedsReauth, wantCode: claudeNeedsReauth},
+		{name: "codex not logged in is needs-reauth", tool: builtins.CodexName, binary: shim(failOnStderr("Not logged in")), wantClass: runner.ClassNeedsReauth, wantCode: codexNeedsReauth},
 		{name: "quotation is not quota", tool: builtins.CodexName, binary: shim(failOnStderr("error: unterminated quotation in config.toml")), wantClass: runner.ClassPermanent, wantCode: codexExit},
 		{name: "rate limiter log line is not a limit", tool: builtins.CodexName, binary: shim(failOnStderr("client rate limiter delayed a request")), wantClass: runner.ClassPermanent, wantCode: codexExit},
 		{name: "unrelated stdout failure is permanent", tool: builtins.ClaudeName, binary: shim(failOnStdout("compilation failed: 3 errors")), wantClass: runner.ClassPermanent, wantCode: "claude.exit"},
@@ -427,7 +439,7 @@ func TestCLIValidatePromptParam(t *testing.T) {
 	}{
 		{name: "missing prompt", params: map[string]any{}, resolved: true, wantErr: true},
 		{name: "non-string prompt", params: map[string]any{promptKey: int64(7)}, resolved: true, wantErr: true},
-		{name: "unresolved reference defers", params: map[string]any{promptKey: "${{ pick.output }}"}, resolved: false, wantErr: false},
+		{name: caseUnresolvedDefers, params: map[string]any{promptKey: unresolved}, resolved: false, wantErr: false},
 		{name: "literal prompt", params: map[string]any{promptKey: testPrompt}, resolved: true, wantErr: false},
 	}
 

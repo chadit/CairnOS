@@ -26,7 +26,7 @@ func (b *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	clone := req.Clone(req.Context())
 	clone.Header.Set("Authorization", "Bearer "+b.token)
 
-	return b.base.RoundTrip(clone) //nolint:wrapcheck // a test round tripper passes the transport error through unchanged
+	return b.base.RoundTrip(clone)
 }
 
 func TestHTTPTransportEnforcesScopeFromHeader(t *testing.T) {

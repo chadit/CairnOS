@@ -10,18 +10,33 @@ import (
 	"github.com/chadit/CairnOS/internal/environ"
 )
 
+const (
+	// setKey and setValue are a variable with an ordinary non-empty value.
+	setKey   = "SET"
+	setValue = "value"
+	// emptyKey names a variable set to the empty string, which must still
+	// read as found.
+	emptyKey = "EMPTY"
+	// snapshotKey is the variable whose source map changes after Map copies
+	// it, and originalValue is what the copy must keep.
+	snapshotKey   = "KEY"
+	originalValue = "first"
+	// pathVar is the search-path variable LookPath reads from the lookup.
+	pathVar = "PATH"
+)
+
 func TestMapAnswersOnlyWhatItWasGiven(t *testing.T) {
 	t.Parallel()
 
-	lookup := environ.Map(map[string]string{"SET": "value", "EMPTY": ""})
+	lookup := environ.Map(map[string]string{setKey: setValue, emptyKey: ""})
 
 	tests := map[string]struct {
 		key       string
 		wantValue string
 		wantFound bool
 	}{
-		"set key":            {key: "SET", wantValue: "value", wantFound: true},
-		"key set to nothing": {key: "EMPTY", wantValue: "", wantFound: true},
+		"set key":            {key: setKey, wantValue: setValue, wantFound: true},
+		"key set to nothing": {key: emptyKey, wantValue: "", wantFound: true},
 		"absent key":         {key: "MISSING", wantValue: "", wantFound: false},
 	}
 
@@ -44,12 +59,12 @@ func TestMapAnswersOnlyWhatItWasGiven(t *testing.T) {
 func TestMapIgnoresLaterMutation(t *testing.T) {
 	t.Parallel()
 
-	vars := map[string]string{"KEY": "first"}
+	vars := map[string]string{snapshotKey: originalValue}
 	lookup := environ.Map(vars)
-	vars["KEY"] = "second"
+	vars[snapshotKey] = "second"
 
-	if got := lookup.Get("KEY"); got != "first" {
-		t.Fatalf("Get after caller mutated its map = %q; want %q", got, "first")
+	if got := lookup.Get(snapshotKey); got != originalValue {
+		t.Fatalf("Get after caller mutated its map = %q; want %q", got, originalValue)
 	}
 }
 
@@ -82,7 +97,7 @@ func TestLookPathSearchesTheSuppliedPath(t *testing.T) {
 	dir := t.TempDir()
 	tool := writeExecutable(t, dir, "cairn-tool")
 
-	lookup := environ.Map(map[string]string{"PATH": dir})
+	lookup := environ.Map(map[string]string{pathVar: dir})
 
 	got, err := environ.LookPath(lookup, filepath.Base(tool))
 	if err != nil {
@@ -114,7 +129,7 @@ func TestLookPathReportsMisses(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	lookup := environ.Map(map[string]string{"PATH": dir})
+	lookup := environ.Map(map[string]string{pathVar: dir})
 
 	tests := map[string]string{
 		"empty name":           "",

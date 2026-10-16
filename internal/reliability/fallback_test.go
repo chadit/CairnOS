@@ -64,14 +64,16 @@ func TestFallbackFallsThroughToNext(t *testing.T) {
 func TestFallbackJoinsErrorsAndPreservesClass(t *testing.T) {
 	t.Parallel()
 
+	const reauthProvider = "codex"
+
 	// The primary needs re-auth and the fallback is down. The joined error must
 	// still classify as re-auth so the engine holds the job once nothing served
 	// it, the mixed-model and hold paths composing correctly (D12).
 	reauthErr := runner.NewReauthError("codex.needs_reauth", "run: codex login")
 
-	_, err := reliability.Fallback(t.Context(), []string{"codex", "qwen"},
+	_, err := reliability.Fallback(t.Context(), []string{reauthProvider, "qwen"},
 		func(_ context.Context, provider string) (runner.Result, error) {
-			if provider == "codex" {
+			if provider == reauthProvider {
 				return runner.Result{}, reauthErr
 			}
 

@@ -60,11 +60,11 @@ var (
 // interpolation away from a second command.
 var hostPathPattern = regexp.MustCompile(`^[A-Za-z0-9_.+@~/-]+$`)
 
-// Harness is one AI command-line tool installed on a host, named from a
+// HostCLI is one AI command-line tool installed on a host, named from a
 // [host.<name>.<tool table>.<cli>] block. The engine launches Path + "/" + Name
 // instead of trusting the worker host's PATH, which a non-login ssh shell
 // usually leaves without ~/.local/bin on it.
-type Harness struct {
+type HostCLI struct {
 	// Path is the directory holding the binary: absolute, or "~/"-prefixed for
 	// the host to expand. Defaults to DefaultHarnessPath.
 	Path string
@@ -84,7 +84,7 @@ type Harness struct {
 // host's tool layout from config rather than from its own constants.
 type Host struct {
 	// Harnesses holds one entry per installed CLI, keyed by the tool name.
-	Harnesses map[string]Harness
+	Harnesses map[string]HostCLI
 
 	// Type is HostTypeWorker or HostTypeAgent.
 	Type string
@@ -150,7 +150,7 @@ func parseHostBlocks(raw map[string]map[string]any) (map[string]Host, error) {
 // tool tables back inside this same map, so the whole two-level shape is
 // decoded here rather than through a second struct tag.
 func parseHostBlock(name string, block map[string]any) (Host, error) {
-	host := Host{Harnesses: map[string]Harness{}}
+	host := Host{Harnesses: map[string]HostCLI{}}
 
 	for _, key := range slices.Sorted(maps.Keys(block)) {
 		entry := hostEntry{host: name, key: key, value: block[key]}
@@ -187,14 +187,14 @@ func applyHostKey(host *Host, entry hostEntry) error {
 // parseHarnessBlocks decodes the tool table of one host. Its value and each
 // cli's value both have to be tables, and a scalar in either place is an
 // operator mistake worth naming rather than ignoring.
-func parseHarnessBlocks(entry hostEntry) (map[string]Harness, error) {
+func parseHarnessBlocks(entry hostEntry) (map[string]HostCLI, error) {
 	table, isTable := entry.value.(map[string]any)
 	if !isTable {
 		return nil, fmt.Errorf("%w: host.%s.%s must be a table of harness blocks",
 			ErrInvalidConfig, entry.host, entry.key)
 	}
 
-	harnesses := make(map[string]Harness, len(table))
+	harnesses := make(map[string]HostCLI, len(table))
 
 	for _, cli := range slices.Sorted(maps.Keys(table)) {
 		harness, err := parseHarnessBlock(entry.host, cli, table[cli])
@@ -212,19 +212,19 @@ func parseHarnessBlocks(entry hostEntry) (map[string]Harness, error) {
 // block written empty still describes a launchable binary. A key written blank
 // keeps the blank and fails validation, since an operator who typed the key
 // meant to name something.
-func parseHarnessBlock(host, cli string, raw any) (Harness, error) {
+func parseHarnessBlock(host, cli string, raw any) (HostCLI, error) {
 	block, isTable := raw.(map[string]any)
 	if !isTable {
-		return Harness{}, fmt.Errorf("%w: host.%s.harness.%s must be a table",
+		return HostCLI{}, fmt.Errorf("%w: host.%s.harness.%s must be a table",
 			ErrInvalidConfig, host, cli)
 	}
 
-	harness := Harness{Path: DefaultHarnessPath, Name: cli}
+	harness := HostCLI{Path: DefaultHarnessPath, Name: cli}
 
 	for _, key := range slices.Sorted(maps.Keys(block)) {
 		entry := harnessEntry{host: host, cli: cli, key: key, value: block[key]}
 		if err := applyHarnessKey(&harness, entry); err != nil {
-			return Harness{}, err
+			return HostCLI{}, err
 		}
 	}
 
@@ -232,7 +232,7 @@ func parseHarnessBlock(host, cli string, raw any) (Harness, error) {
 }
 
 // applyHarnessKey sets one parsed key on the block or returns a naming error.
-func applyHarnessKey(harness *Harness, entry harnessEntry) error {
+func applyHarnessKey(harness *HostCLI, entry harnessEntry) error {
 	var err error
 
 	switch entry.key {
@@ -361,7 +361,7 @@ func validateHostWrapper(name, path string) error {
 
 // validateHarnesses checks one host's harnesses, refusing two cli keys that
 // render the same variable for the same reason two hosts cannot.
-func validateHarnesses(host string, harnesses map[string]Harness) error {
+func validateHarnesses(host string, harnesses map[string]HostCLI) error {
 	seen := make(map[string]string, len(harnesses))
 
 	for _, cli := range slices.Sorted(maps.Keys(harnesses)) {
@@ -393,7 +393,7 @@ func claimHarnessToken(seen map[string]string, host, cli string) error {
 }
 
 // validateHarness checks one tool block's key and its two path parts.
-func validateHarness(host, cli string, harness *Harness) error {
+func validateHarness(host, cli string, harness *HostCLI) error {
 	if !harnessKeyPattern.MatchString(cli) {
 		return fmt.Errorf("%w: host.%s.harness.%s name must match %s",
 			ErrInvalidConfig, host, cli, harnessKeyPattern)

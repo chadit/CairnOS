@@ -30,6 +30,8 @@ const (
 	keyMaxTokens    = "max_tokens"
 	promptText      = "summarize this"
 	queryJobs       = "jobs"
+	paramPrompt     = "prompt"
+	inputQuery      = "query"
 )
 
 // floatTolerance absorbs float64 rounding in savings assertions.
@@ -98,7 +100,7 @@ func seedCachingCorpus(t *testing.T, db *sqlite.Store, runCount int, costPerCall
 	t.Helper()
 
 	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
-	inputs := map[string]any{"query": queryJobs}
+	inputs := map[string]any{inputQuery: queryJobs}
 
 	for idx := range runCount {
 		runID := fmt.Sprintf("repeat-run-%d", idx)
@@ -174,7 +176,7 @@ func TestCachingDetectorRequiresIdenticalOutputs(t *testing.T) {
 	db := openStore(t)
 
 	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
-	inputs := map[string]any{"query": queryJobs}
+	inputs := map[string]any{inputQuery: queryJobs}
 
 	for idx := range 4 {
 		runID := fmt.Sprintf("vary-run-%d", idx)

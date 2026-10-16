@@ -13,9 +13,21 @@ import (
 )
 
 const (
-	testBinary = "/usr/local/bin/cairnos"
-	testLabel  = "test"
-	cmdReload  = "reload"
+	testBinary    = "/usr/local/bin/cairnos"
+	testLabel     = "test"
+	cmdReload     = "reload"
+	cmdSupervisor = "supervisor"
+
+	// The fixture account and the paths each platform derives from it.
+	testUser       = "operator"
+	linuxDataHome  = "/home/operator/.cairnos"
+	darwinDataHome = "/Users/operator/.cairnos"
+	userUnitPath   = "/home/operator/.config/systemd/user/cairnos.service"
+	systemUnitPath = "/etc/systemd/system/cairnos.service"
+
+	// Host shapes the unsupported-platform cases share across files.
+	caseNoSystemd = "linux without systemd"
+	goosWindows   = "windows"
 )
 
 // linuxHost is a plain systemd workstation user, the default install target.
@@ -23,7 +35,7 @@ func linuxHost() *service.Host {
 	return &service.Host{
 		GOOS:       "linux",
 		EUID:       1000,
-		Username:   "operator",
+		Username:   testUser,
 		UID:        "1000",
 		HomeDir:    "/home/operator",
 		ConfigDir:  "/home/operator/.config",
@@ -37,7 +49,7 @@ func darwinHost() *service.Host {
 	return &service.Host{
 		GOOS:      "darwin",
 		EUID:      501,
-		Username:  "operator",
+		Username:  testUser,
 		UID:       "501",
 		HomeDir:   "/Users/operator",
 		ConfigDir: "/Users/operator/Library/Application Support",
@@ -46,7 +58,7 @@ func darwinHost() *service.Host {
 
 func userOptions() service.Options {
 	return service.Options{
-		Home:   "/home/operator/.cairnos",
+		Home:   linuxDataHome,
 		Binary: testBinary,
 	}
 }
@@ -89,7 +101,7 @@ func TestPlanSetupSystemdUserWritesUnitEnvAndLinger(t *testing.T) {
 		t.Errorf("label = %q", plan.Label)
 	}
 
-	unit := planFile(t, &plan, "/home/operator/.config/systemd/user/cairnos.service")
+	unit := planFile(t, &plan, userUnitPath)
 	for _, want := range []string{
 		`ExecStart="` + testBinary + `" serve --dir "/home/operator/.cairnos"`,
 		"EnvironmentFile=-/home/operator/.cairnos/env",
@@ -146,7 +158,7 @@ func TestPlanSetupSystemdSystemCreatesAccountOnlyWhenMissing(t *testing.T) {
 		t.Error("data dir must be handed to the service account")
 	}
 
-	unit := planFile(t, &plan, "/etc/systemd/system/cairnos.service")
+	unit := planFile(t, &plan, systemUnitPath)
 	if !strings.Contains(unit.Content, "User=cairnos") {
 		t.Errorf("system unit must run as the service account:\n%s", unit.Content)
 	}
@@ -184,12 +196,12 @@ func TestServeUnitsRestartAlwaysSoADrainedExitComesBack(t *testing.T) {
 	}{
 		{
 			name: "user", host: linuxHost(), opts: userOptions(),
-			unitPath: "/home/operator/.config/systemd/user/cairnos.service",
+			unitPath: userUnitPath,
 		},
 		{
 			name: "system", host: root,
 			opts:     service.Options{System: true, Home: service.SystemHome, Binary: testBinary},
-			unitPath: "/etc/systemd/system/cairnos.service",
+			unitPath: systemUnitPath,
 		},
 	}
 
@@ -217,7 +229,7 @@ func TestServeUnitsRestartAlwaysSoADrainedExitComesBack(t *testing.T) {
 func TestPlanSetupLaunchdBuildsAgentWithEnvSourcingWrapper(t *testing.T) {
 	t.Parallel()
 
-	opts := service.Options{Home: "/Users/operator/.cairnos", Binary: testBinary}
+	opts := service.Options{Home: darwinDataHome, Binary: testBinary}
 
 	plan, err := service.PlanSetup(darwinHost(), opts)
 	if err != nil {
@@ -283,7 +295,7 @@ func TestPlanSetupModeGuards(t *testing.T) {
 		{name: "system mode without root", host: linuxHost(), opts: service.Options{System: true}, want: service.ErrNeedRoot},
 		{name: "user mode as root", host: rootLinux, opts: service.Options{}, want: service.ErrRootUserMode},
 		{name: "system mode on macOS", host: darwinHost(), opts: service.Options{System: true}, want: service.ErrDarwinSystem},
-		{name: "linux without systemd", host: noSystemd, opts: service.Options{}, want: service.ErrUnsupported},
+		{name: caseNoSystemd, host: noSystemd, opts: service.Options{}, want: service.ErrUnsupported},
 	}
 
 	for _, testCase := range cases {
@@ -310,7 +322,7 @@ func TestPlanUninstallReleasesUnitBeforeRemovalAndReloadsAfter(t *testing.T) {
 		t.Errorf("uninstall must start with a tolerated disable, got %+v", disable)
 	}
 
-	if len(plan.Removals) != 1 || plan.Removals[0] != "/home/operator/.config/systemd/user/cairnos.service" {
+	if len(plan.Removals) != 1 || plan.Removals[0] != userUnitPath {
 		t.Errorf("removals = %v", plan.Removals)
 	}
 
@@ -326,6 +338,11 @@ func TestPlanUninstallReleasesUnitBeforeRemovalAndReloadsAfter(t *testing.T) {
 func TestApplyWritesFilesKeepsExistingEnvAndRunsCommands(t *testing.T) {
 	t.Parallel()
 
+	const (
+		unitContent = "unit"
+		cmdLinger   = "linger"
+	)
+
 	home := t.TempDir()
 	envFile := filepath.Join(home, "env")
 
@@ -337,12 +354,12 @@ func TestApplyWritesFilesKeepsExistingEnvAndRunsCommands(t *testing.T) {
 		Label: testLabel,
 		Dirs:  []service.Dir{{Path: filepath.Join(home, "logs"), Perm: 0o750}},
 		Files: []service.File{
-			{Path: filepath.Join(home, "sub", "unit.txt"), Content: "unit", Perm: 0o600},
+			{Path: filepath.Join(home, "sub", "unit.txt"), Content: unitContent, Perm: 0o600},
 			{Path: envFile, Content: "TEMPLATE=1\n", Perm: 0o600, KeepExisting: true},
 		},
 		Commands: []service.Command{
-			{Argv: []string{"supervisor", cmdReload}},
-			{Argv: []string{"linger"}, Optional: true, Hint: "run linger yourself"},
+			{Argv: []string{cmdSupervisor, cmdReload}},
+			{Argv: []string{cmdLinger}, Optional: true, Hint: "run linger yourself"},
 		},
 		Notices: []string{"done"},
 	}
@@ -353,7 +370,7 @@ func TestApplyWritesFilesKeepsExistingEnvAndRunsCommands(t *testing.T) {
 		joined := strings.Join(argv, " ")
 		ran = append(ran, joined)
 
-		if joined == "linger" {
+		if joined == cmdLinger {
 			return "denied", errors.New("polkit said no")
 		}
 
@@ -366,11 +383,15 @@ func TestApplyWritesFilesKeepsExistingEnvAndRunsCommands(t *testing.T) {
 	}
 
 	unitBytes, err := os.ReadFile(filepath.Join(home, "sub", "unit.txt"))
-	if err != nil || string(unitBytes) != "unit" {
+	if err != nil || string(unitBytes) != unitContent {
 		t.Errorf("unit file content = %q, err %v", unitBytes, err)
 	}
 
-	envBytes, _ := os.ReadFile(envFile)
+	envBytes, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+
 	if string(envBytes) != "OPERATOR_EDIT=1\n" {
 		t.Errorf("existing env was rewritten to %q", envBytes)
 	}
@@ -390,7 +411,7 @@ func TestApplyStopsOnRequiredCommandFailureWithOutput(t *testing.T) {
 
 	plan := service.Plan{
 		Label:    testLabel,
-		Commands: []service.Command{{Argv: []string{"supervisor", cmdReload}}},
+		Commands: []service.Command{{Argv: []string{cmdSupervisor, cmdReload}}},
 	}
 
 	execer := func(_ context.Context, _ []string) (string, error) {
@@ -472,7 +493,7 @@ func TestDiscoverReportsOnlyInstallsWhoseUnitFilesExist(t *testing.T) {
 	t.Parallel()
 
 	installs := service.Discover(linuxHost(), func(path string) bool {
-		return path == "/etc/systemd/system/cairnos.service"
+		return path == systemUnitPath
 	})
 
 	if len(installs) != 1 || installs[0].Label != "systemd (system)" {

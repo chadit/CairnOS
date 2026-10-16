@@ -138,7 +138,7 @@ func TestSubscribeDropsOffAllowlistTips(t *testing.T) {
 	served := []hive.Tip{
 		{Kind: store.SuggestionCaching, Category: hive.CategoryJobSearch, RunnerType: hive.RunnerTypeOpenAI},
 		{Kind: store.SuggestionCaching, Category: "not-a-real-category", RunnerType: hive.RunnerTypeOpenAI},
-		{Kind: "prompt_refactor", Category: hive.CategoryJobSearch, RunnerType: hive.RunnerTypeOpenAI},
+		{Kind: kindPromptRefactor, Category: hive.CategoryJobSearch, RunnerType: hive.RunnerTypeOpenAI},
 	}
 	mock := newFakeHive(t, served)
 
@@ -279,7 +279,11 @@ func TestPublishSendsPseudonymNotHostname(t *testing.T) {
 		t.Errorf("pseudonym %q is not a rotating node- id", sent.NodePseudonym)
 	}
 
-	host, _ := os.Hostname()
+	host, hostErr := os.Hostname()
+	if hostErr != nil {
+		t.Fatalf("hostname: %v", hostErr)
+	}
+
 	if host != "" && strings.Contains(sent.NodePseudonym, host) {
 		t.Errorf("pseudonym %q contains the hostname %q", sent.NodePseudonym, host)
 	}

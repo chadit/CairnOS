@@ -17,6 +17,9 @@ import (
 // this repo's lint policy, so the repeated skill name and markers are consts.
 const (
 	skillNameBig    = "big"
+	skillSummarize  = "summarize"
+	argSkillName    = "name"
+	bigToolName     = "bigtool"
 	truncatedMarker = "... (truncated)"
 	skillListHeader = "Available skills (load one with the skill tool when its description matches the task):"
 )
@@ -45,7 +48,7 @@ type bigResultTool struct {
 
 var _ runner.Runner = (*bigResultTool)(nil)
 
-func (*bigResultTool) Name() string                { return "bigtool" }
+func (*bigResultTool) Name() string                { return bigToolName }
 func (*bigResultTool) Validate(*runner.Task) error { return nil }
 func (b *bigResultTool) Execute(context.Context, *runner.Task) (runner.Result, error) {
 	return runner.Result{Output: b.output}, nil
@@ -114,7 +117,7 @@ func TestSystemPromptListsSkills(t *testing.T) {
 
 	source := &fakeSkillSource{infos: []chat.SkillInfo{
 		{Name: "deploy-check", Description: "Verify a host before deploy."},
-		{Name: "summarize", Description: "Summarize the conversation into five bullets."},
+		{Name: skillSummarize, Description: "Summarize the conversation into five bullets."},
 	}}
 	driver := &scriptedDriver{turns: []runner.Result{finalTurn(plainAnswer)}}
 	agent := newSkillAgent(t, driver, source)
@@ -199,7 +202,7 @@ func TestSkillToolPersistsFullBody(t *testing.T) {
 	source := &fakeSkillSource{bodies: map[string]string{skillNameBig: body}}
 
 	driver := &scriptedDriver{turns: []runner.Result{
-		toolTurn(chat.SkillToolName, map[string]any{"name": skillNameBig}),
+		toolTurn(chat.SkillToolName, map[string]any{argSkillName: skillNameBig}),
 		finalTurn(plainAnswer),
 	}}
 	agent := newSkillToolAgent(t, driver, source)
@@ -268,7 +271,7 @@ func TestSkillToolUnknownNamePersistsError(t *testing.T) {
 
 	source := &fakeSkillSource{bodies: map[string]string{}}
 	driver := &scriptedDriver{turns: []runner.Result{
-		toolTurn(chat.SkillToolName, map[string]any{"name": "ghost"}),
+		toolTurn(chat.SkillToolName, map[string]any{argSkillName: "ghost"}),
 		finalTurn(plainAnswer),
 	}}
 	agent := newSkillToolAgent(t, driver, source)
@@ -294,7 +297,7 @@ func TestNonSkillToolResultTruncates(t *testing.T) {
 	t.Parallel()
 
 	driver := &scriptedDriver{turns: []runner.Result{
-		toolTurn("bigtool", map[string]any{}),
+		toolTurn(bigToolName, map[string]any{}),
 		finalTurn(plainAnswer),
 	}}
 
@@ -302,7 +305,7 @@ func TestNonSkillToolResultTruncates(t *testing.T) {
 	agent := chat.New(&chat.Config{
 		Store:         db,
 		Driver:        driver,
-		Tools:         map[string]runner.Runner{"bigtool": &bigResultTool{output: strings.Repeat("x", 5000)}},
+		Tools:         map[string]runner.Runner{bigToolName: &bigResultTool{output: strings.Repeat("x", 5000)}},
 		Personalities: chat.NewPersonalities(nil, ""),
 		NewID:         sqlite.NewID,
 	})

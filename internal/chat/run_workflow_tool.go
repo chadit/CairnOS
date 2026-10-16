@@ -18,11 +18,14 @@ const (
 	argInputs   = "inputs"
 )
 
-// JSON Schema keywords the tool's Describe schema repeats.
+// JSON Schema keywords the tools' Describe schemas repeat.
 const (
-	schemaType   = "type"
-	schemaObject = "object"
-	schemaString = "string"
+	schemaType        = "type"
+	schemaObject      = "object"
+	schemaString      = "string"
+	schemaDescription = "description"
+	schemaProperties  = "properties"
+	schemaRequired    = "required"
 )
 
 // runWorkflowTool is the descriptor side of the D9 gate. It implements
@@ -88,17 +91,17 @@ func (*runWorkflowTool) Describe() runner.ToolSpec {
 			"naming the workflow and any inputs it needs.",
 		InputSchema: map[string]any{
 			schemaType: schemaObject,
-			"properties": map[string]any{
+			schemaProperties: map[string]any{
 				argWorkflow: map[string]any{
-					schemaType:    schemaString,
-					"description": "the workflow name to run",
+					schemaType:        schemaString,
+					schemaDescription: "the workflow name to run",
 				},
 				argInputs: map[string]any{
-					schemaType:    schemaObject,
-					"description": "inputs the workflow declares",
+					schemaType:        schemaObject,
+					schemaDescription: "inputs the workflow declares",
 				},
 			},
-			"required": []string{argWorkflow},
+			schemaRequired: []string{argWorkflow},
 		},
 	}
 }

@@ -41,16 +41,8 @@ describe('saveWorkflow', () => {
       ),
     );
 
-    let caught: unknown = null;
-    try {
-      await saveWorkflow('bad', 'name = "other"\n');
-    } catch (err) {
-      caught = err;
-    }
-
+    const caught = await saveWorkflow('bad', 'name = "other"\n').catch((err: unknown) => err);
     expect(isCairnApiError(caught)).toBe(true);
-    if (isCairnApiError(caught)) {
-      expect(caught.code).toBe('api.workflow_name_mismatch');
-    }
+    expect(caught).toHaveProperty('code', 'api.workflow_name_mismatch');
   });
 });

@@ -27,7 +27,7 @@ func candidates(lookup Lookup, path string) []string {
 
 	paths := []string{path}
 
-	for _, ext := range strings.Split(pathExt, ";") {
+	for ext := range strings.SplitSeq(pathExt, ";") {
 		if ext != "" {
 			paths = append(paths, path+ext)
 		}

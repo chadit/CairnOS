@@ -47,7 +47,7 @@ func (p *Plugin) stopProcess() error {
 	}
 
 	if p.tree.group <= 0 {
-		return errNoProcessGroup
+		return fmt.Errorf("%w: process group %d", errProcessID, p.tree.group)
 	}
 
 	if err := syscall.Kill(-p.tree.group, syscall.SIGTERM); err != nil {
@@ -67,10 +67,20 @@ func (p *Plugin) stopProcess() error {
 	case <-p.exited:
 		return nil
 	case <-timer.C:
-		_ = syscall.Kill(-p.tree.group, syscall.SIGKILL)
-
-		<-p.exited
-
-		return nil
+		return p.killGroup()
 	}
+}
+
+// killGroup sends the SIGKILL that ends the grace period and waits for the
+// reap. A group already gone (ESRCH) lost the race to a child that exited on
+// its own; any other refusal returns, because waiting on a child the signal
+// never reached would block Close forever.
+func (p *Plugin) killGroup() error {
+	if err := syscall.Kill(-p.tree.group, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("kill plugin process group: %w", err)
+	}
+
+	<-p.exited
+
+	return nil
 }

@@ -76,7 +76,7 @@ func (s *Store) ListSessions(ctx context.Context, filter store.ChatSessionFilter
 	args := []any{store.WorkspaceFromContext(ctx)}
 
 	if filter.Limit > 0 {
-		query += " LIMIT $2"
+		query += limitAfterWorkspace
 
 		args = append(args, filter.Limit)
 	}
@@ -118,7 +118,7 @@ func (s *Store) AppendMessage(ctx context.Context, message *store.ChatMessage) e
 	if err != nil {
 		return fmt.Errorf("begin append message tx: %w", err)
 	}
-	defer rollbackQuietly(ctx, tx)
+	defer rollbackUncommitted(ctx, tx)
 
 	seq, err := nextChatSeq(ctx, tx, message.SessionID, store.WorkspaceFromContext(ctx))
 	if err != nil {

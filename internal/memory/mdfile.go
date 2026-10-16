@@ -247,7 +247,7 @@ func splitMarkdownTags(raw string) []string {
 // dir, creating it if needed, and returns the entry count. Each id is checked
 // against the canonical ULID form before it composes a filename, as defense in
 // depth against a row some other tool wrote with a traversal-shaped id.
-func ExportDir(ctx context.Context, store Store, scope, dir string) (int, error) {
+func ExportDir(ctx context.Context, store Retriever, scope, dir string) (int, error) {
 	entries, err := store.List(ctx, scope)
 	if err != nil {
 		return 0, fmt.Errorf("list entries for export: %w", err)
@@ -291,7 +291,7 @@ const (
 // two passes: the first parses all files and aborts the whole import on any
 // parse failure, so a half-edited directory can never half-import; the second
 // applies. It never deletes; removal stays `cairnos memory rm`.
-func ImportDir(ctx context.Context, store Store, dir string) (ImportSummary, error) {
+func ImportDir(ctx context.Context, store EntryStore, dir string) (ImportSummary, error) {
 	parsed, err := parseImportDir(dir)
 	if err != nil {
 		return ImportSummary{}, err
@@ -358,17 +358,17 @@ func parseImportDir(dir string) ([]Entry, error) {
 // content, importance, or tags differ is a Replace (which refreshes UpdatedAt
 // and re-estimates cost), and an identical entry is unchanged. The front-matter
 // id is authoritative, not the filename.
-func applyImported(ctx context.Context, store Store, entry *Entry) (importOutcome, error) {
+func applyImported(ctx context.Context, store EntryStore, entry *Entry) (importOutcome, error) {
 	existing, err := store.Get(ctx, entry.ID)
-	if err != nil {
-		if errors.Is(err, ErrEntryNotFound) {
-			if _, addErr := store.Add(ctx, entry); addErr != nil {
-				return outcomeAdded, fmt.Errorf("import add %s: %w", entry.ID, addErr)
-			}
-
-			return outcomeAdded, nil
+	if errors.Is(err, ErrEntryNotFound) {
+		if _, addErr := store.Add(ctx, entry); addErr != nil {
+			return outcomeAdded, fmt.Errorf("import add %s: %w", entry.ID, addErr)
 		}
 
+		return outcomeAdded, nil
+	}
+
+	if err != nil {
 		return outcomeUnchanged, fmt.Errorf("import get %s: %w", entry.ID, err)
 	}
 

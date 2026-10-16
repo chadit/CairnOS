@@ -27,6 +27,11 @@ const (
 	wordKafka    = "kafka"
 	bodyLeaf     = "leaf"
 	tagGoRules   = "go-rules"
+	titleRenamed = "renamed"
+	bodyRevised  = "second body"
+	bodySecond   = "second"
+	bodyHub      = "hub"
+	bodyRoot     = "root"
 	defaultLimit = 50
 )
 
@@ -34,19 +39,24 @@ const (
 // constant keeps the magic-number check happy in test code.
 const twoDocs = 2
 
+// hopsToC is the link distance from a to c in linkChain's a->b->c->d, the
+// depth the multi-hop cases query; d sits one hop past it.
+const hopsToC = 2
+
 // OpenFunc hands the suite a fresh, empty vault store. The implementation
 // registers cleanup (t.Cleanup with Close) so each subtest gets an isolated
-// database. Returning the interface keeps the suite backend-agnostic.
-type OpenFunc func(t *testing.T) vault.Store
+// database. S is the backend's own type, so a backend's opener returns what it
+// opened while the suite drives only the vault.Store methods.
+type OpenFunc[S vault.Store] func(t *testing.T) S
 
 // RunConformance runs the full vault.Store behavioral suite against the store
 // openFn hands out. Each named subtest opens its own store, so they are
 // independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "SatisfiesInterface", run: testSatisfiesInterface},
@@ -104,7 +114,7 @@ func queryIDs(t *testing.T, store vault.Store, query *vault.Query) []string {
 	return ids
 }
 
-func testSatisfiesInterface(t *testing.T, openFn OpenFunc) {
+func testSatisfiesInterface[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -114,7 +124,7 @@ func testSatisfiesInterface(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPutGetRoundTrip(t *testing.T, openFn OpenFunc) {
+func testPutGetRoundTrip[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -151,7 +161,7 @@ func testPutGetRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPutOverwrites(t *testing.T, openFn OpenFunc) {
+func testPutOverwrites[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -164,7 +174,7 @@ func testPutOverwrites(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("get before overwrite: %v", err)
 	}
 
-	if _, innerErr := store.Put(ctx, &vault.Document{ID: id, Title: "renamed", Body: "second body"}); innerErr != nil {
+	if _, innerErr := store.Put(ctx, &vault.Document{ID: id, Title: titleRenamed, Body: bodyRevised}); innerErr != nil {
 		t.Fatalf("overwrite: %v", innerErr)
 	}
 
@@ -173,7 +183,7 @@ func testPutOverwrites(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("get after overwrite: %v", err)
 	}
 
-	if after.Title != "renamed" || after.Body != "second body" {
+	if after.Title != titleRenamed || after.Body != bodyRevised {
 		t.Errorf("overwritten document = %+v, want renamed/second body", after)
 	}
 
@@ -186,7 +196,7 @@ func testPutOverwrites(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testBacklinksDerived(t *testing.T, openFn OpenFunc) {
+func testBacklinksDerived[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -194,7 +204,7 @@ func testBacklinksDerived(t *testing.T, openFn OpenFunc) {
 
 	// hub links to leaf; the backlink on leaf is derived, never stored on it.
 	leafID := put(t, store, &vault.Document{Title: titleBravo, Body: bodyLeaf})
-	hubID := put(t, store, &vault.Document{Title: titleAlpha, Body: "hub", Links: []string{leafID}})
+	hubID := put(t, store, &vault.Document{Title: titleAlpha, Body: bodyHub, Links: []string{leafID}})
 
 	leaf, err := store.Get(ctx, leafID)
 	if err != nil {
@@ -219,14 +229,14 @@ func testBacklinksDerived(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testDeleteRemovesLinks(t *testing.T, openFn OpenFunc) {
+func testDeleteRemovesLinks[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
 	ctx := t.Context()
 
 	leafID := put(t, store, &vault.Document{Title: titleBravo, Body: bodyLeaf})
-	hubID := put(t, store, &vault.Document{Title: titleAlpha, Body: "hub", Links: []string{leafID}})
+	hubID := put(t, store, &vault.Document{Title: titleAlpha, Body: bodyHub, Links: []string{leafID}})
 
 	if err := store.Delete(ctx, hubID); err != nil {
 		t.Fatalf("delete hub: %v", err)
@@ -252,13 +262,13 @@ func testDeleteRemovesLinks(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListNewestFirst(t *testing.T, openFn OpenFunc) {
+func testListNewestFirst[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
 
 	firstID := put(t, store, &vault.Document{Title: titleAlpha, Body: "first"})
-	secondID := put(t, store, &vault.Document{Title: titleBravo, Body: "second"})
+	secondID := put(t, store, &vault.Document{Title: titleBravo, Body: bodySecond})
 
 	docs, err := store.List(t.Context(), defaultLimit)
 	if err != nil {
@@ -276,7 +286,7 @@ func testListNewestFirst(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testQueryByTag(t *testing.T, openFn OpenFunc) {
+func testQueryByTag[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -290,7 +300,7 @@ func testQueryByTag(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testQueryByProject(t *testing.T, openFn OpenFunc) {
+func testQueryByProject[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -315,13 +325,13 @@ func linkChain(t *testing.T, store vault.Store) (string, string, string, string)
 
 	dID := put(t, store, &vault.Document{Title: "d", Body: "leaf"})
 	cID := put(t, store, &vault.Document{Title: "c", Body: "third", Links: []string{dID}})
-	bID := put(t, store, &vault.Document{Title: "b", Body: "second", Links: []string{cID}})
-	aID := put(t, store, &vault.Document{Title: "a", Body: "root", Links: []string{bID}})
+	bID := put(t, store, &vault.Document{Title: "b", Body: bodySecond, Links: []string{cID}})
+	aID := put(t, store, &vault.Document{Title: "a", Body: bodyRoot, Links: []string{bID}})
 
 	return aID, bID, cID, dID
 }
 
-func testQueryOneHop(t *testing.T, openFn OpenFunc) {
+func testQueryOneHop[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -333,13 +343,13 @@ func testQueryOneHop(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testQueryTwoHop(t *testing.T, openFn OpenFunc) {
+func testQueryTwoHop[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
 	aID, bID, cID, _ := linkChain(t, store)
 
-	ids := queryIDs(t, store, &vault.Query{LinkedFrom: aID, Hops: 2})
+	ids := queryIDs(t, store, &vault.Query{LinkedFrom: aID, Hops: hopsToC})
 	want := slices.Clone([]string{bID, cID})
 	slices.Sort(want)
 	slices.Sort(ids)
@@ -349,7 +359,7 @@ func testQueryTwoHop(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testQueryHopBound(t *testing.T, openFn OpenFunc) {
+func testQueryHopBound[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -357,13 +367,13 @@ func testQueryHopBound(t *testing.T, openFn OpenFunc) {
 
 	// Two hops from a reaches b and c, never d (three hops out). The bound is
 	// what keeps a deep chain from returning the whole graph.
-	ids := queryIDs(t, store, &vault.Query{LinkedFrom: aID, Hops: 2})
+	ids := queryIDs(t, store, &vault.Query{LinkedFrom: aID, Hops: hopsToC})
 	if slices.Contains(ids, dID) {
 		t.Errorf("two-hop from %s reached distant %s: %v", aID, dID, ids)
 	}
 }
 
-func testQueryCombined(t *testing.T, openFn OpenFunc) {
+func testQueryCombined[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -372,7 +382,7 @@ func testQueryCombined(t *testing.T, openFn OpenFunc) {
 	// traversal-plus-tag query returns exactly that one.
 	taggedID := put(t, store, &vault.Document{Title: titleBravo, Body: "tagged child", Tags: []string{tagFinance}})
 	plainID := put(t, store, &vault.Document{Title: "plain", Body: "plain child"})
-	rootID := put(t, store, &vault.Document{Title: titleAlpha, Body: "root", Links: []string{taggedID, plainID}})
+	rootID := put(t, store, &vault.Document{Title: titleAlpha, Body: bodyRoot, Links: []string{taggedID, plainID}})
 
 	ids := queryIDs(t, store, &vault.Query{LinkedFrom: rootID, Hops: 1, Tags: []string{tagFinance}})
 	if !reflect.DeepEqual(ids, []string{taggedID}) {
@@ -380,7 +390,7 @@ func testQueryCombined(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testQueryKeyword(t *testing.T, openFn OpenFunc) {
+func testQueryKeyword[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -394,7 +404,7 @@ func testQueryKeyword(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSemanticFallsBack(t *testing.T, openFn OpenFunc) {
+func testSemanticFallsBack[S vault.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)

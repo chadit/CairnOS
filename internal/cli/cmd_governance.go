@@ -42,7 +42,7 @@ func (a *App) cmdPause(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "pause", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "pause", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -79,7 +79,7 @@ func (a *App) cmdResume(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "resume", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "resume", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -123,7 +123,7 @@ func (a *App) cmdAudit(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "audit", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "audit", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -178,7 +178,7 @@ func (a *App) cmdBudget(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "budget", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "budget", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

@@ -16,7 +16,7 @@ const (
 	versionTOMLAfter = "name = \"alpha-workflow\"\nversion = \"2\"\n"
 )
 
-func testWorkflowVersionRoundTrip(t *testing.T, openFn OpenFunc) {
+func testWorkflowVersionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -47,7 +47,7 @@ func testWorkflowVersionRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowVersionSaveStampsTime(t *testing.T, openFn OpenFunc) {
+func testWorkflowVersionSaveStampsTime[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -72,7 +72,7 @@ func testWorkflowVersionSaveStampsTime(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowVersionReSaveKeepsOriginal(t *testing.T, openFn OpenFunc) {
+func testWorkflowVersionReSaveKeepsOriginal[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -109,7 +109,7 @@ func testWorkflowVersionReSaveKeepsOriginal(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowVersionNotFound(t *testing.T, openFn OpenFunc) {
+func testWorkflowVersionNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -120,7 +120,7 @@ func testWorkflowVersionNotFound(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowVersionListNewestFirst(t *testing.T, openFn OpenFunc) {
+func testWorkflowVersionListNewestFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -160,13 +160,12 @@ func testWorkflowVersionListNewestFirst(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPruneLeavesWorkflowVersions(t *testing.T, openFn OpenFunc) {
+func testPruneLeavesWorkflowVersions[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	day := 24 * time.Hour
 	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 
 	// A version captured well before the run-retention window must survive the
@@ -180,7 +179,7 @@ func testPruneLeavesWorkflowVersions(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("save old version: %v", err)
 	}
 
-	if _, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: 90 * day, Now: now}); err != nil {
+	if _, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: retentionWindow, Now: now}); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 

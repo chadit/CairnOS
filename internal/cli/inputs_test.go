@@ -12,6 +12,9 @@ import (
 const (
 	keyCount = "count"
 	keyLabel = "label"
+	keyRatio = "ratio"
+	keyDeep  = "deep"
+	keyTags  = "tags"
 )
 
 func TestCoerceInputs(t *testing.T) {
@@ -19,9 +22,9 @@ func TestCoerceInputs(t *testing.T) {
 
 	decls := map[string]workflow.InputDecl{
 		keyCount: {Type: workflow.TypeInt},
-		"ratio":  {Type: workflow.TypeFloat},
-		"deep":   {Type: workflow.TypeBool},
-		"tags":   {Type: workflow.TypeStringSlice},
+		keyRatio: {Type: workflow.TypeFloat},
+		keyDeep:  {Type: workflow.TypeBool},
+		keyTags:  {Type: workflow.TypeStringSlice},
 		keyLabel: {Type: workflow.TypeString},
 	}
 
@@ -34,12 +37,12 @@ func TestCoerceInputs(t *testing.T) {
 		{
 			name:  "int and string slice",
 			pairs: []string{"count=5", "tags=a,b"},
-			want:  map[string]any{keyCount: 5, "tags": []string{"a", "b"}},
+			want:  map[string]any{keyCount: 5, keyTags: []string{"a", "b"}},
 		},
 		{
 			name:  "float bool and string",
-			pairs: []string{"ratio=0.5", "deep=true", "label=cairn"},
-			want:  map[string]any{"ratio": 0.5, "deep": true, keyLabel: "cairn"},
+			pairs: []string{"ratio=0.5", "deep=true", "label=summit"},
+			want:  map[string]any{keyRatio: 0.5, keyDeep: true, keyLabel: "summit"},
 		},
 		{
 			name:  "undeclared key passes through as text",

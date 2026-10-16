@@ -113,8 +113,8 @@ func NewKey(label string, scopes []string, workspace string, now time.Time) (*Ke
 }
 
 // SplitKey parses a plaintext access key into its id and secret parts.
-// SplitN bounds the cut because the base64url secret may itself contain
-// underscores; the ULID id never does (Crockford base32).
+// SplitN bounds the cut because the base64url secret may itself contain the
+// "_" separator; the ULID id never does (Crockford base32).
 func SplitKey(plaintext string) (string, string, error) {
 	parts := strings.SplitN(plaintext, keySeparator, 3)
 	if len(parts) != 3 || parts[0] != keyPrefix || parts[1] == "" || parts[2] == "" {

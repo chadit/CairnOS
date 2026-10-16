@@ -24,6 +24,17 @@ const (
 	testUserID    = "usr1"
 	testPostText  = "hello"
 	testPostID    = "p1"
+
+	// plainServerURL is serverURL over http, which needs the InsecureHTTP opt-in.
+	plainServerURL = "http://mm.example.test"
+
+	// keyMaxPostSize is the old-format client config key the stub server answers
+	// Connect's size lookup with.
+	keyMaxPostSize = "MaxPostSize"
+
+	// createPostMethod is the method name the client reports a failed post
+	// under, pinned here so the assertions check the exact text.
+	createPostMethod = "CreatePost"
 )
 
 // quietLog keeps the client's warnings out of the test output; the assertions
@@ -48,7 +59,7 @@ func serveConnect(t *testing.T, mux *http.ServeMux, maxPostSize string) {
 			return
 		}
 
-		writeJSON(t, w, map[string]string{"MaxPostSize": maxPostSize})
+		writeJSON(t, w, map[string]string{keyMaxPostSize: maxPostSize})
 	})
 }
 
@@ -62,6 +73,30 @@ func writeJSON(t *testing.T, w http.ResponseWriter, body any) {
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		t.Errorf("encode stub response: %v", err)
 	}
+}
+
+// writeText answers a request with a plain body. Like writeJSON, a failure means
+// the stub server broke, so it fails the test.
+func writeText(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+
+	if _, err := io.WriteString(w, body); err != nil {
+		t.Errorf("write stub response: %v", err)
+	}
+}
+
+// readBody returns a request body for the case to parse after the call returns.
+// A failed read fails the test, since the assertion would otherwise run against
+// an empty body and blame the client.
+func readBody(t *testing.T, r *http.Request) string {
+	t.Helper()
+
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read request body: %v", err)
+	}
+
+	return string(raw)
 }
 
 // newTestClient points a client at server with the plain-http opt-in, which is
@@ -105,22 +140,22 @@ func TestNewClientValidatesTheServerURL(t *testing.T) {
 		token    string
 		insecure bool
 	}{
-		{name: "https", url: "https://mm.example.test", token: testToken},
-		{name: "trailing slash", url: "https://mm.example.test/", token: testToken},
-		{name: "plain http refused", url: "http://mm.example.test", token: testToken, wantErr: mattermost.ErrInsecureURL},
-		{name: "plain http opted in", url: "http://mm.example.test", token: testToken, insecure: true},
+		{name: "https", url: serverURL, token: testToken},
+		{name: "trailing slash", url: serverURL + "/", token: testToken},
+		{name: "plain http refused", url: plainServerURL, token: testToken, wantErr: mattermost.ErrInsecureURL},
+		{name: "plain http opted in", url: plainServerURL, token: testToken, insecure: true},
 		{name: "bare host", url: "mm.example.test", token: testToken, wantErr: mattermost.ErrBadURL},
 		{name: "empty url", url: "", token: testToken, wantErr: mattermost.ErrNoURL},
 		{name: "no host", url: "https://", token: testToken, wantErr: mattermost.ErrBadURL},
 		{
-			name: "query string", url: "https://mm.example.test?tenant=a",
+			name: "query string", url: serverURL + "?tenant=a",
 			token: testToken, wantErr: mattermost.ErrBadURLQuery,
 		},
 		{
-			name: "fragment", url: "https://mm.example.test#anchor",
+			name: "fragment", url: serverURL + "#anchor",
 			token: testToken, wantErr: mattermost.ErrBadURLQuery,
 		},
-		{name: "no token", url: "https://mm.example.test", token: "", wantErr: mattermost.ErrNoToken},
+		{name: "no token", url: serverURL, token: "", wantErr: mattermost.ErrNoToken},
 	}
 
 	for _, testCase := range cases {
@@ -209,7 +244,7 @@ func TestConnectFallsBackWhenThePostSizeIsUnreadable(t *testing.T) {
 					return
 				}
 
-				writeJSON(t, w, map[string]string{"MaxPostSize": testCase.maxPostSize})
+				writeJSON(t, w, map[string]string{keyMaxPostSize: testCase.maxPostSize})
 			})
 
 			server := nettest.NewServer(t, mux)
@@ -252,6 +287,8 @@ func TestConnectReportsAFailedIdentityCall(t *testing.T) {
 func TestCreatePostCarriesChannelRootAndMessage(t *testing.T) {
 	t.Parallel()
 
+	const createdPostID = "pstnew"
+
 	cases := []struct {
 		name     string
 		rootID   string
@@ -269,11 +306,10 @@ func TestCreatePostCarriesChannelRootAndMessage(t *testing.T) {
 
 			mux := http.NewServeMux()
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
-				raw, _ := io.ReadAll(r.Body)
-				body.Store(string(raw))
+				body.Store(readBody(t, r))
 
 				w.WriteHeader(http.StatusCreated)
-				writeJSON(t, w, map[string]any{"id": "pstnew", "channel_id": testChannelID, "root_id": testCase.rootID})
+				writeJSON(t, w, map[string]any{"id": createdPostID, "channel_id": testChannelID, "root_id": testCase.rootID})
 			})
 
 			client := newConnectedClient(t, mux)
@@ -283,7 +319,7 @@ func TestCreatePostCarriesChannelRootAndMessage(t *testing.T) {
 				t.Fatalf("CreatePost: %v", err)
 			}
 
-			if post.ID != "pstnew" {
+			if post.ID != createdPostID {
 				t.Fatalf("CreatePost returned post %q, want the id the server assigned", post.ID)
 			}
 
@@ -309,14 +345,15 @@ func TestCreatePostCarriesChannelRootAndMessage(t *testing.T) {
 func TestDirectChannelSendsABareUserIDArray(t *testing.T) {
 	t.Parallel()
 
+	const directChannelID = "dmc1"
+
 	var body atomic.Value
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/channels/direct", func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body.Store(string(raw))
+		body.Store(readBody(t, r))
 
-		writeJSON(t, w, mattermost.Channel{ID: "dmc1", Type: mattermost.ChannelDirect})
+		writeJSON(t, w, mattermost.Channel{ID: directChannelID, Type: mattermost.ChannelDirect})
 	})
 
 	client := newConnectedClient(t, mux)
@@ -326,7 +363,7 @@ func TestDirectChannelSendsABareUserIDArray(t *testing.T) {
 		t.Fatalf("DirectChannel: %v", err)
 	}
 
-	if channel.ID != "dmc1" || channel.Type != mattermost.ChannelDirect {
+	if channel.ID != directChannelID || channel.Type != mattermost.ChannelDirect {
 		t.Fatalf("DirectChannel returned %+v, want the DM channel the server described", channel)
 	}
 
@@ -408,19 +445,21 @@ func TestUserCachesTheBotFlag(t *testing.T) {
 func TestChannelByNameUsesTeamAndChannelName(t *testing.T) {
 	t.Parallel()
 
+	const alertsChannel = "alerts"
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/teams/name/ops/channels/name/alerts", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(t, w, mattermost.Channel{ID: testChannelID, Name: "alerts", Type: mattermost.ChannelOpen, TeamID: "tm1"})
+		writeJSON(t, w, mattermost.Channel{ID: testChannelID, Name: alertsChannel, Type: mattermost.ChannelOpen, TeamID: "tm1"})
 	})
 
 	client := newConnectedClient(t, mux)
 
-	channel, err := client.ChannelByName(t.Context(), "ops", "alerts")
+	channel, err := client.ChannelByName(t.Context(), "ops", alertsChannel)
 	if err != nil {
 		t.Fatalf("ChannelByName: %v", err)
 	}
 
-	if channel.ID != testChannelID || channel.Name != "alerts" {
+	if channel.ID != testChannelID || channel.Name != alertsChannel {
 		t.Fatalf("ChannelByName returned %+v, want the alerts channel", channel)
 	}
 }
@@ -432,8 +471,7 @@ func TestTypingPostsAsTheIdentity(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/users/"+testBotID+"/typing", func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body.Store(string(raw))
+		body.Store(readBody(t, r))
 
 		w.WriteHeader(http.StatusOK)
 	})
@@ -456,6 +494,26 @@ func TestTypingPostsAsTheIdentity(t *testing.T) {
 	}
 }
 
+// TestTypingReportsATruncatedResponse proves a body that breaks off mid-read is a
+// transient failure even on a call that keeps no answer, rather than a success
+// over a connection that never finished.
+func TestTypingReportsATruncatedResponse(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/users/"+testBotID+"/typing", func(w http.ResponseWriter, _ *http.Request) {
+		// Promising more bytes than are sent makes the server drop the
+		// connection mid-body once the handler returns.
+		w.Header().Set("Content-Length", "64")
+		writeText(t, w, "{}")
+	})
+
+	err := newConnectedClient(t, mux).Typing(t.Context(), testChannelID, "")
+	if class := classOf(t, err); class != mattermost.ClassTransient {
+		t.Fatalf("a truncated response classified as %v, want transient", class)
+	}
+}
+
 // TestAddReactionPostsAsTheIdentity pins the reaction body: the server rejects
 // a reaction whose user_id is not the token's own account.
 func TestAddReactionPostsAsTheIdentity(t *testing.T) {
@@ -465,8 +523,7 @@ func TestAddReactionPostsAsTheIdentity(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v4/reactions", func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body.Store(string(raw))
+		body.Store(readBody(t, r))
 
 		w.WriteHeader(http.StatusCreated)
 	})
@@ -545,7 +602,7 @@ func TestErrorClassification(t *testing.T) {
 				}
 
 				w.WriteHeader(testCase.status)
-				_, _ = w.Write([]byte("limit exceeded"))
+				writeText(t, w, "limit exceeded")
 			})
 
 			client := newConnectedClient(t, mux)
@@ -565,7 +622,7 @@ func TestErrorClassification(t *testing.T) {
 				t.Fatalf("error carried RetryAfter %v, want %v", failure.RetryAfter, testCase.wantRetry)
 			}
 
-			if failure.Method != "CreatePost" {
+			if failure.Method != createPostMethod {
 				t.Fatalf("error names method %q, want the failing call", failure.Method)
 			}
 		})
@@ -737,7 +794,7 @@ func TestMissingThreadRootReadsAsNotFound(t *testing.T) {
 			body:      `{"id":"api.post.create_post.message_length.app_error","status_code":400}`,
 			wantClass: mattermost.ClassPermanent,
 		},
-		{name: "a body that is not json", body: "bad request", wantClass: mattermost.ClassPermanent},
+		{name: "a body that is not json", body: "400 Bad Request", wantClass: mattermost.ClassPermanent},
 	}
 
 	for _, testCase := range cases {
@@ -747,7 +804,7 @@ func TestMissingThreadRootReadsAsNotFound(t *testing.T) {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(testCase.body))
+				writeText(t, w, testCase.body)
 			})
 
 			_, err := newConnectedClient(t, mux).CreatePost(t.Context(), testChannelID, "gone-root", testPostText)

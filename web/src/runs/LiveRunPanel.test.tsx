@@ -20,7 +20,7 @@ function runningState(overrides: Partial<RunStreamState> = {}): RunStreamState {
 
 describe('LiveRunPanel', () => {
   it('renders the per-action live table', () => {
-    renderWithProviders(<LiveRunPanel state={runningState()} cancel={vi.fn()} />, {
+    renderWithProviders(<LiveRunPanel state={runningState()} cancel={vi.fn<() => void>()} />, {
       withAuth: false,
     });
 
@@ -32,7 +32,7 @@ describe('LiveRunPanel', () => {
     renderWithProviders(
       <LiveRunPanel
         state={runningState({ running: false, finalStatus: 'succeeded' })}
-        cancel={vi.fn()}
+        cancel={vi.fn<() => void>()}
       />,
       { withAuth: false },
     );
@@ -41,7 +41,7 @@ describe('LiveRunPanel', () => {
   });
 
   it('invokes cancel from its button while the run is live', async () => {
-    const cancel = vi.fn();
+    const cancel = vi.fn<() => void>();
     const user = userEvent.setup();
     renderWithProviders(<LiveRunPanel state={runningState()} cancel={cancel} />, {
       withAuth: false,

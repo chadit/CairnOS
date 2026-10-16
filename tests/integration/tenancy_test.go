@@ -17,7 +17,7 @@ import (
 // openTenancy opens a tenancy store in its own Postgres schema off the shared
 // container, matching the per-case isolation the sqlite backend gets from a temp
 // file. The schema is a fresh lowercased ULID; cleanup drops it.
-func openTenancy(t *testing.T) tenancy.Store {
+func openTenancy(t *testing.T) *tenancy.Postgres {
 	t.Helper()
 
 	ctx := t.Context()

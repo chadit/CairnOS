@@ -165,6 +165,10 @@ type Store struct {
 	DSN     string
 }
 
+// defaultBackend is the store and memory backend a fresh install ships: SQLite
+// needs no server, so `cairnos init` runs immediately.
+const defaultBackend = "sqlite"
+
 // Secrets selects how a ${{ secrets.name }} reference resolves
 // (.agents/spec/parity/secrets-credentials.md, "Config"). "env" reads only
 // CAIRNOS_SECRET_<NAME>; "store" chains env ahead of an encrypted store, so
@@ -420,6 +424,14 @@ type MCP struct {
 const (
 	MCPTransportHTTP  = "http"
 	MCPTransportStdio = "stdio"
+)
+
+// URL schemes the endpoint checks accept. schemeHTTP shares its spelling with
+// MCPTransportHTTP but not its meaning: that one names a transport, this one
+// the scheme a parsed URL carries.
+const (
+	schemeHTTPS = "https"
+	schemeHTTP  = "http"
 )
 
 // defaultMCPPath is the mux pattern the http transport mounts on when the
@@ -721,24 +733,24 @@ type Discord struct {
 func Default() Config {
 	return Config{
 		Engine: Engine{
-			MaxConcurrentActions: 4,
-			DefaultTimeout:       10 * time.Minute,
-			MaxCallDepth:         3,
+			MaxConcurrentActions: defaultMaxConcurrentActions,
+			DefaultTimeout:       defaultActionTimeout,
+			MaxCallDepth:         defaultMaxCallDepth,
 			Retry: Retry{
-				MaxAttempts: 3,
+				MaxAttempts: defaultRetryAttempts,
 				Backoff:     "exponential",
 				BaseDelay:   time.Second,
-				MaxDelay:    30 * time.Second,
+				MaxDelay:    defaultRetryMaxDelay,
 				Jitter:      true,
 			},
 		},
-		Store:   Store{Backend: "sqlite", DSN: "file:./data/cairnos.db"},
+		Store:   Store{Backend: defaultBackend, DSN: "file:./data/cairnos.db"},
 		Secrets: Secrets{Backend: SecretsBackendEnv},
-		Memory:  Memory{Backend: "sqlite", EmbeddingRunner: "openai"},
+		Memory:  Memory{Backend: defaultBackend, EmbeddingRunner: "openai"},
 		Retention: Retention{
-			Runs:    90 * 24 * time.Hour,
-			Outputs: 30 * 24 * time.Hour,
-			Sweep:   6 * time.Hour,
+			Runs:    defaultRunRetention,
+			Outputs: defaultOutputRetention,
+			Sweep:   defaultSweepInterval,
 		},
 		Update:    Update{Interval: defaultUpdateInterval},
 		Telemetry: Telemetry{Enabled: true, Prometheus: ":9090"},
@@ -749,8 +761,8 @@ func Default() Config {
 			MaxRecvMsgBytes: defaultMaxRecvMsgBytes,
 		},
 		Auth: Auth{
-			Issuer:              "cairnos",
-			Audience:            "cairnos",
+			Issuer:              defaultTokenIssuer,
+			Audience:            defaultTokenAudience,
 			AccessTokenTTL:      time.Hour,
 			SigningAlgorithm:    "HS256",
 			RequireExp:          true,
@@ -902,6 +914,24 @@ func notifyEvents() []string {
 	}
 }
 
+// Engine and retry defaults a fresh install ships. defaultRetryMaxDelay is the
+// ceiling the exponential backoff between attempts grows to.
+const (
+	defaultMaxConcurrentActions = 4
+	defaultActionTimeout        = 10 * time.Minute
+	defaultMaxCallDepth         = 3
+	defaultRetryAttempts        = 3
+	defaultRetryMaxDelay        = 30 * time.Second
+)
+
+// Retention defaults: how long run records and outputs are kept, and how often
+// the sweep removes what has aged past them.
+const (
+	defaultRunRetention    = 90 * 24 * time.Hour
+	defaultOutputRetention = 30 * 24 * time.Hour
+	defaultSweepInterval   = 6 * time.Hour
+)
+
 // Hive publish floor defaults (.agents/spec/09-a2a-and-hive.md,
 // "k-anonymity threshold"). The k-anonymity floor is the server-side k the
 // client knows about; the local min-observations floor is the count a node
@@ -944,6 +974,13 @@ const (
 	defaultLoginRatePerMinute  = 60
 	defaultStreamRecheck       = 15 * time.Second
 	defaultClockSkew           = 30 * time.Second
+)
+
+// Token identity defaults: a node issues the tokens it accepts, so the issuer
+// and the audience start as the same name.
+const (
+	defaultTokenIssuer   = "cairnos"
+	defaultTokenAudience = defaultTokenIssuer
 )
 
 // Load resolves the configuration under this process's own environment. A
@@ -1599,8 +1636,8 @@ func applyDurations(cfg *Config, file *fileConfig) error {
 		{name: "bridge.telegram.confirm_ttl", raw: file.Bridge.Telegram.ConfirmTTL, dst: &cfg.Bridge.Telegram.ConfirmTTL},
 		{name: "bridge.mattermost.send_timeout", raw: file.Bridge.Mattermost.SendTimeout, dst: &cfg.Bridge.Mattermost.SendTimeout},
 		{name: "bridge.mattermost.confirm_ttl", raw: file.Bridge.Mattermost.ConfirmTTL, dst: &cfg.Bridge.Mattermost.ConfirmTTL},
-		{name: "bridge.mattermost.bot_loop.window", raw: file.Bridge.Mattermost.BotLoop.Window, dst: &cfg.Bridge.Mattermost.BotLoop.Window},
-		{name: "bridge.mattermost.bot_loop.cooldown", raw: file.Bridge.Mattermost.BotLoop.Cooldown, dst: &cfg.Bridge.Mattermost.BotLoop.Cooldown},
+		{name: keyBotLoopWindow, raw: file.Bridge.Mattermost.BotLoop.Window, dst: &cfg.Bridge.Mattermost.BotLoop.Window},
+		{name: keyBotLoopCooldown, raw: file.Bridge.Mattermost.BotLoop.Cooldown, dst: &cfg.Bridge.Mattermost.BotLoop.Cooldown},
 	}
 
 	if file.Engine.Retry != nil {

@@ -29,18 +29,19 @@ const (
 
 // OpenFunc hands the suite a fresh tenancy store with the default workspace
 // already seeded. The implementation registers cleanup (t.Cleanup with Close)
-// so each subtest gets an isolated database. Returning the interface keeps the
-// suite backend-agnostic.
-type OpenFunc func(t *testing.T) tenancy.Store
+// so each subtest gets an isolated database. S is the backend's own type, so a
+// backend's opener returns what it opened while the suite drives only the
+// tenancy.Store methods.
+type OpenFunc[S tenancy.Store] func(t *testing.T) S
 
 // RunConformance runs the full tenancy.Store behavioral suite against the
 // store openFn hands out. Each named subtest opens its own store, so they are
 // independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "DefaultWorkspaceSeeded", run: testDefaultWorkspaceSeeded},
@@ -76,7 +77,7 @@ func createWorkspace(t *testing.T, tenants tenancy.Store, name string) string {
 	return workspace.ID
 }
 
-func testDefaultWorkspaceSeeded(t *testing.T, openFn OpenFunc) {
+func testDefaultWorkspaceSeeded[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -91,7 +92,7 @@ func testDefaultWorkspaceSeeded(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkspaceCRUD(t *testing.T, openFn OpenFunc) {
+func testWorkspaceCRUD[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -117,7 +118,7 @@ func testWorkspaceCRUD(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testDuplicateNameRejected(t *testing.T, openFn OpenFunc) {
+func testDuplicateNameRejected[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -128,7 +129,7 @@ func testDuplicateNameRejected(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testGetWorkspaceNotFound(t *testing.T, openFn OpenFunc) {
+func testGetWorkspaceNotFound[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -138,7 +139,7 @@ func testGetWorkspaceNotFound(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testAddMemberAndGetRole(t *testing.T, openFn OpenFunc) {
+func testAddMemberAndGetRole[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -158,7 +159,7 @@ func testAddMemberAndGetRole(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testAddMemberOverwritesRole(t *testing.T, openFn OpenFunc) {
+func testAddMemberOverwritesRole[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -182,7 +183,7 @@ func testAddMemberOverwritesRole(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testAddMemberRejectsUnknownRole(t *testing.T, openFn OpenFunc) {
+func testAddMemberRejectsUnknownRole[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -193,7 +194,7 @@ func testAddMemberRejectsUnknownRole(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testAddMemberRejectsMissingWorkspace(t *testing.T, openFn OpenFunc) {
+func testAddMemberRejectsMissingWorkspace[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -203,7 +204,7 @@ func testAddMemberRejectsMissingWorkspace(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testGetMemberRoleNotFound(t *testing.T, openFn OpenFunc) {
+func testGetMemberRoleNotFound[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -214,7 +215,7 @@ func testGetMemberRoleNotFound(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListMembers(t *testing.T, openFn OpenFunc) {
+func testListMembers[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)
@@ -241,7 +242,7 @@ func testListMembers(t *testing.T, openFn OpenFunc) {
 // testMembersIsolatedByWorkspace is the tenancy invariant the spec rests on: a
 // member of one workspace is not a member of another, so ListMembers never
 // leaks across the boundary.
-func testMembersIsolatedByWorkspace(t *testing.T, openFn OpenFunc) {
+func testMembersIsolatedByWorkspace[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	tenants := openFn(t)

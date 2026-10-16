@@ -78,7 +78,7 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 // authHeaders builds the per-call auth header from the same env var the openai
 // chat runner reads.
 func (e *OpenAIEmbedder) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + e.env.Get(OpenAIKeyEnv)}
+	return map[string]string{headerAuthorization: "Bearer " + e.env.Get(OpenAIKeyEnv)}
 }
 
 // decodeEmbedding reads one embeddings response and returns the first vector,

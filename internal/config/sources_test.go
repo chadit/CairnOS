@@ -119,7 +119,7 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 		want string
 	}{
 		{
-			name: "unknown key",
+			name: "unknown branch key",
 			toml: sourceTOML(
 				`repo   = "`+sourceRepoURL+`"`,
 				`dest   = "/opt/src/automation"`,
@@ -205,7 +205,7 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 			toml: `[source."build automation"]` + "\n" +
 				`repo = "` + sourceRepoURL + `"` + "\n" +
 				`dest = "/opt/src/automation"` + "\n",
-			want: "name must match",
+			want: wantNameGrammarRefusal,
 		},
 	}
 

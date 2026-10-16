@@ -18,12 +18,10 @@ func runnerKeyEnv(block string) string {
 }
 
 // RunnerKeyEnvs lists the variables a block reads, most specific first: its own
-// name, then the variable named after its type. The fallback is what keeps a
-// host that only ever set CAIRNOS_RUNNER_OPENAI_API_KEY working after a block
-// gains a name of its own.
-//
-// A block named after its type collapses to one name, because both rules
-// produce the same string and an error naming it twice reads like a bug.
+// name, then the variable named after its type. The fallback keeps a host that
+// only set CAIRNOS_RUNNER_OPENAI_API_KEY working after a block gains a name.
+// A block named after its type gets one entry, as a repeated name reads like
+// a bug.
 func RunnerKeyEnvs(block, typeEnv string) []string {
 	named := runnerKeyEnv(block)
 	if named == typeEnv {

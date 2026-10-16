@@ -572,10 +572,12 @@ make update-deps
 ```
 
 It moves the Go modules, the `go.mod` tool directives, the Go toolchain line,
-the buf registry dependency, the npm packages under `web/`, the `gosec`
-version the Makefile pins, the major of every action the GitHub workflows use,
-the postgres image the integration tests start, and the Bitwarden CLI pin, then
-regenerates the protobuf code. It writes files and stops there: no commit, no
+the buf registry dependency, the npm packages under `web/`, the major of every
+action the GitHub workflows use, the postgres image the integration tests
+start, and the Bitwarden CLI pin, then regenerates the protobuf code. It leaves
+`gosec` alone: `make lint` installs it at `@latest` on every run, the same as
+`golangci-lint`, so neither linter has a version to move. It writes files and
+stops there: no commit, no
 push, no tests. At the end it prints `git status --short`. The builder `FROM`
 line in the Dockerfile and the Node version CI installs float on purpose, so
 they need no bump. The runtime `FROM` floats only within its Debian major: the
@@ -583,9 +585,9 @@ they need no bump. The runtime `FROM` floats only within its Debian major: the
 means editing the tag by hand.
 
 Run `make test` and `make lint` before committing any of it. `make lint`
-installs both linters into `bin/tools` instead of using whatever is on PATH:
-`golangci-lint` at its newest release, which CI also asks for, and `gosec` at
-the version the Makefile names.
+installs both linters into `bin/tools` instead of using whatever is on PATH.
+Neither is pinned: every run installs `golangci-lint` and `gosec` at `@latest`,
+and CI does the same, so there is no linter version to keep current.
 
 The Bitwarden CLI pin is the slow part of a bump, and it runs on its own too:
 

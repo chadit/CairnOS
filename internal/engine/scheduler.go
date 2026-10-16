@@ -576,7 +576,7 @@ func failureContext(run *store.Run, failedAction string) map[string]any {
 	}
 
 	return map[string]any{
-		"run_id":        run.ID,
+		fieldRunID:      run.ID,
 		"workflow":      run.WorkflowName,
 		"failed_action": failedAction,
 		"error_code":    code,

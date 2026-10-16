@@ -197,7 +197,7 @@ func TestDaemonCatchUpStaysOneFireForSubMinuteSchedule(t *testing.T) {
 		now := time.Now()
 
 		if _, err := store.Add(t.Context(), &scheduler.Schedule{
-			ID: "behind", WorkflowName: flowName, Cron: thirtySecCron,
+			ID: behindScheduleID, WorkflowName: flowName, Cron: thirtySecCron,
 			NextFire: now.Add(-hourInterval),
 		}); err != nil {
 			t.Fatalf("seed store: %v", err)
@@ -212,7 +212,7 @@ func TestDaemonCatchUpStaysOneFireForSubMinuteSchedule(t *testing.T) {
 			t.Fatalf("an hour of missed occurrences fired %d times, want exactly 1", got)
 		}
 
-		stamped := store.get(t, "behind")
+		stamped := store.get(t, behindScheduleID)
 
 		wantNext, err := scheduler.NextFire(thirtySecCron, now)
 		if err != nil {

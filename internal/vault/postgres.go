@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -332,9 +333,12 @@ func (s *Postgres) linkIDs(ctx context.Context, query, id, workspace string) ([]
 
 // rollbackPG ends a transaction that was not committed, ignoring the
 // already-committed error so the deferred call is a clean no-op on the happy
-// path.
+// path. Any other failure is logged: the deferring caller has already chosen
+// its return value.
 func rollbackPG(ctx context.Context, tx pgx.Tx) {
-	_ = tx.Rollback(ctx)
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		slog.WarnContext(ctx, "roll back vault transaction", "error", err)
+	}
 }
 
 // limitOrNull maps "no limit requested" onto a SQL NULL, which Postgres treats

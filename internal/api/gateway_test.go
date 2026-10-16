@@ -98,7 +98,7 @@ func TestGatewayErrorEnvelope(t *testing.T) {
 
 	// An undeclared input rejects the run with workflow.invalid before any
 	// record exists; the gateway must answer 400 with the canonical envelope.
-	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", `{"inputs":{"bogus":1}}`)
+	resp := httpPost(t, fix.transport, fix.httpBase+helloRunsPath, `{"inputs":{"bogus":1}}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -122,7 +122,7 @@ func TestGatewayErrorEnvelope(t *testing.T) {
 		t.Fatalf("envelope status = %q, want error", envelope.Status)
 	}
 
-	if envelope.Error.Code != "workflow.invalid" {
+	if envelope.Error.Code != wireWorkflowInvalid {
 		t.Fatalf("envelope code = %q, want workflow.invalid", envelope.Error.Code)
 	}
 
@@ -162,7 +162,7 @@ func TestGatewayStreamsParseableJSONLines(t *testing.T) {
 
 	fix := startServer(t)
 
-	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", `{}`)
+	resp := httpPost(t, fix.transport, fix.httpBase+helloRunsPath, `{}`)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -267,17 +267,17 @@ func TestGatewayRejectsBadRequests(t *testing.T) {
 		{
 			name:     "malformed json body",
 			method:   http.MethodPost,
-			path:     "/v1/workflows/hello/runs",
+			path:     helloRunsPath,
 			body:     `{"inputs":`,
 			wantCode: http.StatusBadRequest,
-			wantErr:  "api.invalid_argument",
+			wantErr:  wireInvalidArgument,
 		},
 		{
 			name:     "wrong method on a known route",
 			method:   http.MethodGet,
-			path:     "/v1/workflows/hello/runs",
+			path:     helloRunsPath,
 			wantCode: http.StatusNotImplemented,
-			wantErr:  "api.unimplemented",
+			wantErr:  wireUnimplemented,
 		},
 		{
 			name:     "unknown path",

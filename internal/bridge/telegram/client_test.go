@@ -38,7 +38,7 @@ type botServer struct {
 }
 
 // newBotServer builds the fake Bot API and the client that answers from it.
-func newBotServer(t *testing.T) (*botServer, telegram.BotAPI) {
+func newBotServer(t *testing.T) (*botServer, *telegram.Client) {
 	t.Helper()
 
 	bs := &botServer{}
@@ -77,7 +77,11 @@ func (bs *botServer) handle(writer http.ResponseWriter, request *http.Request) {
 			Text string `json:"text"`
 		}
 
-		_ = json.NewDecoder(request.Body).Decode(&req)
+		if err := json.NewDecoder(request.Body).Decode(&req); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+
+			return
+		}
 
 		bs.mu.Lock()
 		bs.sent = append(bs.sent, req.Text)

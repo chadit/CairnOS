@@ -25,7 +25,7 @@ func (a *App) cmdMemory(ctx context.Context, args []string) int {
 		return a.cmdMemoryAdd(ctx, args[1:])
 	case subcmdGet:
 		return a.cmdMemoryGet(ctx, args[1:])
-	case "rm":
+	case subcmdRm:
 		return a.cmdMemoryRemove(ctx, args[1:])
 	case "search":
 		return a.cmdMemorySearch(ctx, args[1:])
@@ -61,7 +61,7 @@ func (a *App) cmdMemoryAdd(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory add", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory add", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -103,7 +103,7 @@ func (a *App) cmdMemoryGet(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory get", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory get", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -138,7 +138,7 @@ func (a *App) cmdMemoryRemove(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory rm", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory rm", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -173,7 +173,7 @@ func (a *App) cmdMemorySearch(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory search", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory search", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -220,7 +220,7 @@ func (a *App) cmdMemoryExport(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory export", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory export", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -255,7 +255,7 @@ func (a *App) cmdMemoryImport(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "memory import", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "memory import", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}

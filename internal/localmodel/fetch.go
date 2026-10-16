@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -196,8 +197,14 @@ func writeVerified(body io.Reader, art *Artifact, dest string, progress io.Write
 	defer func() {
 		_ = tmp.Close()
 
-		if !committed {
-			_ = os.Remove(tmpName)
+		if committed {
+			return
+		}
+
+		// The download already failed with its own error, so a leftover part
+		// file is worth a warning, not a second error.
+		if removeErr := os.Remove(tmpName); removeErr != nil {
+			slog.Warn("remove partial download", "path", tmpName, "error", removeErr)
 		}
 	}()
 
@@ -253,9 +260,10 @@ type ProgressWriter struct {
 	total   int64
 	written int64
 	lastPct int64
-	// done latches once the closing newline has been printed. A server that
-	// sends more than Artifact.Bytes keeps the percentage at or past 100, and
-	// without the latch every further chunk would print another newline.
+	// done latches once the closing newline has been printed or a print
+	// failed. A server that sends more than Artifact.Bytes keeps the percentage
+	// at or past 100, and without the latch every further chunk would print
+	// another newline.
 	done bool
 }
 
@@ -266,8 +274,8 @@ func NewProgressWriter(out io.Writer, name string, total int64) *ProgressWriter 
 }
 
 // Write counts bytes and prints percent at the throttle boundary. It never
-// fails the download: a failed progress print is dropped, since the bytes
-// still landed.
+// fails the download, since the bytes still landed: a progress line that will
+// not print stops further printing instead.
 func (p *ProgressWriter) Write(chunk []byte) (int, error) {
 	count := len(chunk)
 	p.written += int64(count)
@@ -282,12 +290,15 @@ func (p *ProgressWriter) Write(chunk []byte) (int, error) {
 	}
 
 	p.lastPct = pct
-	_, _ = fmt.Fprintf(p.out, "\r%s: %d%%", p.name, pct)
+	finished := pct >= percentScale
 
-	if pct >= percentScale {
+	line := fmt.Sprintf("\r%s: %d%%", p.name, pct)
+	if finished {
+		line += "\n"
+	}
+
+	if _, err := io.WriteString(p.out, line); err != nil || finished {
 		p.done = true
-
-		_, _ = fmt.Fprintln(p.out)
 	}
 
 	return count, nil

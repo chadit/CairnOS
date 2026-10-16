@@ -12,6 +12,10 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
+// chatActionName labels every runner task a chat turn issues, where a workflow
+// run would carry its action's name.
+const chatActionName = "chat"
+
 // keyError is the output key a tool result carries when it failed, so the
 // driver sees the failure as data it can react to. keyCode carries the
 // classified runner error's stable code alongside it, so the transcript names
@@ -135,7 +139,7 @@ func (t *chatTurn) callDriver(ctx context.Context) (runner.Result, error) {
 
 	task := &runner.Task{
 		RunID:      t.session.ID,
-		ActionName: "chat",
+		ActionName: chatActionName,
 		Params: map[string]any{
 			paramSystem: t.system,
 			paramPrompt: prompt,
@@ -224,7 +228,7 @@ func (t *chatTurn) executeTool(ctx context.Context, tool string, arguments map[s
 
 	task := &runner.Task{
 		RunID:      t.session.ID,
-		ActionName: "chat",
+		ActionName: chatActionName,
 		Params:     maps.Clone(arguments),
 		Resolved:   true,
 	}

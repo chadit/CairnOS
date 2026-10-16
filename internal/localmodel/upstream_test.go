@@ -30,14 +30,16 @@ type upstreamFixture struct {
 func TestUpstreamRuntimeResolvesStableTagAndBuild(t *testing.T) {
 	t.Parallel()
 
-	upstream := fakeUpstream(t, &upstreamFixture{tag: fixtureTag, buildTag: "b12345"})
+	const buildTag = "b12345"
+
+	upstream := fakeUpstream(t, &upstreamFixture{tag: fixtureTag, buildTag: buildTag})
 
 	latest, err := upstream.Runtime(t.Context())
 	if err != nil {
 		t.Fatalf("runtime: %v", err)
 	}
 
-	if latest.Version != fixtureTag || latest.Build != "b12345" {
+	if latest.Version != fixtureTag || latest.Build != buildTag {
 		t.Errorf("latest = %+v, want v0.9.1 / b12345", latest)
 	}
 
@@ -65,10 +67,15 @@ func TestUpstreamRuntimeRejectsReleaseWithoutBuildTag(t *testing.T) {
 func TestUpstreamModelReadsLFSDigestForPinnedFile(t *testing.T) {
 	t.Parallel()
 
+	const (
+		repoSHA = "c0ffee00000000000000000000000000000000ff"
+		fileSHA = "abc123"
+	)
+
 	upstream := fakeUpstream(t, &upstreamFixture{
-		repoSHA:   "c0ffee00000000000000000000000000000000ff",
+		repoSHA:   repoSHA,
 		fileName:  "wanted.gguf",
-		fileSHA:   "abc123",
+		fileSHA:   fileSHA,
 		fileBytes: 42,
 	})
 
@@ -77,11 +84,11 @@ func TestUpstreamModelReadsLFSDigestForPinnedFile(t *testing.T) {
 		t.Fatalf("model: %v", err)
 	}
 
-	if latest.SHA256 != "abc123" || latest.Bytes != 42 {
+	if latest.SHA256 != fileSHA || latest.Bytes != 42 {
 		t.Errorf("latest = %+v, want abc123 / 42", latest)
 	}
 
-	if latest.Revision != "c0ffee00000000000000000000000000000000ff" {
+	if latest.Revision != repoSHA {
 		t.Errorf("revision = %q", latest.Revision)
 	}
 }
@@ -108,11 +115,11 @@ func fakeUpstream(t *testing.T, fixture *upstreamFixture) *localmodel.Upstream {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
-			_, _ = w.Write([]byte(`{"tag_name":"` + fixture.tag + `","html_url":"https://example.test/` + fixture.tag + `"}`))
+			writeResponse(t, w, []byte(`{"tag_name":"`+fixture.tag+`","html_url":"https://example.test/`+fixture.tag+`"}`))
 		case strings.HasSuffix(r.URL.Path, localmodel.BuildTagAsset):
-			_, _ = w.Write([]byte(fixture.buildTag + "\n"))
+			writeResponse(t, w, []byte(fixture.buildTag+"\n"))
 		case strings.HasPrefix(r.URL.Path, "/api/models/"):
-			_, _ = w.Write([]byte(modelListingJSON(fixture)))
+			writeResponse(t, w, []byte(modelListingJSON(fixture)))
 		default:
 			http.NotFound(w, r)
 		}

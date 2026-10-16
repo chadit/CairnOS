@@ -30,6 +30,10 @@ const (
 	driverFakeName = "driver_fake"
 	mockName       = "mock"
 	triggerCLI     = "cli"
+
+	// statusSucceeded pins the run status and the status label the recorder
+	// emits for a clean run.
+	statusSucceeded = "succeeded"
 )
 
 // Catalog names the assertions read.
@@ -206,7 +210,7 @@ func TestEngineEmitsSpanTreeAndCatalogMetrics(t *testing.T) {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
 
-	if run.Status != "succeeded" {
+	if run.Status != statusSucceeded {
 		t.Fatalf("run status = %q, want succeeded (error: %v)", run.Status, run.Error)
 	}
 
@@ -218,7 +222,7 @@ func TestEngineEmitsSpanTreeAndCatalogMetrics(t *testing.T) {
 		t.Fatalf("%s = %d, want 1", nameRuns, got)
 	}
 
-	if got := intWithAttr(t, &data, nameRuns, "status", "succeeded"); got != 1 {
+	if got := intWithAttr(t, &data, nameRuns, "status", statusSucceeded); got != 1 {
 		t.Fatalf("%s{status=succeeded} = %d, want 1", nameRuns, got)
 	}
 
@@ -324,7 +328,7 @@ func TestAgentLoopEmitsIterationSpansAndMetrics(t *testing.T) {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
 
-	if run.Status != "succeeded" {
+	if run.Status != statusSucceeded {
 		t.Fatalf("run status = %q, want succeeded (error: %v)", run.Status, run.Error)
 	}
 
@@ -340,7 +344,7 @@ func TestAgentLoopEmitsIterationSpansAndMetrics(t *testing.T) {
 		t.Fatalf("%s{workflow=agentic} = %d, want 2", nameAgentIterations, got)
 	}
 
-	if got := intWithAttr(t, &data, nameAgentToolCalls, "status", "succeeded"); got != 1 {
+	if got := intWithAttr(t, &data, nameAgentToolCalls, "status", statusSucceeded); got != 1 {
 		t.Fatalf("%s{status=succeeded} = %d, want 1", nameAgentToolCalls, got)
 	}
 }
@@ -395,13 +399,19 @@ func assertAgentSpanTree(t *testing.T, ended []sdktrace.ReadOnlySpan) {
 func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 	t.Parallel()
 
+	const (
+		runnerCalm    = "calm"
+		runnerProbing = "probing"
+		runnerBroken  = "broken"
+	)
+
 	rec, reader, _ := newTestRecorder(t)
 
 	err := rec.ObserveBreakers(func() map[string]reliability.State {
 		return map[string]reliability.State{
-			"calm":    reliability.StateClosed,
-			"probing": reliability.StateHalfOpen,
-			"broken":  reliability.StateOpen,
+			runnerCalm:    reliability.StateClosed,
+			runnerProbing: reliability.StateHalfOpen,
+			runnerBroken:  reliability.StateOpen,
 		}
 	})
 	if err != nil {
@@ -414,9 +424,9 @@ func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 		runnerName string
 		want       int64
 	}{
-		{runnerName: "calm", want: 0},
-		{runnerName: "probing", want: 1},
-		{runnerName: "broken", want: 2},
+		{runnerName: runnerCalm, want: 0},
+		{runnerName: runnerProbing, want: 1},
+		{runnerName: runnerBroken, want: 2},
 	}
 
 	for _, tt := range tests {
@@ -509,7 +519,7 @@ func newInstrumentedEngine(t *testing.T, rec *telemetry.Recorder, driver *toolDr
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 

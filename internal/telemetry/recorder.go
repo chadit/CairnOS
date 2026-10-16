@@ -513,32 +513,90 @@ func (r *Recorder) buildInstruments(meter metric.Meter) error {
 
 	var errs []error
 
-	r.runs = newCounter(meter, &errs, metricRuns, "Runs by outcome.")
-	r.runDuration = newHistogram(meter, &errs, metricRunDuration, "Wall-clock seconds per run.", runBuckets)
-	r.actions = newCounter(meter, &errs, metricActions, "Actions by outcome.")
-	r.actionDuration = newHistogram(meter, &errs, metricActionDuration, "Per-action latency in seconds.", actionBuckets)
-	r.tokens = newCounter(meter, &errs, metricTokens, "Token consumption by kind.")
-	r.cost = newFloatCounter(meter, &errs, metricCost, "Estimated spend in US dollars, runner-computed.")
-	r.cacheHits = newCounter(meter, &errs, metricCacheHits, "Actions whose usage reported cached tokens.")
-	r.cacheMisses = newCounter(meter, &errs, metricCacheMisses, "Actions that consumed input tokens with no cached ones.")
-	r.retries = newCounter(meter, &errs, metricRetries, "Retry attempts beyond each action's first try.")
-	r.agentIterations = newCounter(meter, &errs, metricAgentIterations, "Driver iterations inside agent-loop actions.")
-	r.agentToolCalls = newCounter(meter, &errs, metricAgentToolCalls, "Tool calls made by agent loops.")
-	r.circuitChanges = newCounter(meter, &errs, metricCircuitTransitions, "Breaker state changes by destination state.")
-	r.budgetSpend = newFloatGauge(meter, &errs, metricBudgetSpend, "Workflow spend for the current budget period in US dollars, runner-estimated.")
-	r.budgetExceeded = newCounter(meter, &errs, metricBudgetExceeded, "Budget limit breaches by workflow and the action taken (pause or warn).")
-	r.queueRuns = newCounter(meter, &errs, metricQueueRuns, "Queued scheduled runs by outcome (ok or failed).")
-	r.queueDeadLettered = newCounter(meter, &errs, metricQueueDeadLettered, "Work items dead-lettered after exhausting deliveries.")
-	r.queueHeld = newCounter(meter, &errs, metricQueueHeld, "Work items held for re-authentication after a credential expired.")
-	r.queueResumed = newCounter(meter, &errs, metricQueueResumed, "Held work items resumed after their credential became valid again.")
-	r.queueReclaimed = newCounter(meter, &errs, metricQueueReclaimed, "Expired leases the sweep returned to ready for redelivery.")
-	r.queueDepth = newFloatGauge(meter, &errs, metricQueueDepth, "Work-queue depth by item state (ready, leased, held, dead).")
-	r.queueOldestAge = newFloatGauge(meter, &errs, metricQueueOldestAge, "Age in seconds of the oldest ready work item.")
-	r.bridgeUpdates = newCounter(meter, &errs, metricBridgeUpdates, "Bridge inbound messages by transport, identity, and outcome (handled, unauthorized, or error).")
-	r.bridgeTurns = newCounter(meter, &errs, metricBridgeTurns, "Bridge chat turns by transport, identity, and outcome (ok or error).")
-	r.bridgeConfirms = newCounter(meter, &errs, metricBridgeConfirms, "Bridge D9 confirmations by transport, identity, and outcome (approved, denied, expired, or refused).")
-	r.bridgeSendFailures = newCounter(meter, &errs, metricBridgeSendFailures, "Bridge outbound sends that failed after the turn completed, by transport and identity.")
-	r.messagingSends = newCounter(meter, &errs, metricMessagingSends, "Outbound messages by identity and outcome (ok or error).")
+	r.runs = newInstrument(&errs, metricRuns, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricRuns, metric.WithDescription("Runs by outcome."))
+	})
+	r.runDuration = newInstrument(&errs, metricRunDuration, func() (metric.Float64Histogram, error) {
+		return meter.Float64Histogram(metricRunDuration,
+			metric.WithDescription("Wall-clock seconds per run."),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(runBuckets...))
+	})
+	r.actions = newInstrument(&errs, metricActions, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricActions, metric.WithDescription("Actions by outcome."))
+	})
+	r.actionDuration = newInstrument(&errs, metricActionDuration, func() (metric.Float64Histogram, error) {
+		return meter.Float64Histogram(metricActionDuration,
+			metric.WithDescription("Per-action latency in seconds."),
+			metric.WithUnit("s"),
+			metric.WithExplicitBucketBoundaries(actionBuckets...))
+	})
+	r.tokens = newInstrument(&errs, metricTokens, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricTokens, metric.WithDescription("Token consumption by kind."))
+	})
+	r.cost = newInstrument(&errs, metricCost, func() (metric.Float64Counter, error) {
+		return meter.Float64Counter(metricCost, metric.WithDescription("Estimated spend in US dollars, runner-computed."))
+	})
+	r.cacheHits = newInstrument(&errs, metricCacheHits, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricCacheHits, metric.WithDescription("Actions whose usage reported cached tokens."))
+	})
+	r.cacheMisses = newInstrument(&errs, metricCacheMisses, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricCacheMisses, metric.WithDescription("Actions that consumed input tokens with no cached ones."))
+	})
+	r.retries = newInstrument(&errs, metricRetries, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricRetries, metric.WithDescription("Retry attempts beyond each action's first try."))
+	})
+	r.agentIterations = newInstrument(&errs, metricAgentIterations, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricAgentIterations, metric.WithDescription("Driver iterations inside agent-loop actions."))
+	})
+	r.agentToolCalls = newInstrument(&errs, metricAgentToolCalls, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricAgentToolCalls, metric.WithDescription("Tool calls made by agent loops."))
+	})
+	r.circuitChanges = newInstrument(&errs, metricCircuitTransitions, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricCircuitTransitions, metric.WithDescription("Breaker state changes by destination state."))
+	})
+	r.budgetSpend = newInstrument(&errs, metricBudgetSpend, func() (metric.Float64Gauge, error) {
+		return meter.Float64Gauge(metricBudgetSpend, metric.WithDescription("Workflow spend for the current budget period in US dollars, runner-estimated."))
+	})
+	r.budgetExceeded = newInstrument(&errs, metricBudgetExceeded, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricBudgetExceeded, metric.WithDescription("Budget limit breaches by workflow and the action taken (pause or warn)."))
+	})
+	r.queueRuns = newInstrument(&errs, metricQueueRuns, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricQueueRuns, metric.WithDescription("Queued scheduled runs by outcome (ok or failed)."))
+	})
+	r.queueDeadLettered = newInstrument(&errs, metricQueueDeadLettered, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricQueueDeadLettered, metric.WithDescription("Work items dead-lettered after exhausting deliveries."))
+	})
+	r.queueHeld = newInstrument(&errs, metricQueueHeld, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricQueueHeld, metric.WithDescription("Work items held for re-authentication after a credential expired."))
+	})
+	r.queueResumed = newInstrument(&errs, metricQueueResumed, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricQueueResumed, metric.WithDescription("Held work items resumed after their credential became valid again."))
+	})
+	r.queueReclaimed = newInstrument(&errs, metricQueueReclaimed, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricQueueReclaimed, metric.WithDescription("Expired leases the sweep returned to ready for redelivery."))
+	})
+	r.queueDepth = newInstrument(&errs, metricQueueDepth, func() (metric.Float64Gauge, error) {
+		return meter.Float64Gauge(metricQueueDepth, metric.WithDescription("Work-queue depth by item state (ready, leased, held, dead)."))
+	})
+	r.queueOldestAge = newInstrument(&errs, metricQueueOldestAge, func() (metric.Float64Gauge, error) {
+		return meter.Float64Gauge(metricQueueOldestAge, metric.WithDescription("Age in seconds of the oldest ready work item."))
+	})
+	r.bridgeUpdates = newInstrument(&errs, metricBridgeUpdates, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricBridgeUpdates, metric.WithDescription("Bridge inbound messages by transport, identity, and outcome (handled, unauthorized, or error)."))
+	})
+	r.bridgeTurns = newInstrument(&errs, metricBridgeTurns, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricBridgeTurns, metric.WithDescription("Bridge chat turns by transport, identity, and outcome (ok or error)."))
+	})
+	r.bridgeConfirms = newInstrument(&errs, metricBridgeConfirms, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricBridgeConfirms, metric.WithDescription("Bridge D9 confirmations by transport, identity, and outcome (approved, denied, expired, or refused)."))
+	})
+	r.bridgeSendFailures = newInstrument(&errs, metricBridgeSendFailures, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricBridgeSendFailures, metric.WithDescription("Bridge outbound sends that failed after the turn completed, by transport and identity."))
+	})
+	r.messagingSends = newInstrument(&errs, metricMessagingSends, func() (metric.Int64Counter, error) {
+		return meter.Int64Counter(metricMessagingSends, metric.WithDescription("Outbound messages by identity and outcome (ok or error)."))
+	})
 
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("build metric instruments: %w", err)
@@ -642,50 +700,17 @@ func endSpan(span trace.Span, usage runner.Usage, err error) {
 	span.End()
 }
 
-// newCounter builds one Int64Counter, parking any failure on errs so the
-// caller reports every bad instrument together.
-func newCounter(meter metric.Meter, errs *[]error, name, description string) metric.Int64Counter {
-	counter, err := meter.Int64Counter(name, metric.WithDescription(description))
+// newInstrument builds one instrument through create, parking any failure on
+// errs so the caller reports every bad instrument together. Each OTel
+// instrument kind has its own constructor and option type, so create carries
+// the call and this keeps the shared error handling.
+func newInstrument[T any](errs *[]error, name string, create func() (T, error)) T {
+	instrument, err := create()
 	if err != nil {
 		*errs = append(*errs, fmt.Errorf("instrument %s: %w", name, err))
 	}
 
-	return counter
-}
-
-// newFloatCounter is newCounter for float-valued series (cost).
-func newFloatCounter(meter metric.Meter, errs *[]error, name, description string) metric.Float64Counter {
-	counter, err := meter.Float64Counter(name, metric.WithDescription(description))
-	if err != nil {
-		*errs = append(*errs, fmt.Errorf("instrument %s: %w", name, err))
-	}
-
-	return counter
-}
-
-// newFloatGauge is newCounter for synchronous float gauges (budget spend),
-// which record the latest observed value rather than accumulating.
-func newFloatGauge(meter metric.Meter, errs *[]error, name, description string) metric.Float64Gauge {
-	gauge, err := meter.Float64Gauge(name, metric.WithDescription(description))
-	if err != nil {
-		*errs = append(*errs, fmt.Errorf("instrument %s: %w", name, err))
-	}
-
-	return gauge
-}
-
-// newHistogram is newCounter for histograms, with explicit second-scaled
-// buckets.
-func newHistogram(meter metric.Meter, errs *[]error, name, description string, buckets []float64) metric.Float64Histogram {
-	histogram, err := meter.Float64Histogram(name,
-		metric.WithDescription(description),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(buckets...))
-	if err != nil {
-		*errs = append(*errs, fmt.Errorf("instrument %s: %w", name, err))
-	}
-
-	return histogram
+	return instrument
 }
 
 // stateLabel renders a breaker state as its metric label.

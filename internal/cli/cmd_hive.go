@@ -32,7 +32,7 @@ func (a *App) cmdHive(ctx context.Context, args []string) int {
 	switch args[0] {
 	case "subscribe":
 		return a.cmdHiveSubscribe(ctx, args[1:])
-	case "publish":
+	case subcmdPublish:
 		return a.cmdHivePublish(ctx, args[1:])
 	case subcmdStatus:
 		return a.cmdHiveStatus(args[1:])
@@ -58,7 +58,7 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 		return code
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "hive subscribe", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "hive subscribe", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -83,7 +83,7 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 
 		return ExitFailure
 	}
-	defer func() { _ = closeSource() }()
+	defer a.runCloser("secret source", closeSource)
 
 	client, err := buildHiveClient(ctx, source, &cfg)
 	if err != nil {
@@ -140,7 +140,7 @@ func (a *App) cmdHivePublish(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "hive publish", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "hive publish", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -194,7 +194,7 @@ func (a *App) publishSuggestion(ctx context.Context, dir string, db store.Store,
 
 		return ExitFailure
 	}
-	defer func() { _ = closeSource() }()
+	defer a.runCloser("secret source", closeSource)
 
 	client, err := buildHiveClient(ctx, source, cfg)
 	if err != nil {

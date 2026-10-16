@@ -20,6 +20,16 @@ const (
 
 	keyName   = "name"
 	keyActive = "active"
+	keyItems  = "items"
+
+	// firstActive and secondActive are the items the list filter keeps.
+	firstActive  = "alice"
+	secondActive = "carol"
+
+	// paramsValue and inputsValue tell apart what a script read from each
+	// predeclared global.
+	paramsValue = "from-params"
+	inputsValue = "from-inputs"
 
 	wantFailed        = "code.failed"
 	wantBadOutput     = "code.bad_output"
@@ -28,7 +38,8 @@ const (
 	wantMissingScript = "code.missing_script"
 	wantBadScript     = "code.bad_script"
 
-	scriptNoop = "output = None"
+	scriptNoop        = "output = None"
+	scriptSyntaxError = "output = ("
 )
 
 // codeTask builds a resolved task for the code runner, folding script and any
@@ -69,17 +80,17 @@ func TestCodeFiltersAListLikeTheNodeExample(t *testing.T) {
 
 	script := `output = [item["name"] for item in params["items"] if item["active"]]`
 	items := []any{
-		map[string]any{keyName: "alice", keyActive: true},
+		map[string]any{keyName: firstActive, keyActive: true},
 		map[string]any{keyName: "bob", keyActive: false},
-		map[string]any{keyName: "carol", keyActive: true},
+		map[string]any{keyName: secondActive, keyActive: true},
 	}
 
-	result, err := builtins.NewCode().Execute(t.Context(), codeTask(script, map[string]any{"items": items}, nil))
+	result, err := builtins.NewCode().Execute(t.Context(), codeTask(script, map[string]any{keyItems: items}, nil))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
-	want := []any{"alice", "carol"}
+	want := []any{firstActive, secondActive}
 	if !reflect.DeepEqual(result.Output, want) {
 		t.Fatalf("output = %#v, want %#v", result.Output, want)
 	}
@@ -92,13 +103,13 @@ func TestCodeSeesParamsAndInputs(t *testing.T) {
 
 	result, err := builtins.NewCode().Execute(
 		t.Context(),
-		codeTask(script, map[string]any{"x": "from-params"}, map[string]any{"y": "from-inputs"}),
+		codeTask(script, map[string]any{"x": paramsValue}, map[string]any{"y": inputsValue}),
 	)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
-	want := map[string]any{"p": "from-params", "i": "from-inputs"}
+	want := map[string]any{"p": paramsValue, "i": inputsValue}
 	if !reflect.DeepEqual(result.Output, want) {
 		t.Fatalf("output = %#v, want %#v", result.Output, want)
 	}
@@ -173,9 +184,9 @@ func TestCodeValidateSyntaxIsTwoPhase(t *testing.T) {
 		resolved bool
 		wantErr  bool
 	}{
-		{name: "resolved syntax error flags", script: "output = (", resolved: true, wantErr: true},
-		{name: "literal syntax error flags at load", script: "output = (", resolved: false, wantErr: true},
-		{name: "unresolved reference defers", script: `output = ${{ fetch.output }}`, resolved: false, wantErr: false},
+		{name: "resolved syntax error flags", script: scriptSyntaxError, resolved: true, wantErr: true},
+		{name: "literal syntax error flags at load", script: scriptSyntaxError, resolved: false, wantErr: true},
+		{name: caseUnresolvedDefers, script: `output = ${{ fetch.output }}`, resolved: false, wantErr: false},
 		{name: "valid resolved passes", script: "output = 1", resolved: true, wantErr: false},
 	}
 

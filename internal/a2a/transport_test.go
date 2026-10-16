@@ -3,6 +3,7 @@ package a2a_test
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/a2a"
+	"github.com/chadit/CairnOS/internal/api"
 )
 
 // certPEMType and keyPEMType are the PEM block labels the test writers emit.
@@ -21,6 +23,9 @@ const (
 	certPEMType = "CERTIFICATE"
 	keyPEMType  = "PRIVATE KEY"
 )
+
+// tlsProtocol is the SecurityProtocol gRPC reports for TLS credentials.
+const tlsProtocol = "tls"
 
 // certValidity bounds the throwaway certs the test mints.
 const certValidity = time.Hour
@@ -102,7 +107,7 @@ func TestTLSConfigConfigured(t *testing.T) {
 	}
 }
 
-func TestServerCredentialsFromFiles(t *testing.T) {
+func TestServerTLSConfigFromFiles(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -110,21 +115,25 @@ func TestServerCredentialsFromFiles(t *testing.T) {
 
 	cfg := a2a.TLSConfig{CertFile: certPath, KeyFile: keyPath, ClientCAFile: certPath}
 
-	creds, err := cfg.ServerCredentials()
+	serverTLS, err := cfg.ServerTLSConfig()
 	if err != nil {
-		t.Fatalf("ServerCredentials: %v", err)
+		t.Fatalf("ServerTLSConfig: %v", err)
 	}
 
-	if creds == nil {
-		t.Fatal("ServerCredentials returned nil creds without an error")
+	if serverTLS.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Fatalf("client auth = %v, want RequireAndVerifyClientCert", serverTLS.ClientAuth)
 	}
 
-	if creds.Info().SecurityProtocol != "tls" {
-		t.Fatalf("security protocol = %q, want tls", creds.Info().SecurityProtocol)
+	if serverTLS.ClientCAs == nil || len(serverTLS.Certificates) != 1 {
+		t.Fatalf("server TLS has client CAs %v and %d certificates, want a pool and one", serverTLS.ClientCAs, len(serverTLS.Certificates))
+	}
+
+	if serverTLS.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("min version = %#x, want TLS 1.2", serverTLS.MinVersion)
 	}
 }
 
-func TestClientCredentialsFromFiles(t *testing.T) {
+func TestClientTLSConfigFromFiles(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -132,17 +141,17 @@ func TestClientCredentialsFromFiles(t *testing.T) {
 
 	cfg := a2a.TLSConfig{CertFile: certPath, KeyFile: keyPath, ClientCAFile: certPath}
 
-	creds, err := cfg.ClientCredentials()
+	clientTLS, err := cfg.ClientTLSConfig()
 	if err != nil {
-		t.Fatalf("ClientCredentials: %v", err)
+		t.Fatalf("ClientTLSConfig: %v", err)
 	}
 
-	if creds == nil {
-		t.Fatal("ClientCredentials returned nil creds without an error")
+	if clientTLS.RootCAs == nil || len(clientTLS.Certificates) != 1 {
+		t.Fatalf("client TLS has roots %v and %d certificates, want a pool and one", clientTLS.RootCAs, len(clientTLS.Certificates))
 	}
 }
 
-func TestServerCredentialsRejectsPartialConfig(t *testing.T) {
+func TestServerTLSConfigRejectsPartialConfig(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -161,14 +170,14 @@ func TestServerCredentialsRejectsPartialConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := tt.cfg.ServerCredentials(); !errors.Is(err, a2a.ErrTLSConfigIncomplete) {
-				t.Fatalf("ServerCredentials with %s = %v, want ErrTLSConfigIncomplete", tt.name, err)
+			if _, err := tt.cfg.ServerTLSConfig(); !errors.Is(err, a2a.ErrTLSConfigIncomplete) {
+				t.Fatalf("ServerTLSConfig with %s = %v, want ErrTLSConfigIncomplete", tt.name, err)
 			}
 		})
 	}
 }
 
-func TestServerCredentialsRejectsUnreadableCA(t *testing.T) {
+func TestServerTLSConfigRejectsUnreadableCA(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -181,7 +190,68 @@ func TestServerCredentialsRejectsUnreadableCA(t *testing.T) {
 
 	cfg := a2a.TLSConfig{CertFile: certPath, KeyFile: keyPath, ClientCAFile: garbageCA}
 
-	if _, err := cfg.ServerCredentials(); !errors.Is(err, a2a.ErrClientCAUnreadable) {
-		t.Fatalf("ServerCredentials with garbage CA = %v, want ErrClientCAUnreadable", err)
+	if _, err := cfg.ServerTLSConfig(); !errors.Is(err, a2a.ErrClientCAUnreadable) {
+		t.Fatalf("ServerTLSConfig with garbage CA = %v, want ErrClientCAUnreadable", err)
+	}
+}
+
+// TestBundleWiresMTLSCredentials proves an mTLS block turns into TLS server
+// credentials on the bundle and a TLS dial credential for the local gateway.
+func TestBundleWiresMTLSCredentials(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	certPath, keyPath := writeSelfSigned(t, dir, "bundle")
+
+	_, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate card key: %v", err)
+	}
+
+	bundle, err := a2a.NewBundle(&a2a.BundleConfig{
+		NodeName:   nodeName,
+		SigningKey: signingKey,
+		TLS:        a2a.TLSConfig{CertFile: certPath, KeyFile: keyPath, ClientCAFile: certPath},
+	})
+	if err != nil {
+		t.Fatalf("NewBundle: %v", err)
+	}
+
+	if bundle.Creds == nil || bundle.Creds.Info().SecurityProtocol != tlsProtocol {
+		t.Fatalf("bundle creds = %v, want TLS server credentials", bundle.Creds)
+	}
+
+	apiCfg := &api.Config{}
+	if err := bundle.Attach(apiCfg); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	if apiCfg.GatewayDialCreds == nil || apiCfg.GatewayDialCreds.Info().SecurityProtocol != tlsProtocol {
+		t.Fatalf("gateway dial creds = %v, want TLS client credentials", apiCfg.GatewayDialCreds)
+	}
+}
+
+// TestBundleWithoutTLSStaysPlaintext pins the plaintext default: no mTLS block
+// leaves both credentials nil so the API server falls back to insecure.
+func TestBundleWithoutTLSStaysPlaintext(t *testing.T) {
+	t.Parallel()
+
+	_, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate card key: %v", err)
+	}
+
+	bundle, err := a2a.NewBundle(&a2a.BundleConfig{NodeName: nodeName, SigningKey: signingKey})
+	if err != nil {
+		t.Fatalf("NewBundle: %v", err)
+	}
+
+	apiCfg := &api.Config{}
+	if err := bundle.Attach(apiCfg); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	if bundle.Creds != nil || apiCfg.GatewayDialCreds != nil {
+		t.Fatalf("plaintext bundle set creds %v and dial creds %v, want both nil", bundle.Creds, apiCfg.GatewayDialCreds)
 	}
 }

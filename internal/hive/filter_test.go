@@ -23,8 +23,14 @@ const (
 	rawEndpoint     = "https://internal.example.com/v1/private"
 	rawWorkflowName = "jane_private_jobsearch"
 	rawOutputText   = "jane is a strong match for the staff engineer role at acme"
+	rawActionName   = "score_candidate"
 
-	openaiRunner = "openai"
+	openaiRunner   = "openai"
+	proposedPrompt = "prompt"
+
+	// kindPromptRefactor is the one suggestion kind that cannot be made
+	// content-free, so neither the transformer nor a subscriber accepts it.
+	kindPromptRefactor = "prompt_refactor"
 )
 
 // realisticSuggestion builds a suggestion whose evidence and proposed map are
@@ -36,12 +42,12 @@ func realisticSuggestion() store.Suggestion {
 	return store.Suggestion{
 		ID:        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 		Kind:      store.SuggestionParamTuning,
-		Target:    rawWorkflowName + ".score_candidate",
+		Target:    rawWorkflowName + "." + rawActionName,
 		Rationale: "the action " + rawPromptText + " ran with max_tokens far above its output",
 		Evidence: map[string]any{
 			tuning.EvidenceRunner:    openaiRunner,
 			tuning.EvidenceWorkflow:  rawWorkflowName,
-			tuning.EvidenceAction:    "score_candidate",
+			tuning.EvidenceAction:    rawActionName,
 			"raw_prompt":             rawPromptText,
 			"recorded_output":        rawOutputText,
 			"api_key":                rawAPIKey,
@@ -52,7 +58,7 @@ func realisticSuggestion() store.Suggestion {
 		Proposed: map[string]any{
 			tuning.ProposedMaxTokens:   512,
 			tuning.ProposedConfigBlock: "runner." + openaiRunner,
-			"prompt":                   rawPromptText,
+			proposedPrompt:             rawPromptText,
 		},
 		EstSavings: store.Savings{
 			CostUSDPerRun: 0.0234,
@@ -93,10 +99,10 @@ func TestTransformLeaksNoRawContent(t *testing.T) {
 		rawEndpoint,
 		rawWorkflowName,
 		rawOutputText,
-		"score_candidate", // the action name is content-tied too
-		"4096",            // the raw max_tokens value
-		"512",             // the proposed value: only the direction may leak
-		"0.0234",          // the exact saving: only the bucket may leak
+		rawActionName, // the action name is content-tied too
+		"4096",        // the raw max_tokens value
+		"512",         // the proposed value: only the direction may leak
+		"0.0234",      // the exact saving: only the bucket may leak
 	}
 
 	for _, secret := range forbidden {
@@ -189,9 +195,9 @@ func TestTransformRefusesPromptRefactor(t *testing.T) {
 	}
 
 	suggestion := store.Suggestion{
-		Kind:     "prompt_refactor",
+		Kind:     kindPromptRefactor,
 		Evidence: map[string]any{tuning.EvidenceRunner: openaiRunner},
-		Proposed: map[string]any{"prompt": rawPromptText},
+		Proposed: map[string]any{proposedPrompt: rawPromptText},
 	}
 
 	if _, ok := transformer.Transform(suggestion); ok {

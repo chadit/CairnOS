@@ -79,68 +79,26 @@ func New(
 	for _, name := range manager.names {
 		cred := cfgs[name]
 
-		tokenSource, err := buildTokenSource(ctx, name, &cred, source, newClient)
-		if err != nil {
+		if err := manager.addSource(ctx, name, &cred, source, newClient); err != nil {
 			return nil, err
 		}
-
-		manager.sources[name] = tokenSource
 	}
 
 	return manager, nil
 }
 
-// buildTokenSource resolves cred's secret refs and returns the reuse-wrapped
-// TokenSource for its grant. The base context carries the guarded client and
-// drops the caller's cancellation so a late refresh survives (see the package
-// doc's context-capture note).
-func buildTokenSource(
+// refreshConfig builds the refresh_token grant's config and the token that
+// seeds it: the refresh token is required, the client secret is optional (some
+// providers want it on the refresh call).
+func refreshConfig(
 	ctx context.Context,
 	name string,
 	cred *config.Credential,
 	source SecretResolver,
-	newClient func(allowPrivate bool) *http.Client,
-) (oauth2.TokenSource, error) {
-	base := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, newClient(cred.AllowPrivateTargets))
-
-	switch cred.Grant {
-	case config.GrantClientCredentials:
-		secret, err := source.Get(ctx, cred.ClientSecretRef)
-		if err != nil {
-			return nil, fmt.Errorf("credential %q: resolve client_secret_ref %q: %w", name, cred.ClientSecretRef, err)
-		}
-
-		conf := &clientcredentials.Config{
-			ClientID:     cred.ClientID,
-			ClientSecret: secret,
-			TokenURL:     cred.TokenURL,
-			Scopes:       cred.Scopes,
-		}
-
-		return conf.TokenSource(base), nil
-
-	case config.GrantRefreshToken:
-		return refreshTokenSource(ctx, base, name, cred, source)
-
-	default:
-		// Unreachable: config.Load rejects any other grant. Defensive so a future
-		// grant added to the config without a case here fails loudly.
-		return nil, fmt.Errorf("%w: credential.%s.grant %q", config.ErrInvalidConfig, name, cred.Grant)
-	}
-}
-
-// refreshTokenSource builds the refresh_token grant's source: the refresh token
-// is required, the client secret is optional (some providers want it on the
-// refresh call).
-func refreshTokenSource(
-	ctx, base context.Context,
-	name string,
-	cred *config.Credential,
-	source SecretResolver,
-) (oauth2.TokenSource, error) {
+) (*oauth2.Config, *oauth2.Token, error) {
 	refresh, err := source.Get(ctx, cred.RefreshTokenRef)
 	if err != nil {
-		return nil, fmt.Errorf("credential %q: resolve refresh_token_ref %q: %w", name, cred.RefreshTokenRef, err)
+		return nil, nil, fmt.Errorf("credential %q: resolve refresh_token_ref %q: %w", name, cred.RefreshTokenRef, err)
 	}
 
 	conf := &oauth2.Config{
@@ -151,13 +109,13 @@ func refreshTokenSource(
 	if cred.ClientSecretRef != "" {
 		secret, secErr := source.Get(ctx, cred.ClientSecretRef)
 		if secErr != nil {
-			return nil, fmt.Errorf("credential %q: resolve client_secret_ref %q: %w", name, cred.ClientSecretRef, secErr)
+			return nil, nil, fmt.Errorf("credential %q: resolve client_secret_ref %q: %w", name, cred.ClientSecretRef, secErr)
 		}
 
 		conf.ClientSecret = secret
 	}
 
-	return conf.TokenSource(base, &oauth2.Token{RefreshToken: refresh}), nil
+	return conf, &oauth2.Token{RefreshToken: refresh}, nil
 }
 
 // Token returns a fresh, cached, or refreshed access token for name. A caller
@@ -195,6 +153,54 @@ func (m *Manager) Has(name string) bool {
 // copy so a caller cannot mutate the manager's state.
 func (m *Manager) Names() []string {
 	return slices.Clone(m.names)
+}
+
+// addSource resolves cred's secret refs and stores the reuse-wrapped
+// TokenSource for its grant under name. The base context carries the guarded
+// client and drops the caller's cancellation so a late refresh survives (see
+// the package doc's context-capture note).
+func (m *Manager) addSource(
+	ctx context.Context,
+	name string,
+	cred *config.Credential,
+	source SecretResolver,
+	newClient func(allowPrivate bool) *http.Client,
+) error {
+	base := context.WithValue(context.WithoutCancel(ctx), oauth2.HTTPClient, newClient(cred.AllowPrivateTargets))
+
+	switch cred.Grant {
+	case config.GrantClientCredentials:
+		secret, err := source.Get(ctx, cred.ClientSecretRef)
+		if err != nil {
+			return fmt.Errorf("credential %q: resolve client_secret_ref %q: %w", name, cred.ClientSecretRef, err)
+		}
+
+		conf := &clientcredentials.Config{
+			ClientID:     cred.ClientID,
+			ClientSecret: secret,
+			TokenURL:     cred.TokenURL,
+			Scopes:       cred.Scopes,
+		}
+
+		m.sources[name] = conf.TokenSource(base)
+
+		return nil
+
+	case config.GrantRefreshToken:
+		conf, seed, err := refreshConfig(ctx, name, cred, source)
+		if err != nil {
+			return err
+		}
+
+		m.sources[name] = conf.TokenSource(base, seed)
+
+		return nil
+
+	default:
+		// Unreachable: config.Load rejects any other grant. Defensive so a future
+		// grant added to the config without a case here fails loudly.
+		return fmt.Errorf("%w: credential.%s.grant %q", config.ErrInvalidConfig, name, cred.Grant)
+	}
 }
 
 // mapTokenError converts a TokenSource failure into a safe error. A token

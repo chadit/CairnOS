@@ -1,13 +1,15 @@
 // Package plugin is the SDK an out-of-process runner imports. A plugin
 // author implements pkg/runner.Runner (plus any of Streamer and Describer)
 // and hands it to Serve; everything else, the socket, the gRPC service, the
-// proto translation, and the SIGTERM handling, lives here
-// (.agents/spec/03-runner-interface.md, "Custom runners and plugins").
+// proto translation, and stopping on SIGTERM or a closed stdin pipe, lives
+// here (.agents/spec/03-runner-interface.md, "Custom runners and plugins").
 package plugin
 
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -29,11 +31,11 @@ const SocketEnv = "CAIRNOS_PLUGIN_SOCKET"
 // launching a plugin by hand for debugging: `my-plugin --socket /tmp/p.sock`.
 const SocketFlag = "--socket"
 
-// Serve runs impl as a CairnOS runner plugin: it reads the socket path the
-// host supplied (SocketEnv first, then SocketFlag), serves the RunnerPlugin
-// gRPC service over that unix socket, and returns once a SIGTERM or SIGINT
-// arrives and in-flight calls drain. A plugin main is just
-// `plugin.Serve(myRunner{})` plus error reporting.
+// Serve runs impl as a CairnOS runner plugin over the unix socket the host
+// supplied (SocketEnv first, then SocketFlag) until SIGTERM, SIGINT, or the
+// end of a pipe on stdin. A pipe on stdin is the host's liveness lease and the
+// SDK reads it, so a plugin runner must not pass os.Stdin to its own
+// subprocesses.
 func Serve(impl runner.Runner) error {
 	if impl == nil {
 		return ErrNilRunner
@@ -57,18 +59,57 @@ func Serve(impl runner.Runner) error {
 	server := grpc.NewServer()
 	pluginv1.RegisterRunnerPluginServer(server, &service{impl: impl})
 
-	go func() {
-		<-ctx.Done()
-		// GracefulStop lets an in-flight Execute finish; a plugin that hangs
-		// here is covered by the host's SIGKILL escalation, not by us.
-		server.GracefulStop()
-	}()
+	hostGone := make(chan struct{})
+	if hostLease(os.Stdin) {
+		go watchHost(os.Stdin, hostGone)
+	}
+
+	go stopServer(ctx, hostGone, server)
 
 	if err := server.Serve(listener); err != nil {
 		return fmt.Errorf("serve plugin: %w", err)
 	}
 
 	return nil
+}
+
+// hostLease reports whether stdin is a pipe, the only stdin a CairnOS host
+// hands a plugin. A terminal, the null device, a file, or a socket comes from
+// some other launcher, and its end says nothing about whether a host is alive.
+func hostLease(stdin *os.File) bool {
+	info, err := stdin.Stat()
+	if err != nil {
+		slog.Warn("cannot stat plugin stdin, not watching for host exit", "error", err)
+
+		return false
+	}
+
+	return info.Mode()&os.ModeNamedPipe != 0
+}
+
+// watchHost reads stdin to its end, then closes hostGone. The host holds the
+// write end until it has reaped this process, so EOF or a read error means the
+// host died without stopping the plugin. A blocked stdin read cannot be
+// interrupted, so after a signal stop this goroutine lasts until exit.
+func watchHost(stdin io.Reader, hostGone chan<- struct{}) {
+	defer close(hostGone)
+
+	if _, err := io.Copy(io.Discard, stdin); err != nil {
+		slog.Warn("plugin stdin read failed, stopping", "error", err)
+	}
+}
+
+// stopServer ends the server on the first stop. A signal drains in-flight
+// calls, because the host sent it and is waiting for their results. A lost
+// host stops at once: nobody can receive a result, and a runner that ignores
+// its context would otherwise keep the orphaned plugin alive forever.
+func stopServer(ctx context.Context, hostGone <-chan struct{}, server *grpc.Server) {
+	select {
+	case <-ctx.Done():
+		server.GracefulStop()
+	case <-hostGone:
+		server.Stop()
+	}
 }
 
 // socketPath resolves the socket location: the environment variable wins,

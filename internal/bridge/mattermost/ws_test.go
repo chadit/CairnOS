@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -84,7 +85,7 @@ func newSocketServer(t *testing.T, frames [][]byte, abrupt bool) *nettest.Server
 			return
 		}
 
-		defer func() { _ = conn.CloseNow() }()
+		defer dropFixtureConn(t, conn)
 
 		if writeFrames(r.Context(), conn, frames) != nil {
 			return
@@ -96,6 +97,17 @@ func newSocketServer(t *testing.T, frames [][]byte, abrupt bool) *nettest.Server
 	}))
 
 	return server
+}
+
+// dropFixtureConn closes the server side of a fixture socket without a
+// handshake. The client may have closed it first, which reports net.ErrClosed
+// and is not a fixture failure.
+func dropFixtureConn(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+
+	if err := conn.CloseNow(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Errorf("close fixture socket: %v", err)
+	}
 }
 
 func writeFrames(ctx context.Context, conn *websocket.Conn, frames [][]byte) error {
@@ -231,7 +243,11 @@ func TestListenParsesTheRecordedFrames(t *testing.T) {
 func TestListenKeepsStringPropsAndDropsTheRest(t *testing.T) {
 	t.Parallel()
 
-	events, _ := replay(t, []string{fixtureBotPlain}, false)
+	events, replayErr := replay(t, []string{fixtureBotPlain}, false)
+	if replayErr == nil {
+		t.Fatal("Listen returned no error after the server hung up")
+	}
+
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want the one recorded webhook post", len(events))
 	}
@@ -298,7 +314,7 @@ func TestListenStopsWhenTheContextEnds(t *testing.T) {
 			return
 		}
 
-		defer func() { _ = conn.CloseNow() }()
+		defer dropFixtureConn(t, conn)
 
 		<-r.Context().Done()
 	}))
@@ -413,7 +429,7 @@ func newDeafServer(t *testing.T) *nettest.Server {
 			return
 		}
 
-		defer func() { _ = conn.CloseNow() }()
+		defer dropFixtureConn(t, conn)
 
 		<-r.Context().Done()
 	}))

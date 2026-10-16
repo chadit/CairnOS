@@ -20,6 +20,8 @@ const (
 	messageText         = "hi"
 	postID              = "p1"
 	channelID           = "c1"
+	botUsername         = "ops"
+	botDisplayName      = "Ops Bot"
 )
 
 // fakeSender is the second implementation of messaging.Sender: the Mattermost

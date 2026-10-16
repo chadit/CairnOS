@@ -8,13 +8,12 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Instrumentation observes execution milestones so the telemetry layer can
-// build the run -> action -> runner.call span tree
-// (.agents/spec/06-observability-and-tuning.md) without the engine importing a
-// telemetry SDK. Implementations must be concurrency-safe and return promptly:
-// every hook sits on the hot path. A Started hook's context carries its scope
-// into the work it covers, and each finish func is called exactly once.
-type Instrumentation interface {
+// ExecutionInstrumentation follows a run through its actions and runner calls,
+// the hooks that build the run -> action -> runner.call span tree
+// (.agents/spec/06-observability-and-tuning.md). A Started hook's context
+// carries its scope into the work it covers, and each finish func is called
+// exactly once.
+type ExecutionInstrumentation interface {
 	// RunStarted opens the run scope as the run record turns running. The
 	// finish func runs once the run is terminal, with status and error
 	// settled on the record.
@@ -33,7 +32,10 @@ type Instrumentation interface {
 	// CallStarted opens one runner.call attempt under the action scope in
 	// ctx. The finish func receives the attempt's usage and outcome.
 	CallStarted(ctx context.Context, call *Call) (context.Context, func(usage runner.Usage, err error))
+}
 
+// BudgetInstrumentation receives the budget gate's spend readings and breaches.
+type BudgetInstrumentation interface {
 	// BudgetSpend records a workflow's accumulated spend against its limit for
 	// the current period, feeding the cairnos_budget_spend_usd gauge. The
 	// engine calls it whenever a budgeted run is evaluated, so the gauge
@@ -44,6 +46,15 @@ type Instrumentation interface {
 	// cairnos_budget_exceeded_total counter labeled by the action taken
 	// (pause or warn).
 	BudgetExceeded(ctx context.Context, workflowName, action string)
+}
+
+// Instrumentation observes execution milestones so the telemetry layer can
+// build its spans and budget metrics without the engine importing a telemetry
+// SDK. Implementations must be concurrency-safe and return promptly: every
+// hook sits on the hot path.
+type Instrumentation interface {
+	ExecutionInstrumentation
+	BudgetInstrumentation
 }
 
 // Call identifies one runner.call attempt for instrumentation.
@@ -73,7 +84,8 @@ func (nopInstrumentation) ActionStarted(ctx context.Context, _ *workflow.Action)
 	return ctx, func(*store.ActionResult) {}
 }
 
-// ActionSettled implements Instrumentation.
+// ActionSettled does nothing: with no telemetry wired there is no counter to
+// move.
 func (nopInstrumentation) ActionSettled(context.Context, *store.ActionResult) {}
 
 // CallStarted implements Instrumentation.
@@ -81,8 +93,9 @@ func (nopInstrumentation) CallStarted(ctx context.Context, _ *Call) (context.Con
 	return ctx, func(runner.Usage, error) {}
 }
 
-// BudgetSpend implements Instrumentation.
+// BudgetSpend does nothing: with no telemetry wired there is no gauge to set.
 func (nopInstrumentation) BudgetSpend(context.Context, string, float64, float64) {}
 
-// BudgetExceeded implements Instrumentation.
+// BudgetExceeded does nothing: with no telemetry wired there is no counter to
+// bump.
 func (nopInstrumentation) BudgetExceeded(context.Context, string, string) {}

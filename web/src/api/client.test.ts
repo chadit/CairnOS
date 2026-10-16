@@ -58,7 +58,7 @@ describe('error envelope unwrap', () => {
 
   it('fires the unauthorized handler and clears the token on a 401', async () => {
     setToken('stale-token');
-    const onUnauth = vi.fn();
+    const onUnauth = vi.fn<() => void>();
     onUnauthorized(onUnauth);
 
     server.use(

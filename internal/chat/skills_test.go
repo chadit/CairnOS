@@ -91,7 +91,7 @@ func TestSlashSkillInjectsBody(t *testing.T) {
 
 	const body = "Summarize the conversation into five bullets."
 
-	source := &fakeSkillSource{bodies: map[string]string{"summarize": body}}
+	source := &fakeSkillSource{bodies: map[string]string{skillSummarize: body}}
 	driver := &scriptedDriver{turns: []runner.Result{finalTurn(plainAnswer)}}
 	agent := newSkillAgent(t, driver, source)
 	sessionID := newSession(t, agent)

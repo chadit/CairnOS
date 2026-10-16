@@ -26,6 +26,12 @@ const cfgKeyAllowPrivateTargets = "allow_private_targets"
 // resolves to the same blocked address on every retry.
 const codeSuffixBlockedTarget = ".blocked_target"
 
+// The only URL schemes the egress guard lets a target or a redirect hop use.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // safeHTTPClient builds an http.Client that refuses connections to loopback,
 // link-local, private, unspecified, and multicast addresses. The check sits in
 // the dialer's Control callback, after DNS, so a rebind to an internal IP is
@@ -142,7 +148,7 @@ func ipUnmap(addr net.IP) net.IP {
 func redirectSchemeGuard(_ string) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, _ []*http.Request) error {
 		switch req.URL.Scheme {
-		case "http", "https":
+		case schemeHTTP, schemeHTTPS:
 			return nil
 		default:
 			return fmt.Errorf("%w: redirect to scheme %q", errBlockedTarget, req.URL.Scheme)
@@ -156,7 +162,7 @@ func redirectSchemeGuard(_ string) func(*http.Request, []*http.Request) error {
 // retry a scheme that will never be allowed.
 func validateScheme(name string, target *url.URL) error {
 	switch target.Scheme {
-	case "http", "https":
+	case schemeHTTP, schemeHTTPS:
 		return nil
 	default:
 		return runner.NewError(runner.ClassPermanent, name+codeSuffixBlockedTarget,

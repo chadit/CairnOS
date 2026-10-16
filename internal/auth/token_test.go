@@ -309,7 +309,7 @@ func TestVerifyRejectsBadTokens(t *testing.T) {
 		name  string
 		token string
 	}{
-		{name: "garbage", token: "not-a-token", cause: jwt.ErrTokenMalformed},
+		{name: "not a token", token: "not-a-token", cause: jwt.ErrTokenMalformed},
 		{name: caseEmpty, token: "", cause: jwt.ErrTokenMalformed},
 		{name: "alg none", token: noneToken, cause: jwt.ErrTokenSignatureInvalid},
 		{name: "alg EdDSA under HS256 config", token: edToken, cause: jwt.ErrTokenSignatureInvalid},
@@ -708,7 +708,7 @@ func TestLoadMaterialFailures(t *testing.T) {
 		alg     string
 	}{
 		{name: "unknown algorithm", alg: "ES256", env: nil, wantErr: auth.ErrAlgorithmUnknown},
-		{name: "missing secret", alg: auth.AlgHS256, env: nil, wantErr: auth.ErrSecretMissing},
+		{name: caseMissingSecret, alg: auth.AlgHS256, env: nil, wantErr: auth.ErrSecretMissing},
 		{
 			name:    "short secret",
 			alg:     auth.AlgHS256,

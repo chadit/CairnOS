@@ -17,6 +17,9 @@ const (
 	// testValue is distinctive so the hiding and no-leak checks can look for it
 	// verbatim in ciphertext and error strings.
 	testValue = "correct-horse-battery-staple"
+	// dottedName is testName with a dot and capitals, which normalization must
+	// fold to the same secret.
+	dottedName = "DB.PASSWORD"
 )
 
 // randomKey returns 32 random bytes for an AES-256 sealer.
@@ -259,7 +262,7 @@ func TestOpenNormalizesNameForAAD(t *testing.T) {
 		t.Fatalf("seal: %v", err)
 	}
 
-	for _, name := range []string{"db_password", "DB.PASSWORD", "DB-PASSWORD"} {
+	for _, name := range []string{testName, dottedName, "DB-PASSWORD"} {
 		got, err := sealer.Open(testWorkspace, name, 1, keyID, nonce, ciphertext)
 		if err != nil || got != testValue {
 			t.Errorf("open under %q = %q, %v; want %q", name, got, err, testValue)

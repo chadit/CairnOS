@@ -44,9 +44,13 @@ const (
 	workflowDeployStaging = "deploy-staging"
 	simpleUserBody        = `{"model":"assistant","messages":[{"role":"user","content":"hi"}]}`
 
-	// codeUnauthenticated is the OpenAI error code both the completions and the
-	// models auth tests assert on missing or invalid tokens.
+	// The OpenAI error triple values the tests pin, plus the assistant role a
+	// reply carries; each is spelled out so a production rename fails a test.
 	codeUnauthenticated = "auth.unauthenticated"
+	codeForbidden       = "auth.forbidden"
+	codeModelNotFound   = "model_not_found"
+	typeServerError     = "server_error"
+	roleAssistant       = "assistant"
 
 	// authTestSecret meets the 32-byte HS256 floor.
 	authTestSecret = "0123456789abcdef0123456789abcdef"
@@ -107,7 +111,7 @@ func (f *fakeAgent) SendMessage(ctx context.Context, _, userMessage string, out 
 		select {
 		case out <- events[idx]:
 		case <-ctx.Done():
-			return ctx.Err() //nolint:wrapcheck // a fake surfaces the context error verbatim
+			return ctx.Err()
 		}
 	}
 
@@ -546,5 +550,76 @@ func answerAgent() *fakeAgent {
 		sessionID:   defaultSessionID,
 		personality: personalityAssistant,
 		events:      []chat.Event{chunkEvent(plainAnswer), doneEvent(runner.Usage{})},
+	}
+}
+
+// authCase is one row of the chat:session gate: the token a request carries and
+// the status and error code it must earn.
+type authCase struct {
+	token      func(t *testing.T, fix *fixture) string
+	name       string
+	wantCode   string
+	wantStatus int
+}
+
+// runAuthCases drives the chat:session gate table through one route's send, so
+// completions and models enforce the same rows and cannot drift apart: missing
+// and invalid tokens 401, a wrong scope 403, and a chat:session token 200.
+func runAuthCases(t *testing.T, send func(t *testing.T, fix *fixture, token string) (int, []byte)) {
+	t.Helper()
+
+	cases := []authCase{
+		{
+			name:       "missing_token",
+			token:      func(_ *testing.T, _ *fixture) string { return "" },
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   codeUnauthenticated,
+		},
+		{
+			name:       "invalid_token",
+			token:      func(_ *testing.T, _ *fixture) string { return "not-a-real-token" },
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   codeUnauthenticated,
+		},
+		{
+			name: "wrong_scope",
+			token: func(t *testing.T, fix *fixture) string {
+				t.Helper()
+
+				return fix.token(t, auth.ScopeReadMemory)
+			},
+			wantStatus: http.StatusForbidden,
+			wantCode:   codeForbidden,
+		},
+		{
+			name: "chat_session_scope",
+			token: func(t *testing.T, fix *fixture) string {
+				t.Helper()
+
+				return fix.token(t, auth.ScopeChatSession)
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fix := startFixture(t, fixtureOptions{authEnabled: true, agent: answerAgent()})
+
+			status, data := send(t, fix, tt.token(t, fix))
+			if status != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", status, tt.wantStatus, data)
+			}
+
+			if tt.wantCode == "" {
+				return
+			}
+
+			if got := decodeError(t, data).Error.Code; got != tt.wantCode {
+				t.Errorf("code = %q, want %q", got, tt.wantCode)
+			}
+		})
 	}
 }

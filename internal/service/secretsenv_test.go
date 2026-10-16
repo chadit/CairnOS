@@ -26,7 +26,7 @@ func TestSystemdUserUnitLoadsBothEnvironmentFiles(t *testing.T) {
 		t.Fatalf("PlanSetup: %v", err)
 	}
 
-	unit := planFile(t, &plan, "/home/operator/.config/systemd/user/cairnos.service")
+	unit := planFile(t, &plan, userUnitPath)
 
 	for _, want := range []string{
 		"EnvironmentFile=-" + userEnvFile,
@@ -59,7 +59,7 @@ func TestSystemdSystemUnitLoadsBothEnvironmentFiles(t *testing.T) {
 		t.Fatalf("PlanSetup: %v", err)
 	}
 
-	unit := planFile(t, &plan, "/etc/systemd/system/cairnos.service")
+	unit := planFile(t, &plan, systemUnitPath)
 
 	for _, want := range []string{
 		"EnvironmentFile=-/etc/cairnos/env",
@@ -78,7 +78,7 @@ func TestLaunchdPreambleSourcesBothEnvironmentFiles(t *testing.T) {
 	t.Parallel()
 
 	plan, err := service.PlanSetup(darwinHost(), service.Options{
-		Home: "/Users/operator/.cairnos", Binary: testBinary,
+		Home: darwinDataHome, Binary: testBinary,
 	})
 	if err != nil {
 		t.Fatalf("PlanSetup: %v", err)

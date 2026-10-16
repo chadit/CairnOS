@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -35,12 +36,28 @@ type Metadata struct {
 // rows only (key id, nonce, ciphertext) plus timestamps, so a database dump
 // yields no plaintext.
 type Store interface {
+	Reader
+	Writer
+
+	// Close releases the backend's database resources.
+	io.Closer
+}
+
+// Reader is the read side of a Store. Neither method changes a row.
+type Reader interface {
 	// Get resolves one secret by name, opening its sealed row. It satisfies the
 	// engine SecretSource shape so Chain composes it with Env uniformly. A
 	// missing row is ErrNotFound; a row that will not open is ErrOpenSealed, and
 	// no error ever carries plaintext.
 	Get(ctx context.Context, name string) (string, error)
 
+	// List returns the workspace's secret metadata, never values.
+	List(ctx context.Context) ([]Metadata, error)
+}
+
+// Writer is the write side of a Store: every method seals, re-seals, or
+// removes rows.
+type Writer interface {
 	// Set seals value under the primary key and upserts the row, preserving
 	// created_at across an overwrite and advancing updated_at (the recency stamp).
 	Set(ctx context.Context, name, value string) error
@@ -49,17 +66,11 @@ type Store interface {
 	// miss from a no-op.
 	Delete(ctx context.Context, name string) error
 
-	// List returns the workspace's secret metadata, never values.
-	List(ctx context.Context) ([]Metadata, error)
-
 	// Rotate re-seals every row not already under the primary key, across all
 	// workspaces, and returns the count. A row that opens under no loaded key
 	// fails the rotate with an error naming the secret (name only), so a stuck
 	// generation is visible rather than silently dropped.
 	Rotate(ctx context.Context) (int, error)
-
-	// Close releases the backend's database resources.
-	Close() error
 }
 
 // storeVersion is the recency stamp bound into the sealer AAD: the row's

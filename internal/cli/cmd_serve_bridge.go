@@ -140,6 +140,7 @@ func (a *App) buildTelegramBridge(
 		Users:       users,
 		Logger:      deps.logger,
 		Token:       token,
+		Transport:   a.bridgeTransport,
 		PollTimeout: settings.PollTimeout,
 		SendTimeout: settings.SendTimeout,
 	})
@@ -219,7 +220,8 @@ type bridgeRuntime struct {
 // none configured it returns a closed channel, so runServe needs no nil guard.
 func (a *App) startBridges(ctx context.Context, logger *slog.Logger, deps *bridgeRuntime) <-chan struct{} {
 	done := make(chan struct{})
-	loops := make([]func(context.Context), 0, 2)
+
+	var loops []func(context.Context)
 
 	if deps.telegram != nil {
 		a.printOutf("telegram bridge running\n")

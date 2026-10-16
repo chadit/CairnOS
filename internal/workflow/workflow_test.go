@@ -14,6 +14,9 @@ import (
 	"github.com/chadit/CairnOS/internal/workflow"
 )
 
+// fullWorkflowName is the workflow name fullWorkflow declares.
+const fullWorkflowName = "career_scout"
+
 const fullWorkflow = `
 [workflow]
 name        = "career_scout"
@@ -70,7 +73,7 @@ func TestParseAcceptsFullWorkflow(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if flow.Name != "career_scout" || flow.OnError != workflow.OnErrorContinue {
+	if flow.Name != fullWorkflowName || flow.OnError != workflow.OnErrorContinue {
 		t.Fatalf("meta = %q/%q, want career_scout/continue", flow.Name, flow.OnError)
 	}
 
@@ -528,7 +531,7 @@ func TestLoadReadsWorkflowFromDisk(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if flow.Name != "career_scout" {
+	if flow.Name != fullWorkflowName {
 		t.Fatalf("name = %q", flow.Name)
 	}
 

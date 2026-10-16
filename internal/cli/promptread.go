@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"unicode/utf8"
@@ -36,11 +37,11 @@ func (a *App) readLine(ctx context.Context, reader *bufio.Reader, prompt string,
 		return readString(reader)
 	}
 
-	stop := watchForRestore(ctx, restore)
+	stop := watchForRestore(ctx, restore, a.logger)
 
 	defer stop()
 	defer a.printOutf("\n")
-	defer restore()
+	defer restoreEcho(restore, a.logger)
 
 	a.printOutf("%s", prompt)
 
@@ -70,19 +71,25 @@ func (a *App) readMasked(reader *bufio.Reader) (string, error) {
 			return typed.value(), fmt.Errorf("read a line: %w", err)
 		}
 
-		switch next {
-		case '\n', '\r':
-			dropPairedNewline(reader)
+		if next == '\n' || next == '\r' {
+			return typed.value(), dropPairedNewline(reader)
+		}
 
-			return typed.value(), nil
-		case asciiBackspace, asciiDelete:
-			if typed.eraseRune() {
-				a.printOutf("%s", eraseCharacter)
-			}
-		default:
-			if typed.addByte(next) {
-				a.printOutf("%s", maskCharacter)
-			}
+		a.maskKeystroke(&typed, next)
+	}
+}
+
+// maskKeystroke applies one non-newline byte to typed and draws or erases the
+// star it earns, so the screen always shows one star per rune held.
+func (a *App) maskKeystroke(typed *maskedInput, next byte) {
+	switch next {
+	case asciiBackspace, asciiDelete:
+		if typed.eraseRune() {
+			a.printOutf("%s", eraseCharacter)
+		}
+	default:
+		if typed.addByte(next) {
+			a.printOutf("%s", maskCharacter)
 		}
 	}
 }
@@ -90,17 +97,25 @@ func (a *App) readMasked(reader *bufio.Reader) (string, error) {
 // dropPairedNewline eats the second half of a pasted CRLF, which would otherwise
 // answer the next prompt with an empty line. Waiting for a byte would hang a
 // plain newline, so only a buffered one is taken.
-func dropPairedNewline(reader *bufio.Reader) {
+func dropPairedNewline(reader *bufio.Reader) error {
 	if reader.Buffered() == 0 {
-		return
+		return nil
 	}
 
 	paired, err := reader.Peek(1)
-	if err != nil || (paired[0] != '\n' && paired[0] != '\r') {
-		return
+	if err != nil {
+		return fmt.Errorf("read past the newline: %w", err)
 	}
 
-	_, _ = reader.ReadByte()
+	if paired[0] != '\n' && paired[0] != '\r' {
+		return nil
+	}
+
+	if _, err := reader.ReadByte(); err != nil {
+		return fmt.Errorf("read past the newline: %w", err)
+	}
+
+	return nil
 }
 
 // maskedInput tracks the bytes behind each star, so one typed rune is one star
@@ -170,7 +185,7 @@ func readString(reader *bufio.Reader) (string, error) {
 
 // hideEcho turns echo off for the process stdin, reporting why it could not
 // rather than silently reading a secret in the clear.
-func (a *App) hideEcho() (func(), error) {
+func (a *App) hideEcho() (func() error, error) {
 	file, isFile := a.stdin.(*os.File)
 	if !isFile {
 		return nil, errNotATerminal
@@ -197,11 +212,19 @@ func (a *App) noticeEchoOn(cause error) {
 	a.logger.Debug("terminal echo stays on", "error", cause)
 }
 
+// restoreEcho puts the terminal back, logging a failure: the answer is already
+// read, and an operator left with a silent shell needs to see why.
+func restoreEcho(restore func() error, logger *slog.Logger) {
+	if err := restore(); err != nil {
+		logger.Warn("terminal echo may still be off", "error", err)
+	}
+}
+
 // watchForRestore puts echo back when the run ends some way the defer will
 // never see. Ctrl+C during a hidden read would otherwise leave the operator's
 // shell with echo off and no sign of why. It returns the call that ends the
 // watch.
-func watchForRestore(ctx context.Context, restore func()) func() {
+func watchForRestore(ctx context.Context, restore func() error, logger *slog.Logger) func() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 
@@ -210,10 +233,10 @@ func watchForRestore(ctx context.Context, restore func()) func() {
 	go func() {
 		select {
 		case <-signals:
-			restore()
-			reraiseInterrupt(signals)
+			restoreEcho(restore, logger)
+			reraiseInterrupt(signals, logger)
 		case <-ctx.Done():
-			restore()
+			restoreEcho(restore, logger)
 		case <-done:
 		}
 	}()
@@ -227,14 +250,18 @@ func watchForRestore(ctx context.Context, restore func()) func() {
 // reraiseInterrupt hands the interrupt back to the default handler now that the
 // terminal is readable again. Swallowing it would leave the run blocked on a
 // prompt the operator has already walked away from.
-func reraiseInterrupt(signals chan<- os.Signal) {
+func reraiseInterrupt(signals chan<- os.Signal, logger *slog.Logger) {
 	signal.Stop(signals)
 	signal.Reset(os.Interrupt)
 
 	self, err := os.FindProcess(os.Getpid())
 	if err != nil {
+		logger.Warn("interrupt not re-raised; the prompt keeps waiting", "error", err)
+
 		return
 	}
 
-	_ = self.Signal(os.Interrupt)
+	if err := self.Signal(os.Interrupt); err != nil {
+		logger.Warn("interrupt not re-raised; the prompt keeps waiting", "error", err)
+	}
 }

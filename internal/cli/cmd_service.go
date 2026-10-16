@@ -37,11 +37,11 @@ func (a *App) cmdService(ctx context.Context, args []string) int {
 	}
 
 	switch args[0] {
-	case "setup":
+	case subcmdSetup:
 		return a.cmdServiceSetup(ctx, args[1:])
 	case subcmdStatus:
 		return a.cmdServiceStatus(ctx, args[1:])
-	case "uninstall":
+	case subcmdUninstall:
 		return a.cmdServiceUninstall(ctx, args[1:])
 	default:
 		a.printErrf("unknown service subcommand %q\n", args[0])

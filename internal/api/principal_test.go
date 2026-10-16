@@ -22,7 +22,8 @@ import (
 const (
 	principalService      = "cairnos.test.v1.PrincipalService"
 	principalUnaryMethod  = "/" + principalService + "/Report"
-	principalStreamMethod = "/" + principalService + "/ReportStream"
+	principalStreamName   = "ReportStream"
+	principalStreamMethod = "/" + principalService + "/" + principalStreamName
 )
 
 // Field names in the report a principal handler sends back.
@@ -55,7 +56,6 @@ func principalReport(ctx context.Context) *structpb.Struct {
 // report and returns, which is enough to prove the stream's context carries the
 // same claims the unary path does.
 func reportStream(_ any, stream grpc.ServerStream) error {
-	//nolint:wrapcheck // SendMsg's error is the transport's; the caller reads it as a status
 	return stream.SendMsg(principalReport(stream.Context()))
 }
 
@@ -92,7 +92,7 @@ func principalExtension() *api.Extension {
 		HandlerType: (*any)(nil),
 		Methods:     []grpc.MethodDesc{{MethodName: "Report", Handler: unary}},
 		Streams: []grpc.StreamDesc{
-			{StreamName: "ReportStream", Handler: reportStream, ServerStreams: true},
+			{StreamName: principalStreamName, Handler: reportStream, ServerStreams: true},
 		},
 		Metadata: "principal_test.go",
 	}
@@ -124,7 +124,7 @@ func callReport(t *testing.T, conn *grpc.ClientConn, token string) map[string]*s
 func callReportStream(t *testing.T, conn *grpc.ClientConn, token string) map[string]*structpb.Value {
 	t.Helper()
 
-	desc := &grpc.StreamDesc{StreamName: "ReportStream", ServerStreams: true}
+	desc := &grpc.StreamDesc{StreamName: principalStreamName, ServerStreams: true}
 
 	stream, err := conn.NewStream(bearerContext(t, token), desc, principalStreamMethod)
 	if err != nil {

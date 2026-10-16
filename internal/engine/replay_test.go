@@ -34,7 +34,9 @@ params = { fn = "score", value = "${{ fetch.output }}" }
 func TestReplayRerunsFromFailedActionAndSeedsSucceeded(t *testing.T) {
 	t.Parallel()
 
-	fetch := &countingFn{output: "data"}
+	const fetchOutput = "data"
+
+	fetch := &countingFn{output: fetchOutput}
 	score := &gateFn{}
 	funcs := map[string]builtins.Func{
 		"fetch": fetch.run,
@@ -93,7 +95,7 @@ func TestReplayRerunsFromFailedActionAndSeedsSucceeded(t *testing.T) {
 	}
 
 	scoreRow := wantActionStatus(t, db, replay.ID, "score", store.ActionSucceeded)
-	if scoreRow.Output != "data" {
+	if scoreRow.Output != fetchOutput {
 		t.Errorf("replayed score output = %v, want the seeded fetch output", scoreRow.Output)
 	}
 }
@@ -116,7 +118,7 @@ func TestReplayPersistsNoResolvedSecret(t *testing.T) {
 	const secretValue = "sk-super-secret-value"
 
 	cfg := baseConfig()
-	cfg.Secrets = &fakeSecrets{values: map[string]string{"api_key": secretValue}}
+	cfg.Secrets = &fakeSecrets{values: map[string]string{secretAPIKey: secretValue}}
 
 	consume := &gateFn{}
 	funcs := map[string]builtins.Func{"consume": consume.run}

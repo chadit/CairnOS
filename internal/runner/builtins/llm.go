@@ -297,8 +297,8 @@ func apiKey(lookup environ.Lookup, keyEnvs []string) string {
 // everywhere. Any other name keeps the credential requirement: what it resolves
 // to is unknowable at validate time, and a hosted endpoint is likelier.
 //
-// Exported because `cairnos secrets pull` warns about a runner that will want an
-// API key, and it has to draw that line in the same place the runner does.
+// Exported so `cairnos secrets pull` draws the API-key line where the runner
+// does.
 func LocalEndpoint(baseURL string) bool {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -485,47 +485,26 @@ func readSSEEvents(body io.Reader, handle func(event sseEvent) (bool, error)) er
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, initialScanBuffer), maxCapturedOutput)
 
-	var (
-		name string
-		data strings.Builder
-	)
+	var decoder sseDecoder
 
-	// Grow once up front: event payloads are rebuilt per event, and the
-	// retained capacity stops per-line writes from reallocating.
-	data.Grow(initialScanBuffer)
+	// Grow up front so the first event's data lines append without
+	// reallocating. Reset hands the buffer to the dispatched string, so later
+	// events grow their own.
+	decoder.data.Grow(initialScanBuffer)
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		event, complete := decoder.feed(scanner.Text())
+		if !complete {
+			continue
+		}
 
-		switch {
-		case line == "":
-			if data.Len() == 0 {
-				name = ""
+		keep, err := handle(event)
+		if err != nil {
+			return err
+		}
 
-				continue
-			}
-
-			keep, err := handle(sseEvent{name: name, data: data.String()})
-
-			name = ""
-
-			data.Reset()
-
-			if err != nil {
-				return err
-			}
-
-			if !keep {
-				return nil
-			}
-		case strings.HasPrefix(line, "event:"):
-			name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		if !keep {
+			return nil
 		}
 	}
 
@@ -534,4 +513,48 @@ func readSSEEvents(body io.Reader, handle func(event sseEvent) (bool, error)) er
 	}
 
 	return nil
+}
+
+// sseDecoder holds the event being assembled between the blank lines that
+// delimit events, so readSSEEvents only sees whole events.
+type sseDecoder struct {
+	name string
+	data strings.Builder
+}
+
+// feed takes one stream line and reports the event a blank line completes.
+// Comment lines and unknown fields change nothing.
+func (d *sseDecoder) feed(line string) (sseEvent, bool) {
+	switch {
+	case line == "":
+		return d.flush()
+	case strings.HasPrefix(line, "event:"):
+		d.name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+	case strings.HasPrefix(line, "data:"):
+		if d.data.Len() > 0 {
+			d.data.WriteByte('\n')
+		}
+
+		d.data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	}
+
+	return sseEvent{}, false
+}
+
+// flush ends the current event and starts the next one empty. An event with
+// no data lines dispatches nothing, per the SSE format, though its name still
+// resets.
+func (d *sseDecoder) flush() (sseEvent, bool) {
+	name := d.name
+	d.name = ""
+
+	if d.data.Len() == 0 {
+		return sseEvent{}, false
+	}
+
+	event := sseEvent{name: name, data: d.data.String()}
+
+	d.data.Reset()
+
+	return event, true
 }

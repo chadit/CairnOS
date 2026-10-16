@@ -11,26 +11,47 @@ import (
 	"github.com/chadit/CairnOS/internal/notify"
 )
 
-const toolCodex = "codex"
+// The reauth alert both the direct Notify test and the fan-out parity test send.
+const (
+	toolCodex        = "codex"
+	alertRemediation = "codex exited (re-authenticate the codex CLI)"
+	alertDedupKey    = "sched-7|2026-06-13T00:00:00Z"
+)
+
+// recordBody answers every webhook POST with 204 and pushes the raw body onto
+// got. A body that fails to read fails the test and answers 400, so the notifier
+// under test reports an error instead of posting a silent empty line.
+func recordBody(t *testing.T, got chan<- string) http.HandlerFunc {
+	t.Helper()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read webhook body: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		got <- string(body)
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
 
 func TestDiscordNotifierPostsAlert(t *testing.T) {
 	t.Parallel()
 
 	got := make(chan string, 1)
 
-	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		got <- string(body)
-
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	server := nettest.New(recordBody(t, got))
 
 	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 
 	alert := notify.ReauthAlert{
 		Tool:        toolCodex,
-		Remediation: "codex exited (re-authenticate the codex CLI)",
-		DedupKey:    "sched-7|2026-06-13T00:00:00Z",
+		Remediation: alertRemediation,
+		DedupKey:    alertDedupKey,
 	}
 
 	if err := notifier.Notify(t.Context(), alert); err != nil {
@@ -82,12 +103,7 @@ func TestReauthAlertMessageOmitsEmptyFields(t *testing.T) {
 
 	got := make(chan string, 1)
 
-	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		got <- string(body)
-
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	server := nettest.New(recordBody(t, got))
 
 	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 

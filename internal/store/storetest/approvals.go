@@ -21,7 +21,7 @@ const (
 // testApprovalRoundTrip proves a pending gate persists with its message, reads
 // back, and moves once to a decided state carrying the actor and comment
 // (.agents/spec/parity/workflow-language.md, "Human approval").
-func testApprovalRoundTrip(t *testing.T, openFn OpenFunc) {
+func testApprovalRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -92,17 +92,17 @@ func testApprovalRoundTrip(t *testing.T, openFn OpenFunc) {
 // testApprovalNotFound proves GetApproval and DecideApproval report the
 // not-found sentinel for a gate that has no pending row, so callers classify
 // it instead of seeing a silent no-op.
-func testApprovalNotFound(t *testing.T, openFn OpenFunc) {
+func testApprovalNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	if _, err := db.GetApproval(ctx, "missing", actionFetch); !errors.Is(err, store.ErrApprovalNotFound) {
+	if _, err := db.GetApproval(ctx, absentID, actionFetch); !errors.Is(err, store.ErrApprovalNotFound) {
 		t.Errorf("GetApproval error = %v, want ErrApprovalNotFound", err)
 	}
 
-	err := db.DecideApproval(ctx, "missing", actionFetch, store.ApprovalApproved, approvalActor, "")
+	err := db.DecideApproval(ctx, absentID, actionFetch, store.ApprovalApproved, approvalActor, "")
 	if !errors.Is(err, store.ErrApprovalNotFound) {
 		t.Errorf("DecideApproval error = %v, want ErrApprovalNotFound", err)
 	}
@@ -111,7 +111,7 @@ func testApprovalNotFound(t *testing.T, openFn OpenFunc) {
 // testApprovalDecideOnce proves a gate moves exactly once: a second decision
 // on an already-decided gate reads as not-found, so a late denial cannot
 // overturn an approval.
-func testApprovalDecideOnce(t *testing.T, openFn OpenFunc) {
+func testApprovalDecideOnce[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -144,7 +144,7 @@ func testApprovalDecideOnce(t *testing.T, openFn OpenFunc) {
 // testApprovalListPending proves ListPendingApprovals returns a run's pending
 // gates ordered by action name and drops a gate once it is decided, the
 // listing the name-omitted decision path relies on.
-func testApprovalListPending(t *testing.T, openFn OpenFunc) {
+func testApprovalListPending[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -188,7 +188,7 @@ func testApprovalListPending(t *testing.T, openFn OpenFunc) {
 // testApprovalIsolatesByWorkspace proves a gate created in one workspace is
 // invisible to another: a cross-tenant read, decision, or listing never
 // touches it (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testApprovalIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testApprovalIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -233,7 +233,7 @@ func testApprovalIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 // ReconcileInterrupted: its held status, its waiting action row, and its pending
 // gate all survive a restart sweep, because a held run never looks running
 // (.agents/spec/parity/workflow-language.md, "Human approval").
-func testApprovalHeldSurvivesReconcile(t *testing.T, openFn OpenFunc) {
+func testApprovalHeldSurvivesReconcile[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)

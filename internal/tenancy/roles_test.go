@@ -98,10 +98,12 @@ func TestScopesForRoleReturnsCopy(t *testing.T) {
 		t.Fatal("admin scopes empty")
 	}
 
-	first[0] = "mutated"
+	const mutatedScope = "mutated"
+
+	first[0] = mutatedScope
 
 	second, _ := tenancy.ScopesForRole(tenancy.RoleAdmin)
-	if second[0] == "mutated" {
+	if second[0] == mutatedScope {
 		t.Fatal("ScopesForRole leaked the shared table; a caller mutated it")
 	}
 }

@@ -7,8 +7,8 @@ import (
 )
 
 // EnvVarName reports the environment variable the env source reads for a secret
-// named name: the prefix plus the canonical name uppercased with dashes and
-// dots folded to underscores, so it matches Get's own lookup. It returns a
+// named name: the prefix plus the canonical name uppercased with each dash and
+// dot replaced by an underscore, so it matches Get's own lookup. It returns a
 // variable name, never a value, so callers can log or print the result.
 func (e *Env) EnvVarName(name string) string {
 	normalized := strings.ToUpper(name)

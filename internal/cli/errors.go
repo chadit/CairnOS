@@ -136,4 +136,12 @@ var (
 	// llama-server bind an ephemeral port while every probe still targets :0, so
 	// an upgrade would roll back a runtime that was running fine.
 	errFlagValue = errors.New("model: flag value out of range")
+
+	// errSecretStoreNotConfigured refuses a secrets subcommand while the engine
+	// still reads only the environment.
+	errSecretStoreNotConfigured = errors.New("secret store is not configured")
+
+	// errScheduleStoreNotPostgres means a store that borrows the schedule store's
+	// postgres pool was handed a schedule store on another backend.
+	errScheduleStoreNotPostgres = errors.New("schedule store is not on postgres")
 )

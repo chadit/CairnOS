@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/credentials"
@@ -77,14 +79,42 @@ const (
 // triggerCLI marks runs started by this binary in run history.
 const triggerCLI = "cli"
 
-// Subcommand names shared by several command families (runs, schedule,
-// suggestions, memory, keys).
+// Command words that more than one dispatch switch matches. A top-level
+// command can recur as another family's subcommand (schedule run, mcp serve,
+// secrets auth), so each word is spelled once.
 const (
-	subcmdList   = "list"
-	subcmdAdd    = "add"
-	subcmdGet    = "get"
-	subcmdImport = "import"
-	subcmdStatus = "status"
+	subcmdList      = "list"
+	subcmdAdd       = "add"
+	subcmdGet       = "get"
+	subcmdImport    = "import"
+	subcmdStatus    = "status"
+	subcmdRun       = "run"
+	subcmdServe     = "serve"
+	subcmdAuth      = "auth"
+	subcmdPublish   = "publish"
+	subcmdRemove    = "remove"
+	subcmdRm        = "rm"
+	subcmdSet       = "set"
+	subcmdSetup     = "setup"
+	subcmdUninstall = "uninstall"
+	subcmdApprove   = "approve"
+	subcmdRotate    = "rotate"
+)
+
+// Words that ask a dispatcher for its usage text instead of naming a
+// subcommand.
+const (
+	helpWord      = "help"
+	helpShortFlag = "-h"
+	helpLongFlag  = "--help"
+)
+
+// runtime.GOOS values the package branches on. Each branch says why its
+// platform behaves differently.
+const (
+	goosLinux   = "linux"
+	goosDarwin  = "darwin"
+	goosWindows = "windows"
 )
 
 // defaultListLimit caps tabular output when no --limit is given.
@@ -139,40 +169,113 @@ func ensureDataDir(path string) error {
 	return nil
 }
 
-// openStore loads the config under dir and opens the run store its DSN
-// points at, branching on the configured backend
-// (.agents/spec/11-deployment-and-config.md, "[store] backend"). The sqlite
-// path creates the data directory first; the postgres path connects to the
-// DSN (credentials from CAIRNOS_STORE_DSN). ctx bounds the postgres connect;
-// sqlite opens a file and ignores it. The returned store.Store keeps callers
-// backend-agnostic.
-func openStore(ctx context.Context, dir string, lookup environ.Lookup) (store.Store, config.Config, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, cfg, fmt.Errorf("load config: %w", err)
+// storeBackends holds one store family's postgres and sqlite constructors, so
+// open picks between them by the configured backend. Each constructor wraps its
+// own error: wrapcheck wants the wrap where the other package's error enters
+// cli, and that is also where the family's name is known.
+type storeBackends[S any] struct {
+	postgres func(ctx context.Context, dsn string) (S, error)
+	sqlite   func(path string) (S, error)
+
+	// require, when set, refuses an open the family must not attempt, before
+	// open creates the data directory or connects.
+	require func(cfg *config.Config) error
+}
+
+// open picks the backend the config names (.agents/spec/11-deployment-and-config.md,
+// "[store] backend"). Every family shares the run store's DSN, and sqlite's
+// data directory comes first so a fresh home works without init. Only postgres
+// takes ctx, since sqlite schema setup is process-lifetime work; the secret
+// store's sqlite closure is the exception and carries its caller's ctx.
+func (b storeBackends[S]) open(ctx context.Context, dir string, cfg *config.Config) (S, error) {
+	var zero S
+
+	if b.require != nil {
+		if err := b.require(cfg); err != nil {
+			return zero, err
+		}
 	}
 
 	if cfg.Store.Backend == backendPostgres {
-		db, openErr := postgres.Open(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, cfg, fmt.Errorf("open store: %w", openErr)
-		}
-
-		return db, cfg, nil
+		return b.postgres(ctx, cfg.Store.DSN)
 	}
 
 	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, cfg, ensureDataDirErr
+	if err := ensureDataDir(path); err != nil {
+		return zero, err
 	}
 
-	//nolint:contextcheck // sqlite.Open carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	db, err := sqlite.Open(path)
+	return b.sqlite(path)
+}
+
+// openBackend loads the config under dir and opens one store family on its
+// backend. The config comes back for callers that read settings beside the
+// store, such as auth's revocation windows.
+func openBackend[S any](ctx context.Context, dir string, lookup environ.Lookup, backends storeBackends[S]) (S, config.Config, error) {
+	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
 	if err != nil {
-		return nil, cfg, fmt.Errorf("open store: %w", err)
+		var zero S
+
+		return zero, cfg, fmt.Errorf("load config: %w", err)
 	}
 
-	return db, cfg, nil
+	opened, err := backends.open(ctx, dir, &cfg)
+
+	return opened, cfg, err
+}
+
+// openAt resolves the home from a --dir value and opens one store family,
+// reporting failures on stderr under label: the shared spine of the
+// store-backed subcommands. The ctx check keeps an already-canceled invocation
+// from opening a database it will never use. Methods cannot take type
+// parameters, so the App is an argument.
+func openAt[S any](ctx context.Context, app *App, label, dirFlagValue string, backends storeBackends[S]) (S, config.Config, int, bool) {
+	var zero S
+
+	if err := ctx.Err(); err != nil {
+		app.printErrf("%s: %v\n", label, err)
+
+		return zero, config.Config{}, ExitFailure, false
+	}
+
+	dir, err := resolveDir(dirFlagValue, app.envLookup())
+	if err != nil {
+		app.printErrf("%s: %v\n", label, err)
+
+		return zero, config.Config{}, ExitFailure, false
+	}
+
+	opened, cfg, err := openBackend(ctx, dir, app.envLookup(), backends)
+	if err != nil {
+		app.printErrf("%s: %v\n", label, err)
+
+		return zero, cfg, ExitFailure, false
+	}
+
+	return opened, cfg, ExitOK, true
+}
+
+// runStoreBackends opens the run store: runs, steps, and the governance tables
+// every other family sits beside.
+func runStoreBackends() storeBackends[store.Store] {
+	return storeBackends[store.Store]{
+		postgres: func(ctx context.Context, dsn string) (store.Store, error) {
+			db, err := postgres.Open(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open store: %w", err)
+			}
+
+			return db, nil
+		},
+		sqlite: func(path string) (store.Store, error) {
+			db, err := sqlite.Open(path)
+			if err != nil {
+				return nil, fmt.Errorf("open store: %w", err)
+			}
+
+			return db, nil
+		},
+	}
 }
 
 // memoryStore is a memory.Store that also closes, so the memory subcommands
@@ -183,38 +286,25 @@ type memoryStore interface {
 	Close() error
 }
 
-// openMemory opens the memory store on the configured backend. On sqlite it
-// shares the run store's database file (one file stays the whole local
-// footprint, disjoint tables); on postgres it shares the run store's
-// database (different tables in the same Postgres database, reached through
-// the same CAIRNOS_STORE_DSN).
-func openMemory(ctx context.Context, dir string, lookup environ.Lookup) (memoryStore, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+func memoryBackends() storeBackends[memoryStore] {
+	return storeBackends[memoryStore]{
+		postgres: func(ctx context.Context, dsn string) (memoryStore, error) {
+			mem, err := memory.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open memory store: %w", err)
+			}
+
+			return mem, nil
+		},
+		sqlite: func(path string) (memoryStore, error) {
+			mem, err := memory.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open memory store: %w", err)
+			}
+
+			return mem, nil
+		},
 	}
-
-	if cfg.Store.Backend == backendPostgres {
-		mem, openErr := memory.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, fmt.Errorf("open memory store: %w", openErr)
-		}
-
-		return mem, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // memory.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	mem, err := memory.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open memory store: %w", err)
-	}
-
-	return mem, nil
 }
 
 // vaultStore is a vault.Store that also closes, so the vault subcommands hold
@@ -224,46 +314,204 @@ type vaultStore interface {
 	Close() error
 }
 
-// openVault opens the vault store on the configured backend, sharing the run
-// store's database the same way openMemory does: disjoint document and link
-// tables in the one sqlite file, or in the one Postgres database.
-func openVault(ctx context.Context, dir string, lookup environ.Lookup) (vaultStore, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+func vaultBackends() storeBackends[vaultStore] {
+	return storeBackends[vaultStore]{
+		postgres: func(ctx context.Context, dsn string) (vaultStore, error) {
+			vaultDB, err := vault.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open vault store: %w", err)
+			}
+
+			return vaultDB, nil
+		},
+		sqlite: func(path string) (vaultStore, error) {
+			vaultDB, err := vault.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open vault store: %w", err)
+			}
+
+			return vaultDB, nil
+		},
 	}
-
-	if cfg.Store.Backend == backendPostgres {
-		vaultDB, openErr := vault.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, fmt.Errorf("open vault store: %w", openErr)
-		}
-
-		return vaultDB, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // vault.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	vaultDB, err := vault.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open vault store: %w", err)
-	}
-
-	return vaultDB, nil
 }
 
-// openSecretsStore opens the encrypted secret store on the configured backend.
-// It shares the run store's DSN, a disjoint secrets table in one sqlite file or
-// Postgres database, and wraps it in the sealer built from environment key
-// material. A missing or malformed master key (secrets.LoadKeys) fails here,
-// not at first resolve; those errors name env vars only, never key bytes.
-func openSecretsStore(
-	ctx context.Context, dir string, cfg *config.Config, lookup environ.Lookup,
-) (secrets.Store, error) {
+// rulesStore is a rules.Service that also closes, so the rules subcommands hold
+// one value for both the service surface and cleanup regardless of backend.
+type rulesStore interface {
+	rules.Service
+	Close() error
+}
+
+func rulesBackends() storeBackends[rulesStore] {
+	return storeBackends[rulesStore]{
+		postgres: func(ctx context.Context, dsn string) (rulesStore, error) {
+			svc, err := rules.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open rules store: %w", err)
+			}
+
+			return svc, nil
+		},
+		sqlite: func(path string) (rulesStore, error) {
+			svc, err := rules.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open rules store: %w", err)
+			}
+
+			return svc, nil
+		},
+	}
+}
+
+// scheduleStore is a Schedules that also closes, so the schedule subcommands
+// hold one value for both the daemon surface and cleanup regardless of
+// backend.
+type scheduleStore interface {
+	scheduler.Schedules
+	Close() error
+}
+
+func scheduleBackends() storeBackends[scheduleStore] {
+	return storeBackends[scheduleStore]{
+		postgres: func(ctx context.Context, dsn string) (scheduleStore, error) {
+			scheds, err := scheduler.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open schedule store: %w", err)
+			}
+
+			return scheds, nil
+		},
+		sqlite: func(path string) (scheduleStore, error) {
+			scheds, err := scheduler.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open schedule store: %w", err)
+			}
+
+			return scheds, nil
+		},
+	}
+}
+
+// authStore is an auth.Store that also closes, so the keys and auth
+// subcommands hold one value for both the authenticator surface and cleanup
+// regardless of backend.
+type authStore interface {
+	auth.Store
+	Close() error
+}
+
+// authBackends opens the auth store: keys and the revocation denylist.
+func authBackends() storeBackends[authStore] {
+	return storeBackends[authStore]{
+		postgres: func(ctx context.Context, dsn string) (authStore, error) {
+			keyStore, err := auth.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open auth store: %w", err)
+			}
+
+			return keyStore, nil
+		},
+		sqlite: func(path string) (authStore, error) {
+			keyStore, err := auth.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open auth store: %w", err)
+			}
+
+			return keyStore, nil
+		},
+	}
+}
+
+// tenancyStore is a tenancy.Store that also closes, so the workspace
+// subcommands hold one value for both the store surface and cleanup
+// regardless of backend.
+type tenancyStore interface {
+	tenancy.Store
+	Close() error
+}
+
+// tenancyBackends opens the tenancy store, workspaces and members. Opening
+// seeds the default workspace.
+func tenancyBackends() storeBackends[tenancyStore] {
+	return storeBackends[tenancyStore]{
+		postgres: func(ctx context.Context, dsn string) (tenancyStore, error) {
+			tenants, err := tenancy.OpenPostgres(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("open tenancy store: %w", err)
+			}
+
+			return tenants, nil
+		},
+		sqlite: func(path string) (tenancyStore, error) {
+			tenants, err := tenancy.OpenSQLite(path)
+			if err != nil {
+				return nil, fmt.Errorf("open tenancy store: %w", err)
+			}
+
+			return tenants, nil
+		},
+	}
+}
+
+// secretBackends opens the encrypted secret store, sealed with the key material
+// in lookup. The store opens only when [secrets] backend selects it, so nobody
+// writes to a store the engine is not reading. Keys load at open, not first
+// resolve, and their errors name env vars only, never key bytes.
+func secretBackends(ctx context.Context, lookup environ.Lookup) storeBackends[secrets.Store] {
+	return storeBackends[secrets.Store]{
+		require: func(cfg *config.Config) error {
+			if err := requireSecretStore(cfg); err != nil {
+				return err
+			}
+
+			// Building the sealer here as well as in the constructor checks the
+			// keys before open creates the data directory, so a missing master
+			// key leaves a fresh home as it was.
+			_, err := newSealer(lookup)
+
+			return err
+		},
+		postgres: func(ctx context.Context, dsn string) (secrets.Store, error) {
+			sealer, err := newSealer(lookup)
+			if err != nil {
+				return nil, err
+			}
+
+			secretStore, err := secrets.OpenPostgres(ctx, dsn, sealer)
+			if err != nil {
+				return nil, fmt.Errorf("open secrets store: %w", err)
+			}
+
+			return secretStore, nil
+		},
+		sqlite: func(path string) (secrets.Store, error) {
+			sealer, err := newSealer(lookup)
+			if err != nil {
+				return nil, err
+			}
+
+			secretStore, err := secrets.OpenSQLite(ctx, path, sealer)
+			if err != nil {
+				return nil, fmt.Errorf("open secrets store: %w", err)
+			}
+
+			return secretStore, nil
+		},
+	}
+}
+
+func requireSecretStore(cfg *config.Config) error {
+	if cfg.Secrets.Backend == config.SecretsBackendStore {
+		return nil
+	}
+
+	return fmt.Errorf("%w; set [secrets] backend = %q (currently %q)",
+		errSecretStoreNotConfigured, config.SecretsBackendStore, cfg.Secrets.Backend)
+}
+
+// newSealer builds the secret store's sealer from the master and previous keys
+// in the environment.
+func newSealer(lookup environ.Lookup) (*secrets.Sealer, error) {
 	primary, previous, err := secrets.LoadKeys(lookup.Get)
 	if err != nil {
 		return nil, fmt.Errorf("load secrets keys: %w", err)
@@ -274,40 +522,115 @@ func openSecretsStore(
 		return nil, fmt.Errorf("build secrets sealer: %w", err)
 	}
 
-	if cfg.Store.Backend == backendPostgres {
-		secretStore, openErr := secrets.OpenPostgres(ctx, cfg.Store.DSN, sealer)
-		if openErr != nil {
-			return nil, fmt.Errorf("open secrets store: %w", openErr)
-		}
+	return sealer, nil
+}
 
-		return secretStore, nil
+// schedulePool returns the pool a postgres schedule store holds, for the stores
+// that borrow it so a node keeps one pool. The borrower's own Close leaves the
+// pool to whoever closes scheds.
+func schedulePool(scheds scheduleStore) (*pgxpool.Pool, error) {
+	pgScheds, ok := scheds.(*scheduler.Postgres)
+	if !ok {
+		return nil, errScheduleStoreNotPostgres
 	}
 
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
+	return pgScheds.Pool(), nil
+}
+
+// webhookBackends opens the webhook registration store beside scheds. Postgres
+// borrows scheds' pool and has nothing of its own to close; sqlite opens the
+// shared database file, and ownedCloser releases that handle.
+func webhookBackends(scheds scheduleStore) storeBackends[webhook.Store] {
+	return storeBackends[webhook.Store]{
+		postgres: func(ctx context.Context, _ string) (webhook.Store, error) {
+			pool, err := schedulePool(scheds)
+			if err != nil {
+				return nil, fmt.Errorf("open webhook store: %w", err)
+			}
+
+			hooks, err := webhook.NewPostgresWebhooks(ctx, pool)
+			if err != nil {
+				return nil, fmt.Errorf("open webhook store: %w", err)
+			}
+
+			return hooks, nil
+		},
+		sqlite: func(path string) (webhook.Store, error) {
+			hooks, err := webhook.OpenSQLiteWebhooks(path)
+			if err != nil {
+				return nil, fmt.Errorf("open webhook store: %w", err)
+			}
+
+			return hooks, nil
+		},
+	}
+}
+
+// newCoordinator builds the advisory-lock coordinator that lets exactly one node
+// own scheduling across a shared postgres database
+// (.agents/spec/14-open-decisions.md, S2). It is nil off postgres: leave
+// scheduler.Config.Coordinator unset then, and the daemon defaults to the
+// SoloCoordinator, rather than storing a typed nil there.
+func newCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
+	pgScheds, ok := scheds.(*scheduler.Postgres)
+	if !ok {
+		return nil
 	}
 
-	//nolint:contextcheck // secrets.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	secretStore, err := secrets.OpenSQLite(path, sealer)
-	if err != nil {
-		return nil, fmt.Errorf("open secrets store: %w", err)
+	return scheduler.NewPostgresCoordinator(pgScheds.Pool())
+}
+
+// hiveAdvisoryLockKey is the advisory-lock key the hive primary elects on,
+// distinct from the scheduler leader's key so the two roles elect independently
+// over the same database: a node can be the scheduler leader without being the
+// hive primary. Same "CRNS" high bytes as the scheduler key, +2 in the low
+// bytes so the two never collide in pg_locks.
+const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
+
+// newHiveCoordinator builds the coordinator that elects the one node running the
+// hive loop (R3 in .agents/spec/14-open-decisions.md), on the hive key over the
+// schedule store's pool. It is nil off postgres, where serve already refuses
+// the hive.
+func newHiveCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
+	pgScheds, ok := scheds.(*scheduler.Postgres)
+	if !ok {
+		return nil
 	}
 
-	return secretStore, nil
+	return scheduler.NewPostgresCoordinatorWithKey(pgScheds.Pool(), hiveAdvisoryLockKey)
+}
+
+// ownedCloser returns the Close of a store that owns its handle, and a no-op for
+// one that borrows the schedule store's pool, so callers release either the
+// same way without knowing the backend.
+func ownedCloser(opened any) func() error {
+	if closer, ok := opened.(io.Closer); ok {
+		return closer.Close
+	}
+
+	return func() error { return nil }
+}
+
+// closeCoordinator releases a coordinator's advisory lock on shutdown so another
+// node takes over promptly, logging instead of failing because the process is
+// already on its way out. ctx is detached, since the caller's is canceled by now.
+func closeCoordinator(ctx context.Context, coord *scheduler.PostgresCoordinator, logger *slog.Logger) {
+	if err := coord.Close(context.WithoutCancel(ctx)); err != nil {
+		logger.Warn("release advisory lock", "error", err)
+	}
 }
 
 // buildSecretSource resolves the engine's secret source for the configured
-// [secrets] backend. The default "env" backend returns the env source alone,
-// needing no key material. The "store" backend opens the encrypted store and
-// composes Chain(env, store), so env still wins; it warns about any store
-// secret an env var shadows, since a stale variable can mask a rotated value.
-func (a *App) buildSecretSource(ctx context.Context, dir string, cfg *config.Config) (secrets.Source, func() error, error) {
+// [secrets] backend. The default "env" backend chains the env source alone and
+// needs no key material. The "store" backend composes Chain(env, store), so env
+// still wins, and warns about any store secret an env var shadows, since a
+// stale variable can mask a rotated value.
+func (a *App) buildSecretSource(ctx context.Context, dir string, cfg *config.Config) (*secrets.ChainSource, func() error, error) {
 	if cfg.Secrets.Backend != config.SecretsBackendStore {
-		return secrets.NewEnvWith(a.envLookup()), func() error { return nil }, nil
+		return secrets.Chain(secrets.NewEnvWith(a.envLookup())), func() error { return nil }, nil
 	}
 
-	secretStore, err := openSecretsStore(ctx, dir, cfg, a.envLookup())
+	secretStore, err := secretBackends(ctx, a.envLookup()).open(ctx, dir, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -383,283 +706,6 @@ func (a *App) buildServeCredentials(ctx context.Context, cfg *config.Config, sou
 	return manager, true
 }
 
-// openVaultAt is openStoreAt for the vault subcommands.
-func (a *App) openVaultAt(ctx context.Context, label, dirFlagValue string) (vaultStore, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	vaultDB, err := openVault(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return vaultDB, ExitOK, true
-}
-
-// rulesStore is a rules.Service that also closes, so the rules subcommands hold
-// one value for both the service surface and cleanup regardless of backend.
-type rulesStore interface {
-	rules.Service
-	Close() error
-}
-
-// openRules opens the rules store on the configured backend, sharing the run
-// store's database the same way openMemory does: a disjoint language_rules
-// table in the one sqlite file, or in the one Postgres database.
-func openRules(ctx context.Context, dir string, lookup environ.Lookup) (rulesStore, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.Store.Backend == backendPostgres {
-		svc, openErr := rules.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, fmt.Errorf("open rules store: %w", openErr)
-		}
-
-		return svc, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // rules.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	svc, err := rules.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open rules store: %w", err)
-	}
-
-	return svc, nil
-}
-
-// openRulesAt is openStoreAt for the rules subcommands.
-func (a *App) openRulesAt(ctx context.Context, label, dirFlagValue string) (rulesStore, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	svc, err := openRules(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return svc, ExitOK, true
-}
-
-// scheduleStore is a Schedules that also closes, so the schedule subcommands
-// hold one value for both the daemon surface and cleanup regardless of
-// backend.
-type scheduleStore interface {
-	scheduler.Schedules
-	Close() error
-}
-
-// openSchedules opens the schedule store on the configured backend, sharing
-// the run store's database the same way openMemory does: a disjoint
-// schedules table in the one sqlite file, or in the one Postgres database.
-func openSchedules(ctx context.Context, dir string, lookup environ.Lookup) (scheduleStore, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.Store.Backend == backendPostgres {
-		scheds, openErr := scheduler.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, fmt.Errorf("open schedule store: %w", openErr)
-		}
-
-		return scheds, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // scheduler.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	scheds, err := scheduler.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open schedule store: %w", err)
-	}
-
-	return scheds, nil
-}
-
-// openWebhooks opens the webhook registration store. Sqlite shares the run
-// store's file through a disjoint webhook_registrations table, and the closer
-// releases that handle. Postgres puts the table in the run store's database,
-// through a schedule store opened only for its pool: PostgresWebhooks borrows
-// that pool and its own Close is a no-op, so the closer closes the schedule
-// store.
-func openWebhooks(ctx context.Context, dir string, lookup environ.Lookup) (webhook.Store, func() error, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.Store.Backend == backendPostgres {
-		scheds, openErr := scheduler.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, nil, fmt.Errorf("open webhook store: %w", openErr)
-		}
-
-		hooks, hookErr := webhook.NewPostgresWebhooks(ctx, scheds.Pool())
-		if hookErr != nil {
-			return nil, nil, fmt.Errorf("open webhook store: %w", errors.Join(hookErr, scheds.Close()))
-		}
-
-		return hooks, scheds.Close, nil
-	}
-
-	//nolint:contextcheck // openSQLiteWebhooks does schema setup, process-lifetime initialization with no request ctx to inherit
-	return openSQLiteWebhooks(dir, &cfg)
-}
-
-// openSQLiteWebhooks opens the sqlite registration store sharing the run store's
-// database file through a disjoint table, the branch both webhook-store openers
-// share. The returned closer releases the file handle. It carries no ctx: schema
-// setup is process-lifetime initialization, not request work.
-func openSQLiteWebhooks(dir string, cfg *config.Config) (webhook.Store, func() error, error) {
-	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, nil, err
-	}
-
-	hooks, err := webhook.OpenSQLiteWebhooks(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open webhook store: %w", err)
-	}
-
-	return hooks, hooks.Close, nil
-}
-
-// openWebhooksAt is openStoreAt for the webhook subcommands. It hands back the
-// registration store and the closer that releases the backend's handle (the
-// pool on postgres, the file on sqlite), so the caller defers one close.
-func (a *App) openWebhooksAt(ctx context.Context, label, dirFlagValue string) (webhook.Store, func() error, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, nil, ExitFailure, false
-	}
-
-	hooks, closeHooks, err := openWebhooks(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, nil, ExitFailure, false
-	}
-
-	return hooks, closeHooks, ExitOK, true
-}
-
-// newCoordinator picks the scheduler coordinator for the configured backend:
-// SoloCoordinator for sqlite, and the advisory-lock PostgresCoordinator for
-// postgres so exactly one node owns scheduling across a shared database
-// (.agents/spec/14-open-decisions.md, S2). The postgres coordinator borrows the
-// schedule store's pool, so the lock lives on the same database, and closer
-// releases it on shutdown (nil for sqlite).
-func newCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.Context)) {
-	pgScheds, ok := scheds.(*scheduler.Postgres)
-	if !ok {
-		return scheduler.SoloCoordinator{}, nil
-	}
-
-	coord := scheduler.NewPostgresCoordinator(pgScheds.Pool())
-
-	return coord, func(ctx context.Context) {
-		_ = coord.Close(ctx)
-	}
-}
-
-// hiveAdvisoryLockKey is the advisory-lock key the hive primary elects on,
-// distinct from the scheduler leader's key so the two roles elect independently
-// over the same database: a node can be the scheduler leader without being the
-// hive primary. Same "CRNS" high bytes as the scheduler key, +2 in the low
-// bytes so the two never collide in pg_locks.
-const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
-
-// newHiveCoordinator picks the hive primary-election coordinator: the advisory-
-// lock PostgresCoordinator on the hive key for postgres, so exactly one node in
-// the cluster runs the hive loop (R3 in .agents/spec/14-open-decisions.md). It
-// borrows the schedule store's pool. A non-postgres schedule store yields no
-// coordinator; serve already refuses the hive off postgres, so that path stays
-// unused.
-func newHiveCoordinator(scheds scheduleStore) (scheduler.Coordinator, func(context.Context)) {
-	pgScheds, ok := scheds.(*scheduler.Postgres)
-	if !ok {
-		return nil, nil
-	}
-
-	coord := scheduler.NewPostgresCoordinatorWithKey(pgScheds.Pool(), hiveAdvisoryLockKey)
-
-	return coord, func(ctx context.Context) {
-		_ = coord.Close(ctx)
-	}
-}
-
-// openStoreAt resolves the home from a --dir value and opens the run store,
-// reporting failures on stderr; the shared spine of the store-backed
-// subcommands. The ctx check keeps an already-canceled invocation from
-// opening a database it will never use, and bounds the postgres connect.
-func (a *App) openStoreAt(ctx context.Context, label, dirFlagValue string) (store.Store, config.Config, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, config.Config{}, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, config.Config{}, ExitFailure, false
-	}
-
-	db, cfg, err := openStore(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, cfg, ExitFailure, false
-	}
-
-	return db, cfg, ExitOK, true
-}
-
 // loadConfigAt resolves the home from a --dir value and loads the config,
 // reporting failures on stderr. It is the config-only spine of subcommands
 // that read settings without opening a store (hive status).
@@ -681,189 +727,6 @@ func (a *App) loadConfigAt(dirFlagValue, label string) (config.Config, int, bool
 	return cfg, ExitOK, true
 }
 
-// openMemoryAt is openStoreAt for the memory subcommands.
-func (a *App) openMemoryAt(ctx context.Context, label, dirFlagValue string) (memoryStore, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	mem, err := openMemory(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return mem, ExitOK, true
-}
-
-// authStore is an auth.Store that also closes, so the keys and auth
-// subcommands hold one value for both the authenticator surface and cleanup
-// regardless of backend.
-type authStore interface {
-	auth.Store
-	Close() error
-}
-
-// openAuth opens the auth store (keys and the revocation denylist) on the
-// configured backend, sharing the run store's database the same way
-// openMemory does: disjoint auth tables in the one sqlite file, or in the one
-// Postgres database.
-func openAuth(ctx context.Context, dir string, lookup environ.Lookup) (authStore, config.Config, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, cfg, fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.Store.Backend == backendPostgres {
-		keyStore, openErr := auth.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, cfg, fmt.Errorf("open auth store: %w", openErr)
-		}
-
-		return keyStore, cfg, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, cfg, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // auth.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	keyStore, err := auth.OpenSQLite(path)
-	if err != nil {
-		return nil, cfg, fmt.Errorf("open auth store: %w", err)
-	}
-
-	return keyStore, cfg, nil
-}
-
-// tenancyStore is a tenancy.Store that also closes, so the workspace
-// subcommands hold one value for both the store surface and cleanup
-// regardless of backend.
-type tenancyStore interface {
-	tenancy.Store
-	Close() error
-}
-
-// openTenancy opens the tenancy store (workspaces and members) on the
-// configured backend, sharing the run store's database the same way openAuth
-// does: disjoint tenancy tables in the one sqlite file, or in the one Postgres
-// database. Opening seeds the default workspace.
-func openTenancy(ctx context.Context, dir string, lookup environ.Lookup) (tenancyStore, error) {
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), lookup)
-	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
-	}
-
-	if cfg.Store.Backend == backendPostgres {
-		tenants, openErr := tenancy.OpenPostgres(ctx, cfg.Store.DSN)
-		if openErr != nil {
-			return nil, fmt.Errorf("open tenancy store: %w", openErr)
-		}
-
-		return tenants, nil
-	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if ensureDataDirErr := ensureDataDir(path); ensureDataDirErr != nil {
-		return nil, ensureDataDirErr
-	}
-
-	//nolint:contextcheck // tenancy.OpenSQLite carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	tenants, err := tenancy.OpenSQLite(path)
-	if err != nil {
-		return nil, fmt.Errorf("open tenancy store: %w", err)
-	}
-
-	return tenants, nil
-}
-
-// openTenancyAt is openStoreAt for the workspace subcommands.
-func (a *App) openTenancyAt(ctx context.Context, label, dirFlagValue string) (tenancyStore, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	tenants, err := openTenancy(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return tenants, ExitOK, true
-}
-
-// openAuthAt is openStoreAt for the keys and auth subcommands; the config
-// rides along because revocation windows come from auth.access_token_ttl.
-func (a *App) openAuthAt(ctx context.Context, label, dirFlagValue string) (authStore, config.Config, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, config.Config{}, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, config.Config{}, ExitFailure, false
-	}
-
-	keyStore, cfg, err := openAuth(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, cfg, ExitFailure, false
-	}
-
-	return keyStore, cfg, ExitOK, true
-}
-
-// openSchedulesAt is openStoreAt for the schedule subcommands.
-func (a *App) openSchedulesAt(ctx context.Context, label, dirFlagValue string) (scheduleStore, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	scheds, err := openSchedules(ctx, dir, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return scheds, ExitOK, true
-}
-
 // closeStore releases a database, logging instead of failing: by the time
 // Close runs the command's outcome is already decided.
 func (a *App) closeStore(closer io.Closer) {
@@ -872,13 +735,12 @@ func (a *App) closeStore(closer io.Closer) {
 	}
 }
 
-// closeSecretSource runs a secret source's closer, logging instead of failing.
-// It exists so a build-failure cleanup path can release the source as a plain
-// statement alongside closeTelemetry and closeRegistry, rather than a bare
-// error-discarding assignment.
-func (a *App) closeSecretSource(closeSource func() error) {
-	if err := closeSource(); err != nil {
-		a.logger.Warn("close secret source", "error", err)
+// runCloser runs a closer handed back by an opener, logging instead of failing
+// like closeStore, so a defer or a build-failure cleanup path releases it as a
+// plain statement. what names the resource in the log line.
+func (a *App) runCloser(what string, closeFn func() error) {
+	if err := closeFn(); err != nil {
+		a.logger.Warn("close "+what, "error", err)
 	}
 }
 
@@ -992,7 +854,7 @@ func newRegistry(
 // is the static-file-only runner the examples have always used.
 func languageRulesFactory(rulesSvc rules.Service) runner.Factory {
 	if rulesSvc == nil {
-		return builtins.LanguageRulesFactory
+		return builtins.LanguageRulesFactory()
 	}
 
 	return builtins.LanguageRulesServiceFactory(newRulesLookup(rulesSvc))
@@ -1021,18 +883,18 @@ func fixedBuiltins(
 	sourceObs builtins.SourceObserver,
 ) []builtinRunner {
 	return []builtinRunner{
-		{name: builtins.MockName, factory: builtins.MockFactory},
+		{name: builtins.MockName, factory: builtins.MockFactory()},
 		{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{})},
 		{name: builtins.EmailName, factory: builtins.EmailFactory(env)},
-		{name: builtins.WebhookName, factory: builtins.WebhookFactory},
+		{name: builtins.WebhookName, factory: builtins.WebhookFactory()},
 		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
-		{name: builtins.CodeName, factory: builtins.CodeFactory},
+		{name: builtins.CodeName, factory: builtins.CodeFactory()},
 		{name: builtins.LanguageRulesName, factory: languageRulesFactory(rulesSvc)},
 		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory(env)},
 		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory(env)},
 		{name: builtins.GitHubName, factory: builtins.GitHubFactory(env)},
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
-		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory},
+		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory()},
 		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ())},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender, msgThreads)},
 		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
@@ -1080,14 +942,11 @@ type configuredRunnerDeps struct {
 }
 
 // registerConfiguredRunners registers a runner for every [runner.<name>] block
-// whose type selects a registration path: "plugin" for an out-of-process
-// runner, "mcp_client" for a per-name MCP client, "openai" or "anthropic" for a
-// chat-completions runner under its own name, and any builtins.CLIDefaults name
-// for another command-line tool, such as a wrapper script, launched from that
-// runner's defaults. Blocks with no type, or another value, stay plain config
-// for the built-in of that name, and stop startup when no built-in has that
-// name, because no runner would ever read them. That check relies on every
-// built-in being registered before this runs.
+// whose type selects one: "plugin", "mcp_client", "openai", "anthropic", or a
+// builtins.CLIDefaults name, which launches another command-line tool, such as
+// a wrapper script, from that runner's defaults. Any other block configures the
+// same-named built-in, or stops startup when none exists. That check needs
+// every built-in registered first.
 func registerConfiguredRunners(
 	ctx context.Context,
 	registry *runner.Registry,
@@ -1150,11 +1009,10 @@ func configuredRunnerTypes() []string {
 }
 
 // configuredRunnerFactory returns the factory a block's type selects, or nil
-// when the type selects nothing: a block named after its own non-plugin type,
-// an empty type, or a value no branch knows. Such a block configures the
-// built-in of the same name, or stops startup when there is none. A CLI type
-// hands the child the same host table and environment the built-in CLI runners
-// get, so a wrapper declared in config sees what its parent tool would.
+// for a block named after its own non-plugin type, an empty type, or an
+// unknown value; such a block configures the same-named built-in. A CLI type
+// gets the host table and environment the built-in CLI runners get, so a
+// wrapper in config sees what its parent tool would.
 func configuredRunnerFactory(ctx context.Context, kind, name string, deps configuredRunnerDeps) runner.Factory {
 	if kind == pluginRunnerType {
 		return plugin.Factory(ctx, name, deps.env)

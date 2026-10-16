@@ -42,7 +42,7 @@ func (a *App) cmdRules(ctx context.Context, args []string) int {
 	}
 
 	switch args[0] {
-	case "set":
+	case subcmdSet:
 		return a.cmdRulesSet(ctx, args[1:])
 	case subcmdGet:
 		return a.cmdRulesGet(ctx, args[1:])
@@ -77,7 +77,7 @@ func (a *App) cmdRulesSet(ctx context.Context, args []string) int {
 
 	rule.Description = *descFlag
 
-	svc, code, proceed := a.openRulesAt(ctx, "rules set", *dirFlag)
+	svc, _, code, proceed := openAt(ctx, a, "rules set", *dirFlag, rulesBackends())
 	if !proceed {
 		return code
 	}
@@ -135,7 +135,7 @@ func (a *App) cmdRulesGet(ctx context.Context, args []string) int {
 		project = positionals[1]
 	}
 
-	svc, code, proceed := a.openRulesAt(ctx, "rules get", *dirFlag)
+	svc, _, code, proceed := openAt(ctx, a, "rules get", *dirFlag, rulesBackends())
 	if !proceed {
 		return code
 	}
@@ -178,7 +178,7 @@ func (a *App) cmdRulesImport(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	svc, code, proceed := a.openRulesAt(ctx, "rules import", *dirFlag)
+	svc, _, code, proceed := openAt(ctx, a, "rules import", *dirFlag, rulesBackends())
 	if !proceed {
 		return code
 	}

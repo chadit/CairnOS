@@ -32,33 +32,16 @@ const (
 
 // TestMain points git at an empty global and system config for the whole
 // package, so a developer's own gpg signing, commit template, or default branch
-// cannot change what these fixtures build.
+// cannot change what these fixtures build. The null device reads as an empty
+// file, so no temp config is left behind when os.Exit skips deferred calls.
 func TestMain(m *testing.M) {
-	os.Exit(runWithEmptyGitConfig(m))
-}
-
-// runWithEmptyGitConfig wraps m.Run so the temp config directory is removed
-// before os.Exit skips every deferred call.
-func runWithEmptyGitConfig(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "cairnos-source-gitconfig")
-	if err != nil {
-		panic("create git config dir: " + err.Error())
-	}
-
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	empty := filepath.Join(dir, "gitconfig")
-	if writeErr := os.WriteFile(empty, nil, fixtureFilePerm); writeErr != nil {
-		panic("write empty git config: " + writeErr.Error())
-	}
-
 	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
-		if setErr := os.Setenv(key, empty); setErr != nil {
-			panic("set " + key + ": " + setErr.Error())
+		if err := os.Setenv(key, os.DevNull); err != nil {
+			panic("set " + key + ": " + err.Error())
 		}
 	}
 
-	return m.Run()
+	os.Exit(m.Run())
 }
 
 // origin is a bare repository plus the work tree the fixtures commit through.
@@ -181,7 +164,7 @@ func (f failingGit) git(ctx context.Context, dir string, argv ...string) (string
 		}
 	}
 
-	return source.GitCommand(ctx, dir, argv...) //nolint:wrapcheck // pass-through fixture
+	return source.GitCommand(ctx, dir, argv...)
 }
 
 // setInsteadOf records a url rewrite in one checkout's own config. git merges

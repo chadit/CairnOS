@@ -69,7 +69,7 @@ func (v *VaultQuery) Execute(ctx context.Context, task *runner.Task) (runner.Res
 	return runner.Result{
 		Output: map[string]any{
 			paramVaultDocs: renderVaultDocs(result.Documents),
-			"fallback":     result.Fallback,
+			keyFallback:    result.Fallback,
 		},
 		Usage: runner.Usage{Latency: time.Since(start)},
 	}, nil

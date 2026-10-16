@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
@@ -43,20 +44,16 @@ type SQLite struct {
 }
 
 // OpenSQLite opens (creating if needed) the secret database at path, applies the
-// schema, and wraps it in sealer. The same pragma choices as the vault and run
-// stores: WAL so readers do not block the writer, busy_timeout so concurrent
-// writers wait instead of failing with SQLITE_BUSY.
-func OpenSQLite(path string, sealer *Sealer) (*SQLite, error) {
+// schema under ctx, and wraps it in sealer. The same pragma choices as the vault
+// and run stores: WAL so readers do not block the writer, busy_timeout so
+// concurrent writers wait instead of failing with SQLITE_BUSY.
+func OpenSQLite(ctx context.Context, path string, sealer *Sealer) (*SQLite, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open secrets database %q: %w", path, err)
 	}
 
-	// Schema creation is process-lifetime initialization with no request context
-	// to inherit; OpenSQLite carries no ctx on purpose.
-	setupCtx := context.Background()
-
-	if _, execErr := db.ExecContext(setupCtx, secretsSchema); execErr != nil {
+	if _, execErr := db.ExecContext(ctx, secretsSchema); execErr != nil {
 		return nil, fmt.Errorf("create secrets schema: %w", errors.Join(execErr, db.Close()))
 	}
 
@@ -214,7 +211,13 @@ func (s *SQLite) Rotate(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("begin secrets rotate: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		// Rollback after Commit is the happy path. Any other failure is only
+		// logged, because Rotate has already chosen its return value.
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			slog.WarnContext(ctx, "roll back secrets rotate", "error", rollbackErr)
+		}
+	}()
 
 	for idx := range pending {
 		if err := s.reseal(ctx, tx, &pending[idx]); err != nil {

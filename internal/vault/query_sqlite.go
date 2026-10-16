@@ -13,6 +13,10 @@ import (
 // since a clamp degrades gracefully where a rejection would surprise a caller.
 const maxHops = 5
 
+// emptyInList is the IN-list body for an empty value set. "x IN (NULL)" is
+// never true, so it matches no row where "IN ()" would be a syntax error.
+const emptyInList = "NULL"
+
 // Query runs the typed graph query against sqlite (S1): tag and project
 // filtering, bounded link traversal from LinkedFrom out to Hops, and FTS5
 // keyword match. A traversal, when present, produces the candidate id set the
@@ -202,7 +206,7 @@ func clampHops(hops int) int {
 // caller never builds "IN ()", which is a syntax error.
 func inClause(values []string) (string, []any) {
 	if len(values) == 0 {
-		return "NULL", nil
+		return emptyInList, nil
 	}
 
 	placeholders := make([]string, len(values))

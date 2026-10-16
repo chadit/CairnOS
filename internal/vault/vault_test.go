@@ -9,10 +9,8 @@ import (
 )
 
 // openVault opens a fresh database under t.TempDir and closes it when the case
-// finishes; every case exercises schema and index creation. It returns the
-// vault.Store interface so the shared conformance suite drives it the same way
-// it drives the postgres backend.
-func openVault(t *testing.T) vault.Store {
+// finishes; every case exercises schema and index creation.
+func openVault(t *testing.T) *vault.SQLite {
 	t.Helper()
 
 	store, err := vault.OpenSQLite(filepath.Join(t.TempDir(), "vault.db"))

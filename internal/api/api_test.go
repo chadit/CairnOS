@@ -44,6 +44,40 @@ const (
 	statusRunning   = "running"
 )
 
+// Canonical API codes asserted on the wire, spelled out so a rename in
+// production fails the tests.
+const (
+	wireInvalidArgument = "api.invalid_argument"
+	wireUnimplemented   = "api.unimplemented"
+	wireWorkflowInvalid = "workflow.invalid"
+)
+
+// Inputs the not-found and validation paths share: names, ids, and values no
+// fixture defines or accepts.
+const (
+	unknownName       = "ghost"
+	unknownID         = "missing"
+	unknownRunID      = "no-such-run"
+	unrecognizedValue = "bogus"
+)
+
+// Run fields for tests that seed a run row directly: a workflow hash no file on
+// disk produces, and the trigger a CLI start records.
+const (
+	staleWorkflowHash = "deadbeef"
+	triggerCLI        = "cli"
+)
+
+// helloRunsPath is the HTTP route that starts the hello workflow.
+const helloRunsPath = "/v1/workflows/hello/runs"
+
+// The memory entry the round-trip test stores, and the indent style both it and
+// the rules test search for or read back.
+const (
+	preferTabsMemory = "prefer tabs"
+	indentTabs       = "tabs"
+)
+
 // shutdownTimeout bounds the fixture teardown drain.
 const shutdownTimeout = 5 * time.Second
 
@@ -268,7 +302,7 @@ func testRegistry(t *testing.T) *runner.Registry {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 
@@ -482,7 +516,7 @@ func TestGetRunAndListRunsRoundTrip(t *testing.T) {
 		t.Fatalf("ListRuns = %v, want exactly the run %s", list.GetRuns(), runID)
 	}
 
-	_, err = fix.workflow.GetRun(t.Context(), &cairnosv1.GetRunRequest{RunId: "missing"})
+	_, err = fix.workflow.GetRun(t.Context(), &cairnosv1.GetRunRequest{RunId: unknownID})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("GetRun(missing) code = %v, want NotFound", status.Code(err))
 	}
@@ -551,9 +585,9 @@ func TestReplayRunRefusesHashMismatch(t *testing.T) {
 	err := fix.db.CreateRun(t.Context(), &store.Run{
 		ID:           runID,
 		WorkflowName: helloName,
-		WorkflowHash: "deadbeef",
+		WorkflowHash: staleWorkflowHash,
 		Status:       store.RunFailed,
-		Trigger:      "cli",
+		Trigger:      triggerCLI,
 		CreatedAt:    time.Now(),
 	})
 	if err != nil {
@@ -587,7 +621,7 @@ func TestRunWorkflowRejectsBadRequests(t *testing.T) {
 
 	fix := startServer(t)
 
-	badInputs, err := structpb.NewStruct(map[string]any{"bogus": 1})
+	badInputs, err := structpb.NewStruct(map[string]any{unrecognizedValue: 1})
 	if err != nil {
 		t.Fatalf("build inputs: %v", err)
 	}
@@ -599,7 +633,7 @@ func TestRunWorkflowRejectsBadRequests(t *testing.T) {
 	}{
 		{
 			name:     "unknown workflow name",
-			req:      &cairnosv1.RunWorkflowRequest{WorkflowName: "ghost"},
+			req:      &cairnosv1.RunWorkflowRequest{WorkflowName: unknownName},
 			wantCode: codes.NotFound,
 		},
 		{
@@ -667,7 +701,7 @@ depends_on = ["nowhere"]
 		{
 			name:     "not toml at all",
 			toml:     "definitely not toml {{{",
-			wantCode: "workflow.invalid",
+			wantCode: wireWorkflowInvalid,
 		},
 	}
 
@@ -753,7 +787,7 @@ func TestMemoryCRUDOverGRPC(t *testing.T) {
 	fix := startServer(t)
 
 	added, err := fix.memory.AddMemory(t.Context(), &cairnosv1.AddMemoryRequest{
-		Entry: &cairnosv1.MemoryEntry{Scope: memoryScopeGlobal, Content: "prefer tabs", Importance: 80},
+		Entry: &cairnosv1.MemoryEntry{Scope: memoryScopeGlobal, Content: preferTabsMemory, Importance: 80},
 	})
 	if err != nil {
 		t.Fatalf("AddMemory: %v", err)
@@ -764,11 +798,11 @@ func TestMemoryCRUDOverGRPC(t *testing.T) {
 		t.Fatalf("GetMemory: %v", err)
 	}
 
-	if got.GetEntry().GetContent() != "prefer tabs" {
+	if got.GetEntry().GetContent() != preferTabsMemory {
 		t.Fatalf("entry content = %q, want the added content", got.GetEntry().GetContent())
 	}
 
-	found, err := fix.memory.SearchMemory(t.Context(), &cairnosv1.SearchMemoryRequest{Scope: memoryScopeGlobal, Text: "tabs"})
+	found, err := fix.memory.SearchMemory(t.Context(), &cairnosv1.SearchMemoryRequest{Scope: memoryScopeGlobal, Text: indentTabs})
 	if err != nil {
 		t.Fatalf("SearchMemory: %v", err)
 	}

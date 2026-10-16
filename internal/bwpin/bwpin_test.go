@@ -20,11 +20,13 @@ import (
 )
 
 // The version already pinned in the fixture file, the one the fake feed is
-// newest at, and the body the fixture archive carries.
+// newest at, the body the fixture archive carries, and a newer release tag
+// from another product that the CLI tag pattern must skip.
 const (
 	pinnedVersion = "2026.8.0"
 	newerVersion  = "2026.10.0"
 	binaryBody    = "#!/bin/sh\necho 2026.10.0\n"
+	webReleaseTag = "web-v2027.1.0"
 )
 
 // entryName is the one file a release archive holds, spelled out here rather
@@ -52,7 +54,7 @@ func TestRunRewritesThePinForANewerRelease(t *testing.T) {
 	out := stagePinFile(t)
 
 	cfg := serveRelease(t, feed(
-		feedEntry{TagName: "web-v2027.1.0"},
+		feedEntry{TagName: webReleaseTag},
 		feedEntry{TagName: "cli-v" + newerVersion},
 		feedEntry{TagName: "cli-v" + pinnedVersion},
 	), archive)
@@ -180,7 +182,7 @@ func TestRunReportsAFeedWithNoCLIRelease(t *testing.T) {
 	archive, _ := buildZip(t, entryName)
 	out := stagePinFile(t)
 
-	cfg := serveRelease(t, feed(feedEntry{TagName: "web-v2027.1.0"}), archive)
+	cfg := serveRelease(t, feed(feedEntry{TagName: webReleaseTag}), archive)
 	cfg.Out = out
 
 	if err := bwpin.Run(t.Context(), cfg); !errors.Is(err, bwpin.ErrNoCLIRelease) {
@@ -219,7 +221,7 @@ func encode(value any) string {
 func serveRelease(t *testing.T, pages map[string]string, archive []byte) bwpin.Config {
 	t.Helper()
 
-	return pointAt(releaseHandler(pages, archive))
+	return pointAt(releaseHandler(t, pages, archive))
 }
 
 // serveDowngrade answers the feed normally and sends every asset request to a
@@ -234,7 +236,7 @@ func serveDowngrade(t *testing.T, pages map[string]string) bwpin.Config {
 			return
 		}
 
-		feedHandler(pages).ServeHTTP(writer, request)
+		feedHandler(t, pages).ServeHTTP(writer, request)
 	}))
 }
 
@@ -253,21 +255,27 @@ func pointAt(handler http.Handler) bwpin.Config {
 
 // releaseHandler answers the two endpoints the tool drives: the paged release
 // list, and the asset for either platform.
-func releaseHandler(pages map[string]string, archive []byte) http.Handler {
+func releaseHandler(t *testing.T, pages map[string]string, archive []byte) http.Handler {
+	t.Helper()
+
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, downloadPrefix) {
-			_, _ = writer.Write(archive)
+		if !strings.HasPrefix(request.URL.Path, downloadPrefix) {
+			feedHandler(t, pages).ServeHTTP(writer, request)
 
 			return
 		}
 
-		feedHandler(pages).ServeHTTP(writer, request)
+		if _, err := writer.Write(archive); err != nil {
+			t.Errorf("release handler: write archive: %v", err)
+		}
 	})
 }
 
 // feedHandler answers one page of the release list, and an empty body for a
 // page the case did not stage.
-func feedHandler(pages map[string]string) http.Handler {
+func feedHandler(t *testing.T, pages map[string]string) http.Handler {
+	t.Helper()
+
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, served := pages[request.URL.Query().Get("page")]
 		if !served {
@@ -275,7 +283,10 @@ func feedHandler(pages map[string]string) http.Handler {
 		}
 
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(body))
+
+		if _, err := writer.Write([]byte(body)); err != nil {
+			t.Errorf("feed handler: write page: %v", err)
+		}
 	})
 }
 
@@ -297,7 +308,6 @@ func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, er
 		t.hits.Add(1)
 	}
 
-	//nolint:wrapcheck // a test transport: the error goes straight back to the client
 	return t.inner.RoundTrip(request)
 }
 

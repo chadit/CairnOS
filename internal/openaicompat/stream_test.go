@@ -90,7 +90,7 @@ func TestStreamMultiChunkDeltas(t *testing.T) {
 		t.Errorf("chunk id = %q, want %s%s", role.ID, completionIDPrefix, defaultSessionID)
 	}
 
-	if len(role.Choices) != 1 || role.Choices[0].Delta.Role != "assistant" {
+	if len(role.Choices) != 1 || role.Choices[0].Delta.Role != roleAssistant {
 		t.Fatalf("first chunk choices = %+v, want one assistant role delta", role.Choices)
 	}
 
@@ -176,7 +176,7 @@ func TestStreamMidTurnErrorPayload(t *testing.T) {
 	}
 
 	failure := decodeError(t, []byte(frames[2]))
-	if failure.Error.Type != "server_error" || failure.Error.Code != chat.CodeDriverFailed {
+	if failure.Error.Type != typeServerError || failure.Error.Code != chat.CodeDriverFailed {
 		t.Errorf("error frame = %+v, want server_error / %s", failure.Error, chat.CodeDriverFailed)
 	}
 }
@@ -366,7 +366,7 @@ func (b *blockingAgent) SendMessage(ctx context.Context, _, _ string, out chan<-
 
 	close(b.finished)
 
-	return ctx.Err() //nolint:wrapcheck // a fake surfaces the context error verbatim
+	return ctx.Err()
 }
 
 // cancelCause reports the context error SendMessage recorded, under the lock.

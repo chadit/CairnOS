@@ -48,10 +48,15 @@ func NewWebhook(cfg map[string]any, client *http.Client) (*Webhook, error) {
 	return &Webhook{url: url, client: client}, nil
 }
 
-// WebhookFactory adapts NewWebhook to the registry contract with the shared
-// egress guard wrapping the client. allow_private_targets opts out of the IP
-// guard for operators that post to internal endpoints on purpose.
-func WebhookFactory(cfg map[string]any) (runner.Runner, error) {
+// WebhookFactory adapts guardedWebhook to the registry contract.
+func WebhookFactory() runner.Factory {
+	return asFactory(guardedWebhook)
+}
+
+// guardedWebhook builds the runner with the shared egress guard wrapping the
+// client. allow_private_targets opts out of the IP guard for operators that
+// post to internal endpoints on purpose.
+func guardedWebhook(cfg map[string]any) (*Webhook, error) {
 	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
 	if err != nil {
 		return nil, wrapConfigErr(WebhookName, err)
@@ -154,7 +159,7 @@ func (w *Webhook) Execute(ctx context.Context, task *runner.Task) (runner.Result
 // them first.
 func encodeBody(value any) ([]byte, string, error) {
 	if text, isString := value.(string); isString {
-		return []byte(text), "text/plain; charset=utf-8", nil
+		return []byte(text), contentTypeText, nil
 	}
 
 	encoded, err := json.Marshal(value)
@@ -165,7 +170,7 @@ func encodeBody(value any) ([]byte, string, error) {
 		}
 	}
 
-	return encoded, "application/json", nil
+	return encoded, contentTypeJSON, nil
 }
 
 // classifyTransport maps a failed round trip. Cancellation and deadline both

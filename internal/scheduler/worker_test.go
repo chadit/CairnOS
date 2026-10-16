@@ -222,8 +222,8 @@ func TestWorkerOnDeadLetterFiresOnlyOnDeadLetter(t *testing.T) {
 
 	select {
 	case key := <-deadLettered:
-		if key != "item-a" {
-			t.Errorf("OnDeadLetter saw dedup %q, want item-a", key)
+		if key != firstItemDedup {
+			t.Errorf("OnDeadLetter saw dedup %q, want %q", key, firstItemDedup)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for OnDeadLetter")
@@ -335,8 +335,8 @@ func TestWorkerHoldsHoldableError(t *testing.T) {
 
 	select {
 	case key := <-notified:
-		if key != "item-a" {
-			t.Errorf("OnHold saw dedup %q, want item-a", key)
+		if key != firstItemDedup {
+			t.Errorf("OnHold saw dedup %q, want %q", key, firstItemDedup)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for OnHold")
@@ -570,6 +570,9 @@ func openWorkerQueue(t *testing.T) *scheduler.SQLiteQueue {
 
 	return queue
 }
+
+// firstItemDedup is the dedup key enqueueWorkerItem gives index 0.
+const firstItemDedup = "item-a"
 
 // enqueueWorkerItem enqueues one ready item available now.
 func enqueueWorkerItem(t *testing.T, queue scheduler.WorkQueue, idx int) {

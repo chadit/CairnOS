@@ -130,7 +130,6 @@ write_defaults() {
 actions/checkout v7.1.0
 actions/setup-go v7.0.2
 golangci/golangci-lint-action v8.0.3
-securego/gosec v2.30.1
 TAGS
 
 	cat >"$DEFAULT_GRAPH" <<'GRAPH'
@@ -155,7 +154,6 @@ make_repo() {
 
 	mkdir -p -- "${repo}/scripts" "${repo}/.github/workflows" "${repo}/tests/integration" "${repo}/web"
 	cp -- "$SUBJECT" "${repo}/scripts/update-deps.sh"
-	printf 'GOSEC_VERSION := v2.29.0\n' >"${repo}/Makefile"
 	printf 'package integration\n\nconst (\n\tpgImage = "postgres:17-alpine"\n)\n' >"${repo}/tests/integration/support.go"
 	if [[ -n "$workflow" ]]; then
 		printf '%s\n' "$workflow" >"${repo}/.github/workflows/ci.yml"
@@ -202,9 +200,9 @@ assert_lacks() {
 # ─── Cases ──────────────────────────────────────────────────────────────────
 
 # case_moves_pins: a full run moves both action step shapes to the new major,
-# keeps an action whose latest release is an older major, rewrites the gosec and
-# postgres pins, moves the web lockfile's transitive packages, and holds libc
-# and go.lsp.dev where their consumers put them.
+# keeps an action whose latest release is an older major, rewrites the postgres
+# pin, moves the web lockfile's transitive packages, and holds libc and
+# go.lsp.dev where their consumers put them.
 # Returns 0 always.
 case_moves_pins() {
 	local name="moves_pins" repo
@@ -216,7 +214,6 @@ case_moves_pins() {
 	assert_contains "$name" "$workflow" "      - uses: actions/checkout@v7"
 	assert_contains "$name" "$workflow" "        uses: actions/setup-go@v7"
 	assert_contains "$name" "$workflow" "        uses: golangci/golangci-lint-action@v9"
-	assert_contains "$name" "${repo}/Makefile" "GOSEC_VERSION := v2.30.1"
 	assert_contains "$name" "${repo}/tests/integration/support.go" '"postgres:18-alpine"'
 	assert_contains "$name" "$calls" "go get -u tool"
 	assert_contains "$name" "$calls" "npm update"

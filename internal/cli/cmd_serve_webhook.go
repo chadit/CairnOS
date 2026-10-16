@@ -7,7 +7,6 @@ import (
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/config"
-	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/secrets"
 	"github.com/chadit/CairnOS/internal/telemetry"
 	"github.com/chadit/CairnOS/internal/webhook"
@@ -18,6 +17,10 @@ import (
 // banner so an operator sees where the extension mounted. The token completes it
 // per registration, so the banner shows the prefix only, never a token.
 const webhookIngressPath = "/v1/hooks/"
+
+// webhookComponent names the webhook ingress in serve logs, both as the
+// extension label and as the setup stage a failure reports.
+const webhookComponent = "webhook"
 
 // webhookDeps is what buildWebhookExtension wires the ingress handler over: the
 // schedule store it borrows a pool from on postgres, the run manager it starts
@@ -48,7 +51,7 @@ func (a *App) attachWebhookServe(ctx context.Context, cfg *config.Config, tel *t
 
 	ext, closeHooks, err := buildWebhookExtension(ctx, cfg, dir, deps)
 	if err != nil {
-		return noop, a.failServe(ctx, tel, "webhook", err), false
+		return noop, a.failServe(ctx, tel, webhookComponent, err), false
 	}
 
 	apiCfg.Extensions = append(apiCfg.Extensions, ext)
@@ -68,7 +71,7 @@ func (a *App) attachWebhookServe(ctx context.Context, cfg *config.Config, tel *t
 // mounting the two POST routes on the root mux outside the gRPC interceptor.
 // The returned closer releases the store's handle.
 func buildWebhookExtension(ctx context.Context, cfg *config.Config, dir string, deps *webhookDeps) (*api.Extension, func() error, error) {
-	hooks, closeHooks, err := openWebhooksForServe(ctx, dir, cfg, deps.scheds)
+	hooks, err := webhookBackends(deps.scheds).open(ctx, dir, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -89,27 +92,9 @@ func buildWebhookExtension(ctx context.Context, cfg *config.Config, dir string, 
 	})
 
 	return &api.Extension{
-		Name:       "webhook",
+		Name:       webhookComponent,
 		HTTPRoutes: handler.Routes(),
-	}, closeHooks, nil
-}
-
-// openWebhooksForServe opens the registration store for the serve process. On
-// postgres it borrows the already-open schedule store's pool (one pool per node),
-// so its closer is a no-op; on sqlite it opens the shared database file, and the
-// closer releases that handle.
-func openWebhooksForServe(ctx context.Context, dir string, cfg *config.Config, scheds scheduleStore) (webhook.Store, func() error, error) {
-	if pgScheds, ok := scheds.(*scheduler.Postgres); ok {
-		hooks, err := webhook.NewPostgresWebhooks(ctx, pgScheds.Pool())
-		if err != nil {
-			return nil, nil, fmt.Errorf("open webhook store: %w", err)
-		}
-
-		return hooks, func() error { return nil }, nil
-	}
-
-	//nolint:contextcheck // openSQLiteWebhooks does schema setup, process-lifetime initialization with no request ctx to inherit
-	return openSQLiteWebhooks(dir, cfg)
+	}, ownedCloser(hooks), nil
 }
 
 // webhookRunStarter adapts the run manager to webhook.RunStarter: it loads the

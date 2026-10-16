@@ -36,7 +36,7 @@ func (a *App) cmdSuggestions(ctx context.Context, args []string) int {
 		return a.cmdSuggestionsScan(ctx, args[1:])
 	case subcmdList:
 		return a.cmdSuggestionsList(ctx, args[1:])
-	case "approve":
+	case subcmdApprove:
 		return a.cmdSuggestionsApprove(ctx, args[1:])
 	case "reject":
 		return a.cmdSuggestionsReject(ctx, args[1:])
@@ -81,7 +81,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 		since = time.Now().Add(-window)
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "suggestions scan", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "suggestions scan", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -160,7 +160,7 @@ func replayComparator(
 	threshold float64,
 	runners map[string]map[string]any,
 	env environ.Lookup,
-) tuning.Comparator {
+) *tuning.EmbeddingComparator {
 	if model == "" {
 		return nil
 	}
@@ -319,7 +319,7 @@ func (a *App) cmdSuggestionsList(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "suggestions list", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "suggestions list", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -374,7 +374,7 @@ func (a *App) reviewSuggestion(ctx context.Context, label string, status store.S
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, label, *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, label, *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

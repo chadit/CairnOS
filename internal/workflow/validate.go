@@ -570,13 +570,7 @@ func (b *builder) checkActionRefs(flow *Workflow, action *Action) {
 }
 
 func collectRefTexts(action *Action) []string {
-	nested := collectValueTexts(action.Params)
-
-	texts := make([]string, 0, len(nested)+2)
-	texts = append(texts, action.Goal, action.Condition)
-	texts = append(texts, nested...)
-
-	return texts
+	return slices.Concat([]string{action.Goal, action.Condition}, collectValueTexts(action.Params))
 }
 
 // collectValueTexts gathers every string reachable inside a params- or

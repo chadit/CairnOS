@@ -39,6 +39,9 @@ const (
 	statusRunning   = "running"
 )
 
+// fixtureNode names the fixture node on its card and as its token issuer.
+const fixtureNode = "cairnos-fixture"
+
 // loopbackEphemeral asks for any free loopback port so parallel fixtures never
 // collide.
 const loopbackEphemeral = "127.0.0.1:0"
@@ -226,19 +229,26 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 		t.Fatalf("generate card key: %v", err)
 	}
 
-	var chatRigging *chatRig
+	// The handler stays an untyped nil when chat is off: a typed nil *bridge.Core
+	// would satisfy the interface and defeat the bundle's chat-disabled check.
+	var (
+		chatRigging *chatRig
+		chatHandler a2a.BridgeHandler
+	)
+
 	if opts.chatEnabled {
 		chatRigging = newChatRig(t, opts.confirmTTL)
+		chatHandler = chatRigging.core
 	}
 
 	bundle, err := a2a.NewBundle(&a2a.BundleConfig{
-		NodeName:   "cairnos-fixture",
+		NodeName:   fixtureNode,
 		Version:    "0.0.1",
 		Endpoint:   "grpc://127.0.0.1:7777",
 		LoginURL:   "http://127.0.0.1:8080/v1/login",
 		SigningKey: cardPriv,
 		Channels:   fixtureChannels(),
-		Bridge:     chatBridge(chatRigging),
+		Bridge:     chatHandler,
 		Manager:    manager,
 		Resolver:   api.NewWorkflowResolver(workflowsDir, logger),
 		Store:      db,
@@ -298,18 +308,6 @@ func startFixture(t *testing.T, opts fixtureOptions) *fixture {
 	}
 }
 
-// chatBridge hands the bundle the rig's core, or a nil handler when the fixture
-// runs with chat off. A typed nil *bridge.Core would satisfy the interface and
-// defeat the nil check the disabled path relies on, so the untyped nil is the
-// point of this helper.
-func chatBridge(rig *chatRig) a2a.BridgeHandler {
-	if rig == nil {
-		return nil
-	}
-
-	return rig.core
-}
-
 // wireFixtureAuth opens the auth store and attaches an authenticator when the
 // fixture asks for token enforcement, returning the store (nil when auth is
 // off) so tests can seed keys.
@@ -339,7 +337,7 @@ func wireFixtureAuth(t *testing.T, opts fixtureOptions, dbPath string, apiCfg *a
 	}
 
 	apiCfg.Auth = auth.New(authStore, material, auth.Config{
-		Issuer:     "cairnos-fixture",
+		Issuer:     fixtureNode,
 		Audience:   "cairnos",
 		TTL:        time.Hour,
 		RequireExp: true,
@@ -403,7 +401,7 @@ func testRegistry(t *testing.T) *runner.Registry {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 

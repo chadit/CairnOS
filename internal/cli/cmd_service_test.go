@@ -9,7 +9,11 @@ import (
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
-const cmdServiceName = "service"
+// The service command and the subcommand the dry-run case drives.
+const (
+	cmdServiceName = "service"
+	setupSub       = "setup"
+)
 
 func TestServiceWithoutSubcommandPrintsUsage(t *testing.T) {
 	t.Parallel()
@@ -49,7 +53,7 @@ func TestServiceSetupDryRunPrintsPlanAndWritesNothing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := cli.New(&stdout, &stderr).Run(t.Context(),
-		[]string{cmdServiceName, "setup", "--dry-run", flagDirArg, dir})
+		[]string{cmdServiceName, setupSub, flagDryRunArg, flagDirArg, dir})
 
 	// Hosts without a supported supervisor (or a root test runner) refuse
 	// with a mode or support error; the dry-run contract only applies where

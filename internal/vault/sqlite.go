@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -364,9 +365,12 @@ func requireRow(result sql.Result, id string) error {
 
 // rollback ends a transaction that was not committed, ignoring the
 // already-committed error so the deferred call is a clean no-op on the happy
-// path.
+// path. Any other failure is logged: the deferring caller has already chosen
+// its return value.
 func rollback(tx *sql.Tx) {
-	_ = tx.Rollback()
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		slog.Warn("roll back vault transaction", "error", err)
+	}
 }
 
 // dedupeLinks removes duplicate and self-referential link targets, so a

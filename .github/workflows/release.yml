@@ -12,8 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # Publishing goes through gh with GH_TOKEN, so the checkout keeps no
+      # token in .git/config where the build steps could read it.
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           # cmd/go stamps the commit it built from into every binary, and
           # `cairnos update` refuses an asset whose stamp is missing or does not
           # match the tag. A shallow clone leaves it unstamped.
@@ -23,6 +26,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # A tag build that publishes binaries must not restore a cache another
+          # run could have poisoned.
+          cache: false
       # No `buf generate` here on purpose. internal/api/gen is committed, so the
       # build has everything it needs, and regenerating would risk leaving the
       # tree dirty, which stamps every asset "+dirty" and makes the update

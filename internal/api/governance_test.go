@@ -100,8 +100,9 @@ func TestGovernancePauseResumeRoundTrip(t *testing.T) {
 		t.Fatal("resume response did not report resumed")
 	}
 
-	if _, paused, _ := fix.db.GetWorkflowPause(ctx, budgetedName); paused {
-		t.Fatal("workflow still paused after resume")
+	_, paused, err = fix.db.GetWorkflowPause(ctx, budgetedName)
+	if err != nil || paused {
+		t.Fatalf("store pause = %v err = %v, want resumed", paused, err)
 	}
 
 	// Both control actions wrote audit rows.
@@ -157,7 +158,7 @@ func TestGovernanceBudgetStateNoBudget(t *testing.T) {
 	fix := startServer(t)
 
 	// hello.toml declares no budget.
-	state, err := fix.governance.GetWorkflowBudgetState(t.Context(), &cairnosv1.GetWorkflowBudgetStateRequest{WorkflowName: "hello"})
+	state, err := fix.governance.GetWorkflowBudgetState(t.Context(), &cairnosv1.GetWorkflowBudgetStateRequest{WorkflowName: helloName})
 	if err != nil {
 		t.Fatalf("budget state: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestGovernanceTerminateUnknownRun(t *testing.T) {
 
 	fix := startServer(t)
 
-	_, err := fix.governance.TerminateRun(t.Context(), &cairnosv1.TerminateRunRequest{RunId: "no-such-run"})
+	_, err := fix.governance.TerminateRun(t.Context(), &cairnosv1.TerminateRunRequest{RunId: unknownRunID})
 	if err == nil {
 		t.Fatal("terminate of unknown run succeeded, want FAILED_PRECONDITION")
 	}

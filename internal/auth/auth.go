@@ -49,9 +49,9 @@ type TokenLedger interface {
 	MaxIssuedExp(ctx context.Context, sub string) (time.Time, bool, error)
 }
 
-// Denylist is the revocation half: deny by token id or by key, check on every
-// verify, and prune expired rows.
-type Denylist interface {
+// DenyRecorder writes revocations: deny one token id, deny a key's tokens
+// minted up to an instant, or lift a key's denial on re-enable.
+type DenyRecorder interface {
 	// DenyToken denylists one token id until the given time.
 	DenyToken(ctx context.Context, jti string, until time.Time) error
 
@@ -64,7 +64,11 @@ type Denylist interface {
 	// RemoveKeyDenials deletes one key's deny-by-sub rows, the re-enable
 	// counterpart of DenyKeySince.
 	RemoveKeyDenials(ctx context.Context, keyID string) error
+}
 
+// DenyChecker answers the per-verify revocation question and prunes the rows
+// that can no longer deny anything.
+type DenyChecker interface {
 	// IsDenied reports whether the token is denylisted at the given instant:
 	// a live jti row denies outright, and a live sub row denies only when
 	// the token's iat is at or before the recorded revoked-at instant (M3).
@@ -73,6 +77,13 @@ type Denylist interface {
 	// PruneDenylist deletes denylist and issued-token rows whose expiry has
 	// passed and reports how many went.
 	PruneDenylist(ctx context.Context, now time.Time) (int, error)
+}
+
+// Denylist is the revocation half: deny by token id or by key, check on every
+// verify, and prune expired rows.
+type Denylist interface {
+	DenyRecorder
+	DenyChecker
 }
 
 // Store is the full persistence the authenticator and the CLI key commands

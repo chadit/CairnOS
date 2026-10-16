@@ -36,6 +36,8 @@ const (
 	statusOK     = "ok"
 	statusError  = "error"
 	sampleJSON   = `{"x":1}`
+	runSucceeded = "succeeded"
+	deliveryID   = "d1"
 
 	hdrGitHubSig      = "X-Hub-Signature-256"
 	hdrGitHubDelivery = "X-Github-Delivery"
@@ -101,8 +103,9 @@ type storeEntry struct {
 	endpoint webhook.Endpoint
 }
 
-// fakeStore answers GetByTokenHash from an in-memory hash map; the other Store
-// methods are unused by the ingress handler and satisfy the interface as no-ops.
+// fakeStore answers GetByTokenHash from an in-memory hash map; the other
+// RegistrationReader methods are unused by the ingress handler and satisfy the
+// interface as no-ops.
 type fakeStore struct {
 	byHash map[string]storeEntry
 }
@@ -120,21 +123,11 @@ func (s *fakeStore) GetByTokenHash(_ context.Context, hash string) (*webhook.Reg
 	return entry.reg, entry.endpoint, nil
 }
 
-func (*fakeStore) Add(context.Context, *webhook.Registration) error { return nil }
-
 func (*fakeStore) GetByWorkflow(context.Context, string) (*webhook.Registration, error) {
 	return nil, webhook.ErrNotFound
 }
 
 func (*fakeStore) List(context.Context) ([]*webhook.Registration, error) { return nil, nil }
-
-func (*fakeStore) UpdateTokenHash(context.Context, string, webhook.Endpoint, string) error {
-	return nil
-}
-
-func (*fakeStore) Remove(context.Context, string) error { return nil }
-
-func (*fakeStore) Close() error { return nil }
 
 func (s *fakeStore) putHash(hash string, reg *webhook.Registration, endpoint webhook.Endpoint) {
 	s.byHash[hash] = storeEntry{reg: reg, endpoint: endpoint}
@@ -262,7 +255,7 @@ func newRig(t *testing.T, mutate func(*webhook.HandlerConfig)) *testRig {
 	backing := newFakeStore()
 	runs := &fakeRunStarter{
 		runID:  defaultRunID,
-		result: webhook.RunResult{Run: fakeRun{ID: defaultRunID, Status: "succeeded"}},
+		result: webhook.RunResult{Run: fakeRun{ID: defaultRunID, Status: runSucceeded}},
 	}
 	pauses := &fakePauseChecker{}
 	resolver := &fakeSecrets{secret: secretValue}
@@ -522,11 +515,14 @@ func TestNonPostMethodStartsNoRun(t *testing.T) {
 }
 
 // TestBodyTooLargeReturns413 proves the handler caps its own body even though
-// extension routes bypass the gateway's limitBody wrapper.
+// extension routes bypass the gateway's limitBody wrapper, and that the 413
+// tells the sender the cap it exceeded.
 func TestBodyTooLargeReturns413(t *testing.T) {
 	t.Parallel()
 
-	env := newRig(t, func(cfg *webhook.HandlerConfig) { cfg.MaxBodyBytes = 16 })
+	const maxBody = 16
+
+	env := newRig(t, func(cfg *webhook.HandlerConfig) { cfg.MaxBodyBytes = maxBody })
 	prodToken, _ := register(t, env, nil)
 
 	rec := env.post(t, prodPrefix+prodToken, bytes.Repeat([]byte("a"), 128), nil)
@@ -535,8 +531,14 @@ func TestBodyTooLargeReturns413(t *testing.T) {
 		t.Fatalf("status = %d, want 413", rec.Code)
 	}
 
-	if got := decodeErr(t, rec).Error.Code; got != webhook.CodeBodyTooLarge {
-		t.Errorf("code = %q, want %q", got, webhook.CodeBodyTooLarge)
+	body := decodeErr(t, rec)
+	if body.Error.Code != webhook.CodeBodyTooLarge {
+		t.Errorf("code = %q, want %q", body.Error.Code, webhook.CodeBodyTooLarge)
+	}
+
+	// JSON numbers decode into map[string]any as float64.
+	if got := body.Error.Details["limit_bytes"]; got != float64(maxBody) {
+		t.Errorf("details.limit_bytes = %v, want %d", got, maxBody)
 	}
 }
 
@@ -732,7 +734,7 @@ func TestTestEndpointTimesOutTo202(t *testing.T) {
 	}
 
 	// Unblock the background drain so it does not linger.
-	env.runs.deliver(webhook.RunResult{Run: fakeRun{ID: defaultRunID, Status: "succeeded"}})
+	env.runs.deliver(webhook.RunResult{Run: fakeRun{ID: defaultRunID, Status: runSucceeded}})
 }
 
 // TestSecretUnavailableReturns503 proves an unresolvable HMAC secret ref fails
@@ -747,7 +749,7 @@ func TestSecretUnavailableReturns503(t *testing.T) {
 	body := []byte(sampleJSON)
 	headers := map[string]string{
 		hdrGitHubSig:      githubSignature(body),
-		hdrGitHubDelivery: "d1",
+		hdrGitHubDelivery: deliveryID,
 	}
 
 	rec := env.post(t, prodPrefix+prodToken, body, headers)
@@ -847,7 +849,7 @@ func TestHandlerNeverLogsTokenOrPath(t *testing.T) {
 		env.secrets.err = secrets.ErrNotFound
 		path := prodPrefix + prodToken
 		body := []byte(sampleJSON)
-		headers := map[string]string{hdrGitHubSig: githubSignature(body), hdrGitHubDelivery: "d1"}
+		headers := map[string]string{hdrGitHubSig: githubSignature(body), hdrGitHubDelivery: deliveryID}
 
 		rec := env.post(t, path, body, headers)
 		if rec.Code != http.StatusServiceUnavailable {

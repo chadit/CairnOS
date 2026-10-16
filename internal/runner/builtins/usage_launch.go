@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -271,13 +272,17 @@ func (c *usageChild) send(lines []string, closeAfter bool) error {
 }
 
 // close ends the exchange. stdin goes first, because both CLIs shut down on
-// EOF, and the context cancel then signals anything still running.
+// EOF, and the context cancel then signals anything still running. The answer
+// is already in hand by then, and a child the cancel killed always reports an
+// error from Wait, so that error is logged at debug and nothing more.
 func (c *usageChild) close(cancel context.CancelFunc) {
 	_ = c.stdin.Close()
 
 	cancel()
 
-	_ = c.cmd.Wait()
+	if err := c.cmd.Wait(); err != nil {
+		slog.Debug("reap usage launcher", "path", c.cmd.Path, "error", err)
+	}
 }
 
 // explain turns a failed exchange into the message the report carries. cause is

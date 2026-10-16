@@ -22,6 +22,11 @@ const (
 	queryKey     = "query"
 	scopeKey     = "scope"
 	opSearch     = "search"
+	opAdd        = "add"
+	opLoad       = "load"
+
+	// addedEntryID is the id the fake store assigns every added note.
+	addedEntryID = "mem-1"
 )
 
 var errMemoryDown = errors.New("memory store down")
@@ -50,7 +55,7 @@ func (f *fakeMemoryStore) Add(_ context.Context, entry *memory.Entry) (string, e
 
 	f.added = append(f.added, *entry)
 
-	return "mem-1", nil
+	return addedEntryID, nil
 }
 
 // Get implements memory.Store; the tool never calls it.
@@ -144,7 +149,7 @@ func TestMemoryToolAddBuildsEntry(t *testing.T) {
 	tool := builtins.NewMemoryTool(mem)
 
 	result, err := tool.Execute(t.Context(), memoryTask(map[string]any{
-		opKey:        "add",
+		opKey:        opAdd,
 		"content":    noteContent,
 		scopeKey:     scopeProject,
 		"importance": float64(70),
@@ -169,7 +174,7 @@ func TestMemoryToolAddBuildsEntry(t *testing.T) {
 	}
 
 	output, _ := result.Output.(map[string]any)
-	if output["id"] != "mem-1" {
+	if output["id"] != addedEntryID {
 		t.Fatalf("output = %#v, want the new entry id", result.Output)
 	}
 }
@@ -181,7 +186,7 @@ func TestMemoryToolLoadUsesScopeAndBudget(t *testing.T) {
 	tool := builtins.NewMemoryTool(mem)
 
 	result, err := tool.Execute(t.Context(), memoryTask(map[string]any{
-		opKey: "load", scopeKey: scopeProject,
+		opKey: opLoad, scopeKey: scopeProject,
 	}))
 	if err != nil {
 		t.Fatalf("execute load: %v", err)
@@ -208,10 +213,10 @@ func TestMemoryToolValidateRejectsBadParams(t *testing.T) {
 		params map[string]any
 		name   string
 	}{
-		{name: "missing op", params: map[string]any{queryKey: "x"}},
-		{name: "unknown op", params: map[string]any{opKey: "purge"}},
+		{name: caseMissingOp, params: map[string]any{queryKey: "x"}},
+		{name: caseUnknownOp, params: map[string]any{opKey: "purge"}},
 		{name: "search without query", params: map[string]any{opKey: opSearch}},
-		{name: "add without content", params: map[string]any{opKey: "add"}},
+		{name: "add without content", params: map[string]any{opKey: opAdd}},
 	}
 
 	for _, tt := range tests {
@@ -233,7 +238,7 @@ func TestMemoryToolStoreFailureClassifiesPermanent(t *testing.T) {
 
 	tool := builtins.NewMemoryTool(&fakeMemoryStore{failWith: errMemoryDown})
 
-	_, err := tool.Execute(t.Context(), memoryTask(map[string]any{opKey: "load"}))
+	_, err := tool.Execute(t.Context(), memoryTask(map[string]any{opKey: opLoad}))
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
 	if !isClassified || classified.Class != runner.ClassPermanent || !errors.Is(err, errMemoryDown) {
@@ -255,12 +260,12 @@ func TestMemoryToolDescribeOmitsScope(t *testing.T) {
 		t.Fatal("schema exposes scope; the loop injects it, drivers must not pick one")
 	}
 
-	if _, hasOp := properties["op"]; !hasOp {
+	if _, hasOp := properties[opKey]; !hasOp {
 		t.Fatalf("schema properties = %#v, want op present", properties)
 	}
 
 	required, _ := spec.InputSchema["required"].([]string)
-	if !reflect.DeepEqual(required, []string{"op"}) {
+	if !reflect.DeepEqual(required, []string{opKey}) {
 		t.Fatalf("required = %#v, want op only", spec.InputSchema["required"])
 	}
 }

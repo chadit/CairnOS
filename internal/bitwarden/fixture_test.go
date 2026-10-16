@@ -172,7 +172,7 @@ func loadFakeSettings() (fakeSettings, error) {
 func reportStatus(settings fakeSettings) int {
 	status := settings.Status
 	if status == "" {
-		status = "unlocked"
+		status = statusUnlocked
 	}
 
 	fmt.Printf("{%q:%q}\n", "status", status)
@@ -349,7 +349,7 @@ func fakeHandler(settings fakeSettings) http.Handler {
 		writer.Header().Set("Content-Type", "application/json")
 
 		if !strings.HasPrefix(request.URL.Path, "/list/object/items") {
-			_, _ = writer.Write([]byte(`{"success":true,"data":{"template":{"status":"unlocked"}}}`))
+			writeFakeBody(writer, []byte(`{"success":true,"data":{"template":{"status":"unlocked"}}}`))
 
 			return
 		}
@@ -361,8 +361,16 @@ func fakeHandler(settings fakeSettings) http.Handler {
 			return
 		}
 
-		_, _ = writer.Write(items)
+		writeFakeBody(writer, items)
 	})
+}
+
+// writeFakeBody answers one request. A failed write goes to stderr, the only
+// channel this child has, and the client sees the short answer as its error.
+func writeFakeBody(writer http.ResponseWriter, body []byte) {
+	if _, err := writer.Write(body); err != nil {
+		fmt.Fprintf(os.Stderr, fakeServeErrFormat, err)
+	}
 }
 
 // bodyKeys returns the request body's top-level key names, which is enough to
@@ -393,18 +401,22 @@ func flagValue(argv []string, name string) string {
 	return ""
 }
 
-// appendLine records one line. A write that fails is dropped, because this runs
-// in a child process with no way to report anything: the case reading the record
-// back is what notices the gap.
+// appendLine records one line. This runs in a child process, so a failure goes
+// to stderr, the only channel it has; the case reading the record back is what
+// fails on the gap.
 func appendLine(path, line string) {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fixtureFilePerm) // #nosec G304 -- a fixture path
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: open record %s: %v\n", path, err)
+
 		return
 	}
 
 	defer func() { _ = file.Close() }()
 
-	_, _ = fmt.Fprintln(file, line)
+	if _, err := fmt.Fprintln(file, line); err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: append to %s: %v\n", path, err)
+	}
 }
 
 // fakeBW is one staged fake CLI: the binary path to hand the client, plus the

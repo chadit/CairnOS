@@ -63,16 +63,13 @@ type envelopeMarshaler struct {
 
 // Marshal rewrites stream error chunks and delegates everything else.
 func (m *envelopeMarshaler) Marshal(value any) ([]byte, error) {
-	chunk, isChunk := value.(map[string]proto.Message)
-	if isChunk {
-		if statusProto, isStatus := chunk["error"].(*statuspb.Status); isStatus {
-			body, err := json.Marshal(envelopeFor(status.FromProto(statusProto)))
-			if err != nil {
-				return nil, fmt.Errorf("marshal stream error envelope: %w", err)
-			}
-
-			return body, nil
+	if statusProto, isStreamError := streamErrorStatus(value); isStreamError {
+		body, err := json.Marshal(envelopeFor(status.FromProto(statusProto)))
+		if err != nil {
+			return nil, fmt.Errorf("marshal stream error envelope: %w", err)
 		}
+
+		return body, nil
 	}
 
 	body, err := m.JSONPb.Marshal(value)
@@ -81,6 +78,20 @@ func (m *envelopeMarshaler) Marshal(value any) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// streamErrorStatus picks the gRPC status out of the {"error": <status>} chunk
+// grpc-gateway emits for a failed stream, reporting false for any other value
+// so Marshal passes it through untouched.
+func streamErrorStatus(value any) (*statuspb.Status, bool) {
+	chunk, isChunk := value.(map[string]proto.Message)
+	if !isChunk {
+		return nil, false
+	}
+
+	statusProto, isStatus := chunk["error"].(*statuspb.Status)
+
+	return statusProto, isStatus
 }
 
 // envelopeFor renders one gRPC status as the canonical HTTP error body. The

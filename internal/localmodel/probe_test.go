@@ -23,7 +23,7 @@ func TestProbeAcceptsAnsweringServer(t *testing.T) {
 			return
 		}
 
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		writeResponse(t, w, []byte(`{"data":[]}`))
 	}))
 
 	if err := localmodel.Probe(t.Context(), server.Client(), server.URL+"/v1"); err != nil {
@@ -60,7 +60,7 @@ func TestWaitHealthyRidesOutASlowStart(t *testing.T) {
 			return
 		}
 
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		writeResponse(t, w, []byte(`{"data":[]}`))
 	}))
 
 	if err := localmodel.WaitHealthy(t.Context(), server.Client(), server.URL+"/v1", 30*time.Second); err != nil {

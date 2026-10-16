@@ -16,6 +16,10 @@ import (
 // artifactName labels the fixture artifact in progress output and errors.
 const artifactName = "weights"
 
+// unreachableOrigin is a loopback port nothing listens on, for cases that must
+// never get an answer from the network.
+const unreachableOrigin = "http://127.0.0.1:1"
+
 // TestFetchWritesVerifiedFile proves a download lands only after its digest
 // matches the pin.
 func TestFetchWritesVerifiedFile(t *testing.T) {
@@ -63,7 +67,7 @@ func TestFetchSkipsVerifiedFileWithoutDownloading(t *testing.T) {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits++
 
-		_, _ = w.Write(payload)
+		writeResponse(t, w, payload)
 	}))
 
 	art := localmodel.Artifact{Name: artifactName, URL: server.URL, SHA256: digestOf(payload)}
@@ -107,7 +111,7 @@ func TestFetchRejectsWrongDigestAndLeavesNothing(t *testing.T) {
 func TestFetchOfflineReportsMissingCache(t *testing.T) {
 	t.Parallel()
 
-	art := localmodel.Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf(nil)}
+	art := localmodel.Artifact{Name: artifactName, URL: unreachableOrigin + "/never", SHA256: digestOf(nil)}
 
 	_, err := localmodel.Fetch(t.Context(), &art, filepath.Join(t.TempDir(), "weights.gguf"), localmodel.FetchOptions{Offline: true})
 	if !errors.Is(err, localmodel.ErrOffline) {
@@ -125,7 +129,7 @@ func TestFetchOfflineReportsCorruptCache(t *testing.T) {
 		t.Fatalf("seed dest: %v", err)
 	}
 
-	art := localmodel.Artifact{Name: artifactName, URL: "http://127.0.0.1:1/never", SHA256: digestOf([]byte("expected"))}
+	art := localmodel.Artifact{Name: artifactName, URL: unreachableOrigin + "/never", SHA256: digestOf([]byte("expected"))}
 
 	_, err := localmodel.Fetch(t.Context(), &art, dest, localmodel.FetchOptions{Offline: true})
 	if !errors.Is(err, localmodel.ErrHashMismatch) {
@@ -155,7 +159,7 @@ func serveBytes(t *testing.T, payload []byte) *nettest.Fake {
 	t.Helper()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(payload)
+		writeResponse(t, w, payload)
 	}))
 
 	return server
@@ -202,5 +206,41 @@ func TestProgressReportsIntermediateSteps(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("progress is missing %s:\n%q", want, out.String())
 		}
+	}
+}
+
+// errProgressGone stands in for a progress stream that went away mid-download.
+var errProgressGone = errors.New("progress stream closed")
+
+// refusingWriter fails every write and counts the attempts.
+type refusingWriter struct {
+	attempts int
+}
+
+func (w *refusingWriter) Write([]byte) (int, error) {
+	w.attempts++
+
+	return 0, errProgressGone
+}
+
+// TestProgressStopsPrintingAfterAFailedLine proves a progress stream that
+// refuses a line never fails the download and is not written to again.
+func TestProgressStopsPrintingAfterAFailedLine(t *testing.T) {
+	t.Parallel()
+
+	const chunkBytes = 10
+
+	refusing := &refusingWriter{}
+	writer := localmodel.NewProgressWriter(refusing, artifactName, 100)
+
+	for range 10 {
+		count, err := writer.Write(make([]byte, chunkBytes))
+		if err != nil || count != chunkBytes {
+			t.Fatalf("write = %d, %v; want %d, nil", count, err, chunkBytes)
+		}
+	}
+
+	if refusing.attempts != 1 {
+		t.Errorf("progress attempted %d lines, want only the 1 that failed", refusing.attempts)
 	}
 }

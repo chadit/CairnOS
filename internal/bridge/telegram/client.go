@@ -12,8 +12,8 @@ import (
 
 const (
 	// DefaultBaseURL is the public Bot API host and the only base URL the
-	// production path uses: New passes it to NewClient whenever Config.API is
-	// nil. NewClient also takes the base URL as a parameter so the client's own
+	// production path uses: New passes it to NewClientOver whenever Config.API
+	// is nil. NewClient also takes the base URL as a parameter so the client's own
 	// tests can point at an httptest server; it is never read from config or an
 	// env var (doc.go, token-exfiltration rationale).
 	DefaultBaseURL = "https://api.telegram.org"
@@ -81,11 +81,11 @@ type apiResponse struct {
 	OK          bool            `json:"ok"`
 }
 
-// BotAPI is the Bot API surface the adapter drives. The shipped *client is the
-// only production implementation; NewClient returns it behind this interface so
-// the adapter depends on the behavior, not the concrete HTTP client. A fake
-// injects its own recorder through Config.API, which is what lets every adapter
-// suite run as an external package with no white-box access.
+// BotAPI is the Bot API surface the adapter drives. *Client is the only
+// production implementation, and the adapter holds it through this interface so
+// it depends on the behavior, not the concrete HTTP client. A fake injects its
+// own recorder through Config.API, which is what lets every adapter suite run as
+// an external package with no white-box access.
 type BotAPI interface {
 	// GetUpdates long-polls for the next batch of updates starting at offset.
 	GetUpdates(ctx context.Context, offset int64, timeoutSecs int) ([]Update, error)
@@ -98,24 +98,24 @@ type BotAPI interface {
 	AnswerCallbackQuery(ctx context.Context, callbackID, text string) error
 }
 
-// client is the Bot API client and the sole production BotAPI. token is the
+// Client is the Bot API client and the sole production BotAPI. token is the
 // credential embedded in every URL path; baseURL is DefaultBaseURL on every
 // production call and varied only by the client's own suite (doc.go). The
 // client never logs and never returns a raw transport error: every failure is
 // wrapped with the method name and a token-redacted cause.
-type client struct {
+type Client struct {
 	http    *http.Client
 	token   string
 	baseURL string
 	timeout time.Duration
 }
 
-// NewClient builds the Bot API client behind the BotAPI interface. baseURL is
-// DefaultBaseURL on every production call; it is a parameter only so the
-// client's own suite can point somewhere else (doc.go). sendTimeout bounds each
-// non-poll call via its context, while the http.Client's Timeout is the
-// long-poll ceiling that stops a hung connection.
-func NewClient(token, baseURL string, sendTimeout, pollTimeout time.Duration) BotAPI {
+// NewClient builds the Bot API client. baseURL is DefaultBaseURL on every
+// production call; it is a parameter only so the client's own suite can point
+// somewhere else (doc.go). sendTimeout bounds each non-poll call via its
+// context, while the http.Client's Timeout is the long-poll ceiling that stops a
+// hung connection.
+func NewClient(token, baseURL string, sendTimeout, pollTimeout time.Duration) *Client {
 	return NewClientOver(token, baseURL, sendTimeout, pollTimeout, nil)
 }
 
@@ -128,8 +128,8 @@ func NewClientOver(
 	token, baseURL string,
 	sendTimeout, pollTimeout time.Duration,
 	transport http.RoundTripper,
-) BotAPI {
-	return &client{
+) *Client {
+	return &Client{
 		http:    &http.Client{Timeout: pollTimeout + pollDeadlineMargin, Transport: transport},
 		token:   token,
 		baseURL: baseURL,
@@ -146,7 +146,7 @@ type getUpdatesRequest struct {
 // GetUpdates long-polls for the next batch of updates starting at offset. It
 // carries a deadline of the long-poll timeout plus a margin so a hung
 // connection cannot wedge the poll loop forever.
-func (c *client) GetUpdates(ctx context.Context, offset int64, timeoutSecs int) ([]Update, error) {
+func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSecs int) ([]Update, error) {
 	deadline := time.Duration(timeoutSecs)*time.Second + pollDeadlineMargin
 
 	ctx, cancel := context.WithTimeout(ctx, deadline)
@@ -171,7 +171,7 @@ type sendMessageRequest struct {
 
 // SendMessage posts one message and returns the sent message id so the caller
 // can later edit it (the outbound adapter edits an expired proposal in place).
-func (c *client) SendMessage(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) (int64, error) {
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -195,7 +195,7 @@ type editMessageTextRequest struct {
 
 // EditMessageText rewrites a previously sent message. The outbound adapter edits
 // an expired proposal so the operator sees it lapsed rather than a live keyboard.
-func (c *client) EditMessageText(ctx context.Context, chatID, messageID int64, text string) error {
+func (c *Client) EditMessageText(ctx context.Context, chatID, messageID int64, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -214,7 +214,7 @@ type answerCallbackQueryRequest struct {
 // AnswerCallbackQuery clears the tapped button's spinner right away, so the
 // Telegram client responds no matter how busy the target conversation's worker
 // is.
-func (c *client) AnswerCallbackQuery(ctx context.Context, callbackID, text string) error {
+func (c *Client) AnswerCallbackQuery(ctx context.Context, callbackID, text string) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -227,7 +227,7 @@ func (c *client) AnswerCallbackQuery(ctx context.Context, callbackID, text strin
 // it. The Bot API embeds the token in the URL path and net/http returns a
 // *url.Error carrying the full URL, so this runs on every returned cause and
 // every emitted log field.
-func (c *client) redact(text string) string {
+func (c *Client) redact(text string) string {
 	if c.token == "" {
 		return text
 	}
@@ -238,7 +238,7 @@ func (c *client) redact(text string) string {
 // call posts one Bot API method as JSON and decodes the result into out (a nil
 // out discards it). Every error path wraps with the method name and a
 // token-redacted cause, so a caller or a log never sees the raw URL.
-func (c *client) call(ctx context.Context, method string, body, out any) error {
+func (c *Client) call(ctx context.Context, method string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return errf(CodeTelegramAPI, "telegram %s: marshal request: %s", method, c.redact(err.Error()))
@@ -265,7 +265,7 @@ func (c *client) call(ctx context.Context, method string, body, out any) error {
 
 // decode reads one Bot API response, turning a non-200 status or an ok=false
 // envelope into a token-redacted error and unmarshaling result into out.
-func (c *client) decode(method string, resp *http.Response, out any) error {
+func (c *Client) decode(method string, resp *http.Response, out any) error {
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return errf(CodeTelegramAPI, "telegram %s: read response: %s", method, c.redact(err.Error()))

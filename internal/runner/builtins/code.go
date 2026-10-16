@@ -43,15 +43,11 @@ const (
 	defaultCodeTimeout = 10 * time.Second
 
 	// defaultCodeMaxSteps bounds Starlark computation per run in weighted
-	// steps. Since go.starlark.net v0.0.0-20261005163335 a step is no longer
-	// one bytecode instruction: the interpreter charges 10 at each loop back
-	// edge, Starlark function entry, and call return. A loop iteration
-	// therefore costs 10, plus 20 per Starlark function and 10 per builtin it
-	// calls. Measured over six loop-heavy script shapes, the weighted count
-	// averaged 1.02 times the old instruction count, so the value stayed put.
-	// Single scripts moved further: call-heavy string loops cost up to 1.5
-	// times as much and dict-building loops about 0.7 times. A starlark release
-	// that reweights steps again fails TestCodeDefaultStepBudgetBoundary.
+	// steps. Since go.starlark.net v0.0.0-20261005163335 the interpreter
+	// charges 10 per loop back edge, function entry, and call return, not one
+	// per instruction. Over six loop-heavy scripts the weighted count averaged
+	// 1.02 times the old count, so the value stayed put. A release that
+	// reweights steps again fails TestCodeDefaultStepBudgetBoundary.
 	defaultCodeMaxSteps = 500000
 
 	// maxScriptBytes caps the script text at 64 KiB, checked in both Validate
@@ -115,11 +111,15 @@ func NewCode() *Code {
 	}
 }
 
-// CodeFactory adapts the runner to the registry contract, reading the two caps
-// from the [runner.code] block. A present key of the wrong type, or a
-// non-positive max_steps, is a build error so a config typo cannot silently
-// disable a cap.
-func CodeFactory(cfg map[string]any) (runner.Runner, error) {
+// CodeFactory adapts codeFromConfig to the registry contract.
+func CodeFactory() runner.Factory {
+	return asFactory(codeFromConfig)
+}
+
+// codeFromConfig builds the runner with the two caps from the [runner.code]
+// block. A present key of the wrong type, or a non-positive max_steps, is a
+// build error so a config typo cannot silently disable a cap.
+func codeFromConfig(cfg map[string]any) (*Code, error) {
 	code := NewCode()
 
 	timeout, hasTimeout, err := configInt(cfg, cfgKeyTimeout)
@@ -285,7 +285,7 @@ func buildMeta(thread *starlark.Thread, printed *printCapture) map[string]string
 		metaSteps: strconv.FormatUint(thread.ExecutionSteps(), 10),
 	}
 
-	if text := printed.String(); text != "" {
+	if text := printed.buf.String(); text != "" {
 		meta[metaPrint] = text
 	}
 
@@ -298,11 +298,6 @@ func buildMeta(thread *starlark.Thread, printed *printCapture) map[string]string
 type printCapture struct {
 	buf       strings.Builder
 	truncated bool
-}
-
-// String returns the captured text.
-func (p *printCapture) String() string {
-	return p.buf.String()
 }
 
 // add appends one newline-terminated print message until the cap is reached.

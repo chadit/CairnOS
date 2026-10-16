@@ -93,10 +93,14 @@ func (g *GitHubIssues) Poll(ctx context.Context, params map[string]any, cursor s
 	return events, next, nil
 }
 
+// stampedParamCount sizes the merged params for the op and since keys
+// issueParams adds.
+const stampedParamCount = 2
+
 // issueParams copies the workflow's poll params and stamps the op and the since
 // cursor, leaving the caller's map untouched.
 func issueParams(params map[string]any, cursor string) map[string]any {
-	merged := make(map[string]any, len(params)+2)
+	merged := make(map[string]any, len(params)+stampedParamCount)
 	maps.Copy(merged, params)
 
 	merged[opParam] = listIssuesOp

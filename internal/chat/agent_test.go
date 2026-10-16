@@ -70,7 +70,7 @@ func newAgent(t *testing.T, driver *scriptedDriver, budget float64) (*chat.Agent
 
 // openMemory opens a memory store and seeds one entry so a memory tool call
 // returns content the next prompt can show.
-func openMemory(t *testing.T) memory.Store {
+func openMemory(t *testing.T) *memory.SQLite {
 	t.Helper()
 
 	mem, err := memory.OpenSQLite(t.TempDir() + "/mem.db")
@@ -93,7 +93,7 @@ func newTriggerRegistry(t *testing.T) *runner.Registry {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func (e *engineTrigger) Run(ctx context.Context, name string, inputs map[string]
 
 	flow, err := workflow.Parse([]byte(helloTOML))
 	if err != nil {
-		return "", nil, err //nolint:wrapcheck // test helper passes the parse error straight through
+		return "", nil, err
 	}
 
 	if name != flow.Name {
@@ -143,7 +143,7 @@ func (e *engineTrigger) Run(ctx context.Context, name string, inputs map[string]
 
 	run, err := e.eng.RunWorkflow(ctx, flow, inputs, "chat")
 	if err != nil {
-		return "", nil, err //nolint:wrapcheck // test helper passes the engine error straight through
+		return "", nil, err
 	}
 
 	done := make(chan chat.RunResult, 1)
@@ -257,7 +257,7 @@ func TestToolCallThenAnswer(t *testing.T) {
 	t.Parallel()
 
 	driver := &scriptedDriver{turns: []runner.Result{
-		toolTurn(chat.ToolMemory, map[string]any{"op": "search", "query": "deploys"}),
+		toolTurn(chat.ToolMemory, map[string]any{argMemoryOp: memoryOpSearch, argMemoryQuery: "deploys"}),
 		finalTurn(plainAnswer),
 	}}
 	agent, db, _ := newAgent(t, driver, 0)
@@ -378,7 +378,7 @@ func TestTurnBudgetCapEndsTurn(t *testing.T) {
 
 	// Every turn calls the memory tool and never answers; each turn costs
 	// turnCost, so a budget just above one turn fails on the second iteration.
-	loopTurn := toolTurn(chat.ToolMemory, map[string]any{"op": "search", "query": "x"})
+	loopTurn := toolTurn(chat.ToolMemory, map[string]any{argMemoryOp: memoryOpSearch, argMemoryQuery: "x"})
 	driver := &scriptedDriver{turns: []runner.Result{loopTurn, loopTurn, loopTurn, loopTurn}}
 	agent, _, _ := newAgent(t, driver, turnCost*1.5)
 	sessionID := newSession(t, agent)
@@ -471,6 +471,8 @@ func TestTurnDoneCarriesUsage(t *testing.T) {
 func TestPersonalityNamesSortedNoDuplicates(t *testing.T) {
 	t.Parallel()
 
+	const configuredPersonality = "support"
+
 	tests := []struct {
 		name       string
 		configured map[string]string
@@ -483,8 +485,8 @@ func TestPersonalityNamesSortedNoDuplicates(t *testing.T) {
 		},
 		{
 			name:       "config_adds_name",
-			configured: map[string]string{"support": "be helpful"},
-			want:       []string{chat.PersonalityAssistant, chat.PersonalityOps, "support"},
+			configured: map[string]string{configuredPersonality: "be helpful"},
+			want:       []string{chat.PersonalityAssistant, chat.PersonalityOps, configuredPersonality},
 		},
 		{
 			name:       "override_builtin_no_duplicate",

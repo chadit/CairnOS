@@ -12,6 +12,22 @@ func wrapConfigErr(name string, err error) error {
 	return fmt.Errorf("configure %s: %w", name, err)
 }
 
+// asFactory adapts a constructor for one concrete runner to the registry's
+// Factory: Go function types are not covariant, so a func returning *Exec is
+// not a runner.Factory even though *Exec is a runner.Runner. The error path
+// returns an untyped nil so a nil *T never reaches the registry as a non-nil
+// Runner.
+func asFactory[T runner.Runner](build func(map[string]any) (T, error)) runner.Factory {
+	return func(cfg map[string]any) (runner.Runner, error) {
+		built, err := build(cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		return built, nil
+	}
+}
+
 // configValue reads one typed key from a runner's config block, falling back
 // when the key is absent. A present key with the wrong type is a build error:
 // silently ignoring it would make config typos invisible.

@@ -87,12 +87,12 @@ func (l *LocalFn) Execute(ctx context.Context, task *runner.Task) (runner.Result
 	return runner.Result{Output: output}, nil
 }
 
-// wrapFnError keeps an already-classified error intact and marks everything
-// else permanent, matching the contract's safe default: never retry a side
-// effect the function did not declare safe.
+// wrapFnError returns the runner error already in the chain unchanged and
+// marks everything else permanent, matching the contract's safe default:
+// never retry a side effect the function did not declare safe.
 func wrapFnError(name string, err error) error {
-	if _, classified := errors.AsType[*runner.Error](err); classified {
-		return err
+	if classified, isClassified := errors.AsType[*runner.Error](err); isClassified {
+		return classified
 	}
 
 	return &runner.Error{

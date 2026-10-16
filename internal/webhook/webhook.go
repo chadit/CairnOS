@@ -58,12 +58,17 @@ type Registration struct {
 
 // Store persists webhook registrations. Lookup is by token hash, never by the
 // token itself, so the database holds no usable capability. Both backends
-// satisfy this contract, proven by the webhooktest conformance suite.
+// satisfy this contract, proven by the webhooktest conformance suite. It has
+// no Close: the opener returns its own closer, because the Postgres backend
+// borrows a pool it must not close.
 type Store interface {
-	// Add persists a registration, stamping ID and CreatedAt when zero. A
-	// second registration for the same workflow is ErrDuplicate.
-	Add(ctx context.Context, reg *Registration) error
+	RegistrationReader
+	RegistrationWriter
+}
 
+// RegistrationReader finds registrations. The ingress handler needs only
+// this half, so a request path can never mint, rotate, or remove a token.
+type RegistrationReader interface {
 	// GetByTokenHash finds the registration whose production or test hash
 	// equals hash and reports which endpoint matched. Unknown hash is
 	// ErrNotFound with no state minted.
@@ -75,6 +80,14 @@ type Store interface {
 
 	// List returns every registration, oldest first.
 	List(ctx context.Context) ([]*Registration, error)
+}
+
+// RegistrationWriter creates, rotates, and removes registrations, the
+// operator-side half the webhook CLI drives.
+type RegistrationWriter interface {
+	// Add persists a registration, stamping ID and CreatedAt when zero. A
+	// second registration for the same workflow is ErrDuplicate.
+	Add(ctx context.Context, reg *Registration) error
 
 	// UpdateTokenHash rotates one endpoint's hash for a workflow, so the old
 	// token dies at that moment while the sibling endpoint's token survives.
@@ -84,9 +97,6 @@ type Store interface {
 	// Remove deletes a workflow's registration, or ErrNotFound when none
 	// exists.
 	Remove(ctx context.Context, workflowName string) error
-
-	// Close releases the backend's resources.
-	Close() error
 }
 
 // MintToken returns a fresh path token and its stored hash, in that order. The

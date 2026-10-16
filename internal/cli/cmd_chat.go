@@ -27,6 +27,10 @@ const defaultChatAddr = "127.0.0.1:7777"
 // agree on how much transcript floods the terminal.
 const defaultChatSearchLimit = 20
 
+// flagSearch is looked up after parsing as well as registered, because only
+// flag.Visit can tell an explicit --search "" from an absent flag.
+const flagSearch = "search"
+
 // cmdChat is the interactive chat REPL (.agents/spec/13-roadmap.md, Phase 9):
 // it dials a serve API, opens or continues a session, and hands the
 // conversation to chatREPL, which owns the line loop, slash commands, and
@@ -133,7 +137,7 @@ func (a *App) parseChatFlags(args []string) (chatOptions, int, bool) {
 	token := flags.String("token", "", "bearer token (when the server runs with auth)")
 	session := flags.String("session", "", "continue an existing session id; with --search, narrow hits to it")
 	personality := flags.String("personality", "", "personality for a new session")
-	search := flags.String("search", "", "print matching transcript messages and exit without the REPL")
+	search := flags.String(flagSearch, "", "print matching transcript messages and exit without the REPL")
 	limit := flags.Int("limit", defaultChatSearchLimit, "result cap for --search")
 
 	if code, proceed := parseFlags(flags, args); !proceed {
@@ -149,7 +153,7 @@ func (a *App) parseChatFlags(args []string) (chatOptions, int, bool) {
 	var searchSet bool
 
 	flags.Visit(func(visited *flag.Flag) {
-		if visited.Name == "search" {
+		if visited.Name == flagSearch {
 			searchSet = true
 		}
 	})
@@ -175,7 +179,7 @@ func (a *App) parseChatFlags(args []string) (chatOptions, int, bool) {
 // runChatSearch answers --search in one shot: run the query with the
 // --session scope and --limit cap, print hits in the REPL's shared format,
 // and exit without touching sessions or entering the line loop.
-func (a *App) runChatSearch(ctx context.Context, client chatClient, opts *chatOptions) int {
+func (a *App) runChatSearch(ctx context.Context, client chatSessions, opts *chatOptions) int {
 	resp, err := client.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{
 		Text:      opts.search,
 		SessionId: opts.session,
@@ -198,7 +202,7 @@ func (a *App) runChatSearch(ctx context.Context, client chatClient, opts *chatOp
 // one when none was given. It returns the session id and personality to
 // converse in; a continued session reports its stored personality, not the
 // flag value.
-func resolveSession(ctx context.Context, client chatClient, opts *chatOptions) (string, string, error) {
+func resolveSession(ctx context.Context, client chatSessions, opts *chatOptions) (string, string, error) {
 	if opts.session != "" {
 		resp, err := client.GetSession(ctx, &cairnosv1.GetSessionRequest{SessionId: opts.session})
 		if err != nil {

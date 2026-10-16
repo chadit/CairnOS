@@ -24,28 +24,18 @@ type Claims struct {
 }
 
 // issue mints one token for a verified, enabled key: sub is the key id,
-// scopes are the key's grant, the workspace is the key's. The jti and exp are
-// recorded before the token leaves so a later RevokeToken denies it until its
-// real exp even after access_token_ttl drops (spec M2).
+// scopes are the key's grant, the workspace is the key's.
 func (a *Authenticator) issue(ctx context.Context, key *Key) (string, time.Time, error) {
-	return a.mint(ctx, key.ID, keyWorkspace(key), key.Scopes)
+	return a.MintForSubject(ctx, key.ID, keyWorkspace(key), key.Scopes)
 }
 
-// MintForSubject issues a CairnOS token for a subject the OAuth login resolved
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"): the IdP subject
-// becomes sub, and workspace and scopes come from the resolved membership role.
-// The token has the same shape as an access-key token, so the interceptor
-// verifies it the same way and the denylist can revoke it. Callers must resolve
-// membership first.
+// MintForSubject signs a token with subject as sub and the given workspace and
+// scopes. It trusts that grant as handed, so the caller resolves it first,
+// membership included for an IdP subject (.agents/spec/12-ui-and-governance.md,
+// "Multi-tenancy"). jti/sub/exp are recorded before the token leaves, so
+// RevokeToken denies it until its real exp even after access_token_ttl drops
+// (spec M2).
 func (a *Authenticator) MintForSubject(ctx context.Context, subject, workspace string, scopes []string) (string, time.Time, error) {
-	return a.mint(ctx, subject, workspace, scopes)
-}
-
-// mint signs one token for the given subject, workspace, and scopes: jti is a
-// fresh ULID so the denylist can name this exact token, exp is now+TTL, and
-// the jti/sub/exp are recorded before the token leaves so revocation tracks
-// its real life (spec M2).
-func (a *Authenticator) mint(ctx context.Context, subject, workspace string, scopes []string) (string, time.Time, error) {
 	now := a.cfg.Now()
 	expiresAt := now.Add(a.cfg.TTL)
 	jti := ulid.Make().String()
@@ -61,7 +51,7 @@ func (a *Authenticator) mint(ctx context.Context, subject, workspace string, sco
 		Audience:  jwt.ClaimStrings{a.cfg.Audience},
 	}
 
-	signed, err := jwt.NewWithClaims(a.material.signingMethod(), claims).SignedString(a.material.signingKey())
+	signed, err := jwt.NewWithClaims(a.material.method, claims).SignedString(a.material.signingKey())
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
 	}

@@ -7,9 +7,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/config"
-	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/reach"
-	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -50,19 +48,9 @@ func NewModelOptions(dir, model string, port, threads, ctxSize int) *ModelOption
 	return &ModelOptions{dir: dir, model: model, port: port, threads: threads, ctxSize: ctxSize}
 }
 
-// ServerPath returns the resolved target's server binary path.
-func (t *ModelTarget) ServerPath() string {
-	return t.layout.ServerPath()
-}
-
-// ModelPath returns the resolved target's model weights path.
-func (t *ModelTarget) ModelPath() string {
-	return t.layout.ModelPath(&t.model)
-}
-
-// NewDirectPollAwareRunner builds a PollAwareRunner directly from its dependencies,
-// bypassing newPollAwareRunner's queue-capability probe, so a reach-gate test
-// can drive it against a fake queue and monitor.
+// NewDirectPollAwareRunner builds a PollAwareRunner with no poll sources or
+// pause checker, so a reach-gate test can drive it against a fake queue and
+// monitor.
 func NewDirectPollAwareRunner(inner scheduler.Runner, queue pollQueue, monitor *reach.Monitor, logger *slog.Logger) *PollAwareRunner {
 	return &PollAwareRunner{inner: inner, queue: queue, reach: monitor, logger: logger}
 }
@@ -92,13 +80,6 @@ var ErrUpdateBusy = errUpdateBusy
 // layout where the real command passes its own executable.
 func UpdateSourceDir(override, executable string) (string, error) {
 	return discoverSource(override, executable)
-}
-
-// UpdateSyncCheckout runs the update's fetch, then fast-forward or reset, step
-// against a real checkout, which is the only way to exercise the decision
-// honestly.
-func (a *App) UpdateSyncCheckout(ctx context.Context, dir string) error {
-	return a.syncCheckout(ctx, dir)
 }
 
 // UpdateBuild runs the update's build step, so a test can stage stub make and
@@ -167,23 +148,11 @@ func (a *App) DriveUpdate(ctx context.Context, run *UpdateRun, steps UpdateSteps
 	return a.runUpdate(ctx, run.options(), steps)
 }
 
-// AutoUpdateLoop is serve's self-update loop, held so a case can drive its
-// ticks one at a time and see what it remembers between them.
-type AutoUpdateLoop struct {
-	loop *autoUpdate
-}
-
 // NewAutoUpdateLoop builds the loop over a staged invocation. run.Running
 // stands in for the loop's own stamp, and steps replace every step but the
 // drain, which stays the loop's own so a case sees whether it was asked for.
-func (a *App) NewAutoUpdateLoop(run *UpdateRun, drain *api.Drain, steps UpdateSteps) *AutoUpdateLoop {
-	return &AutoUpdateLoop{loop: a.newAutoUpdate(run.options(), drain, steps, a.logger)}
-}
-
-// Tick runs one check and reports whether the loop is finished, which it is
-// once the process is draining for the new build.
-func (l *AutoUpdateLoop) Tick(ctx context.Context) bool {
-	return l.loop.tick(ctx)
+func (a *App) NewAutoUpdateLoop(run *UpdateRun, drain *api.Drain, steps UpdateSteps) *AutoUpdate {
+	return a.newAutoUpdate(run.options(), drain, steps, a.logger)
 }
 
 // RunAutoUpdateStart runs serve's decision to start the loop against the
@@ -199,21 +168,8 @@ func (a *App) RunAutoUpdateStart(ctx context.Context, update *config.Update, hom
 // HoldUpdateLock takes the update lock under home the way a running update
 // does, so a case can watch the other side refuse or wait. The returned func
 // lets it go.
-func HoldUpdateLock(home string) (func(), error) {
+func HoldUpdateLock(home string) (func() error, error) {
 	return lockUpdate(home)
-}
-
-// UpdateRevisionReport prints one revision pair and answers with the exit code
-// the command would, so a case pins both outcomes without a running service to
-// read a stamp out of.
-func (a *App) UpdateRevisionReport(running, wanted string) int {
-	return a.reportRevisionPair(running, wanted)
-}
-
-// NewDrainGateRunner wraps a scheduler runner in the gate serve puts in front
-// of its daemon, so a case drives the skip without standing up a whole serve.
-func NewDrainGateRunner(inner scheduler.Runner, drain *api.Drain, logger *slog.Logger) scheduler.Runner {
-	return &drainGateRunner{inner: inner, drain: drain, logger: logger}
 }
 
 // RunDrainWatcher runs serve's drain watcher, which is what turns an idle
@@ -238,12 +194,6 @@ func (a *App) UpdateDriveRestart(ctx context.Context, hooks UpdateRestartHooks, 
 // real swap on a file it owns.
 func UpdateInstallBinary(target, staged string) error {
 	return installBinary(target, staged)
-}
-
-// NewMessageSender exposes serve's send adapter, so a test can drive the message
-// runner through the same error translation serve applies.
-func NewMessageSender(registry *messaging.Registry, logger *slog.Logger) builtins.MessageSender {
-	return &messageSenderAdapter{registry: registry, logger: logger}
 }
 
 // ServeChatReadTools exposes the read tools serve hands the chat agent when only

@@ -443,11 +443,10 @@ func runUsageCommand(ctx context.Context, path string, argv []string) (string, e
 }
 
 // parseUsageReport decodes a cairnos.usage.v1 report into the probe's report
-// shape. A reset credit that expired before now is dropped, since the file may
-// be read long after it was written. An account missing a name refuses the
-// whole file instead of becoming one errored login the way a failed read does:
-// a failed read is one dead account, while a missing name means the writer
-// itself is broken, and without a wrapper there is no name to report under.
+// shape. An expired reset credit is dropped, since the file may be read long
+// after it was written. An account missing a name refuses the whole file:
+// unlike a failed read, which is one dead account, it means the writer is
+// broken and leaves no name to report under.
 func parseUsageReport(data []byte, now time.Time) (UsageReport, error) {
 	var file usageReportFile
 

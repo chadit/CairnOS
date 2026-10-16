@@ -142,29 +142,39 @@ func echoErrorServer(t *testing.T) *nettest.Fake {
 	t.Helper()
 
 	srv := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received := receivedSecrets(r)
+		received := receivedSecrets(t, r)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(errorResponse{
+
+		err := json.NewEncoder(w).Encode(errorResponse{
 			Error:            "invalid_client",
 			ErrorDescription: "rejected credential " + received,
 		})
+		if err != nil {
+			t.Errorf("echo server: write error body: %v", err)
+		}
 	}))
 
 	return srv
 }
 
 // receivedSecrets pulls every secret-shaped value out of a token request so the
-// echo server can reflect it, whichever auth style the library chose.
-func receivedSecrets(r *http.Request) string {
+// echo server can reflect it, whichever auth style the library chose. An
+// unparsable form fails the test, since the echo would otherwise omit secrets
+// and the leak assertions would pass on nothing.
+func receivedSecrets(t *testing.T, r *http.Request) string {
+	t.Helper()
+
 	var parts []string
 
 	if _, secret, ok := r.BasicAuth(); ok && secret != "" {
 		parts = append(parts, secret)
 	}
 
-	_ = r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		t.Errorf("echo server: parse token request form: %v", err)
+	}
 
 	for _, key := range []string{"client_secret", "refresh_token"} {
 		if value := r.PostFormValue(key); value != "" {

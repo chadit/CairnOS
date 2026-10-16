@@ -187,7 +187,7 @@ func TestSuggestionNotFoundCode(t *testing.T) {
 
 	fix := startServer(t)
 
-	_, err := fix.suggestion.ApproveSuggestion(t.Context(), &cairnosv1.ApproveSuggestionRequest{Id: "missing"})
+	_, err := fix.suggestion.ApproveSuggestion(t.Context(), &cairnosv1.ApproveSuggestionRequest{Id: unknownID})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("approve of a missing id = %v, want NotFound", err)
 	}
@@ -198,7 +198,7 @@ func TestSuggestionInvalidStatusFilter(t *testing.T) {
 
 	fix := startServer(t)
 
-	_, err := fix.suggestion.ListSuggestions(t.Context(), &cairnosv1.ListSuggestionsRequest{Status: "bogus"})
+	_, err := fix.suggestion.ListSuggestions(t.Context(), &cairnosv1.ListSuggestionsRequest{Status: unrecognizedValue})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid status filter = %v, want InvalidArgument", err)
 	}

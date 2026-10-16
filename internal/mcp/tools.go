@@ -89,7 +89,7 @@ func (s *Service) runWorkflowHandler(token string) mcp.ToolHandlerFor[runWorkflo
 		// Stamp the caller's workspace so the run lands in their tenant and the
 		// budget check sums against their spend, not the default workspace.
 		// awaitRun keeps the raw ctx since it only watches for cancellation.
-		handle, err := s.manager.StartRun(s.scopedContext(ctx, workspace), flow, input.Inputs, false, triggerMCP)
+		handle, err := s.manager.StartRun(store.ContextWithWorkspace(ctx, workspace), flow, input.Inputs, false, triggerMCP)
 		if err != nil {
 			return nil, runWorkflowOutput{}, fmt.Errorf("start run: %w", err)
 		}
@@ -127,7 +127,7 @@ func (s *Service) queryMemoryHandler(token string) mcp.ToolHandlerFor[queryMemor
 			return nil, queryMemoryOutput{}, err
 		}
 
-		result, err := s.memory.Search(s.scopedContext(ctx, workspace), memory.Query{
+		result, err := s.memory.Search(store.ContextWithWorkspace(ctx, workspace), memory.Query{
 			Scope:    input.Scope,
 			Text:     input.Text,
 			Tags:     input.Tags,
@@ -180,7 +180,7 @@ func (s *Service) getLanguageRulesHandler(token string) mcp.ToolHandlerFor[getLa
 			return nil, getLanguageRulesOutput{}, err
 		}
 
-		merged, err := s.rules.GetRules(s.scopedContext(ctx, workspace), input.Language, input.Project)
+		merged, err := s.rules.GetRules(store.ContextWithWorkspace(ctx, workspace), input.Language, input.Project)
 		if err != nil {
 			return nil, getLanguageRulesOutput{}, fmt.Errorf("get language rules: %w", err)
 		}

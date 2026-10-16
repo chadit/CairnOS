@@ -111,7 +111,7 @@ func (a *App) cmdModel(ctx context.Context, args []string) int {
 	}
 
 	switch args[0] {
-	case "setup":
+	case subcmdSetup:
 		return a.cmdModelInstall(ctx, "model setup", args[1:], false)
 	case "upgrade":
 		return a.cmdModelInstall(ctx, "model upgrade", args[1:], true)
@@ -119,9 +119,9 @@ func (a *App) cmdModel(ctx context.Context, args []string) int {
 		return a.cmdModelStatus(ctx, args[1:])
 	case "check":
 		return a.cmdModelCheck(ctx, args[1:])
-	case "uninstall":
+	case subcmdUninstall:
 		return a.cmdModelUninstall(ctx, args[1:])
-	case "-h", "--help", "help":
+	case helpShortFlag, helpLongFlag, helpWord:
 		// Asking for help is not a typo, so it skips the "unknown subcommand"
 		// line the default arm leads with.
 		a.printErrf("%s", modelUsage)
@@ -161,7 +161,7 @@ func DefaultThreads() int {
 
 // cmdModelInstall runs setup and upgrade, which walk the same path: bring the
 // runtime and weights to the pins, write the config block, and put the server
-// under supervision. upgrade additionally proves the new server answers before
+// under supervision. upgrade also proves the new server answers before
 // discarding the runtime it replaced.
 func (a *App) cmdModelInstall(ctx context.Context, prefix string, args []string, upgrade bool) int {
 	flags := flag.NewFlagSet(prefix, flag.ContinueOnError)

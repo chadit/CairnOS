@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,12 +33,18 @@ const (
 	testClientID = "cairnos-spa"
 	testSubject  = "alice@idp.test"
 	testCode     = "auth-code-123"
-	defaultWS    = "default"
-	defaultRole  = "viewer"
-	idTokenExtra = "id_token"
-	rsaKeyBits   = 2048
-	stateParam   = "state"
-	tokenTTL     = time.Hour
+	// testWorkspace is a non-default workspace, so a minted token proves it
+	// carries the workspace it was given rather than the default.
+	testWorkspace = "acme"
+	defaultWS     = "default"
+	defaultRole   = "viewer"
+	idTokenExtra  = "id_token"
+	// claimEmail and claimEmailVerified are the OIDC claims the handler reads.
+	claimEmail         = "email"
+	claimEmailVerified = "email_verified"
+	rsaKeyBits         = 2048
+	stateParam         = "state"
+	tokenTTL           = time.Hour
 )
 
 // fakeIDP is a minimal OIDC identity provider for the handler tests: an RSA
@@ -83,6 +90,20 @@ func (m *fakeIDP) signIDToken(t *testing.T) string {
 func (m *fakeIDP) signIDTokenWithEmail(t *testing.T, subject, email string, emailVerified bool) string {
 	t.Helper()
 
+	extra := jwt.MapClaims{}
+	if email != "" {
+		extra[claimEmail] = email
+		extra[claimEmailVerified] = emailVerified
+	}
+
+	return m.signIDTokenClaims(t, subject, extra)
+}
+
+// signIDTokenClaims mints a valid ID token for subject carrying the extra
+// claims as given, so a test can sign a claim of the wrong type.
+func (m *fakeIDP) signIDTokenClaims(t *testing.T, subject string, extra jwt.MapClaims) string {
+	t.Helper()
+
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"iss": testIssuer,
@@ -92,10 +113,7 @@ func (m *fakeIDP) signIDTokenWithEmail(t *testing.T, subject, email string, emai
 		"exp": now.Add(tokenTTL).Unix(),
 	}
 
-	if email != "" {
-		claims["email"] = email
-		claims["email_verified"] = emailVerified
-	}
+	maps.Copy(claims, extra)
 
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodRS256, claims).SignedString(m.key)
 	if err != nil {
@@ -145,7 +163,7 @@ func (f *fakeExchanger) Exchange(_ context.Context, code string, opts ...oauth2.
 	// this probe is the supported way to read it back.
 	probe, err := url.Parse(f.config.AuthCodeURL("probe", opts...))
 	if err != nil {
-		return nil, err //nolint:wrapcheck // test helper; the parse never fails on a config-built URL
+		return nil, err
 	}
 
 	f.gotVerifier = probe.Query().Get("code_verifier")
@@ -174,7 +192,7 @@ func (s *stubMinter) MintForSubject(_ context.Context, subject, workspace string
 
 // newTenancyStore opens a fresh sqlite tenancy store seeded with the default
 // workspace, so a first login has somewhere to provision into.
-func newTenancyStore(t *testing.T) tenancy.Store {
+func newTenancyStore(t *testing.T) *tenancy.SQLite {
 	t.Helper()
 
 	tenants, err := tenancy.OpenSQLite(t.TempDir() + "/tenancy.db")
@@ -407,7 +425,7 @@ func TestMintForSubjectShape(t *testing.T) {
 
 	wantScopes := []string{auth.ScopeReadRun, auth.ScopeReadMemory}
 
-	token, _, err := authn.MintForSubject(t.Context(), testSubject, "acme", wantScopes)
+	token, _, err := authn.MintForSubject(t.Context(), testSubject, testWorkspace, wantScopes)
 	if err != nil {
 		t.Fatalf("MintForSubject: %v", err)
 	}
@@ -421,8 +439,8 @@ func TestMintForSubjectShape(t *testing.T) {
 		t.Errorf("token subject = %q, want %q", claims.Subject, testSubject)
 	}
 
-	if claims.Workspace != "acme" {
-		t.Errorf("token workspace = %q, want acme", claims.Workspace)
+	if claims.Workspace != testWorkspace {
+		t.Errorf("token workspace = %q, want %q", claims.Workspace, testWorkspace)
 	}
 
 	if !slices.Equal(claims.Scopes, wantScopes) {
@@ -432,8 +450,8 @@ func TestMintForSubjectShape(t *testing.T) {
 	// Sanity: the workspace claim lands on the request context the way the
 	// interceptor would lift it.
 	ctx := store.ContextWithWorkspace(t.Context(), claims.Workspace)
-	if got := store.WorkspaceFromContext(ctx); got != "acme" {
-		t.Errorf("context workspace = %q, want acme", got)
+	if got := store.WorkspaceFromContext(ctx); got != testWorkspace {
+		t.Errorf("context workspace = %q, want %q", got, testWorkspace)
 	}
 
 	if strings.Contains(token, testSubject) {

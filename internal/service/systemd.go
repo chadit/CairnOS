@@ -105,7 +105,7 @@ func planSystemdSetup(host *Host, opts Options) Plan {
 // only appears when the account is missing (or the host cannot say), so a
 // re-run stays clean.
 func planSystemdSystemSetup(host *Host, opts Options) Plan {
-	commands := make([]Command, 0, 6)
+	var commands []Command
 
 	if host.HasUser == nil || !host.HasUser(systemUser) {
 		commands = append(commands, Command{Argv: []string{
@@ -174,6 +174,6 @@ func planSystemdUninstall(host *Host, system bool) Plan {
 		After: []Command{
 			{Argv: scope(cmdDaemonReload)},
 		},
-		Notices: []string{"config, data, and the env file were left in place"},
+		Notices: []string{noticeConfigKept},
 	}
 }

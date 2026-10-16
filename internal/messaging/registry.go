@@ -4,7 +4,8 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"sync"
+
+	"github.com/chadit/CairnOS/internal/registry"
 )
 
 // Identity describes one configured send surface: the name a caller addresses
@@ -35,48 +36,27 @@ type Sender interface {
 	Describe() Identity
 }
 
-// Registry holds the senders serve built, keyed by identity name. It is created
-// empty and populated as each transport connects, so the runner and the notify
-// fanout can hold it before any bridge is up. Safe for concurrent use: sends
-// read it while a bridge reconnect may still be adding to it.
+// Registry holds the senders serve built, keyed by identity name, and is safe
+// for concurrent use. It starts empty and fills as each transport connects, so
+// the runner and the notify fanout can hold it before any bridge is up. Add
+// replaces an earlier sender under the same name, so a reconnecting transport
+// leaves no dead sender behind.
 type Registry struct {
-	byName map[string]Sender
-	mu     sync.RWMutex
+	registry.Table[Sender]
 }
 
 // NewRegistry builds an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{byName: make(map[string]Sender)}
-}
-
-// Add registers a sender under an identity name, replacing any earlier one so a
-// transport that rebuilds its client after a reconnect does not leave a dead
-// sender in place.
-func (r *Registry) Add(name string, sender Sender) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.byName[name] = sender
-}
-
-// Get looks up one sender by identity name.
-func (r *Registry) Get(name string) (Sender, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	sender, ok := r.byName[name]
-
-	return sender, ok
+	return &Registry{}
 }
 
 // List describes every registered identity, sorted by name so a CLI listing and
 // an API response do not reshuffle between calls over a map.
 func (r *Registry) List() []Identity {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	senders := r.Snapshot()
 
-	identities := make([]Identity, 0, len(r.byName))
-	for _, sender := range r.byName {
+	identities := make([]Identity, 0, len(senders))
+	for _, sender := range senders {
 		identities = append(identities, sender.Describe())
 	}
 

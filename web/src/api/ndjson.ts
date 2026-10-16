@@ -77,23 +77,26 @@ export async function* readNdjson<T>(
 
       buffer += decoder.decode(value, { stream: true });
 
-      let newline = buffer.indexOf('\n');
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line.length > 0) {
-          yield parseEnvelope<T>(line);
-        }
-        newline = buffer.indexOf('\n');
-      }
+      // The last piece has no newline after it yet, so it waits for the next read.
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      yield* parseLines<T>(lines);
     }
 
-    const tail = buffer.trim();
-    if (tail.length > 0) {
-      yield parseEnvelope<T>(tail);
-    }
+    yield* parseLines<T>([buffer]);
   } finally {
     reader.releaseLock();
+  }
+}
+
+/** parseLines unwraps each line in order, skipping blank lines because they
+ * carry no envelope. */
+function* parseLines<T>(lines: string[]): Generator<T, void, void> {
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.length > 0) {
+      yield parseEnvelope<T>(line);
+    }
   }
 }
 

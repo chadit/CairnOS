@@ -199,13 +199,16 @@ func TestSecretsAuthFailsOnAClosedStdin(t *testing.T) {
 	}
 }
 
+// stagedFieldValue fills a vault field the status check counts but never reads.
+const stagedFieldValue = "one"
+
 // TestSecretsAuthChecksAnExistingFile covers FR16: the credentials already on
 // the host are proven against the vault here, rather than at the next deploy.
 func TestSecretsAuthChecksAnExistingFile(t *testing.T) {
 	t.Parallel()
 
 	binDir := stageFakeBW(t, map[string]string{
-		cairnosOneVar: "one",
+		cairnosOneVar: stagedFieldValue,
 		"CAIRNOS_TWO": "two",
 		pullFieldOne:  pullValueOne,
 	})
@@ -230,7 +233,7 @@ func TestSecretsAuthChecksAnExistingFile(t *testing.T) {
 func TestSecretsAuthReportsAMissingItem(t *testing.T) {
 	t.Parallel()
 
-	binDir := stageFakeBW(t, map[string]string{cairnosOneVar: "one"})
+	binDir := stageFakeBW(t, map[string]string{cairnosOneVar: stagedFieldValue})
 
 	dir := t.TempDir()
 	writePullFile(t, filepath.Join(dir, credentialsFileName), credentialsFixtureFor("absent-item"))

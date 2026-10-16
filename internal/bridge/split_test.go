@@ -16,6 +16,8 @@ import (
 func TestSplitMessageCountsRunes(t *testing.T) {
 	t.Parallel()
 
+	const shortReply = "hello"
+
 	tests := []struct {
 		name  string
 		reply string
@@ -23,8 +25,8 @@ func TestSplitMessageCountsRunes(t *testing.T) {
 	}{
 		{
 			name:  "under the cap",
-			reply: "hello",
-			want:  []string{"hello"},
+			reply: shortReply,
+			want:  []string{shortReply},
 		},
 		{
 			name:  "at the cap",

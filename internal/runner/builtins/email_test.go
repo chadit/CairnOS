@@ -16,6 +16,7 @@ const (
 	toKey      = "to"
 	subjectKey = "subject"
 
+	testSMTPHost  = "smtp.cairn.test"
 	testRecipient = "dev@cairn.test"
 	testSender    = "cairn@cairn.test"
 	testBody      = "hi"
@@ -31,7 +32,7 @@ func emailTask(params map[string]any) *runner.Task {
 func TestEmailValidate(t *testing.T) {
 	t.Parallel()
 
-	configured := map[string]any{hostKey: "smtp.cairn.test", fromKey: testSender}
+	configured := map[string]any{hostKey: testSMTPHost, fromKey: testSender}
 
 	cases := []struct {
 		cfg     map[string]any
@@ -40,8 +41,8 @@ func TestEmailValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "unconfigured runner", params: map[string]any{toKey: testRecipient, bodyKey: testBody}, wantErr: true},
-		{name: "missing to", cfg: configured, params: map[string]any{bodyKey: testBody}, wantErr: true},
-		{name: "missing body", cfg: configured, params: map[string]any{toKey: testRecipient}, wantErr: true},
+		{name: caseMissingTo, cfg: configured, params: map[string]any{bodyKey: testBody}, wantErr: true},
+		{name: caseMissingBody, cfg: configured, params: map[string]any{toKey: testRecipient}, wantErr: true},
 		{name: "non-string subject", cfg: configured, params: map[string]any{toKey: testRecipient, bodyKey: testBody, subjectKey: int64(1)}, wantErr: true},
 		{name: "complete params", cfg: configured, params: map[string]any{toKey: testRecipient, bodyKey: testBody, subjectKey: "ping"}, wantErr: false},
 	}
@@ -96,7 +97,7 @@ func TestEmailDialFailureIsTransient(t *testing.T) {
 func TestEmailRejectsHeaderInjection(t *testing.T) {
 	t.Parallel()
 
-	cfg := map[string]any{hostKey: "smtp.cairn.test", fromKey: testSender}
+	cfg := map[string]any{hostKey: testSMTPHost, fromKey: testSender}
 
 	mail, err := builtins.NewEmail(cfg, environ.Map(nil))
 	if err != nil {

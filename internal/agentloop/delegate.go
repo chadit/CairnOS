@@ -11,7 +11,7 @@ import (
 )
 
 // DelegateToolName is the loop-owned delegation tool. It is not a registry
-// runner: describerFor supplies its descriptor and the loop intercepts its
+// runner: bindTool supplies its descriptor and the loop intercepts its
 // calls the way chat intercepts run_workflow, so its Execute never spawns a
 // child in normal operation.
 const DelegateToolName = "delegate"
@@ -43,32 +43,32 @@ const (
 	schemaDesc    = "description"
 )
 
-// delegateTool is the descriptor side of delegation. It implements
+// DelegateTool is the descriptor side of delegation. It implements
 // runner.Describer so the driver can see and call it, but its Execute never
 // spawns a child: the loop intercepts a delegate call before any execution
 // (runDelegate). Execute is wired to fail loudly so the walls cannot be
 // bypassed by a code path that runs the tool directly.
-type delegateTool struct{}
+type DelegateTool struct{}
 
 var (
-	_ runner.Runner    = (*delegateTool)(nil)
-	_ runner.Describer = (*delegateTool)(nil)
+	_ runner.Runner    = (*DelegateTool)(nil)
+	_ runner.Describer = (*DelegateTool)(nil)
 )
 
 // NewDelegateTool exposes the delegate descriptor as a runner so the bypass
 // guarantee (Execute refuses outside the loop's interception) is testable and
 // the descriptor is reachable for tooling.
-func NewDelegateTool() runner.Runner {
-	return &delegateTool{}
+func NewDelegateTool() *DelegateTool {
+	return &DelegateTool{}
 }
 
 // Name implements runner.Runner.
-func (*delegateTool) Name() string {
+func (*DelegateTool) Name() string {
 	return DelegateToolName
 }
 
 // Validate implements runner.Runner: a delegate proposal must name a goal.
-func (*delegateTool) Validate(task *runner.Task) error {
+func (*DelegateTool) Validate(task *runner.Task) error {
 	if !task.Resolved {
 		return nil
 	}
@@ -86,7 +86,7 @@ func (*delegateTool) Validate(task *runner.Task) error {
 // loop intercepts a delegate call and runs the child itself. Reaching here
 // means the interception was bypassed, so it refuses rather than spawning an
 // unwalled child.
-func (*delegateTool) Execute(ctx context.Context, _ *runner.Task) (runner.Result, error) {
+func (*DelegateTool) Execute(ctx context.Context, _ *runner.Task) (runner.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return runner.Result{}, runner.NewError(runner.ClassTransient, DelegateToolName+".canceled", err.Error())
 	}
@@ -98,7 +98,7 @@ func (*delegateTool) Execute(ctx context.Context, _ *runner.Task) (runner.Result
 // Describe implements runner.Describer. The description tells the driver the
 // child shares its tools except delegate, runs synchronously, and can happen
 // at most once per action run.
-func (*delegateTool) Describe() runner.ToolSpec {
+func (*DelegateTool) Describe() runner.ToolSpec {
 	return runner.ToolSpec{
 		Name: DelegateToolName,
 		Description: "Delegate a sub-goal to one synchronous child agent loop that shares your tools except delegate itself. " +

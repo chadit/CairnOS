@@ -13,6 +13,23 @@ import (
 const (
 	hostName  = "build_box"
 	cliClaude = "claude"
+	cliCursor = "cursor-agent"
+
+	// hostToken is the env token hostName renders to, and dashedHostName the
+	// spelling that renders to the same token. hostSSH is the ssh target the
+	// parse fixture writes.
+	hostToken      = "BUILD_BOX"
+	dashedHostName = "build-box"
+	hostSSH        = "build-box"
+
+	// claudeBinary is the name a host keeps its claude build under, and
+	// absoluteWrapper a wrapper path rooted at the filesystem.
+	claudeBinary    = "claude-agent"
+	absoluteWrapper = "/usr/local/bin/agent-env"
+
+	// wantNameGrammarRefusal is the shared half of the name grammar guard's
+	// message, asserted for a host here and for a source in sources_test.go.
+	wantNameGrammarRefusal = "name must match"
 
 	// wantDashRefusal is the shared half of the dash guard's message, asserted
 	// here for a binary name and in sources_test.go for a repo and a ref.
@@ -39,10 +56,10 @@ func TestEnvTokenUpperCasesAndReplacesEverythingElse(t *testing.T) {
 		name string
 		want string
 	}{
-		{name: "build_box", want: "BUILD_BOX"},
-		{name: "build-box", want: "BUILD_BOX"},
+		{name: hostName, want: hostToken},
+		{name: dashedHostName, want: hostToken},
 		{name: "box.example.com", want: "BOX_EXAMPLE_COM"},
-		{name: "cursor-agent", want: "CURSOR_AGENT"},
+		{name: cliCursor, want: "CURSOR_AGENT"},
 		{name: "node2", want: "NODE2"},
 	}
 
@@ -74,19 +91,19 @@ func TestLoadHostParsesBlockAndDefaults(t *testing.T) {
 		t.Fatalf("host %s missing from parsed config", hostName)
 	}
 
-	if host.Type != config.HostTypeWorker || host.SSH != "build-box" {
+	if host.Type != config.HostTypeWorker || host.SSH != hostSSH {
 		t.Fatalf("host = %+v, want the worker type and the ssh alias", host)
 	}
 
 	// claude names a binary, so only the path falls back to the default.
 	claude := host.Harnesses[cliClaude]
-	if claude.Path != config.DefaultHarnessPath || claude.Name != "claude-agent" {
+	if claude.Path != config.DefaultHarnessPath || claude.Name != claudeBinary {
 		t.Fatalf("claude = %+v, want the default path and the configured name", claude)
 	}
 
 	// cursor-agent names neither, so the key itself is the binary name.
-	cursor := host.Harnesses["cursor-agent"]
-	if cursor.Path != config.DefaultHarnessPath || cursor.Name != "cursor-agent" || cursor.Provider != "cursor" {
+	cursor := host.Harnesses[cliCursor]
+	if cursor.Path != config.DefaultHarnessPath || cursor.Name != cliCursor || cursor.Provider != "cursor" {
 		t.Fatalf("cursor-agent = %+v, want both defaults and the provider label", cursor)
 	}
 }
@@ -164,7 +181,7 @@ func TestLoadHostRejectsBadBlocks(t *testing.T) {
 		{
 			name: "host name outside the grammar",
 			toml: "[host.\"_leading\"]\ntype = \"worker\"\n",
-			want: "name must match",
+			want: wantNameGrammarRefusal,
 		},
 		{
 			name: "tool key outside the grammar",
@@ -279,7 +296,7 @@ func TestLoadHostTrimsToolValues(t *testing.T) {
 	}
 
 	got := cfg.Hosts[hostName].Harnesses[cliClaude]
-	if got.Path != "/opt/bin" || got.Name != "claude-agent" {
+	if got.Path != "/opt/bin" || got.Name != claudeBinary {
 		t.Fatalf("tool = %+v, want both values trimmed", got)
 	}
 }
@@ -327,7 +344,7 @@ func TestLoadHostAcceptsAWrapper(t *testing.T) {
 		name string
 		path string
 	}{
-		{name: "an absolute path", path: "/usr/local/bin/agent-env"},
+		{name: "an absolute path", path: absoluteWrapper},
 		{name: "a home-prefixed path", path: "~/.local/bin/agent-env"},
 	}
 
@@ -401,14 +418,14 @@ func TestLoadHostWithoutAWrapperLeavesItEmpty(t *testing.T) {
 func TestLoadHostWrapperAbsolutenessIsPOSIX(t *testing.T) {
 	t.Parallel()
 
-	toml := hostTOML(`type = "worker"`, `wrapper = "/usr/local/bin/agent-env"`)
+	toml := hostTOML(`type = "worker"`, `wrapper = "`+absoluteWrapper+`"`)
 
 	cfg, err := config.Load(writeConfig(t, toml))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
-	if got := cfg.Hosts[hostName].Wrapper; got != "/usr/local/bin/agent-env" {
+	if got := cfg.Hosts[hostName].Wrapper; got != absoluteWrapper {
 		t.Fatalf("wrapper = %q, want the slash-rooted path accepted", got)
 	}
 }

@@ -131,9 +131,8 @@ update_web() {
 
 # latest_tag prints the newest release tag of a GitHub repository, or `null`
 # when it has none. The API allows sixty unauthenticated calls an hour. This
-# script makes one per action the workflows use plus one for gosec, and the
-# Bitwarden pin refresh reads one to five release pages. Returns non-zero when
-# the request fails.
+# script makes one per action the workflows use, and the Bitwarden pin refresh
+# reads one to five release pages. Returns non-zero when the request fails.
 latest_tag() {
 	local repo="$1"
 	curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name'
@@ -153,40 +152,6 @@ rewrite_file() {
 	mv -- "$rewritten" "$file"
 
 	WORK=""
-}
-
-# pin_version rewrites one Makefile version variable to a repository's newest
-# release tag. A missing variable is a failure rather than an append: a silent
-# no-op would leave the linter frozen while everything else moved. The tag is
-# checked because it reaches a sed replacement, where &, | and a backslash each
-# mean something. Returns 0 or dies.
-pin_version() {
-	local variable="$1" repo="$2"
-	local current tag
-
-	current="$(sed -n "s/^${variable} *:= *//p" "$REPO_ROOT/Makefile")"
-	[[ -n "$current" ]] || die "$variable is not set in $REPO_ROOT/Makefile"
-
-	tag="$(latest_tag "$repo")"
-	[[ -n "$tag" && "$tag" != "null" ]] || die "could not read the newest release of $repo"
-
-	[[ "$tag" =~ ^v?[0-9]+(\.[0-9]+)*$ ]] || die "$repo published an unexpected tag: $tag"
-
-	if [[ "$tag" == "$current" ]]; then
-		info "$variable is already $current"
-		return
-	fi
-
-	rewrite_file "$REPO_ROOT/Makefile" "s|^\(${variable} *\):= *.*|\1:= ${tag}|"
-
-	info "$variable $current -> $tag"
-}
-
-# update_gosec moves the gosec pin the Makefile holds. golangci-lint has no
-# pin to move: the Makefile and CI both install @latest. Returns 0 or dies.
-update_gosec() {
-	info "checking the gosec pin"
-	pin_version GOSEC_VERSION securego/gosec
 }
 
 # workflow_actions prints each distinct `owner/repo@vN` the workflows use, one
@@ -306,7 +271,6 @@ main() {
 	update_go_modules
 	update_buf
 	update_web
-	update_gosec
 	update_actions
 	update_postgres
 	update_bitwarden

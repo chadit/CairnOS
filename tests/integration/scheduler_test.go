@@ -34,7 +34,7 @@ func openSchedulerPool(t *testing.T) *pgxpool.Pool {
 // newPostgresQueue opens a work queue in its own schema so parallel conformance
 // subtests never share one work_item table. The schema is a fresh lowercased
 // ULID (a safe identifier that starts with a letter); cleanup drops it.
-func newPostgresQueue(t *testing.T) scheduler.WorkQueue {
+func newPostgresQueue(t *testing.T) *scheduler.PostgresQueue {
 	t.Helper()
 
 	ctx := t.Context()

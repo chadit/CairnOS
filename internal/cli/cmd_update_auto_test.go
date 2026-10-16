@@ -28,6 +28,10 @@ var (
 // uses it is behind.
 const staleRevision = "0000000000000000000000000000000000000000"
 
+// errorLevelAttr is how slog's text handler marks an error record, which is
+// what tells a failed update apart from a skipped one in the captured log.
+const errorLevelAttr = "level=ERROR"
+
 // TestAutoUpdateLeavesACurrentBuildAlone covers the tick nearly every tick is:
 // the upstream is the build already running, so nothing is fetched into the
 // working tree, built, or drained.
@@ -153,7 +157,7 @@ func TestAutoUpdateDoesNotRetryAFailedRevision(t *testing.T) {
 			builds, drain.Draining())
 	}
 
-	for _, want := range []string{"level=ERROR", "step=build", "wanted=" + first} {
+	for _, want := range []string{errorLevelAttr, "step=build", "wanted=" + first} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("the failure log is missing %q:\n%s", want, stderr.String())
 		}
@@ -482,7 +486,10 @@ func TestAutoUpdateWaitsWhileAnotherUpdateHoldsTheLock(t *testing.T) {
 		t.Fatalf("the loop built %d time(s) while another update held the lock", builds)
 	}
 
-	release()
+	if err := release(); err != nil {
+		t.Fatalf("release the update lock: %v", err)
+	}
+
 	loop.Tick(t.Context())
 
 	if builds != 1 {
@@ -532,7 +539,7 @@ func TestAutoUpdateLogsAStepThatFailsAfterTheDrain(t *testing.T) {
 		t.Fatal("a process draining onto the new build did not finish the loop")
 	}
 
-	for _, want := range []string{"level=ERROR", "step=link", "wanted=" + revision} {
+	for _, want := range []string{errorLevelAttr, "step=link", "wanted=" + revision} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("the failure log is missing %q:\n%s", want, stderr.String())
 		}
@@ -607,7 +614,7 @@ func TestAutoUpdateForgetsAnAttemptAShutdownCutShort(t *testing.T) {
 		t.Fatal("the loop kept going after serve shut down")
 	}
 
-	if strings.Contains(stderr.String(), "level=ERROR") {
+	if strings.Contains(stderr.String(), errorLevelAttr) {
 		t.Errorf("a shutdown was logged as a failed update:\n%s", stderr.String())
 	}
 

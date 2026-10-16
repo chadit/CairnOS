@@ -13,6 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/hive"
 	"github.com/chadit/CairnOS/internal/store"
+	"github.com/chadit/CairnOS/internal/tuning"
 )
 
 const (
@@ -171,8 +172,8 @@ func seedHiveSuggestion(t *testing.T, dir, id string) {
 		ID:        id,
 		Kind:      store.SuggestionCaching,
 		Target:    "jobs.fetch",
-		Rationale: "repeated identical call",
-		Evidence:  map[string]any{"runner": "openai"},
+		Rationale: cachingRationale,
+		Evidence:  map[string]any{tuning.EvidenceRunner: cachingRunner},
 		Status:    store.SuggestionApproved,
 		CreatedAt: time.Now(),
 	})

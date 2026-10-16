@@ -3,7 +3,6 @@ package builtins_test
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,6 +22,18 @@ const (
 	statusField  = "status"
 	bodyField    = "body"
 	statusDone   = "done"
+
+	// mediaJSON is the content type the fixture servers answer with and the
+	// JSON-body cases expect on the request.
+	mediaJSON = "application/json"
+
+	// queryValue and customHeader with its value are what the query case sends;
+	// itemsPath and relativePath are the paths the base_url cases join.
+	queryValue        = "cairn"
+	customHeader      = "X-Token"
+	customHeaderValue = "secret"
+	itemsPath         = "/v1/items"
+	relativePath      = "/x"
 )
 
 func httpTask(params map[string]any) *runner.Task {
@@ -37,8 +48,8 @@ func TestHTTPGetParsesJSONBodyReachableByField(t *testing.T) {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"count": 3, "ok": true}`)
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"count": 3, "ok": true}`)
 	}))
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
@@ -80,12 +91,12 @@ func TestHTTPAppliesQueryAndHeaders(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("q") != "cairn" || r.Header.Get("X-Token") != "secret" {
-			t.Errorf("query/header not applied: query=%q header=%q", r.URL.RawQuery, r.Header.Get("X-Token"))
+		if r.URL.Query().Get("q") != queryValue || r.Header.Get(customHeader) != customHeaderValue {
+			t.Errorf("query/header not applied: query=%q header=%q", r.URL.RawQuery, r.Header.Get(customHeader))
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok": true}`)
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"ok": true}`)
 	}))
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
@@ -95,8 +106,8 @@ func TestHTTPAppliesQueryAndHeaders(t *testing.T) {
 
 	_, err = fetch.Execute(t.Context(), httpTask(map[string]any{
 		urlKey:     server.URL,
-		queryKey:   map[string]any{"q": "cairn"},
-		headersKey: map[string]any{"X-Token": "secret"},
+		queryKey:   map[string]any{"q": queryValue},
+		headersKey: map[string]any{customHeader: customHeaderValue},
 	}))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -113,10 +124,10 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 		wantClass  runner.ErrorClass
 		wantRetry  time.Duration
 	}{
-		{name: "500 is transient", status: http.StatusInternalServerError, wantClass: runner.ClassTransient},
-		{name: "408 is transient", status: http.StatusRequestTimeout, wantClass: runner.ClassTransient},
-		{name: "404 is permanent", status: http.StatusNotFound, wantClass: runner.ClassPermanent},
-		{name: "429 honors retry-after", status: http.StatusTooManyRequests, retryAfter: "2", wantClass: runner.ClassRateLimited, wantRetry: 2 * time.Second},
+		{name: case500, status: http.StatusInternalServerError, wantClass: runner.ClassTransient},
+		{name: case408, status: http.StatusRequestTimeout, wantClass: runner.ClassTransient},
+		{name: case404, status: http.StatusNotFound, wantClass: runner.ClassPermanent},
+		{name: case429, status: http.StatusTooManyRequests, retryAfter: "2", wantClass: runner.ClassRateLimited, wantRetry: 2 * time.Second},
 	}
 
 	for _, tt := range cases {
@@ -129,7 +140,7 @@ func TestHTTPClassifiesStatusCodes(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.status)
-				_, _ = io.WriteString(w, "nope")
+				writeBody(t, w, "nope")
 			}))
 
 			fetch, err := builtins.NewHTTP(nil, server.Client())
@@ -156,7 +167,7 @@ func TestHTTPNonJSONResponseReturnsStringBody(t *testing.T) {
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		_, _ = io.WriteString(w, "plain text reply")
+		writeBody(t, w, "plain text reply")
 	}))
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
@@ -180,7 +191,7 @@ func TestHTTPJSONParamRejectsNonJSON(t *testing.T) {
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		_, _ = io.WriteString(w, "definitely not json")
+		writeBody(t, w, "definitely not json")
 	}))
 
 	fetch, err := builtins.NewHTTP(nil, server.Client())
@@ -209,7 +220,7 @@ func TestHTTPPostEncodesObjectBody(t *testing.T) {
 		var decoded map[string]any
 
 		if r.Method == http.MethodPost &&
-			r.Header.Get("Content-Type") == "application/json" {
+			r.Header.Get("Content-Type") == mediaJSON {
 			if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil {
 				received <- decoded
 			}
@@ -246,12 +257,12 @@ func TestHTTPPathJoinsBaseURL(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/items" {
-			t.Errorf("path = %q, want /v1/items", r.URL.Path)
+		if r.URL.Path != itemsPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, itemsPath)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok": true}`)
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"ok": true}`)
 	}))
 
 	fetch, err := builtins.NewHTTP(map[string]any{baseURLKey: server.URL}, server.Client())
@@ -259,7 +270,7 @@ func TestHTTPPathJoinsBaseURL(t *testing.T) {
 		t.Fatalf("new http: %v", err)
 	}
 
-	if _, err := fetch.Execute(t.Context(), httpTask(map[string]any{pathKey: "/v1/items"})); err != nil {
+	if _, err := fetch.Execute(t.Context(), httpTask(map[string]any{pathKey: itemsPath})); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 }
@@ -274,13 +285,13 @@ func TestHTTPValidate(t *testing.T) {
 		resolved bool
 		wantErr  bool
 	}{
-		{name: "missing url everywhere", params: map[string]any{}, resolved: true, wantErr: true},
+		{name: caseMissingURL, params: map[string]any{}, resolved: true, wantErr: true},
 		{name: "url param suffices", params: map[string]any{urlKey: exampleURL}, resolved: true, wantErr: false},
 		{
 			name: "path needs base_url", cfg: map[string]any{baseURLKey: exampleURL},
-			params: map[string]any{pathKey: "/x"}, resolved: true, wantErr: false,
+			params: map[string]any{pathKey: relativePath}, resolved: true, wantErr: false,
 		},
-		{name: "path without base_url fails", params: map[string]any{pathKey: "/x"}, resolved: true, wantErr: true},
+		{name: "path without base_url fails", params: map[string]any{pathKey: relativePath}, resolved: true, wantErr: true},
 		{
 			name: "bad method", params: map[string]any{urlKey: exampleURL, methodKey: "FETCH"},
 			resolved: true, wantErr: true,
@@ -322,8 +333,8 @@ func TestHTTPCredentialSendsBearer(t *testing.T) {
 			t.Errorf("Authorization = %q, want %q", got, bearerPrefix+credToken)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok": true}`)
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"ok": true}`)
 	}))
 
 	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
@@ -376,8 +387,8 @@ func TestHTTPExplicitAuthorizationWinsOverCredential(t *testing.T) {
 					t.Errorf("Authorization = %q, want the explicit header %q", got, explicit)
 				}
 
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = io.WriteString(w, `{"ok": true}`)
+				w.Header().Set("Content-Type", mediaJSON)
+				writeBody(t, w, `{"ok": true}`)
 			}))
 
 			lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
@@ -410,7 +421,7 @@ func TestHTTPCredentialTokenNeverInError(t *testing.T) {
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, "denied for "+r.Header.Get(authHeader))
+		writeBody(t, w, "denied for "+r.Header.Get(authHeader))
 	}))
 
 	lookup := &fakeTokenLookup{tokens: map[string]string{credName: credToken}}
@@ -479,8 +490,8 @@ func TestHTTPNilLookupSendsNoBearer(t *testing.T) {
 			t.Errorf("Authorization = %q, want none without a credential", got)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"ok": true}`)
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"ok": true}`)
 	}))
 
 	fetch, err := builtins.NewHTTPWithCredentials(nil, server.Client(), nil)

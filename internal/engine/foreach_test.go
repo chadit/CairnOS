@@ -15,6 +15,8 @@ import (
 
 const (
 	fnList   = "list"
+	fnEcho   = "echo"
+	fnCount  = "count"
 	failItem = "fail"
 )
 
@@ -54,7 +56,7 @@ max_parallel = 2
 
 	funcs := map[string]builtins.Func{
 		fnList: listReturning([]any{"a", "b", "c", "d"}),
-		"echo": echoItem,
+		fnEcho: echoItem,
 	}
 	eng, db := newTestEngine(t, baseConfig(), funcs)
 
@@ -88,7 +90,7 @@ items = "${{ list.output }}"
 
 	funcs := map[string]builtins.Func{
 		fnList: listReturning([]any{"a", "b", "c"}),
-		"echo": echoItem,
+		fnEcho: echoItem,
 	}
 	eng, db := newTestEngine(t, baseConfig(), funcs)
 
@@ -133,7 +135,7 @@ items = "${{ list.output }}"
 	counter := &callCounter{}
 	funcs := map[string]builtins.Func{
 		fnList:  listReturning([]any{}),
-		"count": counter.run,
+		fnCount: counter.run,
 	}
 	eng, db := newTestEngine(t, baseConfig(), funcs)
 
@@ -177,7 +179,7 @@ items = "${{ list.output }}"
 	counter := &callCounter{}
 	funcs := map[string]builtins.Func{
 		"scalar": scalar,
-		"count":  counter.run,
+		fnCount:  counter.run,
 	}
 	eng, db := newTestEngine(t, baseConfig(), funcs)
 
@@ -263,7 +265,7 @@ max_parallel = 1
 	calls := &itemCalls{failOn: failItem}
 	funcs := map[string]builtins.Func{
 		fnList: listReturning([]any{"a", "b", failItem, "d"}),
-		"boom": calls.run,
+		fnBoom: calls.run,
 	}
 	eng, db := newTestEngine(t, baseConfig(), funcs)
 

@@ -18,7 +18,7 @@ const testHoldKey = "codex"
 func TestSQLiteQueueConformance(t *testing.T) {
 	t.Parallel()
 
-	schedulertest.RunWorkQueueConformance(t, func(t *testing.T) scheduler.WorkQueue {
+	schedulertest.RunWorkQueueConformance(t, func(t *testing.T) *scheduler.SQLiteQueue {
 		t.Helper()
 
 		queue, err := scheduler.OpenSQLiteQueue(filepath.Join(t.TempDir(), "queue.db"))

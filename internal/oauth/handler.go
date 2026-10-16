@@ -223,9 +223,11 @@ func (h *Handler) verifiedSubject(ctx context.Context, code, verifier string) (i
 	}
 
 	// A missing or malformed claims set is not fatal: the subject is enough to
-	// resolve an existing member, and an absent email simply fails any domain
+	// resolve an existing member, and an absent email fails any domain
 	// allowlist, which is the safe direction.
-	_ = idToken.Claims(&claims)
+	if err := idToken.Claims(&claims); err != nil {
+		h.logger.WarnContext(ctx, "id token claims unreadable, continuing without email", "error", err)
+	}
 
 	email := claims.Email
 	if !claims.EmailVerified {

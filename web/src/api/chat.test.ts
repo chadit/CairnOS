@@ -65,9 +65,7 @@ describe('sendMessage stream', () => {
 
     expect(seen).toEqual(['CHAT_EVENT_TYPE_ASSISTANT_CHUNK']);
     expect(isCairnApiError(caught)).toBe(true);
-    if (isCairnApiError(caught)) {
-      expect(caught.code).toBe('chat.model_unavailable');
-    }
+    expect(caught).toHaveProperty('code', 'chat.model_unavailable');
   });
 });
 

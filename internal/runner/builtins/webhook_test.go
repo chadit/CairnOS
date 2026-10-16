@@ -3,7 +3,6 @@ package builtins_test
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -40,10 +39,10 @@ func TestWebhookClassifiesStatusCodes(t *testing.T) {
 		wantOK     bool
 	}{
 		{name: "200 succeeds", status: http.StatusOK, wantOK: true},
-		{name: "500 is transient", status: http.StatusInternalServerError, wantClass: runner.ClassTransient},
-		{name: "408 is transient", status: http.StatusRequestTimeout, wantClass: runner.ClassTransient},
-		{name: "429 honors retry-after", status: http.StatusTooManyRequests, retryAfter: "2", wantClass: runner.ClassRateLimited, wantRetry: 2 * time.Second},
-		{name: "404 is permanent", status: http.StatusNotFound, wantClass: runner.ClassPermanent},
+		{name: case500, status: http.StatusInternalServerError, wantClass: runner.ClassTransient},
+		{name: case408, status: http.StatusRequestTimeout, wantClass: runner.ClassTransient},
+		{name: case429, status: http.StatusTooManyRequests, retryAfter: "2", wantClass: runner.ClassRateLimited, wantRetry: 2 * time.Second},
+		{name: case404, status: http.StatusNotFound, wantClass: runner.ClassPermanent},
 	}
 
 	for _, tt := range cases {
@@ -56,7 +55,7 @@ func TestWebhookClassifiesStatusCodes(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.status)
-				_, _ = io.WriteString(w, "ack")
+				writeBody(t, w, "ack")
 			}))
 
 			hook, err := builtins.NewWebhook(nil, server.Client())
@@ -103,7 +102,7 @@ func TestWebhookMarshalsStructuredBodyAndUsesConfigURL(t *testing.T) {
 		var decoded map[string]any
 
 		if err := json.NewDecoder(r.Body).Decode(&decoded); err == nil &&
-			r.Header.Get("Content-Type") == "application/json" {
+			r.Header.Get("Content-Type") == mediaJSON {
 			received <- decoded
 		}
 
@@ -116,13 +115,13 @@ func TestWebhookMarshalsStructuredBodyAndUsesConfigURL(t *testing.T) {
 	}
 
 	// An empty params url exercises the config fallback.
-	if _, err := hook.Execute(t.Context(), webhookTask("", map[string]any{"status": "done"})); err != nil {
+	if _, err := hook.Execute(t.Context(), webhookTask("", map[string]any{statusField: statusDone})); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
 	select {
 	case decoded := <-received:
-		if decoded["status"] != "done" {
+		if decoded[statusField] != statusDone {
 			t.Fatalf("decoded body = %v", decoded)
 		}
 	default:
@@ -139,8 +138,8 @@ func TestWebhookValidate(t *testing.T) {
 		cfgURL  string
 		wantErr bool
 	}{
-		{name: "missing body", cfgURL: exampleURL, params: map[string]any{}, wantErr: true},
-		{name: "missing url everywhere", params: map[string]any{bodyKey: "x"}, wantErr: true},
+		{name: caseMissingBody, cfgURL: exampleURL, params: map[string]any{}, wantErr: true},
+		{name: caseMissingURL, params: map[string]any{bodyKey: "x"}, wantErr: true},
 		{name: "config url suffices", cfgURL: exampleURL, params: map[string]any{bodyKey: "x"}, wantErr: false},
 		{name: "param url suffices", params: map[string]any{bodyKey: "x", urlKey: exampleURL}, wantErr: false},
 		{name: "non-string url", cfgURL: exampleURL, params: map[string]any{bodyKey: "x", urlKey: int64(1)}, wantErr: true},

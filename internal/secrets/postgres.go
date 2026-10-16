@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -200,7 +201,13 @@ func (s *Postgres) Rotate(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("begin secrets rotate: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		// Rollback after Commit is the happy path. Any other failure is only
+		// logged, because Rotate has already chosen its return value.
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			slog.WarnContext(ctx, "roll back secrets rotate", "error", rollbackErr)
+		}
+	}()
 
 	for idx := range pending {
 		if err := s.reseal(ctx, tx, &pending[idx]); err != nil {

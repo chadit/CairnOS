@@ -32,12 +32,12 @@ const keyIDLen = 16
 // authenticated data, so a host cannot re-file a tip under a different category
 // without the open failing.
 
-// sealedTip is the encrypted envelope that crosses the wire when a shared key
+// SealedTip is the encrypted envelope that crosses the wire when a shared key
 // is configured. Category stays cleartext so the hive can route a tip to its
 // category subscribers without holding the key. Everything else about the tip
 // lives inside Ciphertext, sealed under the shared key, so the host at rest and
 // the transport see only opaque bytes.
-type sealedTip struct {
+type SealedTip struct {
 	// KeyID is the digest id of the key that sealed this envelope, so a node
 	// holding several keys during a rotation opens it under the right one.
 	KeyID string `json:"kid"`
@@ -63,13 +63,13 @@ type sealedTip struct {
 type Sealer interface {
 	// Seal encrypts one tip under the primary key, binding its category as
 	// authenticated data and stamping the key's id.
-	Seal(tip Tip) (sealedTip, error)
+	Seal(tip Tip) (SealedTip, error)
 
 	// Open decrypts and authenticates one envelope under the key its id names. It
 	// returns ErrOpenSealed for an unknown key id, a malformed nonce, or a
 	// tampered ciphertext or category, so a failed open drops the tip rather than
 	// surfacing ciphertext.
-	Open(env sealedTip) (Tip, error)
+	Open(env SealedTip) (Tip, error)
 }
 
 // SecretResolver is the slice of the secret source the sealer needs: resolve one
@@ -80,11 +80,11 @@ type SecretResolver interface {
 	Get(ctx context.Context, name string) (string, error)
 }
 
-// aesSealer seals tips with AES-256-GCM. It seals under one primary key and
-// opens under any key in openers (the primary plus the previous keys still
+// AESSealer is the Sealer built on AES-256-GCM. It seals under one primary key
+// and opens under any key in openers (the primary plus the previous keys still
 // accepted during a rotation). randReader is the nonce source, held as a field
 // so a test can make sealing reproducible; it defaults to crypto/rand.
-type aesSealer struct {
+type AESSealer struct {
 	primary    cipher.AEAD
 	randReader io.Reader
 	openers    map[string]cipher.AEAD
@@ -122,7 +122,7 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 }
 
 // NewSealer builds a single-key sealer that seals and opens under one key.
-func NewSealer(key []byte) (Sealer, error) {
+func NewSealer(key []byte) (*AESSealer, error) {
 	return NewRotatingSealer(key)
 }
 
@@ -131,7 +131,7 @@ func NewSealer(key []byte) (Sealer, error) {
 // rotation lets a node open tips other nodes sealed under it until the rotation
 // window closes. Each key carries a digest id on the wire, so Open matches an
 // envelope to its key without trying every key.
-func NewRotatingSealer(primaryKey []byte, previousKeys ...[]byte) (Sealer, error) {
+func NewRotatingSealer(primaryKey []byte, previousKeys ...[]byte) (*AESSealer, error) {
 	primary, err := newAEAD(primaryKey)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func NewRotatingSealer(primaryKey []byte, previousKeys ...[]byte) (Sealer, error
 		openers[keyID(prev)] = prevAEAD
 	}
 
-	return &aesSealer{
+	return &AESSealer{
 		primaryID:  keyID(primaryKey),
 		primary:    primary,
 		openers:    openers,
@@ -177,7 +177,7 @@ func keyFromSecret(ctx context.Context, source SecretResolver, ref string) ([]by
 // SealerFromSecret resolves the shared key from the secret source by reference
 // and builds a single-key sealer. The operator distributes 32 random bytes,
 // base64-encoded, through the secret source.
-func SealerFromSecret(ctx context.Context, source SecretResolver, ref string) (Sealer, error) {
+func SealerFromSecret(ctx context.Context, source SecretResolver, ref string) (*AESSealer, error) {
 	key, err := keyFromSecret(ctx, source, ref)
 	if err != nil {
 		return nil, err
@@ -189,7 +189,7 @@ func SealerFromSecret(ctx context.Context, source SecretResolver, ref string) (S
 // RotatingSealerFromSecret resolves the primary key and, when prevRef is set, a
 // previous key from the secret source and builds a rotating sealer. An empty
 // prevRef yields a single-key sealer, so the no-rotation case stays simple.
-func RotatingSealerFromSecret(ctx context.Context, source SecretResolver, primaryRef, prevRef string) (Sealer, error) {
+func RotatingSealerFromSecret(ctx context.Context, source SecretResolver, primaryRef, prevRef string) (*AESSealer, error) {
 	primary, err := keyFromSecret(ctx, source, primaryRef)
 	if err != nil {
 		return nil, err
@@ -211,20 +211,20 @@ func RotatingSealerFromSecret(ctx context.Context, source SecretResolver, primar
 // primary key with the category as authenticated data, stamping the key id.
 //
 //nolint:gocritic // hugeParam: tip is passed by value to keep the content-free tip immutable through the seal, matching the Client contract
-func (s *aesSealer) Seal(tip Tip) (sealedTip, error) {
+func (s *AESSealer) Seal(tip Tip) (SealedTip, error) {
 	plaintext, err := s.encode(tip)
 	if err != nil {
-		return sealedTip{}, fmt.Errorf("hive seal: encode tip: %w", err)
+		return SealedTip{}, fmt.Errorf("hive seal: encode tip: %w", err)
 	}
 
 	nonce := make([]byte, s.primary.NonceSize())
 	if _, err := io.ReadFull(s.randReader, nonce); err != nil {
-		return sealedTip{}, fmt.Errorf("hive seal: nonce: %w", err)
+		return SealedTip{}, fmt.Errorf("hive seal: nonce: %w", err)
 	}
 
 	ciphertext := s.primary.Seal(nil, nonce, plaintext, []byte(tip.Category))
 
-	return sealedTip{
+	return SealedTip{
 		Version:    1,
 		KeyID:      s.primaryID,
 		Category:   tip.Category,
@@ -237,7 +237,7 @@ func (s *aesSealer) Seal(tip Tip) (sealedTip, error) {
 // ciphertext, authenticate against the envelope category, and unmarshal. Any
 // failure collapses to ErrOpenSealed so a caller never distinguishes an unknown
 // key from a tampered tip and never sees partial plaintext.
-func (s *aesSealer) Open(env sealedTip) (Tip, error) {
+func (s *AESSealer) Open(env SealedTip) (Tip, error) {
 	aead, known := s.openers[env.KeyID]
 	if !known {
 		return Tip{}, ErrOpenSealed

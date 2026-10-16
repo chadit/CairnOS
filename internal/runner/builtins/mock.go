@@ -36,9 +36,10 @@ func NewMock() *Mock {
 	return &Mock{}
 }
 
-// MockFactory adapts NewMock to the registry contract.
-func MockFactory(_ map[string]any) (runner.Runner, error) {
-	return NewMock(), nil
+// MockFactory adapts NewMock to the registry contract. The mock reads no
+// config, so every block builds the same runner.
+func MockFactory() runner.Factory {
+	return asFactory(func(map[string]any) (*Mock, error) { return NewMock(), nil })
 }
 
 // Name implements runner.Runner.
@@ -123,18 +124,8 @@ func (m *Mock) maybeFail(task *runner.Task) error {
 		return nil
 	}
 
-	if times, hasTimes := toFloat(task.Params["fail_times"]); hasTimes {
-		key := task.RunID + "/" + task.ActionName
-
-		count, _ := m.attempts.LoadOrStore(key, new(int64))
-		attempts, isCounter := count.(*int64)
-
-		if isCounter {
-			*attempts++
-			if float64(*attempts) > times {
-				return nil
-			}
-		}
+	if times, hasTimes := toFloat(task.Params["fail_times"]); hasTimes && m.failuresSpent(task, times) {
+		return nil
 	}
 
 	switch classText {
@@ -145,6 +136,24 @@ func (m *Mock) maybeFail(task *runner.Task) error {
 	default:
 		return runner.NewError(runner.ClassPermanent, "mock.permanent", fmt.Sprintf("configured failure %v", classText))
 	}
+}
+
+// failuresSpent counts this attempt against the action's fail_times budget and
+// reports whether the budget was already used up, so the attempt succeeds. The
+// count is keyed per run and action, which is what lets a retry recover.
+func (m *Mock) failuresSpent(task *runner.Task, times float64) bool {
+	key := task.RunID + "/" + task.ActionName
+
+	count, _ := m.attempts.LoadOrStore(key, new(int64))
+
+	attempts, isCounter := count.(*int64)
+	if !isCounter {
+		return false
+	}
+
+	*attempts++
+
+	return float64(*attempts) > times
 }
 
 func toFloat(value any) (float64, bool) {

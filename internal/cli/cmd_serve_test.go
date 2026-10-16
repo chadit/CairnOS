@@ -20,6 +20,7 @@ import (
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // serveReadyMarker is the last line serve prints before blocking, giving
@@ -82,7 +83,7 @@ func (w *signalWriter) Write(data []byte) (int, error) {
 	}
 
 	if err != nil {
-		return written, err //nolint:wrapcheck // io.Writer contract: pass the sink's error through untouched
+		return written, err
 	}
 
 	return written, nil
@@ -187,7 +188,7 @@ func fireRun(t *testing.T, addr string) {
 	conn := dialServe(t, addr)
 
 	stream, err := cairnosv1.NewWorkflowServiceClient(conn).RunWorkflow(t.Context(),
-		&cairnosv1.RunWorkflowRequest{WorkflowName: "hello"})
+		&cairnosv1.RunWorkflowRequest{WorkflowName: helloWorkflowName})
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
@@ -329,7 +330,8 @@ func bridgeServeDir(t *testing.T, cfgTOML string) string {
 
 // serveUntilReady boots serve in dir on a goroutine and blocks until the ready
 // marker prints or serve exits early. The returned buffers are safe to read once
-// exit is drained, since the exit send happens-after every serve write.
+// exit is drained, since the exit send happens-after every serve write. Every
+// bridge it starts talks to silentBridgeHost.
 func serveUntilReady(
 	t *testing.T, dir string, env map[string]string,
 ) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
@@ -342,7 +344,8 @@ func serveUntilReady(
 	exit := make(chan int, 1)
 
 	go func() {
-		exit <- cli.New(stdout, stderr).WithEnv(environ.Map(env)).Run(ctx, []string{serveCmd, flagDirArg, dir})
+		app := cli.New(stdout, stderr).WithEnv(environ.Map(env)).WithBridgeTransport(silentBridgeHost())
+		exit <- app.Run(ctx, []string{serveCmd, flagDirArg, dir})
 	}()
 
 	select {
@@ -353,6 +356,16 @@ func serveUntilReady(
 	}
 
 	return stdout, stderr, exit, cancel
+}
+
+// silentBridgeHost stands in for every host a serve case's bridges call. It
+// holds each request until the caller gives up and opens no socket. A default
+// transport would resolve mm.example.test, which takes seconds to fail and
+// outlives serve, or poll the real Telegram API and keep that connection pooled.
+func silentBridgeHost() http.RoundTripper {
+	return nettest.Transport(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
 }
 
 // TestServeStartsBridgeWhenEnabled proves the bridge wiring end to end: enabled

@@ -9,9 +9,8 @@ import (
 )
 
 // openSQLite opens a fresh tenancy database under t.TempDir and closes it when
-// the case finishes. It returns the tenancy.Store interface so the shared
-// conformance suite drives it the same way it drives the postgres backend.
-func openSQLite(t *testing.T) tenancy.Store {
+// the case finishes.
+func openSQLite(t *testing.T) *tenancy.SQLite {
 	t.Helper()
 
 	tenants, err := tenancy.OpenSQLite(filepath.Join(t.TempDir(), "tenancy.db"))

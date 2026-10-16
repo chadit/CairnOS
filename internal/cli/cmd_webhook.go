@@ -43,9 +43,9 @@ func (a *App) cmdWebhook(ctx context.Context, args []string) int {
 		return a.cmdWebhookAdd(ctx, args[1:])
 	case subcmdList:
 		return a.cmdWebhookList(ctx, args[1:])
-	case "rotate":
+	case subcmdRotate:
 		return a.cmdWebhookRotate(ctx, args[1:])
-	case "remove":
+	case subcmdRemove:
 		return a.cmdWebhookRemove(ctx, args[1:])
 	default:
 		a.printErrf("unknown webhook subcommand %q\n", args[0])
@@ -109,11 +109,17 @@ func (a *App) cmdWebhookAdd(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	hooks, closeHooks, code, proceed := a.openWebhooksAt(ctx, "webhook add", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "webhook add", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
-	defer func() { _ = closeHooks() }()
+	defer a.closeStore(scheds)
+
+	hooks, _, code, proceed := openAt(ctx, a, "webhook add", *dirFlag, webhookBackends(scheds))
+	if !proceed {
+		return code
+	}
+	defer a.runCloser("webhook store", ownedCloser(hooks))
 
 	reg := &webhook.Registration{
 		WorkflowName:  flow.Name,
@@ -150,11 +156,17 @@ func (a *App) cmdWebhookList(ctx context.Context, args []string) int {
 		return code
 	}
 
-	hooks, closeHooks, code, proceed := a.openWebhooksAt(ctx, "webhook list", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "webhook list", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
-	defer func() { _ = closeHooks() }()
+	defer a.closeStore(scheds)
+
+	hooks, _, code, proceed := openAt(ctx, a, "webhook list", *dirFlag, webhookBackends(scheds))
+	if !proceed {
+		return code
+	}
+	defer a.runCloser("webhook store", ownedCloser(hooks))
 
 	list, err := hooks.List(ctx)
 	if err != nil {
@@ -209,11 +221,17 @@ func (a *App) cmdWebhookRotate(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	hooks, closeHooks, code, proceed := a.openWebhooksAt(ctx, "webhook rotate", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "webhook rotate", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
-	defer func() { _ = closeHooks() }()
+	defer a.closeStore(scheds)
+
+	hooks, _, code, proceed := openAt(ctx, a, "webhook rotate", *dirFlag, webhookBackends(scheds))
+	if !proceed {
+		return code
+	}
+	defer a.runCloser("webhook store", ownedCloser(hooks))
 
 	if rotateProd && !a.rotateEndpoint(ctx, hooks, name, webhook.EndpointProd, "production", hookPathPrefix) {
 		return ExitFailure
@@ -269,11 +287,17 @@ func (a *App) cmdWebhookRemove(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	hooks, closeHooks, code, proceed := a.openWebhooksAt(ctx, "webhook remove", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "webhook remove", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
-	defer func() { _ = closeHooks() }()
+	defer a.closeStore(scheds)
+
+	hooks, _, code, proceed := openAt(ctx, a, "webhook remove", *dirFlag, webhookBackends(scheds))
+	if !proceed {
+		return code
+	}
+	defer a.runCloser("webhook store", ownedCloser(hooks))
 
 	if err := hooks.Remove(ctx, name); err != nil {
 		a.printErrf("webhook remove: %v\n", err)

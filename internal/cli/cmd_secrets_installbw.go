@@ -104,8 +104,8 @@ func bwAsset(goos string) (bwAssetPin, error) {
 		archiveSum string
 		binarySum  string
 	}{
-		"linux":  {platform: "linux", archiveSum: bwLinuxArchiveSHA256, binarySum: bwLinuxBinarySHA256},
-		"darwin": {platform: "macos", archiveSum: bwMacOSArchiveSHA256, binarySum: bwMacOSBinarySHA256},
+		goosLinux:  {platform: "linux", archiveSum: bwLinuxArchiveSHA256, binarySum: bwLinuxBinarySHA256},
+		goosDarwin: {platform: "macos", archiveSum: bwMacOSArchiveSHA256, binarySum: bwMacOSBinarySHA256},
 	}
 
 	pin, pinned := pins[goos]

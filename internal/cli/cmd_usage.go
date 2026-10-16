@@ -85,7 +85,7 @@ func (a *App) reportUsage(ctx context.Context, probe *builtins.Usage, task *runn
 // usageProbeTask builds the one action this command runs. An absent flag leaves
 // its param out, which is how the runner reads "this machine" and "all of them".
 func usageProbeTask(host, launchers string) *runner.Task {
-	params := make(map[string]any, 2)
+	params := map[string]any{}
 
 	if host != "" {
 		params[paramUsageHost] = host

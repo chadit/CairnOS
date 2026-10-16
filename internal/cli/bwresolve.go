@@ -247,13 +247,21 @@ func unpinnedBitwarden(ctx context.Context, lookup environ.Lookup, cause error) 
 
 // prepareToolsDir creates the directory and keeps it to its owner. MkdirAll
 // leaves an existing directory's mode alone, so the chmod is what makes the
-// guarantee hold on a home created before this directory existed.
+// guarantee hold on a home created before this directory existed. The chmod
+// goes through a Root opened on the directory, naming the directory itself.
 func prepareToolsDir(dir string) error {
 	if err := os.MkdirAll(dir, bwToolsDirPerm); err != nil {
 		return fmt.Errorf("create %s: %w", dir, err)
 	}
 
-	if err := os.Chmod(dir, bwToolsDirPerm); err != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", dir, err)
+	}
+
+	defer func() { _ = root.Close() }()
+
+	if err := root.Chmod(".", bwToolsDirPerm); err != nil {
 		return fmt.Errorf("set the mode of %s: %w", dir, err)
 	}
 

@@ -31,15 +31,20 @@ const (
 
 // buildCode builds a code runner through its factory, the same path the CLI
 // wiring takes, so the tests exercise the real cap plumbing.
-func buildCode(t *testing.T, cfg map[string]any) runner.Runner {
+func buildCode(t *testing.T, cfg map[string]any) *builtins.Code {
 	t.Helper()
 
-	instance, err := builtins.CodeFactory(cfg)
+	instance, err := builtins.CodeFactory()(cfg)
 	if err != nil {
 		t.Fatalf("build code runner: %v", err)
 	}
 
-	return instance
+	code, isCode := instance.(*builtins.Code)
+	if !isCode {
+		t.Fatalf("code factory built %T, want *builtins.Code", instance)
+	}
+
+	return code
 }
 
 func TestCodeWallClockCapCancelsInfiniteLoop(t *testing.T) {
@@ -89,10 +94,10 @@ func TestCodeDefaultStepBudgetBoundary(t *testing.T) {
 
 	// Each iteration costs 30 weighted steps (the back edge plus step()'s entry
 	// and return) and the run adds 40, so 16,500 iterations spend 99% of the
-	// 500,000 default and 16,850 spend 101%. The per-instruction counting
-	// starlark used before v0.0.0-20261005163335 charged both runs about
-	// 270,000 and passed them, so a release that reweights steps fails here
-	// instead of silently moving every script's headroom.
+	// 500,000 default and 16,850 spend 101%. Per-instruction counting before
+	// starlark v0.0.0-20261005163335 charged both runs about 270,000 and passed
+	// them, so a release that reweights steps fails here instead of silently
+	// moving every script's headroom.
 	script := "def step(i):\n    return i % 7\n\ndef spin(n):\n    total = 0\n" +
 		"    for i in range(n):\n        total += step(i)\n    return total\n\noutput = spin(params[\"n\"])"
 
@@ -169,7 +174,7 @@ func TestCodeMetaReportsStepCount(t *testing.T) {
 func TestCodeFactoryBuildsAndRejectsBadConfig(t *testing.T) {
 	t.Parallel()
 
-	if _, err := builtins.CodeFactory(nil); err != nil {
+	if _, err := builtins.CodeFactory()(nil); err != nil {
 		t.Fatalf("empty config build: %v", err)
 	}
 
@@ -186,9 +191,14 @@ func TestCodeFactoryBuildsAndRejectsBadConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := builtins.CodeFactory(tt.cfg)
+			built, err := builtins.CodeFactory()(tt.cfg)
 			if !errors.Is(err, builtins.ErrConfigValue) {
 				t.Fatalf("err = %v, want ErrConfigValue", err)
+			}
+
+			// A nil *Code boxed in the interface would compare non-nil here.
+			if built != nil {
+				t.Fatalf("failed build returned runner %#v, want nil", built)
 			}
 		})
 	}
@@ -199,7 +209,7 @@ func TestCodeRegistersInBuiltRegistry(t *testing.T) {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.CodeName, builtins.CodeFactory); err != nil {
+	if err := registry.Register(builtins.CodeName, builtins.CodeFactory()); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 

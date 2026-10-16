@@ -9,13 +9,21 @@ import (
 	"github.com/chadit/CairnOS/internal/hostenv"
 )
 
-// Fixture values the cases share: the tool key every one installs, a plain
-// absolute directory, the path it renders to, and the single-host block name.
+// Fixture values the cases share: the tool keys the hosts install, a plain
+// absolute directory, the path it renders to, and the single-host block name
+// with its SSH target. The rendered lines two cases both pin stay whole
+// strings so the golden text is readable as the job sees it.
 const (
 	cliClaude  = "claude"
+	cliCursor  = "cursor-agent"
+	cliCodex   = "codex"
 	optBin     = "/opt/bin"
 	optBinPath = optBin + "/" + cliClaude
 	boxHost    = "box"
+	boxSSH     = "build-box"
+
+	boxHostsIndex  = "CAIRNOS_HOSTS=box"
+	claudeTildeVar = "CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent"
 )
 
 // twoHosts is the shape a two-host deployment describes: a worker carrying
@@ -25,16 +33,16 @@ func twoHosts() map[string]config.Host {
 	return map[string]config.Host{
 		"build_box": {
 			Type:    config.HostTypeWorker,
-			SSH:     "build-box",
+			SSH:     boxSSH,
 			Wrapper: "~/.local/bin/agent-env",
-			Harnesses: map[string]config.Harness{
-				cliClaude:      {Path: config.DefaultHarnessPath, Name: "claude-agent"},
-				"cursor-agent": {Path: config.DefaultHarnessPath, Name: "cursor-agent", Provider: "cursor"},
+			Harnesses: map[string]config.HostCLI{
+				cliClaude: {Path: config.DefaultHarnessPath, Name: "claude-agent"},
+				cliCursor: {Path: config.DefaultHarnessPath, Name: cliCursor, Provider: "cursor"},
 			},
 		},
 		"builder.example.com": {
 			Type:      config.HostTypeAgent,
-			Harnesses: map[string]config.Harness{"codex": {Path: optBin, Name: "codex"}},
+			Harnesses: map[string]config.HostCLI{cliCodex: {Path: optBin, Name: cliCodex}},
 		},
 	}
 }
@@ -51,7 +59,7 @@ func TestRenderGolden(t *testing.T) {
 		"CAIRNOS_HOST_BUILD_BOX_SSH=build-box",
 		"CAIRNOS_HOST_BUILD_BOX_WRAPPER=~/.local/bin/agent-env",
 		"CAIRNOS_HOST_BUILD_BOX_HARNESSES=claude cursor-agent",
-		"CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent",
+		claudeTildeVar,
 		"CAIRNOS_HOST_BUILD_BOX_HARNESS_CURSOR_AGENT=~/.local/bin/cursor-agent",
 		"CAIRNOS_HOST_BUILD_BOX_HARNESS_CURSOR_AGENT_PROVIDER=cursor",
 		"CAIRNOS_HOST_BUILDER_EXAMPLE_COM_TYPE=agent",
@@ -73,9 +81,8 @@ func TestRenderKeepsTildeVerbatim(t *testing.T) {
 
 	rendered := hostenv.Render(twoHosts())
 
-	want := "CAIRNOS_HOST_BUILD_BOX_HARNESS_CLAUDE=~/.local/bin/claude-agent"
-	if !slices.Contains(rendered, want) {
-		t.Fatalf("rendered %#v does not contain %q", rendered, want)
+	if !slices.Contains(rendered, claudeTildeVar) {
+		t.Fatalf("rendered %#v does not contain %q", rendered, claudeTildeVar)
 	}
 }
 
@@ -129,7 +136,7 @@ func TestRenderJoinsWithExactlyOneSlash(t *testing.T) {
 		hosts := map[string]config.Host{
 			boxHost: {
 				Type:      config.HostTypeWorker,
-				Harnesses: map[string]config.Harness{cliClaude: {Path: testCase.path, Name: cliClaude}},
+				Harnesses: map[string]config.HostCLI{cliClaude: {Path: testCase.path, Name: cliClaude}},
 			},
 		}
 
@@ -147,11 +154,11 @@ func TestRenderOmitsTheToolIndexForAHostWithNoTools(t *testing.T) {
 	t.Parallel()
 
 	hosts := map[string]config.Host{
-		boxHost: {Type: config.HostTypeAgent, SSH: "build-box"},
+		boxHost: {Type: config.HostTypeAgent, SSH: boxSSH},
 	}
 
 	want := []string{
-		"CAIRNOS_HOSTS=box",
+		boxHostsIndex,
 		"CAIRNOS_HOST_BOX_TYPE=agent",
 		"CAIRNOS_HOST_BOX_SSH=build-box",
 	}
@@ -170,12 +177,12 @@ func TestRenderOmitsUnsetOptionalFields(t *testing.T) {
 	hosts := map[string]config.Host{
 		boxHost: {
 			Type:      config.HostTypeWorker,
-			Harnesses: map[string]config.Harness{cliClaude: {Path: optBin, Name: cliClaude}},
+			Harnesses: map[string]config.HostCLI{cliClaude: {Path: optBin, Name: cliClaude}},
 		},
 	}
 
 	want := []string{
-		"CAIRNOS_HOSTS=box",
+		boxHostsIndex,
 		"CAIRNOS_HOST_BOX_TYPE=worker",
 		"CAIRNOS_HOST_BOX_HARNESSES=claude",
 		"CAIRNOS_HOST_BOX_HARNESS_CLAUDE=" + optBinPath,

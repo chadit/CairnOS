@@ -202,7 +202,7 @@ func copyZipMember(entry *zip.File, target string, limit int64) error {
 func copyMember(source io.Reader, target string, limit int64) error {
 	// #nosec G304 -- target is destDir joined with a separator-free name that
 	// memberName vetted, so an archive entry cannot steer it outside the runtime dir.
-	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, execPerm)
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", target, err)
 	}
@@ -217,6 +217,11 @@ func copyMember(source io.Reader, target string, limit int64) error {
 
 	if written > limit {
 		return &MemberTooLargeError{Path: target, Limit: limit}
+	}
+
+	// Written at filePerm, the member turns runnable only once it is whole.
+	if err := file.Chmod(execPerm); err != nil {
+		return fmt.Errorf("mark %s executable: %w", target, err)
 	}
 
 	if err := file.Close(); err != nil {

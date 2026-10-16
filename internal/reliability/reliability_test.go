@@ -12,9 +12,10 @@ import (
 
 // Shared fixture values; goconst applies to tests in this repo's lint policy.
 const (
-	codeTransient = "test.transient"
-	msgBlip       = "blip"
-	outputOK      = "ok"
+	codeTransient   = "test.transient"
+	codeRateLimited = "test.rate_limited"
+	msgBlip         = "blip"
+	outputOK        = "ok"
 )
 
 // flakyCall builds a call that fails the first failures invocations with
@@ -123,7 +124,7 @@ func TestRetryRateLimitedWaitsAtLeastRetryAfter(t *testing.T) {
 	retryAfter := 30 * time.Millisecond
 	failure := &runner.Error{
 		Class:      runner.ClassRateLimited,
-		Code:       "test.rate_limited",
+		Code:       codeRateLimited,
 		Message:    "slow down",
 		RetryAfter: retryAfter,
 	}
@@ -152,7 +153,7 @@ func TestRetryRateLimitedRetriesNonIdempotentAction(t *testing.T) {
 	retryAfter := 20 * time.Millisecond
 	failure := &runner.Error{
 		Class:      runner.ClassRateLimited,
-		Code:       "test.rate_limited",
+		Code:       codeRateLimited,
 		Message:    "usage limit reached",
 		RetryAfter: retryAfter,
 	}

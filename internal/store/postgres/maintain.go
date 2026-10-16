@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,10 +36,9 @@ func (s *Store) ReconcileInterrupted(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reconcile interrupted: begin: %w", err)
 	}
-	// Rollback after a successful Commit is a no-op pgx reports as
-	// ErrTxClosed; ignoring it keeps the error path covered without
-	// complicating the happy path.
-	defer rollbackQuietly(ctx, tx)
+	// One deferred rollback covers every error path; after Commit it is the
+	// ErrTxClosed no-op rollbackUncommitted ignores.
+	defer rollbackUncommitted(ctx, tx)
 
 	_, err = tx.Exec(ctx,
 		`UPDATE action_results
@@ -111,7 +112,7 @@ func (s *Store) deleteRunsBefore(ctx context.Context, cutoff time.Time) (int, in
 	if err != nil {
 		return 0, 0, fmt.Errorf("prune runs: begin: %w", err)
 	}
-	defer rollbackQuietly(ctx, tx)
+	defer rollbackUncommitted(ctx, tx)
 
 	utcCutoff := cutoff.UTC()
 
@@ -174,8 +175,11 @@ func (s *Store) truncateOutputsBefore(ctx context.Context, cutoff time.Time) (in
 	return int(actionTag.RowsAffected() + stepTag.RowsAffected()), nil
 }
 
-// rollbackQuietly abandons tx; after a successful Commit this is a no-op
-// pgx reports as ErrTxClosed, which carries no signal worth surfacing.
-func rollbackQuietly(ctx context.Context, tx pgx.Tx) {
-	_ = tx.Rollback(ctx)
+// rollbackUncommitted abandons tx. After a successful Commit pgx reports
+// ErrTxClosed, the expected happy-path answer; any other failure is logged
+// because the deferring caller has already chosen its own return value.
+func rollbackUncommitted(ctx context.Context, tx pgx.Tx) {
+	if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		slog.WarnContext(ctx, "roll back store transaction", "error", err)
+	}
 }

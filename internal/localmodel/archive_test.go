@@ -27,6 +27,12 @@ const (
 	fixtureLibBody    = "lib"
 	fixtureRogueBody  = "payload"
 	fixtureWindowsLib = "ggml-base.dll"
+
+	// Library names a POSIX release carries: a CPU backend variant, an
+	// unversioned soname, and one the size tests make too large.
+	fixtureBackendLib   = "libggml-cpu-haswell.so"
+	fixtureUnversioned  = "libllama.so"
+	fixtureOversizedLib = "libbig.so"
 )
 
 // fixtureCeiling is the per-member byte cap the size tests run against, small
@@ -49,14 +55,14 @@ func TestExtractServerKeepsServerAndLibrariesOnly(t *testing.T) {
 		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
 		{Name: fixtureVersionedLib, Content: fixtureLibBody},
 		{Name: fixtureSoname, Link: fixtureVersionedLib},
-		{Name: "libggml-cpu-haswell.so", Content: "backend"},
+		{Name: fixtureBackendLib, Content: "backend"},
 		{Name: fixtureOtherTool, Content: fixtureOtherBody},
 		{Name: fixtureLicense, Content: "text"},
 	})
 
 	dest := extractFixture(t, payload, posixBuild())
 
-	for _, name := range []string{localmodel.ServerBinary, fixtureVersionedLib, fixtureSoname, "libggml-cpu-haswell.so"} {
+	for _, name := range []string{localmodel.ServerBinary, fixtureVersionedLib, fixtureSoname, fixtureBackendLib} {
 		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
 			t.Errorf("missing %s: %v", name, err)
 		}
@@ -79,7 +85,8 @@ func TestExtractServerKeepsServerAndLibrariesOnly(t *testing.T) {
 }
 
 // TestExtractServerMakesServerExecutable proves the installed binary carries
-// the bit the supervisor needs to start it.
+// the bit the supervisor needs to start it, and that no other account can read
+// or run it.
 func TestExtractServerMakesServerExecutable(t *testing.T) {
 	t.Parallel()
 
@@ -93,6 +100,10 @@ func TestExtractServerMakesServerExecutable(t *testing.T) {
 
 	if info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("server mode = %v, want the owner execute bit set", info.Mode().Perm())
+	}
+
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Errorf("server mode = %v, want no group or other access", info.Mode().Perm())
 	}
 }
 
@@ -153,7 +164,7 @@ func TestExtractServerRefusesAnOversizedMember(t *testing.T) {
 
 	payload := tarGzFixture(t, []fixtureEntry{
 		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
-		{Name: "libbig.so", Content: strings.Repeat("x", int(fixtureCeiling)+1)},
+		{Name: fixtureOversizedLib, Content: strings.Repeat("x", int(fixtureCeiling)+1)},
 	})
 
 	dest := filepath.Join(t.TempDir(), "runtime")
@@ -168,7 +179,7 @@ func TestExtractServerRefusesAnOversizedMember(t *testing.T) {
 		t.Fatalf("err = %v, want a *localmodel.MemberTooLargeError naming the member", err)
 	}
 
-	if filepath.Base(tooLarge.Path) != "libbig.so" {
+	if filepath.Base(tooLarge.Path) != fixtureOversizedLib {
 		t.Errorf("path = %q, want the oversized member named", tooLarge.Path)
 	}
 }
@@ -228,7 +239,7 @@ func TestExtractServerRejectsSymlinkWithPathTarget(t *testing.T) {
 
 	payload := tarGzFixture(t, []fixtureEntry{
 		{Name: localmodel.ServerBinary, Content: fixtureServerBody},
-		{Name: "libllama.so", Link: "/etc/passwd"},
+		{Name: fixtureUnversioned, Link: "/etc/passwd"},
 	})
 
 	err := localmodel.ExtractServer(writeFixture(t, payload), t.TempDir(), posixBuild(), localmodel.MaxMemberBytes)
@@ -272,7 +283,7 @@ func TestIsSharedLibCoversVersionedSonames(t *testing.T) {
 		name string
 		want bool
 	}{
-		{"libllama.so", true},
+		{fixtureUnversioned, true},
 		{"libllama.so.0.4.0", true},
 		{"libggml-base.0.23.0.dylib", true},
 		{"ggml-cpu-zen4.dll", true},

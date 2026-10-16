@@ -96,7 +96,7 @@ func TestGatewayRejectsOverLimitBody(t *testing.T) {
 	oversized := `{"inputs":{"pad":"` +
 		strings.Repeat("x", testMaxBodyBytes*2) + `"}}`
 
-	resp := httpPost(t, fix.transport, fix.httpBase+"/v1/workflows/hello/runs", oversized)
+	resp := httpPost(t, fix.transport, fix.httpBase+helloRunsPath, oversized)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {

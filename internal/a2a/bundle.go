@@ -127,9 +127,16 @@ func NewBundle(cfg *BundleConfig) (*Bundle, error) {
 		return nil, err
 	}
 
-	creds, err := serverCreds(cfg.TLS)
-	if err != nil {
-		return nil, err
+	// A nil credential is the plaintext default when no mTLS block is set.
+	var creds credentials.TransportCredentials
+
+	if cfg.TLS.Configured() {
+		serverTLS, err := cfg.TLS.ServerTLSConfig()
+		if err != nil {
+			return nil, err
+		}
+
+		creds = credentials.NewTLS(serverTLS)
 	}
 
 	service := NewService(cfg.Manager, cfg.Resolver, cfg.Store, cfg.Bridge)
@@ -162,29 +169,14 @@ func (b *Bundle) Attach(cfg *api.Config) error {
 
 	cfg.Creds = b.Creds
 
-	dialCreds, err := b.tlsCfg.ClientCredentials()
+	clientTLS, err := b.tlsCfg.ClientTLSConfig()
 	if err != nil {
 		return err
 	}
 
-	cfg.GatewayDialCreds = dialCreds
+	cfg.GatewayDialCreds = credentials.NewTLS(clientTLS)
 
 	return nil
-}
-
-// serverCreds builds the mTLS server credentials when the transport block is
-// configured, returning nil for the plaintext default.
-func serverCreds(tlsCfg TLSConfig) (credentials.TransportCredentials, error) {
-	if !tlsCfg.Configured() {
-		return nil, nil //nolint:nilnil // a nil credential is the documented "plaintext transport" state, not an error
-	}
-
-	creds, err := tlsCfg.ServerCredentials()
-	if err != nil {
-		return nil, err
-	}
-
-	return creds, nil
 }
 
 // registerGateway adapts the generated A2A gateway registrar to the

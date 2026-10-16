@@ -25,6 +25,8 @@ const (
 
 	// keyMaxLine is the shared rule key the merge and service tests assert on.
 	keyMaxLine = "max_line"
+
+	codeUnknownLanguage = "rules.unknown_language"
 )
 
 // errDownstream stands in for a non-unknown-language failure from a wired
@@ -141,7 +143,7 @@ func TestLanguageRulesUnknownLanguage(t *testing.T) {
 	_, err := rules.Execute(t.Context(), rulesTask("fortran", ""))
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
-	if !isClassified || classified.Class != runner.ClassPermanent || classified.Code != "rules.unknown_language" {
+	if !isClassified || classified.Class != runner.ClassPermanent || classified.Code != codeUnknownLanguage {
 		t.Fatalf("error = %v, want permanent rules.unknown_language", err)
 	}
 }
@@ -300,7 +302,7 @@ func TestLanguageRulesServiceUnknownWithoutDir(t *testing.T) {
 	_, execErr := rulesRunner.Execute(t.Context(), rulesTask("python", ""))
 
 	classified, isClassified := errors.AsType[*runner.Error](execErr)
-	if !isClassified || classified.Code != "rules.unknown_language" {
+	if !isClassified || classified.Code != codeUnknownLanguage {
 		t.Fatalf("error = %v, want rules.unknown_language", execErr)
 	}
 }

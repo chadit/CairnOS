@@ -285,7 +285,7 @@ func testRegistry(t *testing.T) *runner.Registry {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 

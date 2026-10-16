@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"os"
 	"testing"
 
@@ -132,4 +133,15 @@ func digestOf(payload []byte) string {
 	sum := sha256.Sum256(payload)
 
 	return hex.EncodeToString(sum[:])
+}
+
+// writeResponse sends body from a fixture handler and fails the test when the
+// write does not go through. It reports with Errorf, since a handler can run
+// off the test goroutine where Fatalf must not be called.
+func writeResponse(t *testing.T, w http.ResponseWriter, body []byte) {
+	t.Helper()
+
+	if _, err := w.Write(body); err != nil {
+		t.Errorf("write fixture response: %v", err)
+	}
 }

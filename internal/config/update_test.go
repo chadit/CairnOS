@@ -10,6 +10,9 @@ import (
 	"github.com/chadit/CairnOS/internal/environ"
 )
 
+// updateIntervalEnv is the override both interval cases set.
+const updateIntervalEnv = "CAIRNOS_UPDATE_INTERVAL"
+
 // TestLoadUpdateDefaultsOff pins the posture a host gets without an [update]
 // block: the loop stays off, and the interval it would use is the quarter hour
 // the README documents.
@@ -66,8 +69,8 @@ func TestLoadUpdateEnvOverridesBeatFile(t *testing.T) {
 	t.Parallel()
 
 	overrides := environ.Map(map[string]string{
-		"CAIRNOS_UPDATE_AUTO":     "true",
-		"CAIRNOS_UPDATE_INTERVAL": "1h",
+		"CAIRNOS_UPDATE_AUTO": "true",
+		updateIntervalEnv:     "1h",
 	})
 
 	cfg, err := config.LoadWith(writeConfig(t, "[update]\nauto = false\ninterval = \"5m\"\n"), overrides)
@@ -89,7 +92,7 @@ func TestLoadUpdateEnvOverridesBeatFile(t *testing.T) {
 func TestLoadRejectsAZeroIntervalFromTheEnvironment(t *testing.T) {
 	t.Parallel()
 
-	overrides := environ.Map(map[string]string{"CAIRNOS_UPDATE_INTERVAL": "0s"})
+	overrides := environ.Map(map[string]string{updateIntervalEnv: "0s"})
 
 	_, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), overrides)
 	if !errors.Is(err, config.ErrInvalidConfig) {

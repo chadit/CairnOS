@@ -9,6 +9,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/store"
+	"github.com/chadit/CairnOS/internal/tuning"
 )
 
 const applyWorkflowName = "cache_me"
@@ -61,8 +62,12 @@ func writeApplyWorkflow(t *testing.T, dir, suggestionID string) {
 		ID:        suggestionID,
 		Kind:      store.SuggestionCaching,
 		Target:    applyWorkflowName + ".fetch",
-		Rationale: "repeated identical call",
-		Evidence:  map[string]any{"workflow": applyWorkflowName, "action": "fetch", "runner": "openai"},
+		Rationale: cachingRationale,
+		Evidence: map[string]any{
+			tuning.EvidenceWorkflow: applyWorkflowName,
+			tuning.EvidenceAction:   "fetch",
+			tuning.EvidenceRunner:   cachingRunner,
+		},
 		Status:    store.SuggestionApproved,
 		CreatedAt: time.Now(),
 	})
@@ -111,7 +116,11 @@ func TestSuggestionsApplyThenRevert(t *testing.T) {
 		t.Errorf("apply output did not mention the rollback point: %s", stdout)
 	}
 
-	afterApply, _ := os.ReadFile(workflowPath)
+	afterApply, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read the applied workflow: %v", err)
+	}
+
 	if !strings.Contains(string(afterApply), "cairnos auto-apply") {
 		t.Error("apply did not annotate the workflow file")
 	}
@@ -134,7 +143,11 @@ func TestSuggestionsApplyThenRevert(t *testing.T) {
 		t.Fatalf("revert exited %d: %s", code, stderr)
 	}
 
-	afterRevert, _ := os.ReadFile(workflowPath)
+	afterRevert, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read the reverted workflow: %v", err)
+	}
+
 	if string(afterRevert) != cacheWorkflow {
 		t.Errorf("revert did not restore the original content\ngot:  %q\nwant: %q", afterRevert, cacheWorkflow)
 	}
@@ -159,7 +172,7 @@ func TestSuggestionsApplyRefusesParamTuning(t *testing.T) {
 		ID:        "param-1",
 		Kind:      store.SuggestionParamTuning,
 		Target:    applyWorkflowName + ".fetch",
-		Evidence:  map[string]any{"workflow": applyWorkflowName},
+		Evidence:  map[string]any{tuning.EvidenceWorkflow: applyWorkflowName},
 		Status:    store.SuggestionApproved,
 		CreatedAt: time.Now(),
 	})

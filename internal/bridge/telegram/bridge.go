@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -41,6 +42,12 @@ type Config struct {
 	// always uses; a test injects its own BotAPI here instead (doc.go, base-URL
 	// rationale).
 	API BotAPI
+
+	// Transport carries the real client's calls when API is nil, and nil means
+	// the shared default. It is a round tripper rather than a base URL, so serve's
+	// tests keep the poll off the network while the host stays fixed (doc.go,
+	// base-URL rationale).
+	Transport http.RoundTripper
 
 	// Users is the allowlist keyed by numeric Telegram user id. Each entry is the
 	// grant the core enforces for that sender.
@@ -85,10 +92,10 @@ type Bridge struct {
 }
 
 // New builds a Bridge from cfg. When cfg.API is nil it constructs the real Bot
-// API client against DefaultBaseURL, which is the production path; a test
-// injects its own BotAPI through cfg.API instead. Nothing in production sets
-// cfg.API, so a running bridge always talks to the fixed public host (doc.go,
-// base-URL rationale).
+// API client against DefaultBaseURL over cfg.Transport, which is the production
+// path; a test injects its own BotAPI through cfg.API instead. Nothing in
+// production sets cfg.API, so a running bridge always addresses the fixed public
+// host (doc.go, base-URL rationale).
 func New(cfg *Config) *Bridge {
 	log := cfg.Logger
 	if log == nil {
@@ -97,7 +104,7 @@ func New(cfg *Config) *Bridge {
 
 	api := cfg.API
 	if api == nil {
-		api = NewClient(cfg.Token, DefaultBaseURL, cfg.SendTimeout, cfg.PollTimeout)
+		api = NewClientOver(cfg.Token, DefaultBaseURL, cfg.SendTimeout, cfg.PollTimeout, cfg.Transport)
 	}
 
 	backoffBase := cfg.BackoffBase
@@ -131,24 +138,10 @@ func (b *Bridge) Run(ctx context.Context) {
 		down   bool
 	)
 
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-
+	for ctx.Err() == nil {
 		updates, err := b.api.GetUpdates(ctx, offset, timeoutSecs)
 		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-
-			down = b.noteDown(ctx, down, err)
-
-			if !bridge.Sleep(ctx, delay) {
-				return
-			}
-
-			delay = bridge.NextBackoff(delay)
+			down, delay = b.retryAfter(ctx, down, delay, err)
 
 			continue
 		}
@@ -169,16 +162,28 @@ func (b *Bridge) Run(ctx context.Context) {
 	}
 }
 
-// noteDown logs the first failure of an outage and reports the outage state, so
-// a long outage writes one warn line instead of one line per retry. It is a
-// helper rather than an inline branch because the poll loop already sits two
-// levels deep by the time a failure is in hand.
-func (b *Bridge) noteDown(ctx context.Context, wasDown bool, cause error) bool {
+// retryAfter handles one failed poll and returns the outage state and the next
+// delay. Only an outage's first failure logs, so a long outage writes one warn
+// line instead of one per retry. A failure caused by ctx ending logs nothing, and
+// Sleep's result is dropped because a ctx that ends mid-wait is what the poll
+// loop's condition checks next.
+func (b *Bridge) retryAfter(
+	ctx context.Context,
+	wasDown bool,
+	delay time.Duration,
+	cause error,
+) (bool, time.Duration) {
+	if ctx.Err() != nil {
+		return wasDown, delay
+	}
+
 	if !wasDown {
 		b.log.WarnContext(ctx, "telegram long-poll down", "error", cause)
 	}
 
-	return true
+	bridge.Sleep(ctx, delay)
+
+	return true, bridge.NextBackoff(delay)
 }
 
 // origin is one update's resolved addressing: the sender id the allowlist is

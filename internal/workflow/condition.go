@@ -10,13 +10,30 @@ import (
 // engine wires this to upstream outputs, run inputs, and the secret source.
 type Resolver func(Ref) (any, error)
 
-// Expr is a parsed condition. The grammar is deliberately small: comparisons,
-// boolean operators, parentheses, literals, and references. No function calls,
-// no arbitrary code (.agents/spec/02-workflow-schema.md, "Conditional actions").
-type Expr interface {
-	// Eval computes the node's value using resolver to look up references.
-	Eval(resolver Resolver) (any, error)
+// Expr is one node of a parsed condition. The grammar is deliberately small:
+// comparisons, boolean operators, parentheses, literals, and references. No
+// function calls, no arbitrary code (.agents/spec/02-workflow-schema.md,
+// "Conditional actions"). Every node shares this one struct and kind says which
+// fields it uses, so the four node shapes evaluate through a single switch.
+type Expr struct {
+	literal  any    // exprLiteral
+	operand  *Expr  // exprNot
+	left     *Expr  // exprBinary
+	right    *Expr  // exprBinary
+	operator string // exprBinary
+	ref      Ref    // exprRef
+	kind     exprKind
 }
+
+// exprKind tags which shape an Expr node has.
+type exprKind int
+
+const (
+	exprLiteral exprKind = iota
+	exprRef
+	exprNot
+	exprBinary
+)
 
 // Operator spellings. Constants rather than inline literals so the lexer, the
 // parser, and the evaluator cannot drift apart on a typo.
@@ -34,7 +51,7 @@ const (
 
 // ParseCondition turns a condition string into an evaluable expression. The
 // returned error wraps ErrBadExpression with position context.
-func ParseCondition(text string) (Expr, error) {
+func ParseCondition(text string) (*Expr, error) {
 	tokens, err := lexCondition(text)
 	if err != nil {
 		return nil, err
@@ -56,7 +73,7 @@ func ParseCondition(text string) (Expr, error) {
 
 // EvalBool evaluates a condition to its final boolean. A non-boolean result
 // is a type error: the grammar exists to gate actions, nothing else.
-func EvalBool(expr Expr, resolver Resolver) (bool, error) {
+func EvalBool(expr *Expr, resolver Resolver) (bool, error) {
 	value, err := expr.Eval(resolver)
 	if err != nil {
 		return false, fmt.Errorf("condition: %w", err)
@@ -263,16 +280,16 @@ func (p *condParser) next() token {
 	return tok
 }
 
-func (p *condParser) parseOr() (Expr, error) {
+func (p *condParser) parseOr() (*Expr, error) {
 	return p.parseBinary(opOr, p.parseAnd)
 }
 
-func (p *condParser) parseAnd() (Expr, error) {
+func (p *condParser) parseAnd() (*Expr, error) {
 	return p.parseBinary(opAnd, p.parseCompare)
 }
 
 // parseBinary handles one left-associative boolean precedence level.
-func (p *condParser) parseBinary(operator string, nextLevel func() (Expr, error)) (Expr, error) {
+func (p *condParser) parseBinary(operator string, nextLevel func() (*Expr, error)) (*Expr, error) {
 	left, err := nextLevel()
 	if err != nil {
 		return nil, err
@@ -286,7 +303,7 @@ func (p *condParser) parseBinary(operator string, nextLevel func() (Expr, error)
 			return nil, err
 		}
 
-		left = &binExpr{operator: operator, left: left, right: right}
+		left = &Expr{kind: exprBinary, operator: operator, left: left, right: right}
 	}
 
 	return left, nil
@@ -301,7 +318,7 @@ func isCompareOp(text string) bool {
 	}
 }
 
-func (p *condParser) parseCompare() (Expr, error) {
+func (p *condParser) parseCompare() (*Expr, error) {
 	left, err := p.parseUnary()
 	if err != nil {
 		return nil, err
@@ -318,10 +335,10 @@ func (p *condParser) parseCompare() (Expr, error) {
 		return nil, err
 	}
 
-	return &binExpr{operator: operator, left: left, right: right}, nil
+	return &Expr{kind: exprBinary, operator: operator, left: left, right: right}, nil
 }
 
-func (p *condParser) parseUnary() (Expr, error) {
+func (p *condParser) parseUnary() (*Expr, error) {
 	if p.peek().kind == tokOp && p.peek().text == opNot {
 		p.next()
 
@@ -330,26 +347,26 @@ func (p *condParser) parseUnary() (Expr, error) {
 			return nil, err
 		}
 
-		return &notExpr{inner: inner}, nil
+		return &Expr{kind: exprNot, operand: inner}, nil
 	}
 
 	return p.parsePrimary()
 }
 
-func (p *condParser) parsePrimary() (Expr, error) {
+func (p *condParser) parsePrimary() (*Expr, error) {
 	tok := p.next()
 
 	switch tok.kind {
 	case tokLParen:
 		return p.parseParen()
 	case tokRef:
-		return &refExpr{ref: tok.ref}, nil
+		return &Expr{kind: exprRef, ref: tok.ref}, nil
 	case tokString:
-		return &litExpr{value: tok.text}, nil
+		return &Expr{kind: exprLiteral, literal: tok.text}, nil
 	case tokNumber:
-		return &litExpr{value: tok.num}, nil
+		return &Expr{kind: exprLiteral, literal: tok.num}, nil
 	case tokBool:
-		return &litExpr{value: tok.boolVal}, nil
+		return &Expr{kind: exprLiteral, literal: tok.boolVal}, nil
 	case tokOp, tokRParen, tokEOF:
 		return nil, fmt.Errorf("%w: unexpected %q", ErrBadExpression, tok.text)
 	default:
@@ -357,7 +374,7 @@ func (p *condParser) parsePrimary() (Expr, error) {
 	}
 }
 
-func (p *condParser) parseParen() (Expr, error) {
+func (p *condParser) parseParen() (*Expr, error) {
 	inner, err := p.parseOr()
 	if err != nil {
 		return nil, err
@@ -372,19 +389,23 @@ func (p *condParser) parseParen() (Expr, error) {
 	return inner, nil
 }
 
-type litExpr struct {
-	value any
+// Eval computes the node's value using resolver to look up references.
+func (e *Expr) Eval(resolver Resolver) (any, error) {
+	switch e.kind {
+	case exprLiteral:
+		return e.literal, nil
+	case exprRef:
+		return e.evalRef(resolver)
+	case exprNot:
+		return e.evalNot(resolver)
+	case exprBinary:
+		return e.evalBinary(resolver)
+	default:
+		return nil, fmt.Errorf("%w: unknown condition node %d", ErrBadExpression, e.kind)
+	}
 }
 
-func (e *litExpr) Eval(_ Resolver) (any, error) {
-	return e.value, nil
-}
-
-type refExpr struct {
-	ref Ref
-}
-
-func (e *refExpr) Eval(resolver Resolver) (any, error) {
+func (e *Expr) evalRef(resolver Resolver) (any, error) {
 	if resolver == nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnresolvedRef, e.ref.Raw)
 	}
@@ -397,12 +418,8 @@ func (e *refExpr) Eval(resolver Resolver) (any, error) {
 	return value, nil
 }
 
-type notExpr struct {
-	inner Expr
-}
-
-func (e *notExpr) Eval(resolver Resolver) (any, error) {
-	value, err := e.inner.Eval(resolver)
+func (e *Expr) evalNot(resolver Resolver) (any, error) {
+	value, err := e.operand.Eval(resolver)
 	if err != nil {
 		return nil, fmt.Errorf("operand of %s: %w", opNot, err)
 	}
@@ -415,13 +432,7 @@ func (e *notExpr) Eval(resolver Resolver) (any, error) {
 	return !operand, nil
 }
 
-type binExpr struct {
-	left     Expr
-	right    Expr
-	operator string
-}
-
-func (e *binExpr) Eval(resolver Resolver) (any, error) {
+func (e *Expr) evalBinary(resolver Resolver) (any, error) {
 	if e.operator == opAnd || e.operator == opOr {
 		return e.evalBool(resolver)
 	}
@@ -431,7 +442,7 @@ func (e *binExpr) Eval(resolver Resolver) (any, error) {
 
 // evalBool short-circuits the way the operators read: the right side never
 // evaluates (and never resolves references) when the left side decides.
-func (e *binExpr) evalBool(resolver Resolver) (any, error) {
+func (e *Expr) evalBool(resolver Resolver) (any, error) {
 	left, err := evalToBool(e.left, resolver, e.operator)
 	if err != nil {
 		return nil, err
@@ -448,7 +459,7 @@ func (e *binExpr) evalBool(resolver Resolver) (any, error) {
 	return evalToBool(e.right, resolver, e.operator)
 }
 
-func evalToBool(expr Expr, resolver Resolver, operator string) (bool, error) {
+func evalToBool(expr *Expr, resolver Resolver, operator string) (bool, error) {
 	value, err := expr.Eval(resolver)
 	if err != nil {
 		return false, fmt.Errorf("operand of %s: %w", operator, err)
@@ -462,7 +473,7 @@ func evalToBool(expr Expr, resolver Resolver, operator string) (bool, error) {
 	return operand, nil
 }
 
-func (e *binExpr) evalCompare(resolver Resolver) (any, error) {
+func (e *Expr) evalCompare(resolver Resolver) (any, error) {
 	left, err := e.left.Eval(resolver)
 	if err != nil {
 		return nil, fmt.Errorf("left of %s: %w", e.operator, err)

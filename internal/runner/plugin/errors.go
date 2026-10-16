@@ -23,6 +23,7 @@ var (
 	ErrProcessExited = errors.New("plugin process exited before result")
 )
 
-// errNoProcessGroup reports a stop attempted before the child's process group
-// was recorded. Signaling group 0 would reach the host's own processes.
-var errNoProcessGroup = errors.New("plugin process group is unknown")
+// errProcessID reports a child whose process tree cannot be named: a Unix stop
+// refuses an unrecorded group, because group 0 is the host's own, and a
+// Windows process id is 32 bits.
+var errProcessID = errors.New("plugin process id is out of range")

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -23,10 +25,6 @@ const maxFrameBytes = 1 << 20
 // long enough for a slow link and short enough to notice a dead flow.
 const pingDeadlineDivisor = 3
 
-// methodListen is the client method every socket failure is reported under, so
-// an operator reading a log line sees which call broke without seeing the URL.
-const methodListen = "Listen"
-
 // Listen holds one WebSocket connection and forwards every posted event to
 // events until ctx ends or the read fails. It never reconnects: the caller owns
 // the backoff, so a server refusing the token cannot spin here (FR7).
@@ -36,14 +34,14 @@ func (c *Client) Listen(ctx context.Context, events chan<- Event) error {
 		return err
 	}
 
-	defer func() { _ = conn.CloseNow() }()
+	defer closeSocket(ctx, c.log, conn)
 
 	conn.SetReadLimit(maxFrameBytes)
 
 	probeCtx, stopProbe := context.WithCancel(ctx)
 	defer stopProbe()
 
-	probe := &keepalive{conn: conn, every: c.pingEvery}
+	probe := &keepalive{conn: conn, log: c.log, every: c.pingEvery}
 	go probe.run(probeCtx)
 
 	readErr := c.readFrames(ctx, conn, events)
@@ -87,6 +85,7 @@ func (c *Client) readFrames(ctx context.Context, conn *websocket.Conn, events ch
 // (FR7, NFR3).
 type keepalive struct {
 	conn  *websocket.Conn
+	log   *slog.Logger
 	err   error
 	every time.Duration
 	mu    sync.Mutex
@@ -130,7 +129,7 @@ func (k *keepalive) probe(ctx context.Context) bool {
 	k.err = &APIError{Class: ClassTransient, Method: methodListen, Message: "keepalive: " + err.Error(), Cause: err}
 	k.mu.Unlock()
 
-	_ = k.conn.CloseNow()
+	closeSocket(ctx, k.log, k.conn)
 
 	return false
 }
@@ -173,9 +172,21 @@ func (c *Client) dialSocket(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
+// closeSocket drops conn without a close handshake. By the time it runs the
+// socket has failed or is being abandoned, so no caller can act on a failure and
+// it is logged at debug. net.ErrClosed means another path closed it first.
+func closeSocket(ctx context.Context, log *slog.Logger, conn *websocket.Conn) {
+	err := conn.CloseNow()
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		return
+	}
+
+	log.DebugContext(ctx, "mattermost event socket close failed", "error", err.Error())
+}
+
 // socketScheme maps the REST scheme onto its WebSocket twin.
 func socketScheme(scheme string) string {
-	if scheme == "http" {
+	if scheme == schemeHTTP {
 		return "ws"
 	}
 

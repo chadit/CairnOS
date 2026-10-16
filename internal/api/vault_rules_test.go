@@ -16,6 +16,9 @@ const (
 	vaultTitle = "design note"
 	ruleLangGo = "go"
 	ruleKeyMax = "max_line"
+	// tagInfra and projectFinance tag and scope the seeded vault document.
+	tagInfra       = "infra"
+	projectFinance = "finance-app"
 )
 
 func TestVaultCRUDAndQueryOverGRPC(t *testing.T) {
@@ -28,7 +31,7 @@ func TestVaultCRUDAndQueryOverGRPC(t *testing.T) {
 		Document: &cairnosv1.VaultDocument{
 			Title: vaultTitle,
 			Body:  "kafka lag postmortem",
-			Tags:  []string{"infra", "project:finance-app"},
+			Tags:  []string{tagInfra, "project:finance-app"},
 		},
 	})
 	if err != nil {
@@ -46,8 +49,8 @@ func TestVaultCRUDAndQueryOverGRPC(t *testing.T) {
 
 	// A tag-and-project query finds the document.
 	queried, err := fix.vault.QueryVault(ctx, &cairnosv1.QueryVaultRequest{
-		Tags:    []string{"infra"},
-		Project: "finance-app",
+		Tags:    []string{tagInfra},
+		Project: projectFinance,
 		Text:    "kafka",
 	})
 	if err != nil {
@@ -118,9 +121,9 @@ func TestRulesMergeAndListOverGRPC(t *testing.T) {
 
 	putRule("", ruleKeyMax, "120")
 	putRule("", "errors", "wrap")
-	putRule("finance-app", ruleKeyMax, "100")
+	putRule(projectFinance, ruleKeyMax, "100")
 
-	merged, err := fix.rules.GetRules(ctx, &cairnosv1.GetRulesRequest{Language: ruleLangGo, Project: "finance-app"})
+	merged, err := fix.rules.GetRules(ctx, &cairnosv1.GetRulesRequest{Language: ruleLangGo, Project: projectFinance})
 	if err != nil {
 		t.Fatalf("GetRules: %v", err)
 	}
@@ -230,7 +233,7 @@ func TestRulesGetOverGateway(t *testing.T) {
 		t.Fatalf("parse rules body %q: %v", body, err)
 	}
 
-	if got.Language != ruleLangGo || len(got.Rules) != 1 || got.Rules[0].Value != "tabs" {
+	if got.Language != ruleLangGo || len(got.Rules) != 1 || got.Rules[0].Value != indentTabs {
 		t.Fatalf("gateway rules = %+v, want one go/indent=tabs rule", got)
 	}
 }

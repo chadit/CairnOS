@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -119,12 +120,17 @@ func startMessagingServer(t *testing.T, fake *fakeMessagingServer) string {
 	server := grpc.NewServer()
 	cairnosv1.RegisterMessagingServiceServer(server, fake)
 
-	go func() {
-		// Serve exits with ErrServerStopped when the cleanup fires.
-		_ = server.Serve(listener)
-	}()
+	served := make(chan error, 1)
 
-	t.Cleanup(server.Stop)
+	go func() { served <- server.Serve(listener) }()
+
+	t.Cleanup(func() {
+		server.Stop()
+
+		if err := <-served; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve: %v", err)
+		}
+	})
 
 	return listener.Addr().String()
 }
@@ -296,12 +302,17 @@ func TestMsgSendRejectsBadInvocations(t *testing.T) {
 func TestMsgListPrintsTheConfiguredIdentities(t *testing.T) {
 	t.Parallel()
 
+	const (
+		listedUsername = "cairnos"
+		listedURL      = "https://mm.example"
+	)
+
 	fake := &fakeMessagingServer{identities: []*cairnosv1.Identity{{
 		Name:        msgIdentity,
-		Transport:   "mattermost",
-		Username:    "cairnos",
+		Transport:   transportMattermost,
+		Username:    listedUsername,
 		DisplayName: "CairnOS",
-		Url:         "https://mm.example",
+		Url:         listedURL,
 	}}}
 	addr := startMessagingServer(t, fake)
 
@@ -312,7 +323,7 @@ func TestMsgListPrintsTheConfiguredIdentities(t *testing.T) {
 		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
 	}
 
-	for _, want := range []string{msgIdentity, "mattermost", "cairnos", "https://mm.example"} {
+	for _, want := range []string{msgIdentity, transportMattermost, listedUsername, listedURL} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("listing %q is missing %q", stdout, want)
 		}

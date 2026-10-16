@@ -150,7 +150,7 @@ func aad(workspace, name string, version int64) []byte {
 }
 
 // NormalizeName maps a secret reference to its canonical store form: lowercase,
-// with dashes and dots folded to underscores, so secrets.db-password and
+// with each dash and dot replaced by an underscore, so secrets.db-password and
 // secrets.db_password name one secret. The env source applies the same mapping
 // before uppercasing for the variable name, so both sources agree on identity.
 func NormalizeName(name string) string {

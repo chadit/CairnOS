@@ -21,7 +21,7 @@ const (
 	// CodeDriverIncapable marks a driver that is not registered or lacks
 	// native tool calling (runner.ToolCaller).
 	CodeDriverIncapable = "agent.driver_incapable"
-	// CodeDelegateBypassed marks delegateTool.Execute running outside the
+	// CodeDelegateBypassed marks DelegateTool.Execute running outside the
 	// loop's interception, which the loop refuses so an unwalled child can
 	// never spawn.
 	CodeDelegateBypassed = "agent.delegate_bypassed"

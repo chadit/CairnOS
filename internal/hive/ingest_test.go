@@ -64,7 +64,7 @@ func TestIngestLandsTipsInQueueAsOpen(t *testing.T) {
 
 	tips := []hive.Tip{
 		{Kind: store.SuggestionCaching, Category: hive.CategoryJobSearch, RunnerType: hive.RunnerTypeOpenAI, CostBucket: bucket20},
-		{Kind: store.SuggestionParamTuning, Category: hive.CategoryCodeGen, RunnerType: hive.RunnerTypeAnthropic, CostBucket: "30%", ParamShape: &hive.ParamShape{Param: "max_tokens", Direction: hive.DirectionLowered}},
+		{Kind: store.SuggestionParamTuning, Category: hive.CategoryCodeGen, RunnerType: hive.RunnerTypeAnthropic, CostBucket: "30%", ParamShape: &hive.ParamShape{Param: paramMaxTokens, Direction: hive.DirectionLowered}},
 	}
 
 	count, err := ingester.Ingest(t.Context(), tips)
@@ -106,7 +106,7 @@ func TestIngestCarriesNoConcreteChange(t *testing.T) {
 	}
 
 	tips := []hive.Tip{
-		{Kind: store.SuggestionParamTuning, Category: hive.CategoryCodeGen, RunnerType: hive.RunnerTypeOpenAI, CostBucket: bucket20, ParamShape: &hive.ParamShape{Param: "max_tokens", Direction: hive.DirectionLowered}},
+		{Kind: store.SuggestionParamTuning, Category: hive.CategoryCodeGen, RunnerType: hive.RunnerTypeOpenAI, CostBucket: bucket20, ParamShape: &hive.ParamShape{Param: paramMaxTokens, Direction: hive.DirectionLowered}},
 	}
 
 	if _, err := ingester.Ingest(t.Context(), tips); err != nil {

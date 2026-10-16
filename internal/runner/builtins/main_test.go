@@ -1,6 +1,7 @@
 package builtins_test
 
 import (
+	"io"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -15,15 +16,20 @@ func keyEnv(name, value string) environ.Lookup {
 	return environ.Map(map[string]string{name: value})
 }
 
-// mcpServerRead is a real leak nobody is tracking: the MCP SDK parks a
-// server-side reader per client the mcp_client cases open and never stops it.
-// This line records it rather than calling it harmless, and keeps the sweep
-// useful for everything else. Whoever fixes those cases deletes it.
-const mcpServerRead = "github.com/modelcontextprotocol/go-sdk/mcp.(*streamableServerConn).Read"
+// writeBody sends a canned response from a test handler. A failed write goes
+// through Errorf, not Fatalf, because handlers on a real loopback listener run
+// off the test goroutine, where FailNow is not allowed.
+func writeBody(t *testing.T, w io.Writer, body string) {
+	t.Helper()
+
+	if _, err := io.WriteString(w, body); err != nil {
+		t.Errorf("write response body: %v", err)
+	}
+}
 
 // TestMain sweeps for goroutines the suite left behind. The source runner holds
 // a per-spec mutex across a git call, so a caller that never releases it shows up
 // here rather than as a suite that quietly slows down.
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m, goleak.IgnoreTopFunction(mcpServerRead))
+	goleak.VerifyTestMain(m)
 }

@@ -37,7 +37,7 @@ func randomKey(t *testing.T) []byte {
 }
 
 // newSealer builds a sealer over a fresh random key.
-func newSealer(t *testing.T) hive.Sealer {
+func newSealer(t *testing.T) *hive.AESSealer {
 	t.Helper()
 
 	sealer, err := hive.NewSealer(randomKey(t))

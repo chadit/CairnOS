@@ -70,14 +70,19 @@ func TestMissingManifestReadsAsNothingInstalled(t *testing.T) {
 func TestModelMatchesIgnoresRevisionAndTracksDigest(t *testing.T) {
 	t.Parallel()
 
-	model := localmodel.Model{Name: "m", SHA256: "aaa", Revision: "r1"}
-	manifest := localmodel.Manifest{Model: localmodel.InstalledModel{Name: "m", SHA256: "aaa", Revision: "r0"}}
+	const (
+		installedDigest   = "aaa"
+		installedRevision = "r0"
+	)
+
+	model := localmodel.Model{Name: "m", SHA256: installedDigest, Revision: "r1"}
+	manifest := localmodel.Manifest{Model: localmodel.InstalledModel{Name: "m", SHA256: installedDigest, Revision: installedRevision}}
 
 	if !manifest.ModelMatches(&model) {
 		t.Error("same digest under a different revision should match")
 	}
 
-	changed := localmodel.Model{Name: "m", SHA256: "bbb", Revision: "r0"}
+	changed := localmodel.Model{Name: "m", SHA256: "bbb", Revision: installedRevision}
 	if manifest.ModelMatches(&changed) {
 		t.Error("a different digest should not match")
 	}

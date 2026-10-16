@@ -164,7 +164,7 @@ type BudgetSpec struct {
 // Action is one unit of work. Kind selects between a task action (one runner
 // with fixed params) and an agent action (a bounded agent loop).
 type Action struct {
-	CondExpr Expr
+	CondExpr *Expr
 
 	// Inputs is the interpolatable table a workflow-call action passes as the
 	// child run's inputs. Secret refs are banned here at validate time because
@@ -302,8 +302,8 @@ func HashBytes(data []byte) string {
 }
 
 // isValidName checks the identifier pattern shared by workflow and action
-// names: a lowercase letter followed by lowercase letters, digits, or
-// underscores.
+// names: a lowercase letter followed by lowercase letters, digits, or the '_'
+// character.
 func isValidName(name string) bool {
 	if name == "" || !isLowerAlpha(name[0]) {
 		return false

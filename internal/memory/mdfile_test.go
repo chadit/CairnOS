@@ -25,28 +25,13 @@ const (
 // only thing under test in those cases is the front matter, not the id.
 const fixedID = "01J8ZQ4V9GN0Y6M3T2C8KWQH5B"
 
+// traversalID is an entry id shaped to escape the export directory if it ever
+// reached a filename unchecked.
+const traversalID = "../../evil"
+
 // stamp is a second-precision UTC time so encode (RFC 3339, second precision)
 // round-trips it exactly.
 var stamp = time.Date(2026, 7, 3, 10, 15, 4, 0, time.UTC) //nolint:gochecknoglobals // shared read-only fixture
-
-// openStore opens a fresh sqlite memory store under t.TempDir and closes it on
-// cleanup, so the export/import cases run against a real backend.
-func openStore(t *testing.T) memory.Store {
-	t.Helper()
-
-	store, err := memory.OpenSQLite(filepath.Join(t.TempDir(), "memory.db"))
-	if err != nil {
-		t.Fatalf("open memory store: %v", err)
-	}
-
-	t.Cleanup(func() {
-		if closeErr := store.Close(); closeErr != nil {
-			t.Errorf("close memory store: %v", closeErr)
-		}
-	})
-
-	return store
-}
 
 // assertEntryEqual compares the fields the markdown format carries. Timestamps
 // use Equal so a UTC parse matches a UTC fixture without reflect's clock quirks;
@@ -184,7 +169,7 @@ func TestParseMarkdownRejectsBadEntryID(t *testing.T) {
 	}{
 		{name: "lowercase", id: strings.ToLower(fixedID)},
 		{name: "wrong length", id: "0123ABC"},
-		{name: "traversal shaped", id: "../../evil"},
+		{name: "traversal shaped", id: traversalID},
 	}
 
 	for _, tt := range cases {
@@ -204,13 +189,13 @@ func TestParseMarkdownRejectsBadEntryID(t *testing.T) {
 func TestExportDirRefusesTraversalID(t *testing.T) {
 	t.Parallel()
 
-	store := openStore(t)
+	store := openMemory(t)
 	ctx := t.Context()
 
 	// A row written directly with a traversal-shaped id must fail export before
 	// it composes any filename, so the check is defense in depth against rows
 	// other tools wrote.
-	if _, err := store.Add(ctx, &memory.Entry{ID: "../../evil", Scope: scopeGlobal, Content: "hi"}); err != nil {
+	if _, err := store.Add(ctx, &memory.Entry{ID: traversalID, Scope: scopeGlobal, Content: "hi"}); err != nil {
 		t.Fatalf("seed bad-id row: %v", err)
 	}
 
@@ -225,7 +210,7 @@ func TestExportDirRefusesTraversalID(t *testing.T) {
 func TestImportDirAbortsBeforeAnyWrite(t *testing.T) {
 	t.Parallel()
 
-	store := openStore(t)
+	store := openMemory(t)
 	ctx := t.Context()
 	dir := t.TempDir()
 
@@ -254,7 +239,7 @@ func TestImportDirAbortsBeforeAnyWrite(t *testing.T) {
 func TestImportDirCountsAddedUpdatedUnchanged(t *testing.T) {
 	t.Parallel()
 
-	store := openStore(t)
+	store := openMemory(t)
 	ctx := t.Context()
 	dir := t.TempDir()
 

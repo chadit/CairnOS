@@ -3,6 +3,7 @@ package bitwarden_test
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,10 +21,14 @@ const (
 	// statusUnauthenticated is the one bw status value that triggers a login.
 	statusUnauthenticated = "unauthenticated"
 
-	fieldToken = "mattermost token"
-	fieldKey   = "zai key"
-	valueToken = "token-value"
-	valueKey   = "key-value"
+	// statusUnlocked is what the fake reports when a case sets no status.
+	statusUnlocked = "unlocked"
+
+	fieldToken   = "mattermost token"
+	fieldKey     = "zai key"
+	fieldMissing = "another field"
+	valueToken   = "token-value"
+	valueKey     = "key-value"
 )
 
 // testCredentials are the three values a case hands the client. None of them may
@@ -146,7 +151,7 @@ func TestFieldsLogsInOnlyWhenUnauthenticated(t *testing.T) {
 	}{
 		{name: "unauthenticated logs in", status: statusUnauthenticated, wantLogin: true},
 		{name: "locked does not", status: "locked", wantLogin: false},
-		{name: "unlocked does not", status: "unlocked", wantLogin: false},
+		{name: "unlocked does not", status: statusUnlocked, wantLogin: false},
 	}
 
 	for _, testCase := range cases {
@@ -190,11 +195,11 @@ func TestFieldsNamesEveryMissingField(t *testing.T) {
 	fake := stageFakeBW(t, itemsJSON(itemJSON(vaultItem, map[string]string{fieldToken: valueToken})), fakeSettings{})
 
 	_, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem,
-		[]string{fieldToken, fieldKey, "another field"})
+		[]string{fieldToken, fieldKey, fieldMissing})
 	wantCode(t, err, bitwarden.CodeFields)
 
 	message := err.Error()
-	for _, want := range []string{fieldKey, "another field"} {
+	for _, want := range []string{fieldKey, fieldMissing} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error %q does not name the missing field %q", message, want)
 		}
@@ -273,15 +278,21 @@ func TestFieldsGivesUpWhenServeNeverAnswers(t *testing.T) {
 	_, err := client.Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
 	wantCode(t, err, bitwarden.CodeReady)
 
-	if got := len(servePorts(recorded(t, fake.argv))); got != startAttempts {
-		t.Fatalf("serve ran %d times, want %d", got, startAttempts)
+	// Starts are counted from the failure, not the fake's argv record: the
+	// one-poll wait kills each child about 250ms after it starts, and a child
+	// slower than that on a loaded host dies before it records itself. The text
+	// is also what the operator reads, so every start names its own quiet port.
+	message := err.Error()
+	quiet := regexp.MustCompile(`never answered on port (\d+)`).FindAllStringSubmatch(message, -1)
+
+	ports := make(map[string]bool, len(quiet))
+	for _, match := range quiet {
+		ports[match[1]] = true
 	}
 
-	// The text, because the operator reads it: three ports went quiet and the
-	// message has to say so rather than report one anonymous timeout.
-	message := err.Error()
-	if strings.Count(message, "never answered") != startAttempts {
-		t.Fatalf("the failure does not name what each of the %d starts hit: %s", startAttempts, message)
+	if len(quiet) != startAttempts || len(ports) != startAttempts {
+		t.Fatalf("the failure names %d quiet starts on %d ports, want %d on distinct ports: %s",
+			len(quiet), len(ports), startAttempts, message)
 	}
 }
 
@@ -352,8 +363,8 @@ func TestFieldsMovesToAnotherPortWhenTheChildLosesIt(t *testing.T) {
 const startAttempts = 3
 
 // TestFieldsGivesUpAfterEveryPortIsLost pins that bound and keeps the child's
-// own words in the failure: without them the operator sees a daemon that went
-// quiet, not a port that was already taken.
+// own words and exit status in the failure: without them the operator sees a
+// daemon that went quiet, not a port that was already taken.
 func TestFieldsGivesUpAfterEveryPortIsLost(t *testing.T) {
 	t.Parallel()
 
@@ -368,9 +379,9 @@ func TestFieldsGivesUpAfterEveryPortIsLost(t *testing.T) {
 	}
 
 	message := err.Error()
-	for _, want := range []string{"fake serve", strconv.Itoa(busy)} {
+	for _, want := range []string{"fake serve", strconv.Itoa(busy), "exit status " + strconv.Itoa(exitStatusFailed)} {
 		if !strings.Contains(message, want) {
-			t.Fatalf("the failure does not carry the child's stderr (%q missing): %s", want, message)
+			t.Fatalf("the failure does not carry how the child exited (%q missing): %s", want, message)
 		}
 	}
 }

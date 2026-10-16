@@ -34,7 +34,9 @@ func TestExtensionRouteBeatsGatewayCatchAll(t *testing.T) {
 
 	root := http.NewServeMux()
 	root.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, gatewayMarker)
+		if _, err := io.WriteString(w, gatewayMarker); err != nil {
+			t.Errorf("write gateway marker: %v", err)
+		}
 	})
 
 	for pattern, handler := range service.Extension().HTTPRoutes {

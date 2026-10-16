@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
@@ -116,6 +117,12 @@ type App struct {
 	// App still reads the process environment, which envLookup supplies.
 	env environ.Lookup
 
+	// bridgeTransport carries the chat bridges' HTTP calls. Nil is the default
+	// transport every real serve uses. A serve test hands over one that answers
+	// in the process, so no case resolves a bridge host, reaches the public
+	// Telegram API, or leaves a dial running after serve returns.
+	bridgeTransport http.RoundTripper
+
 	// echoNoticed keeps the visible-input warning to one line per run. The
 	// prompts ask three times and the answer is the same every time.
 	echoNoticed bool
@@ -149,6 +156,16 @@ func (a *App) WithEnv(env environ.Lookup) *App {
 // cannot fail a wait the daemon answered.
 func (a *App) WithBitwardenClock(clock bitwarden.Clock) *App {
 	a.bwClock = clock
+
+	return a
+}
+
+// WithBridgeTransport sets the round tripper the Telegram and Mattermost
+// bridges send through, and returns the App for chaining. Only a test build
+// calls it: the hosts stay the configured ones, and the tripper decides where
+// their requests actually go.
+func (a *App) WithBridgeTransport(transport http.RoundTripper) *App {
+	a.bridgeTransport = transport
 
 	return a
 }
@@ -187,7 +204,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	switch name {
 	case "init":
 		return a.cmdInit(rest)
-	case "run":
+	case subcmdRun:
 		return a.cmdRun(ctx, rest)
 	case "validate":
 		return a.cmdValidate(rest)
@@ -197,13 +214,13 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdMemory(ctx, rest)
 	case "schedule":
 		return a.cmdSchedule(ctx, rest)
-	case "serve":
+	case subcmdServe:
 		return a.cmdServe(ctx, rest)
 	case "keys":
 		return a.cmdKeys(ctx, rest)
 	case "workspace":
 		return a.cmdWorkspace(ctx, rest)
-	case "auth":
+	case subcmdAuth:
 		return a.cmdAuth(ctx, rest)
 	case "a2a":
 		return a.cmdA2A(rest)
@@ -268,7 +285,7 @@ func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string
 		return a.cmdBudget(ctx, rest)
 	case "audit":
 		return a.cmdAudit(ctx, rest)
-	case "help", "-h", "--help":
+	case helpWord, helpShortFlag, helpLongFlag:
 		a.printOutf("%s", usageText)
 
 		return ExitOK

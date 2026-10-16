@@ -19,7 +19,7 @@ import (
 // conformance subtests never share one webhook_registrations table. The schema
 // is a fresh lowercased ULID (a safe identifier that starts with a letter);
 // cleanup drops it and closes the pool the store borrows.
-func newPostgresWebhooks(t *testing.T) webhook.Store {
+func newPostgresWebhooks(t *testing.T) *webhook.PostgresWebhooks {
 	t.Helper()
 
 	ctx := t.Context()

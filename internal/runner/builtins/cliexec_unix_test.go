@@ -68,8 +68,15 @@ func requireKilledAtDeadline(t *testing.T, err error) {
 		t.Fatalf("error = %v, want transient %s", err, qwenTimeoutCode)
 	}
 
-	if _, killed := errors.AsType[*exec.ExitError](err); !killed {
+	exitErr, hasExit := errors.AsType[*exec.ExitError](err)
+	if !hasExit {
 		t.Fatalf("error = %v, want the killed wrapper's exit error in its chain", err)
+	}
+
+	// ExitCode is -1 only for a process a signal ended, so a wrapper that exited
+	// on its own before the kill landed fails here.
+	if code := exitErr.ExitCode(); code != -1 {
+		t.Fatalf("wrapper exit code = %d, want -1 for a signal kill", code)
 	}
 }
 

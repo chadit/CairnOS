@@ -151,6 +151,9 @@ func TestConditionEvalRejectsTypeMismatches(t *testing.T) {
 	}
 }
 
+// scoreAction is the upstream action the reference tests read from.
+const scoreAction = "score"
+
 func TestExtractRefsClassifiesNamespaces(t *testing.T) {
 	t.Parallel()
 
@@ -166,7 +169,7 @@ func TestExtractRefsClassifiesNamespaces(t *testing.T) {
 	}
 
 	wantKinds := []workflow.RefKind{workflow.RefAction, workflow.RefInput, workflow.RefEnv, workflow.RefSecret}
-	wantTargets := []string{"score", "region", "HOME", "api_key"}
+	wantTargets := []string{scoreAction, "region", "HOME", "api_key"}
 
 	for idx, ref := range refs {
 		if ref.Kind != wantKinds[idx] {
@@ -221,7 +224,7 @@ func TestWholeRefDetectsExactSingleReference(t *testing.T) {
 		t.Fatal("WholeRef rejected a lone reference")
 	}
 
-	if ref.Target != "score" {
+	if ref.Target != scoreAction {
 		t.Fatalf("target = %q, want score", ref.Target)
 	}
 

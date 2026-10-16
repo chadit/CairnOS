@@ -29,6 +29,12 @@ const (
 	fnBoom     = "boom"
 	outputOK   = "ok"
 
+	// flowHash is the content hash the linear test stamps on its flow.
+	flowHash = "deadbeef"
+
+	// secretAPIKey is the secret the interpolation and replay fixtures resolve.
+	secretAPIKey = "api_key"
+
 	// agentAnswer is the canned final answer the fake agent executor
 	// returns in the seam tests.
 	agentAnswer = "the answer is 42"
@@ -54,6 +60,11 @@ runner = "local_fn"
 depends_on = ["second"]
 params = { fn = "record" }
 `
+
+// linearActionOrder is the order linearTOML's dependency chain runs its actions.
+func linearActionOrder() []string {
+	return []string{"first", "second", "third"}
+}
 
 const diamondTOML = `
 [workflow]
@@ -312,17 +323,17 @@ func TestRunWorkflowLinearOrdersActions(t *testing.T) {
 	eng, db := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnRecord: rec.record})
 
 	flow := parseFlow(t, linearTOML)
-	flow.Hash = "deadbeef"
+	flow.Hash = flowHash
 
 	run := mustRun(t, eng, flow, nil)
 
 	wantRunStatus(t, run, store.RunSucceeded)
 
-	if run.WorkflowHash != "deadbeef" {
+	if run.WorkflowHash != flowHash {
 		t.Fatalf("workflow hash = %q, want the flow's hash stamped on the run", run.WorkflowHash)
 	}
 
-	want := []string{"first", "second", "third"}
+	want := linearActionOrder()
 	if got := rec.order(); !slices.Equal(got, want) {
 		t.Fatalf("execution order = %v, want %v", got, want)
 	}
@@ -366,7 +377,7 @@ func TestRunWorkflowEmitsEventsInOrder(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"first", "second", "third"} {
+	for _, name := range linearActionOrder() {
 		got := sink.statusesFor(name)
 
 		wantStatuses := []string{
@@ -807,10 +818,12 @@ func TestCanceledStartStillPersistsRunRecord(t *testing.T) {
 func TestInterpolationResolvesNativeAndEmbeddedValues(t *testing.T) {
 	t.Parallel()
 
+	const secretValue = "s3cr3t"
+
 	sink := &paramSink{}
 
 	cfg := baseConfig()
-	cfg.Secrets = &fakeSecrets{values: map[string]string{"api_key": "s3cr3t"}}
+	cfg.Secrets = &fakeSecrets{values: map[string]string{secretAPIKey: secretValue}}
 
 	eng, db := newTestEngine(t, cfg, map[string]builtins.Func{fnCapture: sink.capture})
 
@@ -838,7 +851,7 @@ func TestInterpolationResolvesNativeAndEmbeddedValues(t *testing.T) {
 		t.Fatalf("text = %v, want embedded render value-x", got["text"])
 	}
 
-	if got["token"] != "s3cr3t" {
+	if got["token"] != secretValue {
 		t.Fatalf("token = %v, want the secret value", got["token"])
 	}
 }
@@ -849,12 +862,12 @@ func TestRunInputsApplyDefaultsAndResolve(t *testing.T) {
 	sink := &paramSink{}
 	eng, _ := newTestEngine(t, baseConfig(), map[string]builtins.Func{fnCapture: sink.capture})
 
-	run := mustRun(t, eng, parseFlow(t, inputsTOML), map[string]any{"region": "lax"})
+	run := mustRun(t, eng, parseFlow(t, inputsTOML), map[string]any{"region": regionLax})
 
 	wantRunStatus(t, run, store.RunSucceeded)
 
 	got := sink.snapshot()
-	if got["where"] != "lax" {
+	if got["where"] != regionLax {
 		t.Fatalf("where = %v, want the supplied input", got["where"])
 	}
 
@@ -1169,7 +1182,7 @@ func newTestEngine(t *testing.T, cfg *engine.Config, funcs map[string]builtins.F
 	t.Helper()
 
 	return newEngineWithRunners(t, cfg, map[string]runner.Factory{
-		builtins.MockName:    builtins.MockFactory,
+		builtins.MockName:    builtins.MockFactory(),
 		builtins.LocalFnName: builtins.LocalFnFactory(funcs),
 	})
 }

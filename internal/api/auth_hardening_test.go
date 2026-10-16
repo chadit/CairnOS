@@ -97,8 +97,8 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 	clock := &authClock{now: time.Now()}
 
 	authn := auth.New(authStore, material, auth.Config{
-		Issuer:     "cairnos-test",
-		Audience:   "cairnos",
+		Issuer:     testIssuer,
+		Audience:   testAudience,
 		TTL:        authTTL,
 		RequireExp: true,
 		RequireJTI: true,

@@ -48,6 +48,19 @@ func (b *builder) add(err *cairnerr.Error) {
 const (
 	keyWorkflow = "workflow"
 	keyAction   = "action"
+
+	// Keys that more than one table accepts.
+	keyDescription = "description"
+	keyTimeout     = "timeout"
+	keyParams      = "params"
+	keyBudget      = "budget"
+)
+
+// Retry backoff shapes, spelled the way the reliability package reads them
+// when the engine hands it the policy.
+const (
+	backoffExponential = "exponential"
+	backoffConstant    = "constant"
 )
 
 func (b *builder) build(raw map[string]any) *Workflow {
@@ -84,7 +97,7 @@ func (b *builder) buildMeta(flow *Workflow, metaRaw map[string]any) {
 			flow.Name = b.str("workflow.name", value)
 		case "version":
 			flow.Version = b.str("workflow.version", value)
-		case "description":
+		case keyDescription:
 			flow.Description = b.str("workflow.description", value)
 		case "schedule":
 			flow.Schedule = b.str("workflow.schedule", value)
@@ -94,11 +107,11 @@ func (b *builder) buildMeta(flow *Workflow, metaRaw map[string]any) {
 			flow.ErrorWorkflow = b.str("workflow.error_workflow", value)
 		case "notify":
 			flow.Notify = b.strSlice("workflow.notify", value)
-		case "timeout":
+		case keyTimeout:
 			flow.Timeout = b.duration("workflow.timeout", value)
-		case "inputs":
+		case nsInputs:
 			b.buildInputs(flow, value)
-		case "budget":
+		case keyBudget:
 			b.buildBudget(flow, value)
 		case "poll":
 			b.buildPoll(flow, value)
@@ -159,7 +172,7 @@ func (b *builder) buildInputDecl(name string, declTable map[string]any) InputDec
 		case "default":
 			decl.Default = value
 			decl.HasDefault = true
-		case "description":
+		case keyDescription:
 			decl.Description = b.str("input "+name+" description", value)
 		default:
 			b.addf(CodeInvalid, "input %q has unknown key %q", name, key)
@@ -245,7 +258,7 @@ func (b *builder) buildPoll(flow *Workflow, value any) {
 		switch key {
 		case "source":
 			poll.Source = b.str("workflow.poll.source", fieldValue)
-		case "params":
+		case keyParams:
 			poll.Params = b.table("workflow.poll.params", fieldValue)
 		default:
 			b.addf(CodeBadPoll, "workflow.poll has unknown key %q", key)
@@ -317,7 +330,7 @@ func (b *builder) buildAction(name string, actionTable map[string]any) *Action {
 			action.DependsOn = b.strSlice(name+".depends_on", value)
 		case "idempotent":
 			action.Idempotent = b.boolean(name+".idempotent", value)
-		case "timeout":
+		case keyTimeout:
 			action.Timeout = b.duration(name+".timeout", value)
 		case "condition":
 			action.Condition = b.str(name+".condition", value)
@@ -325,19 +338,19 @@ func (b *builder) buildAction(name string, actionTable map[string]any) *Action {
 			action.Retry = b.buildRetry(name, value)
 		case "runner":
 			action.Runner = b.str(name+".runner", value)
-		case "params":
+		case keyParams:
 			action.Params = b.table(name+".params", value)
 		case "fallback":
 			action.Fallback = b.strSlice(name+".fallback", value)
 		case "workflow":
 			action.Workflow = b.str(name+".workflow", value)
-		case "inputs":
+		case nsInputs:
 			action.Inputs = b.table(name+".inputs", value)
 		case "message":
 			action.Message = b.str(name+".message", value)
 		case "foreach":
 			action.Foreach = b.buildForeach(name, value)
-		case "budget":
+		case keyBudget:
 			b.addf(CodeReserved, "action %q key %q is reserved for a future phase", name, key)
 		default:
 			if !b.buildAgentKey(action, name, key, value) {
@@ -428,7 +441,7 @@ func (b *builder) buildRetry(name string, value any) *RetryPolicy {
 
 	// Jitter defaults on: retry storms from synchronized backoff are exactly
 	// what the spec's full-jitter requirement exists to prevent.
-	policy := &RetryPolicy{Backoff: "exponential", Jitter: true}
+	policy := &RetryPolicy{Backoff: backoffExponential, Jitter: true}
 
 	for key, fieldValue := range table {
 		switch key {
@@ -454,7 +467,7 @@ func (b *builder) buildBackoff(name string, policy *RetryPolicy, value any) {
 	backoff := b.str(name+".retry.backoff", value)
 
 	switch backoff {
-	case "exponential", "constant", "":
+	case backoffExponential, backoffConstant, "":
 		if backoff != "" {
 			policy.Backoff = backoff
 		}

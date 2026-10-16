@@ -187,15 +187,22 @@ func (e *RegistryError) Error() string {
 }
 
 // registryStatusError reads a bounded slice of the body and builds a typed
-// RegistryError for a non-2xx response.
+// RegistryError for a non-2xx response. A failed body read still yields the
+// RegistryError, because the status is the failure the caller acts on; the
+// read error rides in Body so it is not lost.
 func registryStatusError(operation string, resp *http.Response) error {
-	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxRegistryError))
+	snippet, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryError))
+
+	body := strings.TrimSpace(string(snippet))
+	if err != nil {
+		body = strings.TrimSpace(fmt.Sprintf("%s [reading the body failed: %v]", body, err))
+	}
 
 	return &RegistryError{
 		Op:         operation,
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
-		Body:       strings.TrimSpace(string(snippet)),
+		Body:       body,
 	}
 }
 

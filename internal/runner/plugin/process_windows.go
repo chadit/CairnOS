@@ -3,8 +3,10 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
-	"unsafe"
+	"log/slog"
+	"math"
 
 	"golang.org/x/sys/windows"
 )
@@ -19,64 +21,82 @@ type processTree struct {
 	job windows.Handle
 }
 
-// configureProcessTree has nothing to do before Start: a job takes a running
-// process, so the whole setup waits for adoptProcessTree.
+// configureProcessTree does nothing on Windows. A job object can only take a
+// process that is already running, so all of the setup happens in
+// adoptProcessTree after Start.
 func (*Plugin) configureProcessTree() {}
 
-// adoptProcessTree creates the job object and puts the started child in it.
-// KILL_ON_JOB_CLOSE means a host that dies without calling Close still takes
-// the plugin's tree with it, since the handle closes with the process.
+// adoptProcessTree puts the started child in a new job object, so stopProcess
+// reaches every process the plugin spawned. The job has no kill-on-close limit,
+// since setting one needs unsafe. The stdin pipe from New covers a host that
+// dies without Close: the plugin exits on its own, while its children keep
+// running, as on Unix.
 func (p *Plugin) adoptProcessTree() error {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return fmt.Errorf("create plugin job object: %w", err)
 	}
 
+	if err := p.assignProcess(job); err != nil {
+		// With no job recorded, stopProcess falls back to killing the child.
+		if closeErr := windows.CloseHandle(job); closeErr != nil {
+			slog.Warn("close unused plugin job object", "pid", p.cmd.Process.Pid, "error", closeErr)
+		}
+
+		return err
+	}
+
+	// Recorded only once the child is in it: terminating a job the child never
+	// joined stops nothing, and stopProcess would then wait forever.
 	p.tree.job = job
 
-	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-		},
-	}
-
-	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
-		return fmt.Errorf("set plugin job object limits: %w", err)
-	}
-
-	return p.assignProcess()
+	return nil
 }
 
-// assignProcess hands the running child to the job. os/exec keeps the process
+// assignProcess hands the running child to job. os/exec keeps the process
 // handle private, so the host reopens it by pid; Start has already returned,
 // so the process is alive to open.
-func (p *Plugin) assignProcess() error {
+func (p *Plugin) assignProcess(job windows.Handle) error {
 	const rights = windows.PROCESS_SET_QUOTA | windows.PROCESS_TERMINATE
 
-	handle, err := windows.OpenProcess(rights, false, uint32(p.cmd.Process.Pid))
+	pid := p.cmd.Process.Pid
+	if pid < 0 || int64(pid) > math.MaxUint32 {
+		return fmt.Errorf("%w: %d", errProcessID, pid)
+	}
+
+	handle, err := windows.OpenProcess(rights, false, uint32(pid))
 	if err != nil {
 		return fmt.Errorf("open plugin process: %w", err)
 	}
 
-	defer func() { _ = windows.CloseHandle(handle) }()
+	assignErr := windows.AssignProcessToJobObject(job, handle)
 
-	if err := windows.AssignProcessToJobObject(p.tree.job, handle); err != nil {
-		return fmt.Errorf("assign plugin to job object: %w", err)
+	// The job assignment is what the start needs. A handle that will not close
+	// leaks one handle and is no reason to fail the plugin, so it only warns.
+	if closeErr := windows.CloseHandle(handle); closeErr != nil {
+		slog.Warn("close plugin process handle", "pid", p.cmd.Process.Pid, "error", closeErr)
+	}
+
+	if assignErr != nil {
+		return fmt.Errorf("assign plugin to job object: %w", assignErr)
 	}
 
 	return nil
 }
 
 // stopProcess kills the job object, which takes every process in the tree with
-// it, then waits for the child to be reaped. Windows has no SIGTERM, so the
-// graceful drain Unix gets from closeGrace has no equivalent step here.
+// it, waits for the child to be reaped, then releases the job handle. Windows
+// has no SIGTERM, so the graceful drain Unix gets from closeGrace has no
+// equivalent step here.
 func (p *Plugin) stopProcess() error {
-	defer func() {
-		_ = windows.CloseHandle(p.tree.job)
-		p.tree.job = 0
-	}()
+	endErr := p.endTree()
 
+	return errors.Join(endErr, p.closeJob())
+}
+
+// endTree kills the tree unless the child is already gone, then waits for the
+// reap.
+func (p *Plugin) endTree() error {
 	select {
 	case <-p.exited:
 		return nil
@@ -88,6 +108,23 @@ func (p *Plugin) stopProcess() error {
 	}
 
 	<-p.exited
+
+	return nil
+}
+
+// closeJob releases the job handle once the tree is down. A zero handle means
+// adoptProcessTree failed before the job existed, so there is nothing to close.
+func (p *Plugin) closeJob() error {
+	if p.tree.job == 0 {
+		return nil
+	}
+
+	err := windows.CloseHandle(p.tree.job)
+	p.tree.job = 0
+
+	if err != nil {
+		return fmt.Errorf("close plugin job object: %w", err)
+	}
 
 	return nil
 }

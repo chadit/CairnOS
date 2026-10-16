@@ -3,7 +3,9 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
@@ -30,9 +32,9 @@ func (s *Store) ReconcileInterrupted(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reconcile interrupted: begin: %w", err)
 	}
-	// Rollback after a successful Commit returns ErrTxDone; ignoring it keeps
-	// the error path covered without complicating the happy path.
-	defer rollbackQuietly(tx)
+	// One deferred rollback covers every error path; after Commit it is the
+	// ErrTxDone no-op rollbackUncommitted ignores.
+	defer rollbackUncommitted(tx)
 
 	_, err = tx.ExecContext(ctx,
 		`UPDATE action_results
@@ -111,7 +113,7 @@ func (s *Store) deleteRunsBefore(ctx context.Context, cutoff time.Time) (int, in
 	if err != nil {
 		return 0, 0, fmt.Errorf("prune runs: begin: %w", err)
 	}
-	defer rollbackQuietly(tx)
+	defer rollbackUncommitted(tx)
 
 	encodedCutoff := formatTime(cutoff)
 
@@ -194,8 +196,11 @@ func (s *Store) truncateOutputsBefore(ctx context.Context, cutoff time.Time) (in
 	return int(truncated + stepsTruncated), nil
 }
 
-// rollbackQuietly abandons tx; after a successful Commit this is a no-op
-// that returns ErrTxDone, which carries no signal worth surfacing.
-func rollbackQuietly(tx *sql.Tx) {
-	_ = tx.Rollback()
+// rollbackUncommitted abandons tx. After a successful Commit it returns
+// ErrTxDone, the expected happy-path answer; any other failure is logged
+// because the deferring caller has already chosen its own return value.
+func rollbackUncommitted(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		slog.Warn("roll back store transaction", "error", err)
+	}
 }

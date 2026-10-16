@@ -34,13 +34,19 @@ func fanoutCaptureServer(t *testing.T) (*nettest.Fake, chan string) {
 	bodies := make(chan string, 8)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read webhook body: %v", err)
+		}
 
 		var payload struct {
 			Content string `json:"content"`
 		}
 
-		_ = json.Unmarshal(raw, &payload)
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Errorf("decode webhook body %q: %v", raw, err)
+		}
+
 		bodies <- payload.Content
 
 		w.WriteHeader(http.StatusNoContent)
@@ -177,12 +183,17 @@ func TestWrapRunFailedFanoutEmitsOnFailedFinish(t *testing.T) {
 
 	onEvent := cli.WrapRunFailedFanout(ctx, dispatch, fanout)
 
+	const (
+		succeededRunID = "r-1"
+		failedRunID    = "r-2"
+	)
+
 	// A start and a successful finish dispatch but emit nothing.
-	onEvent(engine.Event{RunID: "r-1", Type: engine.EventRunStarted})
-	onEvent(engine.Event{RunID: "r-1", Type: engine.EventRunFinished, Status: string(store.RunSucceeded)})
+	onEvent(engine.Event{RunID: succeededRunID, Type: engine.EventRunStarted})
+	onEvent(engine.Event{RunID: succeededRunID, Type: engine.EventRunFinished, Status: string(store.RunSucceeded)})
 	// A failed finish emits one line carrying the run ID and the error.
 	onEvent(engine.Event{
-		RunID:  "r-2",
+		RunID:  failedRunID,
 		Type:   engine.EventRunFinished,
 		Status: string(store.RunFailed),
 		Err:    cairnerr.New("action.timeout", "boom"),
@@ -190,7 +201,7 @@ func TestWrapRunFailedFanoutEmitsOnFailedFinish(t *testing.T) {
 
 	select {
 	case got := <-bodies:
-		for _, want := range []string{"r-2", "action.timeout", "boom"} {
+		for _, want := range []string{failedRunID, "action.timeout", "boom"} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("run_failed line %q missing %q", got, want)
 			}

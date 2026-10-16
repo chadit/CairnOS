@@ -67,8 +67,8 @@ func NewLanguageRules(cfg map[string]any) (*LanguageRules, error) {
 // LanguageRulesFactory adapts NewLanguageRules to the registry contract,
 // building the static-file-only runner. The serve wiring uses
 // LanguageRulesServiceFactory instead when a rules service exists.
-func LanguageRulesFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewLanguageRules(cfg)
+func LanguageRulesFactory() runner.Factory {
+	return asFactory(NewLanguageRules)
 }
 
 // LanguageRulesServiceFactory adapts the runner to the registry contract with

@@ -58,7 +58,7 @@ func (a *App) cmdVaultPut(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	store, code, proceed := a.openVaultAt(ctx, "vault put", *dirFlag)
+	store, _, code, proceed := openAt(ctx, a, "vault put", *dirFlag, vaultBackends())
 	if !proceed {
 		return code
 	}
@@ -99,7 +99,7 @@ func (a *App) cmdVaultGet(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	store, code, proceed := a.openVaultAt(ctx, "vault get", *dirFlag)
+	store, _, code, proceed := openAt(ctx, a, "vault get", *dirFlag, vaultBackends())
 	if !proceed {
 		return code
 	}
@@ -132,7 +132,7 @@ func (a *App) cmdVaultQuery(ctx context.Context, args []string) int {
 		return code
 	}
 
-	store, code, proceed := a.openVaultAt(ctx, "vault query", *dirFlag)
+	store, _, code, proceed := openAt(ctx, a, "vault query", *dirFlag, vaultBackends())
 	if !proceed {
 		return code
 	}

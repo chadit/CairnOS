@@ -25,6 +25,9 @@ const (
 	usageReportHost    = "host"
 	reportInterval     = int64(900)
 	reportFileName     = "usage.json"
+	reportOutputPath   = "/tmp/" + reportFileName
+	reportOutFlag      = "--out"
+	outputToken        = "{output}"
 	reportScriptName   = "usage-report"
 	remoteReportScript = "/usr/local/bin/usage-report"
 	altLauncher        = "claude-alt"
@@ -72,7 +75,7 @@ func writeUsageReport(t *testing.T, dir string, writtenAt time.Time) string {
 // reportConfig is a report-file block over script, reading output.
 func reportConfig(script, output string) map[string]any {
 	return map[string]any{
-		usageScriptKey:   []any{script, "--out", "{output}"},
+		usageScriptKey:   []any{script, reportOutFlag, outputToken},
 		usageOutputKey:   output,
 		usageIntervalKey: reportInterval,
 	}
@@ -119,11 +122,11 @@ func TestUsageReadsAReportFile(t *testing.T) {
 
 	codex := findLogin(t, got, codexLauncher)
 	wantWindows := []builtins.UsageWindow{
-		{Name: "5h", UsedPercent: 12.5, ResetsAt: time.Unix(1790010000, 0)},
+		{Name: windowFiveHour, UsedPercent: 12.5, ResetsAt: time.Unix(1790010000, 0)},
 		{Name: "weekly", UsedPercent: 40, ResetsAt: time.Unix(1790400000, 0)},
 	}
 
-	if codex.Protocol != codexConfigKey || codex.Plan != "prolite" || !windowsEqual(codex.Windows, wantWindows) {
+	if codex.Protocol != codexConfigKey || codex.Plan != planProlite || !windowsEqual(codex.Windows, wantWindows) {
 		t.Fatalf("codex login = %+v, want the codex protocol, prolite, and both windows", codex)
 	}
 
@@ -136,7 +139,7 @@ func TestUsageReadsAReportFile(t *testing.T) {
 		t.Fatalf("codex reset credits = %v, want only the unexpired one", codex.ResetCredits)
 	}
 
-	if claude := findLogin(t, got, claudeLauncher); claude.Protocol != claudeConfigKey || claude.Plan != "max" {
+	if claude := findLogin(t, got, claudeLauncher); claude.Protocol != claudeConfigKey || claude.Plan != planMax {
 		t.Fatalf("claude login = %+v, want the claude protocol on a max plan", claude)
 	}
 
@@ -200,7 +203,7 @@ func TestUsageFlagsAReadingOlderThanTwoIntervalsAndATimeout(t *testing.T) {
 
 			dir := t.TempDir()
 			output := writeUsageReport(t, dir, time.Now().Add(-tt.age))
-			usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+			usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 			got, err := usage.Report(t.Context(), usageTask(nil))
 			if err != nil {
@@ -240,7 +243,7 @@ func TestUsageFlagsOnlyTheAccountsReadTooLongAgo(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 
-	usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+	usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 	got, err := usage.Report(t.Context(), usageTask(nil))
 	if err != nil {
@@ -259,7 +262,7 @@ func TestUsageReportsAMissingFile(t *testing.T) {
 
 	dir := t.TempDir()
 	output := filepath.Join(dir, reportFileName)
-	usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+	usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 	_, err := usage.Execute(t.Context(), usageTask(nil))
 
@@ -319,7 +322,7 @@ func TestUsageRefusesAReportItCannotRead(t *testing.T) {
 				t.Fatalf("write report: %v", err)
 			}
 
-			usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+			usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 			_, err := usage.Execute(t.Context(), usageTask(nil))
 
@@ -341,7 +344,7 @@ func TestUsageReportSelectsAnAccountWithPaddedNames(t *testing.T) {
 		t.Fatalf("write report: %v", err)
 	}
 
-	usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+	usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 	got, err := usage.Report(t.Context(), usageTask(map[string]any{usageLaunchers: []any{claudeLauncher}}))
 	if err != nil {
@@ -366,7 +369,7 @@ func TestUsageReportNarrowsToTheNamedLaunchers(t *testing.T) {
 
 	t.Parallel()
 
-	usage := newUsage(t, reportConfig("/bin/true", output), builtins.UsageOptions{Lookup: pathEnv(dir)})
+	usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 	got, err := usage.Report(t.Context(), usageTask(map[string]any{usageLaunchers: []any{codexLauncher}}))
 	if err != nil {
@@ -390,7 +393,7 @@ func TestUsageConfigKeepsTheTwoSourcesApart(t *testing.T) {
 
 	hosts := map[string]builtins.UsageHost{buildBox: {SSH: buildBoxAlias}, quietBox: {}}
 	withScript := func(extra map[string]any) map[string]any {
-		cfg := reportConfig("/bin/true", "/tmp/usage.json")
+		cfg := reportConfig(binTrue, reportOutputPath)
 		maps.Copy(cfg, extra)
 
 		return cfg
@@ -404,14 +407,14 @@ func TestUsageConfigKeepsTheTwoSourcesApart(t *testing.T) {
 	}{
 		{name: "script beside a launcher list", cfg: withScript(map[string]any{claudeConfigKey: []any{claudeLauncher}})},
 		{name: "script beside claude_gap", cfg: withScript(map[string]any{"claude_gap": int64(0)})},
-		{name: "output without script", cfg: map[string]any{usageOutputKey: "/tmp/usage.json"}},
+		{name: "output without script", cfg: map[string]any{usageOutputKey: reportOutputPath}},
 		{name: "host without script", cfg: map[string]any{usageReportHost: buildBox}},
-		{name: "script without output", cfg: map[string]any{usageScriptKey: []any{"/bin/true"}, usageIntervalKey: reportInterval}},
-		{name: "script without interval", cfg: map[string]any{usageScriptKey: []any{"/bin/true"}, usageOutputKey: "/tmp/usage.json"}},
+		{name: "script without output", cfg: map[string]any{usageScriptKey: []any{binTrue}, usageIntervalKey: reportInterval}},
+		{name: "script without interval", cfg: map[string]any{usageScriptKey: []any{binTrue}, usageOutputKey: reportOutputPath}},
 		{name: "zero interval", cfg: withScript(map[string]any{usageIntervalKey: int64(0)})},
 		{name: "empty script", cfg: withScript(map[string]any{usageScriptKey: []any{}})},
 		{name: "relative output", cfg: withScript(map[string]any{usageOutputKey: "usage.json"})},
-		{name: "unknown host", cfg: withScript(map[string]any{usageReportHost: "other_box"})},
+		{name: "unknown host", cfg: withScript(map[string]any{usageReportHost: unknownBox})},
 		{name: "host without an alias", cfg: withScript(map[string]any{usageReportHost: quietBox})},
 	}
 
@@ -494,7 +497,7 @@ printf '%s' `+shellquote.Word(fmt.Sprintf(usageReportJSON, time.Now().Unix())))
 	t.Parallel()
 
 	cfg := map[string]any{
-		usageScriptKey:   []any{remoteReportScript, "--out", "{output}"},
+		usageScriptKey:   []any{remoteReportScript, reportOutFlag, outputToken},
 		usageOutputKey:   "~/.cache/" + reportFileName,
 		usageIntervalKey: reportInterval,
 		usageReportHost:  buildBox,

@@ -19,9 +19,8 @@ const OpenAIName = "openai"
 
 // OpenAIKeyEnv is the API-key variable an openai-type block falls back to. A
 // block reads CAIRNOS_RUNNER_<NAME>_API_KEY first and this one second, so a
-// host that sets only this keeps working however its blocks are named. The
-// config file never carries the key, matching the repo-wide rule that secrets
-// live in the environment.
+// host that sets only this keeps working however its blocks are named. Secrets
+// live in the environment, never the config file.
 //
 // It is exported so the secrets pull warning can name what a runner reads.
 const OpenAIKeyEnv = "CAIRNOS_RUNNER_OPENAI_API_KEY" // #nosec G101 -- environment variable name, not a credential
@@ -37,8 +36,12 @@ const chatCompletionsPath = "/chat/completions"
 // stream.
 const openaiStreamDone = "[DONE]"
 
-// OpenAI calls the OpenAI chat-completions API, one of the Phase 1a API
-// runners in the built-ins table (.agents/spec/03-runner-interface.md).
+// openaiPromptMessages sizes one request's message list: the optional system
+// message and the user prompt.
+const openaiPromptMessages = 2
+
+// OpenAI calls the OpenAI chat-completions API, a Phase 1a API runner
+// (.agents/spec/03-runner-interface.md).
 //
 // Config: model (required to run), base_url, max_tokens, temperature, and
 // price_in/price_out in USD per million tokens for cost reporting. Params:
@@ -105,13 +108,7 @@ func (o *OpenAI) Validate(task *runner.Task) error {
 
 // Execute implements runner.Runner.
 func (o *OpenAI) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	return o.run(ctx, task, nil)
-}
-
-// ExecuteStream implements runner.Streamer over the API's SSE mode, sending
-// content deltas as chunks while the full text still lands in Result.Output.
-func (o *OpenAI) ExecuteStream(ctx context.Context, task *runner.Task, out chan<- runner.Chunk) (runner.Result, error) {
-	return o.run(ctx, task, out)
+	return o.ExecuteStream(ctx, task, nil)
 }
 
 // ExecuteWithTools implements runner.ToolCaller over the chat-completions
@@ -145,9 +142,11 @@ func (o *OpenAI) ExecuteWithTools(ctx context.Context, task *runner.Task, tools 
 	return o.decodeToolResponse(response.Body, start)
 }
 
-// run drives one chat-completions call. A nil stream means plain Execute; a
-// non-nil stream flips the request into SSE mode.
-func (o *OpenAI) run(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
+// ExecuteStream implements runner.Streamer over the API's SSE mode, sending
+// content deltas as chunks while the full text still lands in Result.Output. A
+// nil stream, which Execute passes, keeps the chat-completions call out of SSE
+// mode.
+func (o *OpenAI) ExecuteStream(ctx context.Context, task *runner.Task, stream chan<- runner.Chunk) (runner.Result, error) {
 	if err := o.Validate(task); err != nil {
 		return runner.Result{}, err
 	}
@@ -172,7 +171,7 @@ func (o *OpenAI) run(ctx context.Context, task *runner.Task, stream chan<- runne
 // authHeaders builds the per-call auth header; the key reads at call time
 // so a rotation needs no restart.
 func (o *OpenAI) authHeaders() map[string]string {
-	return map[string]string{"Authorization": "Bearer " + apiKey(o.cfg.env, o.keyEnvs)}
+	return map[string]string{headerAuthorization: "Bearer " + apiKey(o.cfg.env, o.keyEnvs)}
 }
 
 // payload assembles the request body for one task.
@@ -180,7 +179,7 @@ func (o *OpenAI) payload(task *runner.Task, streaming bool) openaiRequest {
 	prompt, _ := task.Params[paramPrompt].(string)
 	system, _ := task.Params[paramSystem].(string)
 
-	messages := make([]openaiMessage, 0, 2)
+	messages := make([]openaiMessage, 0, openaiPromptMessages)
 	if system != "" {
 		messages = append(messages, openaiMessage{Role: roleSystem, Content: system})
 	}
@@ -405,12 +404,12 @@ func (o *OpenAI) usage(tokens openaiUsage, start time.Time) runner.Usage {
 	}
 }
 
-// classifyStreamErr keeps an already-classified stream failure intact and
-// marks anything else (a scanner error mid-stream) by transport rules, since
+// classifyStreamErr returns the runner error already in the chain unchanged
+// and marks anything else (a scanner error mid-stream) by transport rules, since
 // a stream that died is a connection problem.
 func classifyStreamErr(ctx context.Context, name string, err error) error {
-	if _, classified := errors.AsType[*runner.Error](err); classified {
-		return err
+	if classified, isClassified := errors.AsType[*runner.Error](err); isClassified {
+		return classified
 	}
 
 	return classifyAPITransport(ctx, name, err)

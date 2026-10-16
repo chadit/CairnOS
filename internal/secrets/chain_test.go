@@ -3,6 +3,7 @@ package secrets_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -46,7 +47,7 @@ func (f *fakeSource) Get(_ context.Context, name string) (string, error) {
 
 	value, ok := f.values[secrets.NormalizeName(name)]
 	if !ok {
-		return "", secrets.ErrNotFound
+		return "", fmt.Errorf("%w: %s (fake store)", secrets.ErrNotFound, name)
 	}
 
 	return value, nil
@@ -87,19 +88,46 @@ func TestChainHardStopsOnOtherError(t *testing.T) {
 	}
 }
 
-func TestChainAllMissWrapsNotFound(t *testing.T) {
+// emptyEnv is an env source with nothing set, so every lookup misses with its
+// "(set CAIRNOS_SECRET_<NAME>)" hint.
+func emptyEnv() *secrets.Env {
+	return secrets.NewEnvWith(environ.Map(map[string]string{}))
+}
+
+// TestChainAllMissJoinsEverySourcesMiss proves an all-miss keeps each source's
+// own error, the env hint included, and still matches ErrNotFound.
+func TestChainAllMissJoinsEverySourcesMiss(t *testing.T) {
 	t.Parallel()
 
-	one := &fakeSource{values: map[string]string{}}
-	two := &fakeSource{values: map[string]string{}}
+	store := &fakeSource{values: map[string]string{}}
 
-	_, err := secrets.Chain(one, two).Get(t.Context(), testName)
+	_, err := secrets.Chain(emptyEnv(), store).Get(t.Context(), testName)
 	if !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatalf("all-miss error = %v, want ErrNotFound", err)
 	}
 
-	if got := err.Error(); !strings.Contains(got, testName) {
-		t.Errorf("all-miss error %q does not name the secret", got)
+	got := err.Error()
+	for _, want := range []string{"(set " + secrets.EnvPrefix + "DB_PASSWORD)", "(fake store)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("all-miss error %q is missing a source's own miss %q", got, want)
+		}
+	}
+}
+
+// TestChainOfOnlyEnvKeepsTheEnvMiss proves a chain around Env alone misses with
+// exactly Env's error, so wrapping Env in a chain costs the operator no hint.
+func TestChainOfOnlyEnvKeepsTheEnvMiss(t *testing.T) {
+	t.Parallel()
+
+	_, envErr := emptyEnv().Get(t.Context(), testName)
+	_, chainErr := secrets.Chain(emptyEnv()).Get(t.Context(), testName)
+
+	if envErr == nil || chainErr == nil {
+		t.Fatalf("env error = %v, chain error = %v, want both to miss", envErr, chainErr)
+	}
+
+	if chainErr.Error() != envErr.Error() {
+		t.Errorf("chain error = %q, want the env error %q", chainErr, envErr)
 	}
 }
 

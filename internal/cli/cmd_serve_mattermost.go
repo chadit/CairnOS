@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -48,7 +49,7 @@ func (a *App) buildMattermostBridge(
 			fmt.Errorf("%w: bridge.mattermost.identity requires [chat] enabled", config.ErrInvalidConfig)), false
 	}
 
-	identities, err := mattermostIdentities(settings, a.envLookup(), deps.logger)
+	identities, err := mattermostIdentities(settings, a.envLookup(), a.bridgeTransport, deps.logger)
 	if err != nil {
 		return nil, a.failServe(ctx, tel, mattermostStage, err), false
 	}
@@ -73,11 +74,12 @@ func (a *App) buildMattermostBridge(
 }
 
 // mattermostIdentities builds one client per identity whose token env is set,
-// logging one info line for each it skips (FR2). Every client shares one rate
-// bucket because Mattermost keys its own limit by source IP (decision D5). Name
-// order makes the log lines and any failure reproducible across starts.
+// each over transport, logging one info line for each it skips (FR2). Every
+// client shares one rate bucket because Mattermost keys its own limit by source
+// IP (decision D5). Name order makes the log lines and any failure reproducible
+// across starts.
 func mattermostIdentities(
-	settings *config.Mattermost, lookup environ.Lookup, logger *slog.Logger,
+	settings *config.Mattermost, lookup environ.Lookup, transport http.RoundTripper, logger *slog.Logger,
 ) ([]mattermost.Identity, error) {
 	limiter := mattermost.NewBucket(mattermost.BucketConfig{
 		RatePerSecond: float64(settings.RatePerSec),
@@ -99,14 +101,14 @@ func mattermostIdentities(
 
 		logger.Debug("mattermost identity token resolved", "identity", name, "env", env)
 
-		client, err := mattermost.NewClient(mattermost.ClientConfig{
+		client, err := mattermost.NewClientOver(mattermost.ClientConfig{
 			Limiter:      limiter,
 			Log:          logger,
 			URL:          settings.URL,
 			Token:        token,
 			Timeout:      settings.SendTimeout,
 			InsecureHTTP: settings.InsecureHTTP,
-		})
+		}, transport)
 		if err != nil {
 			return nil, fmt.Errorf("%w: bridge.mattermost.identity.%s: %w", config.ErrInvalidConfig, name, err)
 		}

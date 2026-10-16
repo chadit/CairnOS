@@ -21,7 +21,7 @@ const (
 	ScopeA2ATask       = "a2a:task"
 	// ScopeChatSession gates the Phase 9 chat surface: creating sessions,
 	// sending messages, and reading conversations. Triggering a workflow from
-	// chat additionally needs ScopeWriteWorkflow, checked at confirm time
+	// chat also needs ScopeWriteWorkflow, checked at confirm time
 	// (.agents/spec/13-roadmap.md, Phase 9; .agents/spec/14-open-decisions.md,
 	// D9).
 	ScopeChatSession = "chat:session"

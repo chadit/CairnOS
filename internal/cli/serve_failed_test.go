@@ -21,6 +21,9 @@ const serveFailedStateName = "serve-failed.json"
 // notifyChannelID is the id the stub server resolves #alerts to.
 const notifyChannelID = "chn1"
 
+// mattermostKeyID is the key Mattermost's API returns an object's ID under.
+const mattermostKeyID = "id"
+
 // serveFailedConfigTOML pairs a source serve cannot bring up with a Mattermost
 // notify destination, so a startup that dies before the bridges connect still
 // has somewhere to report. The verbs take the stub server URL and the checkout
@@ -62,7 +65,7 @@ func fakeMattermost(t *testing.T) (string, chan string) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/v4/teams/name/main/channels/name/alerts", func(w http.ResponseWriter, _ *http.Request) {
-		writeMattermostJSON(t, w, map[string]string{"id": notifyChannelID})
+		writeMattermostJSON(t, w, map[string]string{mattermostKeyID: notifyChannelID})
 	})
 
 	mux.HandleFunc("/api/v4/posts", func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +79,7 @@ func fakeMattermost(t *testing.T) (string, chan string) {
 
 		posts <- body.Message
 
-		writeMattermostJSON(t, w, map[string]string{"id": "p1", "channel_id": notifyChannelID})
+		writeMattermostJSON(t, w, map[string]string{mattermostKeyID: "p1", "channel_id": notifyChannelID})
 	})
 
 	// Real socket on purpose: serve builds its Mattermost client from config,

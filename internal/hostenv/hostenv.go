@@ -89,7 +89,7 @@ func hostVars(name string, host config.Host) []string {
 
 // toolVars renders one tool's launch path and, when the block named one, its
 // provider label.
-func toolVars(prefix, cli string, tool config.Harness) []string {
+func toolVars(prefix, cli string, tool config.HostCLI) []string {
 	key := prefix + binInfix + config.EnvToken(cli)
 
 	vars := []string{key + "=" + launchPath(tool)}
@@ -106,6 +106,6 @@ func toolVars(prefix, cli string, tool config.Harness) []string {
 // half: a shell and Python's posixpath.join read a doubled slash differently.
 // The rest passes through byte for byte, "~" included, since only the host that
 // runs the binary knows what home means.
-func launchPath(tool config.Harness) string {
+func launchPath(tool config.HostCLI) string {
 	return strings.TrimRight(tool.Path, "/") + "/" + tool.Name
 }

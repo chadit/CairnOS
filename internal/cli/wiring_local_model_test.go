@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -73,11 +74,16 @@ func TestLocalModelBlockSendsTheConfiguredModel(t *testing.T) {
 	// Real socket on purpose: the workflow run builds its runner clients from
 	// config, so base_url has to be one something can dial.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read the model request: %v", err)
+		}
+
 		seen = string(body)
 
-		_, _ = w.Write([]byte(localModelReply))
+		if _, err := w.Write([]byte(localModelReply)); err != nil {
+			t.Errorf("write the model reply: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -100,7 +106,9 @@ func localModelServer(t *testing.T) string {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(localModelReply))
+		if _, err := w.Write([]byte(localModelReply)); err != nil {
+			t.Errorf("write the model reply: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 

@@ -9,10 +9,9 @@ import (
 )
 
 // openMemory opens a fresh database under t.TempDir and closes it when the
-// case finishes; every case exercises schema and index creation. It returns
-// the memory.Store interface so the shared conformance suite drives it the
-// same way it drives the postgres backend.
-func openMemory(t *testing.T) memory.Store {
+// case finishes; every case exercises schema and index creation, and the
+// export/import cases run against a real backend.
+func openMemory(t *testing.T) *memory.SQLite {
 	t.Helper()
 
 	mem, err := memory.OpenSQLite(filepath.Join(t.TempDir(), "memory.db"))

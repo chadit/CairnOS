@@ -93,8 +93,8 @@ func NewExec(cfg map[string]any) (*Exec, error) {
 // it: every entry point goes through newRegistry, and registering this one there
 // would drop the host table for that path without any signal. Use
 // ExecFactoryWithHostEnv, passing nil for the no-hosts case.
-func ExecFactory(cfg map[string]any) (runner.Runner, error) {
-	return NewExec(cfg)
+func ExecFactory() runner.Factory {
+	return asFactory(NewExec)
 }
 
 // ExecFactoryWithHostEnv adapts the runner to the registry contract and hands
@@ -225,7 +225,7 @@ func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, 
 	latency := time.Since(start)
 
 	if waitErr != nil {
-		return runner.Result{}, classifyExecWait(runCtx, waitErr, cmd.ProcessState.ExitCode(), stderr.Text())
+		return runner.Result{}, classifyExecWait(runCtx, waitErr, stderr.Text())
 	}
 
 	if scanErr != nil {
@@ -265,14 +265,14 @@ func classifyExecStart(runCtx context.Context, command string, err error) error 
 // classifyExecWait maps a finished-but-failed process. A dead run context wins
 // over the exit status because CommandContext kills the child on cancellation,
 // so the non-zero exit is an effect of the timeout, not the command's verdict.
-func classifyExecWait(runCtx context.Context, waitErr error, exitCode int, stderrTail string) error {
+func classifyExecWait(runCtx context.Context, waitErr error, stderrTail string) error {
 	if runCtx.Err() != nil {
 		return runner.NewError(runner.ClassTransient, codeExecTimeout,
 			"command canceled or timed out")
 	}
 
-	if _, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
-		message := fmt.Sprintf("command exited with code %d", exitCode)
+	if exitErr, isExit := errors.AsType[*exec.ExitError](waitErr); isExit {
+		message := fmt.Sprintf("command exited with code %d", exitErr.ExitCode())
 		if stderrTail != "" {
 			message += ": " + stderrTail
 		}

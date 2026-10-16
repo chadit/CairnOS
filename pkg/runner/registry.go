@@ -3,9 +3,9 @@ package runner
 import (
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"sync"
+
+	"github.com/chadit/CairnOS/internal/registry"
 )
 
 // Factory constructs a configured runner from its config block (the runner's
@@ -16,17 +16,23 @@ type Factory func(cfg map[string]any) (Runner, error)
 // is constructed once per process from its config block and reused across
 // runs, which is why Execute must be safe for concurrent use.
 type Registry struct {
-	factories map[string]Factory
-	instances map[string]Runner
-	mu        sync.RWMutex
+	// Table holds the built instances. Its Get is the runner-not-found check at
+	// run start (.agents/spec/02-workflow-schema.md, validation rule 7), and its
+	// List gives the built names sorted for stable output.
+	registry.Table[Runner]
+
+	factories registry.Table[Factory]
+
+	// mu makes Register's duplicate check and insert one step, and serializes
+	// Build and Close, so no instance is built twice at once or built while
+	// Close runs, either of which would leave one unclosed.
+	mu sync.Mutex
 }
 
-// NewRegistry returns an empty registry.
+// NewRegistry returns an empty registry. The zero value is empty and ready to
+// use too.
 func NewRegistry() *Registry {
-	return &Registry{
-		factories: map[string]Factory{},
-		instances: map[string]Runner{},
-	}
+	return &Registry{}
 }
 
 // Register adds a factory under a name. Registration happens once at startup
@@ -36,11 +42,11 @@ func (r *Registry) Register(name string, factory Factory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.factories[name]; exists {
+	if _, exists := r.factories.Get(name); exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateRunner, name)
 	}
 
-	r.factories[name] = factory
+	r.factories.Add(name, factory)
 
 	return nil
 }
@@ -49,21 +55,18 @@ func (r *Registry) Register(name string, factory Factory) error {
 // factories, not the built instances Get reads, so unlike Get it answers true
 // before BuildAll, and wiring can check a config block's name at startup.
 func (r *Registry) Registered(name string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	_, exists := r.factories[name]
+	_, exists := r.factories.Get(name)
 
 	return exists
 }
 
 // Build constructs the named runner from its config block and caches the
-// instance for Get.
+// instance for Get, replacing any instance an earlier Build made.
 func (r *Registry) Build(name string, cfg map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	factory, exists := r.factories[name]
+	factory, exists := r.factories.Get(name)
 	if !exists {
 		return fmt.Errorf("%w: %q", ErrUnknownRunner, name)
 	}
@@ -73,7 +76,7 @@ func (r *Registry) Build(name string, cfg map[string]any) error {
 		return fmt.Errorf("build runner %q: %w", name, err)
 	}
 
-	r.instances[name] = instance
+	r.Add(name, instance)
 
 	return nil
 }
@@ -81,35 +84,13 @@ func (r *Registry) Build(name string, cfg map[string]any) error {
 // BuildAll constructs every registered runner, passing each its config block
 // (or nil when the config has none).
 func (r *Registry) BuildAll(cfgs map[string]map[string]any) error {
-	names := r.registeredNames()
-
-	for _, name := range names {
+	for _, name := range r.factories.List() {
 		if err := r.Build(name, cfgs[name]); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-// Get returns the built instance for a name. The false return is the
-// runner-not-found condition checked at run start
-// (.agents/spec/02-workflow-schema.md, validation rule 7).
-func (r *Registry) Get(name string) (Runner, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	instance, exists := r.instances[name]
-
-	return instance, exists
-}
-
-// List returns the built runner names, sorted for stable output.
-func (r *Registry) List() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return slices.Sorted(maps.Keys(r.instances))
 }
 
 // Close shuts down every built instance that holds resources. Called once at
@@ -120,7 +101,7 @@ func (r *Registry) Close() error {
 
 	var errs []error
 
-	for name, instance := range r.instances {
+	for name, instance := range r.Snapshot() {
 		closer, ok := instance.(Closer)
 		if !ok {
 			continue
@@ -136,11 +117,4 @@ func (r *Registry) Close() error {
 	}
 
 	return fmt.Errorf("close registry: %w", errors.Join(errs...))
-}
-
-func (r *Registry) registeredNames() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return slices.Sorted(maps.Keys(r.factories))
 }

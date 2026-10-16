@@ -18,6 +18,10 @@ import (
 // resolves by; it matches the `name` inside the handler TOML above.
 const handlerName = "on_failure"
 
+// secondLevelName is the error_workflow the failing handler itself names, which
+// must never fire because its caller is an error-triggered run.
+const secondLevelName = "second_level"
+
 const (
 	failingParentTOML = `
 [workflow]
@@ -177,7 +181,7 @@ func TestErrorWorkflowReceivesOnlyDeclaredFailureInputs(t *testing.T) {
 		t.Fatalf("run_id input = %v, want the failed run id %q", handler.Inputs["run_id"], parent.ID)
 	}
 
-	if handler.Inputs["failed_action"] != "boom" {
+	if handler.Inputs["failed_action"] != fnBoom {
 		t.Fatalf("failed_action input = %v, want boom", handler.Inputs["failed_action"])
 	}
 
@@ -200,8 +204,8 @@ func TestErrorTriggeredRunNeverFiresItsOwn(t *testing.T) {
 	t.Parallel()
 
 	cfg := errorSourceConfig(t, map[string]string{
-		handlerName:    handlerWithOwnHandlerTOML,
-		"second_level": secondLevelHandlerTOML,
+		handlerName:     handlerWithOwnHandlerTOML,
+		secondLevelName: secondLevelHandlerTOML,
 	})
 	eng, db := newTestEngine(t, cfg, nil)
 
@@ -215,7 +219,7 @@ func TestErrorTriggeredRunNeverFiresItsOwn(t *testing.T) {
 
 	wantRunStatus(t, handler, store.RunFailed)
 
-	second, err := db.ListRuns(t.Context(), store.ListFilter{WorkflowName: "second_level"})
+	second, err := db.ListRuns(t.Context(), store.ListFilter{WorkflowName: secondLevelName})
 	if err != nil {
 		t.Fatalf("list second-level runs: %v", err)
 	}

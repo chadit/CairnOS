@@ -112,7 +112,7 @@ func (a *App) drainToken(ctx context.Context, home string, cfg *config.Config) (
 		return "", nil
 	}
 
-	keyStore, _, err := openAuth(ctx, home, a.envLookup())
+	keyStore, _, err := openBackend(ctx, home, a.envLookup(), authBackends())
 	if err != nil {
 		return "", fmt.Errorf("open the auth store in %s: %w", home, err)
 	}

@@ -33,7 +33,7 @@ func (a *App) cmdSuggestionsApply(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "suggestions apply", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "suggestions apply", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -79,7 +79,7 @@ func (a *App) cmdSuggestionsRevert(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "suggestions revert", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "suggestions revert", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

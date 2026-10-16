@@ -38,7 +38,7 @@ params = { output = "tick" }
 
 // openWebhookStore opens the scaffolded home's registration store directly, so a
 // caller can prove what a token hash resolves to after a CLI mutation.
-func openWebhookStore(t *testing.T, dir string) webhook.Store {
+func openWebhookStore(t *testing.T, dir string) *webhook.SQLiteWebhooks {
 	t.Helper()
 
 	store, err := webhook.OpenSQLiteWebhooks(filepath.Join(dir, dataDirName, dbFileName))

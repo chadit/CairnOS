@@ -86,7 +86,7 @@ func (s *Store) GetSuggestion(ctx context.Context, id string) (*store.Suggestion
 // run listing's stable ordering. Every list is scoped to the request workspace
 // first, so a token bound to one tenant never sees another's suggestions.
 func (s *Store) ListSuggestions(ctx context.Context, filter store.SuggestionFilter) ([]*store.Suggestion, error) {
-	clauses := []string{"workspace_id = ?"}
+	clauses := []string{workspaceClause}
 	args := []any{store.WorkspaceFromContext(ctx)}
 
 	if filter.Status != "" {
@@ -103,7 +103,7 @@ func (s *Store) ListSuggestions(ctx context.Context, filter store.SuggestionFilt
 	// #nosec G202 -- every clause is a constant string; values bind as parameters.
 	query := "SELECT " + suggestionColumns + " FROM suggestions WHERE " + strings.Join(clauses, " AND ")
 
-	query += " ORDER BY created_at DESC, id DESC"
+	query += newestFirst
 
 	if filter.Limit > 0 {
 		query += limitClause

@@ -188,7 +188,7 @@ func TestRequestRestartWithoutDrainIsUnimplemented(t *testing.T) {
 		t.Fatalf("RequestRestart with no drain = %v, want Unimplemented", err)
 	}
 
-	if got := canonicalCode(t, err); got != "api.unimplemented" {
+	if got := canonicalCode(t, err); got != wireUnimplemented {
 		t.Fatalf("canonical code = %q, want api.unimplemented", got)
 	}
 }

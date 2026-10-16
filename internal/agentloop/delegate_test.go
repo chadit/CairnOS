@@ -374,7 +374,7 @@ func TestDelegateMissingGoalDoesNotBurnDelegation(t *testing.T) {
 	}
 }
 
-// Bypass protection: delegateTool.Execute reached outside the loop's
+// Bypass protection: DelegateTool.Execute reached outside the loop's
 // interception refuses with agent.delegate_bypassed, permanent.
 func TestDelegateToolExecuteRefusesBypass(t *testing.T) {
 	t.Parallel()

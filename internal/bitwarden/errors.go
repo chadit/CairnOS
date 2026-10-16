@@ -11,3 +11,7 @@ var errServeExited = errors.New("bw serve exited before it answered")
 // host has stopped carrying traffic for looks exactly like this, so it is the
 // second failure another port can fix.
 var errServeSilent = errors.New("bw serve never answered")
+
+// errAnswered matches every statusError under errors.Is, so a caller can tell a
+// call the daemon replied to from one the transport lost, whatever the code.
+var errAnswered = errors.New("the bw daemon answered")

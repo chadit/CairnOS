@@ -353,7 +353,9 @@ func watchTerminal(t *testing.T, master, slave *os.File) *terminalWatch {
 	t.Cleanup(func() {
 		watch.stopping.Store(true)
 
-		_, _ = slave.WriteString("\n")
+		if _, err := slave.WriteString("\n"); err != nil {
+			t.Errorf("wake the reader: %v", err)
+		}
 
 		<-stopped
 

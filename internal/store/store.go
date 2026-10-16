@@ -330,6 +330,13 @@ type ChatSearchQuery struct {
 // through the request context the way runs are, so one tenant never reads
 // another's conversations.
 type ChatStore interface {
+	ChatSessionStore
+	ChatMessageStore
+}
+
+// ChatSessionStore creates and finds conversations, the half of ChatStore a
+// caller needs before it has a session id to append to.
+type ChatSessionStore interface {
 	// CreateSession persists a new conversation. A zero CreatedAt/UpdatedAt is
 	// stamped with the current time and an empty WorkspaceID becomes the
 	// request workspace.
@@ -342,7 +349,11 @@ type ChatStore interface {
 	// ListSessions returns the request workspace's sessions, most-recently-
 	// updated first, narrowed by the filter.
 	ListSessions(ctx context.Context, filter ChatSessionFilter) ([]*ChatSession, error)
+}
 
+// ChatMessageStore records and reads the messages inside a session. Messages
+// are insert-only, so this role has no update or delete.
+type ChatMessageStore interface {
 	// AppendMessage records one message at the next sequence in its session
 	// and stamps the session's updated_at. Role is one of ChatRoleUser,
 	// ChatRoleAssistant, ChatRoleSystem, or ChatRoleTool; the column is a plain

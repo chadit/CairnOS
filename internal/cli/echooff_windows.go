@@ -16,7 +16,7 @@ import (
 //
 // Line input goes off with it, so a read returns per keystroke and the prompt
 // can star it. Processed input stays on, so Ctrl+C still works.
-func echoOff(file *os.File) (func(), error) {
+func echoOff(file *os.File) (func() error, error) {
 	handle := windows.Handle(file.Fd())
 
 	before, err := currentConsoleMode(handle)
@@ -30,7 +30,13 @@ func echoOff(file *os.File) (func(), error) {
 		return nil, fmt.Errorf("turn terminal echo off: %w", err)
 	}
 
-	return func() { _ = windows.SetConsoleMode(handle, before) }, nil
+	return func() error {
+		if err := windows.SetConsoleMode(handle, before); err != nil {
+			return fmt.Errorf("turn terminal echo back on: %w", err)
+		}
+
+		return nil
+	}, nil
 }
 
 // currentConsoleMode reads the console settings, answering errNotATerminal for

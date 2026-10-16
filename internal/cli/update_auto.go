@@ -46,11 +46,12 @@ const (
 	stepLink     = "link"
 )
 
-// autoUpdate is serve's self-update loop. Each tick asks which build an update
+// AutoUpdate is serve's self-update loop. Each tick asks which build an update
 // would install; when that is not the build this process runs, it runs the
 // install sequence `cairnos update` runs and then drains this process, leaving
-// the restart onto the new binary to the supervisor.
-type autoUpdate struct {
+// the restart onto the new binary to the supervisor. It is exported so a test
+// can drive its ticks one at a time.
+type AutoUpdate struct {
 	app    *App
 	drain  *api.Drain
 	logger *slog.Logger
@@ -115,7 +116,7 @@ func withStep(step string, err error) error {
 		return nil
 	}
 
-	if _, tagged := errors.AsType[*updateStepError](err); tagged {
+	if stepOf(err) != "" {
 		return err
 	}
 
@@ -237,8 +238,8 @@ func systemdUnsupervised(ctx context.Context) string {
 // newAutoUpdate wires the loop over one resolved invocation. Restart is always
 // the loop's own, because draining this process is how the new build takes
 // over; the other steps are the ones `cairnos update` runs.
-func (a *App) newAutoUpdate(opts *updateOptions, drain *api.Drain, steps UpdateSteps, logger *slog.Logger) *autoUpdate {
-	loop := &autoUpdate{app: a, drain: drain, logger: logger, opts: opts}
+func (a *App) newAutoUpdate(opts *updateOptions, drain *api.Drain, steps UpdateSteps, logger *slog.Logger) *AutoUpdate {
+	loop := &AutoUpdate{app: a, drain: drain, logger: logger, opts: opts}
 
 	steps.Restart = loop.restart
 	loop.steps = steps.named()
@@ -253,28 +254,11 @@ func (a *App) newAutoUpdate(opts *updateOptions, drain *api.Drain, steps UpdateS
 	return loop
 }
 
-// run ticks until the loop finishes or serve shuts down. The first check waits
-// a full interval, so a service that keeps crashing does not rebuild on every
-// start.
-func (u *autoUpdate) run(ctx context.Context, ticks <-chan time.Time) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticks:
-		}
-
-		if u.tick(ctx) {
-			return
-		}
-	}
-}
-
-// tick runs one check and reports whether the loop is finished, which it is
+// Tick runs one check and reports whether the loop is finished, which it is
 // once this process is draining for the new build or serve is shutting down.
 // Ticks run one at a time on the loop's goroutine, so two updates never
 // overlap inside one serve.
-func (u *autoUpdate) tick(ctx context.Context) bool {
+func (u *AutoUpdate) Tick(ctx context.Context) bool {
 	if u.drain.Draining() {
 		return true
 	}
@@ -300,16 +284,37 @@ func (u *autoUpdate) tick(ctx context.Context) bool {
 		return false
 	}
 
-	defer unlock()
+	defer func() {
+		if err := unlock(); err != nil {
+			u.logger.Warn("update lock not released", "error", err)
+		}
+	}()
 
 	return u.update(ctx, &target)
+}
+
+// run ticks until the loop finishes or serve shuts down. The first check waits
+// a full interval, so a service that keeps crashing does not rebuild on every
+// start.
+func (u *AutoUpdate) run(ctx context.Context, ticks <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+		}
+
+		if u.Tick(ctx) {
+			return
+		}
+	}
 }
 
 // update runs the install one tick decided on, holding the update lock, and
 // reports whether the loop is finished. The attempt is on disk before any of it
 // starts, and a checkout the loop will not build is refused before the line
 // that announces an update.
-func (u *autoUpdate) update(ctx context.Context, target *updateTarget) bool {
+func (u *AutoUpdate) update(ctx context.Context, target *updateTarget) bool {
 	installCtx, cancel := context.WithTimeout(ctx, autoUpdateTimeout)
 	defer cancel()
 
@@ -333,7 +338,7 @@ func (u *autoUpdate) update(ctx context.Context, target *updateTarget) bool {
 
 // lockFailed logs a lock the loop could not take. Another update holding it is
 // ordinary, and the next tick asks again; anything else is worth a warning.
-func (u *autoUpdate) lockFailed(err error) {
+func (u *AutoUpdate) lockFailed(err error) {
 	if errors.Is(err, errUpdateBusy) {
 		u.logger.Debug("auto-update: another update is running, so this tick waits for the next", "error", err)
 
@@ -346,7 +351,7 @@ func (u *autoUpdate) lockFailed(err error) {
 // lookupFailed reports a lookup that named no wanted revision, and whether the
 // loop is finished. A failure that repeats every tick warns once rather than
 // every interval, and a shutdown cutting the lookup short is no failure at all.
-func (u *autoUpdate) lookupFailed(ctx context.Context, err error) bool {
+func (u *AutoUpdate) lookupFailed(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return true
 	}
@@ -367,7 +372,7 @@ func (u *autoUpdate) lookupFailed(ctx context.Context, err error) bool {
 // A shutdown cutting the install short is not the revision's fault, so the
 // attempt is forgotten rather than logged. Once this loop has handed off, a
 // canceled context is its own drain at work, and the failure is still logged.
-func (u *autoUpdate) installFailed(ctx context.Context, target *updateTarget, err error) bool {
+func (u *AutoUpdate) installFailed(ctx context.Context, target *updateTarget, err error) bool {
 	if !u.handedOff && ctx.Err() != nil {
 		u.forgetAttempt()
 
@@ -384,7 +389,7 @@ func (u *autoUpdate) installFailed(ctx context.Context, target *updateTarget, er
 // running, and not one an earlier attempt failed to bring up. The second guard
 // keeps a broken build from being retried every tick; a new wanted revision
 // clears it.
-func (u *autoUpdate) due(target *updateTarget) bool {
+func (u *AutoUpdate) due(target *updateTarget) bool {
 	switch target.wanted {
 	case u.opts.running:
 		u.logger.Debug("auto-update: running the wanted build", "revision", target.wanted)
@@ -401,7 +406,7 @@ func (u *autoUpdate) due(target *updateTarget) bool {
 }
 
 // attemptPath is where the last attempted revision is kept.
-func (u *autoUpdate) attemptPath() string {
+func (u *AutoUpdate) attemptPath() string {
 	return filepath.Join(u.opts.home, autoUpdateAttemptName)
 }
 
@@ -410,7 +415,7 @@ func (u *autoUpdate) attemptPath() string {
 // which is how running the host out of memory can end, then skips that
 // revision once systemd restarts it instead of building it again an interval
 // later.
-func (u *autoUpdate) recordAttempt(wanted string) {
+func (u *AutoUpdate) recordAttempt(wanted string) {
 	u.attempted = wanted
 
 	if err := os.WriteFile(u.attemptPath(), []byte(wanted+"\n"), attemptFilePerm); err != nil {
@@ -421,7 +426,7 @@ func (u *autoUpdate) recordAttempt(wanted string) {
 
 // forgetAttempt clears an attempt that succeeded, or one a shutdown cut short,
 // which says nothing about whether the revision installs.
-func (u *autoUpdate) forgetAttempt() {
+func (u *AutoUpdate) forgetAttempt() {
 	u.attempted = ""
 
 	if err := os.Remove(u.attemptPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -447,7 +452,7 @@ func readAttempt(path string) (string, error) {
 // target asks which build an update would install, deciding the way `cairnos
 // update` does: the checkout's upstream when the running binary sits in one,
 // and the latest release for this platform otherwise.
-func (u *autoUpdate) target(ctx context.Context) (updateTarget, error) {
+func (u *AutoUpdate) target(ctx context.Context) (updateTarget, error) {
 	build, found, err := u.app.findRelease(ctx, u.opts)
 	if err != nil {
 		return updateTarget{}, err
@@ -505,7 +510,7 @@ func (t *updateTarget) ready(ctx context.Context) error {
 // loop's restart in place of the command's. The steps tag their own failures,
 // so what arrives untagged is the release download and its checks, or the
 // checkout reads around the build.
-func (u *autoUpdate) install(ctx context.Context, target *updateTarget) error {
+func (u *AutoUpdate) install(ctx context.Context, target *updateTarget) error {
 	if target.release != nil {
 		return withStep(stepDownload, u.app.applyRelease(ctx, target.release, u.opts, u.steps))
 	}
@@ -540,7 +545,7 @@ func requireClean(ctx context.Context, dir string) error {
 // the restart and be rebuilt on every start. The drain is the one
 // RequestRestart throws, with the same ceiling, so in-flight runs finish first.
 // A tick already cut short asks for no drain.
-func (u *autoUpdate) restart(ctx context.Context, _, _ bool, wanted string) error {
+func (u *AutoUpdate) restart(ctx context.Context, _, _ bool, wanted string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("drain for %s: %w", wanted, err)
 	}

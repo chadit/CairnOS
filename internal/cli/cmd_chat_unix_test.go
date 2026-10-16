@@ -138,7 +138,9 @@ func TestBlockedReadChild(t *testing.T) {
 	context.AfterFunc(ctx, func() { fmt.Println(blockedReadCanceled) })
 	fmt.Println(blockedReadReady)
 
-	_, _ = io.ReadAll(os.Stdin)
+	if _, err := io.ReadAll(os.Stdin); err != nil {
+		t.Fatalf("read stdin: %v", err)
+	}
 
 	t.Fatal("stdin closed before a second signal ended the process")
 }
@@ -185,7 +187,11 @@ func startChild(t *testing.T, childTest string, env ...string) (*exec.Cmd, *bufi
 func waitForLine(t *testing.T, child *exec.Cmd, lines *bufio.Scanner, want string) {
 	t.Helper()
 
-	startupKill := time.AfterFunc(childWait, func() { _ = child.Process.Kill() })
+	startupKill := time.AfterFunc(childWait, func() {
+		if err := child.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("kill the hung child: %v", err)
+		}
+	})
 	defer startupKill.Stop()
 
 	for lines.Scan() {
@@ -208,6 +214,16 @@ func exitOf(child *exec.Cmd) <-chan error {
 	return exited
 }
 
+// signalChild sends sig to a child that may already have exited. A child that
+// is gone is what the caller waits for, so only another failure stops the test.
+func signalChild(t *testing.T, child *exec.Cmd, sig os.Signal) {
+	t.Helper()
+
+	if err := child.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("send %v to the child: %v", sig, err)
+	}
+}
+
 // resendUntilExit sends stop every resendEvery until the child exits, and
 // fails if it is still running after childWait.
 func resendUntilExit(t *testing.T, child *exec.Cmd, stop os.Signal) error {
@@ -225,7 +241,7 @@ func resendUntilExit(t *testing.T, child *exec.Cmd, stop os.Signal) error {
 		case err := <-exited:
 			return err
 		case <-resend.C:
-			_ = child.Process.Signal(stop)
+			signalChild(t, child, stop)
 		case <-deadline:
 			t.Fatalf("child still running %v into repeated %v", childWait, stop)
 

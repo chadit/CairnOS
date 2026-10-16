@@ -194,9 +194,9 @@ func validateTokenURL(name string, cred *Credential) error {
 	}
 
 	switch parsed.Scheme {
-	case "https":
+	case schemeHTTPS:
 		return nil
-	case "http":
+	case schemeHTTP:
 		if cred.AllowPrivateTargets {
 			return nil
 		}

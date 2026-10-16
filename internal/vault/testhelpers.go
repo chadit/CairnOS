@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,7 +32,7 @@ func OpenPostgresSchema(ctx context.Context, dsn, schema string) (*Postgres, err
 		return nil, fmt.Errorf("open vault postgres pool: %w", err)
 	}
 
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdent(schema)); err != nil {
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
 		pool.Close()
 
 		return nil, fmt.Errorf("create schema %s: %w", schema, err)
@@ -48,30 +49,10 @@ func OpenPostgresSchema(ctx context.Context, dsn, schema string) (*Postgres, err
 
 // DropPostgresSchema removes a test schema and everything in it.
 func DropPostgresSchema(ctx context.Context, s *Postgres, schema string) error {
-	_, err := s.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+quoteIdent(schema)+" CASCADE")
+	_, err := s.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	if err != nil {
 		return fmt.Errorf("drop schema %s: %w", schema, err)
 	}
 
 	return nil
-}
-
-// quoteIdent wraps a SQL identifier in double quotes, doubling any embedded
-// quote, so a generated schema name can never break out of the identifier
-// context.
-func quoteIdent(name string) string {
-	quoted := make([]byte, 0, len(name)+2)
-	quoted = append(quoted, '"')
-
-	for i := range len(name) {
-		if name[i] == '"' {
-			quoted = append(quoted, '"')
-		}
-
-		quoted = append(quoted, name[i])
-	}
-
-	quoted = append(quoted, '"')
-
-	return string(quoted)
 }

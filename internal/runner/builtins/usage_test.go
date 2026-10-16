@@ -27,6 +27,18 @@ const (
 	usageTimeoutKey  = "timeout"
 	remoteWrapper    = "/usr/local/bin/agent-env"
 	usageClientToken = "9.9.9-test"
+
+	// The window labels and plan names the decoders report, pinned here because
+	// the package spells them in unexported constants.
+	windowFiveHour = "5h"
+	windowSevenDay = "7d"
+	planMax        = "max"
+	planProlite    = "prolite"
+
+	// unknownBox is a host name no usage block declares, and sshOptionFlag the
+	// ssh flag in front of each option the launcher passes.
+	unknownBox    = "other_box"
+	sshOptionFlag = "-o"
 )
 
 // claudeUsageLine is the get_usage answer the real CLI sends: a max plan with a
@@ -92,7 +104,7 @@ func usageTask(params map[string]any) *runner.Task {
 // pathEnv aims the runner's lookups at a directory of shims, so a case never
 // depends on what is installed on the machine running it.
 func pathEnv(dir string) environ.Lookup {
-	return environ.Map(map[string]string{"PATH": dir, "HOME": dir})
+	return environ.Map(map[string]string{pathVar: dir, "HOME": dir})
 }
 
 // newUsage builds the runner or fails the case, since every assertion below
@@ -167,13 +179,13 @@ func TestUsageReadsBothProtocolsLocally(t *testing.T) {
 	got := report(t, result)
 
 	claude := findLogin(t, got, claudeLauncher)
-	if claude.Plan != "max" {
+	if claude.Plan != planMax {
 		t.Fatalf("claude plan = %q, want max", claude.Plan)
 	}
 
 	wantWindows := []builtins.UsageWindow{
-		{Name: "5h", UsedPercent: 4, ResetsAt: mustTime(t, "2026-09-22T18:09:59.940354Z")},
-		{Name: "7d", UsedPercent: 41, ResetsAt: mustTime(t, "2026-09-26T06:59:59.940374Z")},
+		{Name: windowFiveHour, UsedPercent: 4, ResetsAt: mustTime(t, "2026-09-22T18:09:59.940354Z")},
+		{Name: windowSevenDay, UsedPercent: 41, ResetsAt: mustTime(t, "2026-09-26T06:59:59.940374Z")},
 	}
 
 	if !windowsEqual(claude.Windows, wantWindows) {
@@ -181,12 +193,12 @@ func TestUsageReadsBothProtocolsLocally(t *testing.T) {
 	}
 
 	codex := findLogin(t, got, codexLauncher)
-	if codex.Plan != "prolite" {
+	if codex.Plan != planProlite {
 		t.Fatalf("codex plan = %q, want prolite", codex.Plan)
 	}
 
 	wantCodex := []builtins.UsageWindow{
-		{Name: "7d", UsedPercent: 24, ResetsAt: time.Unix(1790416865, 0).UTC()},
+		{Name: windowSevenDay, UsedPercent: 24, ResetsAt: time.Unix(1790416865, 0).UTC()},
 	}
 
 	if !windowsEqual(codex.Windows, wantCodex) {
@@ -266,7 +278,7 @@ func TestUsageOverSSHBuildsTheRemoteCommand(t *testing.T) {
 	}
 
 	argv := readLines(t, shim+".argv")
-	wantFlags := []string{"-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", buildBoxAlias, "--"}
+	wantFlags := []string{"-T", sshOptionFlag, "BatchMode=yes", sshOptionFlag, "ConnectTimeout=10", buildBoxAlias, argTerminator}
 
 	if len(argv) != len(wantFlags)+1 {
 		t.Fatalf("ssh argv = %#v, want the flags plus one remote command", argv)

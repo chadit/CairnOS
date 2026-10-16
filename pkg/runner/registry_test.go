@@ -54,3 +54,23 @@ func TestRegisteredAnswersBeforeBuild(t *testing.T) {
 		})
 	}
 }
+
+// TestZeroRegistryIsEmpty covers a Registry declared without NewRegistry: Get
+// must report not found rather than panic, and Close has nothing to close.
+func TestZeroRegistryIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	var registry runner.Registry
+
+	if instance, ok := registry.Get(registeredRunnerName); ok || instance != nil {
+		t.Fatalf("Get on a zero Registry = %v, %v; want nil, false", instance, ok)
+	}
+
+	if registry.Registered(registeredRunnerName) {
+		t.Fatal("Registered on a zero Registry answered true")
+	}
+
+	if err := registry.Close(); err != nil {
+		t.Fatalf("Close on a zero Registry: %v", err)
+	}
+}

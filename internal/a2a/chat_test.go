@@ -381,12 +381,11 @@ func TestSendMessageDetachesTheTurnFromTheRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sent := make(chan struct{})
+	sendErr := make(chan error, 1)
 
 	go func() {
-		defer close(sent)
-
-		_, _ = service.SendMessage(ctx, &a2av1.SendMessageRequest{ContextId: contextOne, Text: msgHello})
+		_, err := service.SendMessage(ctx, &a2av1.SendMessageRequest{ContextId: contextOne, Text: msgHello})
+		sendErr <- err
 	}()
 
 	<-recorder.captured
@@ -397,7 +396,11 @@ func TestSendMessageDetachesTheTurnFromTheRequest(t *testing.T) {
 		t.Fatalf("turn context ended with %v once the request was canceled, want it still live", err)
 	}
 
-	<-sent
+	// The turn finishes after the request is canceled, so the handler may see
+	// either first: a reply and a Canceled status are both correct answers.
+	if err := <-sendErr; err != nil && status.Code(err) != codes.Canceled {
+		t.Fatalf("SendMessage after cancel = %v, want a reply or Canceled", err)
+	}
 }
 
 // TestSendMessageExpiresAnUnansweredProposal proves the expiry path still runs

@@ -23,6 +23,9 @@ const (
 	dbFileName   = "schedules.db"
 	settleSleep  = time.Millisecond
 	hourInterval = time.Hour
+
+	// behindScheduleID names the schedule the catch-up tests leave overdue.
+	behindScheduleID = "behind"
 )
 
 // errFireBoom is the failure the failing-runner tests inject.
@@ -474,7 +477,7 @@ func TestDaemonFiresMissedScheduleOnceWithoutBacklog(t *testing.T) {
 		// Three hourly intervals passed while the process was "down": the
 		// spec's policy is one fire, no burst (.agents/spec/14, S8).
 		if _, err := store.Add(t.Context(), &scheduler.Schedule{
-			ID: "behind", WorkflowName: flowName, Cron: hourlyCron,
+			ID: behindScheduleID, WorkflowName: flowName, Cron: hourlyCron,
 			NextFire: now.Add(-3 * hourInterval),
 		}); err != nil {
 			t.Fatalf("seed store: %v", err)
@@ -489,7 +492,7 @@ func TestDaemonFiresMissedScheduleOnceWithoutBacklog(t *testing.T) {
 			t.Fatalf("missed schedule fired %d times, want exactly 1", got)
 		}
 
-		stamped := store.get(t, "behind")
+		stamped := store.get(t, behindScheduleID)
 
 		wantNext, err := scheduler.NextFire(hourlyCron, now)
 		if err != nil {

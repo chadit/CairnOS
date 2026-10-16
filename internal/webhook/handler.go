@@ -111,7 +111,7 @@ type SecretResolver interface {
 // HandlerConfig wires one Handler. NewHandler applies safe defaults for the
 // durations and rates a caller leaves zero.
 type HandlerConfig struct {
-	Store   Store
+	Store   RegistrationReader
 	Runs    RunStarter
 	Pauses  PauseChecker
 	Secrets SecretResolver
@@ -148,7 +148,7 @@ type HandlerConfig struct {
 // the limiters and replay cache serialize their own writes and every other field
 // is immutable after construction.
 type Handler struct {
-	store    Store
+	store    RegistrationReader
 	runs     RunStarter
 	pauses   PauseChecker
 	secrets  SecretResolver
@@ -312,8 +312,9 @@ func hashPrefix(hash string) string {
 }
 
 // readBody reads the request body under a MaxBytesReader at the configured cap.
-// An over-cap body is 413; any other read failure is a generic 500. Both write
-// the response and report false.
+// An over-cap body is 413 with the cap in details, so a sender can size its
+// payload; any other read failure is a generic 500. Both write the response
+// and report false.
 func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, reg *Registration) ([]byte, bool) {
 	reader := r.Body
 	if h.maxBody > 0 {
@@ -322,8 +323,9 @@ func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, reg *Registra
 
 	body, err := io.ReadAll(reader)
 	if err != nil {
-		if _, isMax := errors.AsType[*http.MaxBytesError](err); isMax {
-			h.reject(w, r, reg, http.StatusRequestEntityTooLarge, CodeBodyTooLarge, "request body too large")
+		if maxErr, isMax := errors.AsType[*http.MaxBytesError](err); isMax {
+			details := map[string]any{"limit_bytes": maxErr.Limit}
+			h.rejectDetails(w, r, reg, http.StatusRequestEntityTooLarge, CodeBodyTooLarge, "request body too large", details)
 
 			return nil, false
 		}
@@ -640,8 +642,8 @@ func (h *Handler) reject(w http.ResponseWriter, r *http.Request, reg *Registrati
 	h.rejectDetails(w, r, reg, status, code, message, nil)
 }
 
-// rejectDetails is reject with a details map, for the workflow.invalid
-// pass-through that names the offending keys.
+// rejectDetails is reject with a details map the error envelope carries to
+// the sender.
 func (h *Handler) rejectDetails(w http.ResponseWriter, r *http.Request, reg *Registration, status int, code, message string, details map[string]any) {
 	h.logger.InfoContext(r.Context(), "webhook rejected", "registration_id", reg.ID, "code", code, "status", status)
 	h.writeError(w, r, status, code, message, details)

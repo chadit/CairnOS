@@ -8,7 +8,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/chat"
 	"github.com/chadit/CairnOS/internal/openaicompat"
 )
@@ -68,10 +67,14 @@ func modelIDs(t *testing.T, body string) []string {
 // TestModelsListsBuiltinsAndConfigured proves an OpenAI-style client sees the
 // built-in personalities plus any the config adds, sorted, each shaped as an
 // OpenAI model object owned by cairnos.
+// customPersonality is a configured personality the model list must append
+// after the builtins.
+const customPersonality = "support"
+
 func TestModelsListsBuiltinsAndConfigured(t *testing.T) {
 	t.Parallel()
 
-	personalities := chat.NewPersonalities(map[string]string{"support": "be helpful"}, "")
+	personalities := chat.NewPersonalities(map[string]string{customPersonality: "be helpful"}, "")
 	fix := mountModels(t, personalities)
 
 	body := getBody(t, fix.server, modelsPath)
@@ -85,7 +88,7 @@ func TestModelsListsBuiltinsAndConfigured(t *testing.T) {
 		t.Errorf("object = %q, want list", list.Object)
 	}
 
-	want := []string{chat.PersonalityAssistant, chat.PersonalityOps, "support"}
+	want := []string{chat.PersonalityAssistant, chat.PersonalityOps, customPersonality}
 	if got := modelIDs(t, body); !slices.Equal(got, want) {
 		t.Errorf("model ids = %v, want %v", got, want)
 	}
@@ -121,64 +124,11 @@ func TestModelsOverrideNoDuplicate(t *testing.T) {
 func TestModelsAuthorization(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		token      func(t *testing.T, fix *fixture) string
-		name       string
-		wantCode   string
-		wantStatus int
-	}{
-		{
-			name:       "missing_token",
-			token:      func(_ *testing.T, _ *fixture) string { return "" },
-			wantStatus: http.StatusUnauthorized,
-			wantCode:   codeUnauthenticated,
-		},
-		{
-			name:       "invalid_token",
-			token:      func(_ *testing.T, _ *fixture) string { return "not-a-real-token" },
-			wantStatus: http.StatusUnauthorized,
-			wantCode:   codeUnauthenticated,
-		},
-		{
-			name: "wrong_scope",
-			token: func(t *testing.T, fix *fixture) string {
-				t.Helper()
+	runAuthCases(t, func(t *testing.T, fix *fixture, token string) (int, []byte) {
+		t.Helper()
 
-				return fix.token(t, auth.ScopeReadMemory)
-			},
-			wantStatus: http.StatusForbidden,
-			wantCode:   "auth.forbidden",
-		},
-		{
-			name: "chat_session_scope",
-			token: func(t *testing.T, fix *fixture) string {
-				t.Helper()
-
-				return fix.token(t, auth.ScopeChatSession)
-			},
-			wantStatus: http.StatusOK,
-			wantCode:   "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			fix := startFixture(t, fixtureOptions{authEnabled: true, agent: answerAgent()})
-
-			status, data := fix.getModels(t, tt.token(t, fix))
-			if status != tt.wantStatus {
-				t.Fatalf("status = %d, want %d (body: %s)", status, tt.wantStatus, data)
-			}
-
-			if tt.wantCode != "" {
-				if got := decodeError(t, data).Error.Code; got != tt.wantCode {
-					t.Errorf("code = %q, want %q", got, tt.wantCode)
-				}
-			}
-		})
-	}
+		return fix.getModels(t, token)
+	})
 }
 
 // getModels drives a GET /v1/models with an optional bearer token, returning the

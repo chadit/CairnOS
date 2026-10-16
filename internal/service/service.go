@@ -57,6 +57,10 @@ const (
 	labelSystemdUser   = "systemd (user)"
 	labelSystemdSystem = "systemd (system)"
 	labelLaunchdUser   = "launchd (user)"
+
+	// noticeConfigKept is the promise every serve uninstall makes: removing the
+	// supervisor entry never deletes the operator's config, data, or env file.
+	noticeConfigKept = "config, data, and the env file were left in place"
 )
 
 // envFileTemplate seeds the env file the supervisor reads at start. Secrets

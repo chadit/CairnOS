@@ -32,6 +32,13 @@ const (
 
 	// rootPostID is the post most cases mention or reply under.
 	rootPostID = "root-1"
+
+	// followUpPostID is the post a case pushes after its first one, usually the
+	// DM whose answer proves the first post already went through the gate.
+	followUpPostID = "p2"
+
+	// botDisplayName is the name a recipient sees on the standard identity.
+	botDisplayName = "Ops Agent"
 )
 
 // recordedPost is one CreatePost the fake server accepted.
@@ -58,6 +65,9 @@ type fakeConn struct {
 
 	// reactErr, when set, is what every AddReaction returns after recording.
 	reactErr error
+
+	// typingErr, when set, is what every Typing returns after counting.
+	typingErr error
 
 	posts []recordedPost
 	me    mattermost.User
@@ -160,7 +170,7 @@ func (c *fakeConn) Typing(_ context.Context, _, _ string) error {
 
 	c.typing++
 
-	return nil
+	return c.typingErr
 }
 
 func (c *fakeConn) AddReaction(_ context.Context, postID, emojiName string) error {
@@ -287,7 +297,7 @@ func opsIdentity(conn mattermost.Conn, allowBotsIn ...string) mattermost.Identit
 		Name:   identityOps,
 		Config: config.MattermostIdentity{
 			Username:    botUsername,
-			DisplayName: "Ops Agent",
+			DisplayName: botDisplayName,
 			Workspace:   workspaceOps,
 			Approvers:   []string{humanName},
 			AllowBotsIn: allowBotsIn,
@@ -444,7 +454,7 @@ func TestThreadContinuationKeepsSession(t *testing.T) {
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
 	conn.push(channelEvent(rootPostID, "", "@cairn first", true))
 	waitForPosts(t, conn, 1)
-	conn.push(channelEvent("p2", rootPostID, "@cairn second", true))
+	conn.push(channelEvent(followUpPostID, rootPostID, "@cairn second", true))
 	waitForPosts(t, conn, 2)
 
 	turns := unit.chat.Turns()
@@ -468,7 +478,7 @@ func TestUnmentionedChannelPostIgnored(t *testing.T) {
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
 	conn.push(channelEvent("p1", "", "just talking among ourselves", false))
-	conn.push(dmEvent("p2", "now answer me"))
+	conn.push(dmEvent(followUpPostID, "now answer me"))
 
 	// The DM is pushed second and answered, so a reply proves the channel post
 	// was already through the gate and dropped rather than still in flight.
@@ -490,7 +500,7 @@ func TestMentionInsideCodeFenceIgnored(t *testing.T) {
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
 	conn.push(channelEvent("p1", "", "see ```@cairn help``` in the docs", true))
-	conn.push(dmEvent("p2", "now answer me"))
+	conn.push(dmEvent(followUpPostID, "now answer me"))
 
 	waitForPosts(t, conn, 1)
 
@@ -542,7 +552,7 @@ func TestBotPostNeedsOptIn(t *testing.T) {
 
 			startBridge(t, unit, config.BotLoop{}, opsIdentity(conn, testCase.allowBotsIn...))
 			conn.push(botEvent("p1", testCase.props))
-			conn.push(dmEvent("p2", "now answer me"))
+			conn.push(dmEvent(followUpPostID, "now answer me"))
 
 			want := 1
 			if testCase.wantAnswer {
@@ -593,7 +603,7 @@ func TestLoopLimiterStopsRunawayBots(t *testing.T) {
 	conn.push(first)
 	waitForPosts(t, conn, 1)
 
-	for _, postID := range []string{"p2", "p3"} {
+	for _, postID := range []string{followUpPostID, "p3"} {
 		event := botEvent(postID, map[string]string{propFromBot: propTrue})
 		event.Post.RootID = rootPostID
 		conn.push(event)
@@ -642,7 +652,7 @@ func TestOwnPostDropped(t *testing.T) {
 	echo := dmEvent("p1", "acknowledged")
 	echo.Post.UserID = botUserID
 	conn.push(echo)
-	conn.push(dmEvent("p2", "now answer me"))
+	conn.push(dmEvent(followUpPostID, "now answer me"))
 
 	waitForPosts(t, conn, 1)
 
@@ -659,16 +669,21 @@ func TestEachIdentityAnswersOnlyItsOwnMention(t *testing.T) {
 
 	unit := newSuite(t)
 
-	alphaConn := newFakeConn("bot-alpha", "alpha")
-	betaConn := newFakeConn("bot-beta", "beta")
+	const (
+		alphaName = "alpha"
+		betaName  = "beta"
+	)
+
+	alphaConn := newFakeConn("bot-alpha", alphaName)
+	betaConn := newFakeConn("bot-beta", betaName)
 
 	alpha := mattermost.Identity{
-		Client: alphaConn, Name: "alpha",
-		Config: config.MattermostIdentity{Username: "alpha", Workspace: workspaceOps},
+		Client: alphaConn, Name: alphaName,
+		Config: config.MattermostIdentity{Username: alphaName, Workspace: workspaceOps},
 	}
 	beta := mattermost.Identity{
-		Client: betaConn, Name: "beta",
-		Config: config.MattermostIdentity{Username: "beta", Workspace: workspaceOps},
+		Client: betaConn, Name: betaName,
+		Config: config.MattermostIdentity{Username: betaName, Workspace: workspaceOps},
 	}
 
 	startBridge(t, unit, config.BotLoop{}, alpha, beta)
@@ -712,7 +727,7 @@ func TestUsernameMismatchRefusesToAnswer(t *testing.T) {
 	startBridge(t, unit, config.BotLoop{}, wrong, opsIdentity(rightConn))
 
 	wrongConn.push(dmEvent("p1", "hello there"))
-	rightConn.push(dmEvent("p2", "hello there"))
+	rightConn.push(dmEvent(followUpPostID, "hello there"))
 
 	waitForPosts(t, rightConn, 1)
 
@@ -782,7 +797,7 @@ func TestBareMentionRunsNoTurn(t *testing.T) {
 
 	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
 	conn.push(channelEvent(rootPostID, "", "@cairn", true))
-	conn.push(dmEvent("p2", "now answer me"))
+	conn.push(dmEvent(followUpPostID, "now answer me"))
 
 	waitForPosts(t, conn, 1)
 
@@ -874,7 +889,7 @@ func TestAcceptedPostGetsAckReaction(t *testing.T) {
 func TestUnprocessedPostGetsNoAckReaction(t *testing.T) {
 	t.Parallel()
 
-	answered := recordedReaction{PostID: "p2", Emoji: ackEmoji}
+	answered := recordedReaction{PostID: followUpPostID, Emoji: ackEmoji}
 
 	cases := []struct {
 		first       *mattermost.Event
@@ -909,7 +924,7 @@ func TestUnprocessedPostGetsNoAckReaction(t *testing.T) {
 
 			startAckingBridge(t, unit, testCase.emoji, opsIdentity(conn))
 			conn.push(testCase.first)
-			conn.push(dmEvent("p2", "now answer me"))
+			conn.push(dmEvent(followUpPostID, "now answer me"))
 
 			waitForPosts(t, conn, testCase.wantReplies)
 			bridgetest.WaitFor(t, func() bool { return len(conn.Reactions()) >= len(testCase.want) })
@@ -938,5 +953,25 @@ func TestAckReactionFailureStillRunsTurn(t *testing.T) {
 
 	if !unit.chat.HasTurn("hello there") {
 		t.Fatalf("agent turns = %+v, want the dm text despite the failed reaction", unit.chat.Turns())
+	}
+}
+
+// TestTypingFailureStillRunsTurn proves a refused typing indicator costs only
+// the decoration: the turn still runs and the reply still lands (FR17).
+func TestTypingFailureStillRunsTurn(t *testing.T) {
+	t.Parallel()
+
+	unit := newSuite(t)
+	conn := newFakeConn(botUserID, botUsername)
+	conn.typingErr = &mattermost.APIError{Class: mattermost.ClassTransient, Method: "Typing", Status: 503}
+
+	startBridge(t, unit, config.BotLoop{}, opsIdentity(conn))
+	conn.push(dmEvent("p1", "hello there"))
+
+	posts := waitForPosts(t, conn, 1)
+	bridgetest.WaitFor(t, func() bool { return conn.TypingCount() == 1 })
+
+	if posts[0].Message != bridgetest.ReplyText {
+		t.Fatalf("reply text = %q, want %q despite the failed indicator", posts[0].Message, bridgetest.ReplyText)
 	}
 }

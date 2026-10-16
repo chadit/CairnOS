@@ -24,6 +24,10 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
+// limitAfterWorkspace is the LIMIT suffix for a list query whose only other
+// parameter is the request workspace at $1.
+const limitAfterWorkspace = " LIMIT $2"
+
 // schemaSQL mirrors the spec schema with JSONB columns and timestamptz, and
 // IF NOT EXISTS so Open is idempotent across restarts and across the several
 // nodes that may open the same database at once. The indexes match the

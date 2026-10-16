@@ -9,10 +9,8 @@ import (
 )
 
 // openRules opens a fresh database under t.TempDir and closes it when the case
-// finishes; every case exercises schema creation. It returns the rules.Service
-// interface so the shared conformance suite drives it the same way it drives
-// the postgres backend.
-func openRules(t *testing.T) rules.Service {
+// finishes; every case exercises schema creation.
+func openRules(t *testing.T) *rules.SQLite {
 	t.Helper()
 
 	svc, err := rules.OpenSQLite(filepath.Join(t.TempDir(), "rules.db"))

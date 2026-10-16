@@ -12,6 +12,9 @@ import (
 // oneMiB is the body and message default the security keys fall back to.
 const oneMiB = 1 << 20
 
+// allowedDomain is the email domain the file and env cases both allow.
+const allowedDomain = "example.com"
+
 func TestLoadSecurityKeyDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +72,7 @@ allowed_subjects = ["sub-123"]
 		t.Fatal("auto_provision overlay missing")
 	}
 
-	if !slices.Equal(cfg.OAuth.AllowedEmailDomains, []string{"example.com", "corp.example"}) {
+	if !slices.Equal(cfg.OAuth.AllowedEmailDomains, []string{allowedDomain, "corp.example"}) {
 		t.Fatalf("allowed_email_domains overlay missing: %v", cfg.OAuth.AllowedEmailDomains)
 	}
 
@@ -86,7 +89,7 @@ func TestLoadSecurityKeysFromEnv(t *testing.T) {
 		"CAIRNOS_API_MAX_BODY_BYTES":          "8192",
 		"CAIRNOS_API_MAX_RECV_MSG_BYTES":      "16384",
 		"CAIRNOS_OAUTH_AUTO_PROVISION":        envOn,
-		"CAIRNOS_OAUTH_ALLOWED_EMAIL_DOMAINS": "example.com",
+		"CAIRNOS_OAUTH_ALLOWED_EMAIL_DOMAINS": allowedDomain,
 		"CAIRNOS_OAUTH_ALLOWED_SUBJECTS":      "sub-a, sub-b",
 	})
 
@@ -105,6 +108,10 @@ func TestLoadSecurityKeysFromEnv(t *testing.T) {
 
 	if !cfg.OAuth.AutoProvision {
 		t.Fatal("auto_provision env override missing")
+	}
+
+	if !slices.Equal(cfg.OAuth.AllowedEmailDomains, []string{allowedDomain}) {
+		t.Fatalf("allowed_email_domains env override missing: %v", cfg.OAuth.AllowedEmailDomains)
 	}
 
 	if !slices.Equal(cfg.OAuth.AllowedSubjects, []string{"sub-a", "sub-b"}) {

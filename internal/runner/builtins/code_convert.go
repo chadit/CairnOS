@@ -2,6 +2,7 @@ package builtins
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"go.starlark.net/starlark"
@@ -9,63 +10,75 @@ import (
 
 // toStarlarkDict maps a params or inputs table into a fresh Starlark dict. It
 // never returns nil, so an absent table still predeclares an empty dict the
-// script can index.
+// script can index. Keys go in sorted, because a Starlark dict iterates in
+// insertion order and Go map order would hand a script a new order each run.
 func toStarlarkDict(table map[string]any) (*starlark.Dict, error) {
 	dict := starlark.NewDict(len(table))
 
-	for key, value := range table {
-		converted, err := toStarlarkValue(value)
+	for _, key := range slices.Sorted(maps.Keys(table)) {
+		err := putStarlark(table[key], func(converted starlark.Value) error {
+			if err := dict.SetKey(starlark.String(key), converted); err != nil {
+				return fmt.Errorf("set dict key %q: %w", key, err)
+			}
+
+			return nil
+		})
 		if err != nil {
 			return nil, err
-		}
-
-		if err := dict.SetKey(starlark.String(key), converted); err != nil {
-			return nil, fmt.Errorf("set dict key %q: %w", key, err)
 		}
 	}
 
 	return dict, nil
 }
 
-// toStarlarkValue maps one JSON-shaped Go value into Starlark per the contract
-// table. An unmapped type is a permanent params error, never a silent drop.
-func toStarlarkValue(value any) (starlark.Value, error) {
-	switch typed := value.(type) {
-	case nil:
-		return starlark.None, nil
-	case bool:
-		return starlark.Bool(typed), nil
-	case int:
-		return starlark.MakeInt(typed), nil
-	case int64:
-		return starlark.MakeInt64(typed), nil
-	case float64:
-		return starlark.Float(typed), nil
-	case string:
-		return starlark.String(typed), nil
-	case []any:
-		return toStarlarkList(typed)
-	case map[string]any:
-		return toStarlarkDict(typed)
-	default:
-		return nil, fmt.Errorf("%w: %T", errUnmappableValue, value)
-	}
-}
-
 // toStarlarkList maps a Go slice into a Starlark list element by element.
-func toStarlarkList(items []any) (starlark.Value, error) {
-	elems := make([]starlark.Value, 0, len(items))
+func toStarlarkList(items []any) (*starlark.List, error) {
+	list := starlark.NewList(make([]starlark.Value, 0, len(items)))
 
 	for _, item := range items {
-		converted, err := toStarlarkValue(item)
-		if err != nil {
+		if err := putStarlark(item, list.Append); err != nil {
 			return nil, err
 		}
-
-		elems = append(elems, converted)
 	}
 
-	return starlark.NewList(elems), nil
+	return list, nil
+}
+
+// putStarlark maps one JSON-shaped Go value into Starlark per the contract
+// table and hands the result to put, the dict or list slot it fills. Handing it
+// over keeps the recursion on the concrete *starlark.Dict and *starlark.List
+// builders. An unmapped type is a permanent params error, never a silent drop.
+func putStarlark(value any, put func(starlark.Value) error) error {
+	switch typed := value.(type) {
+	case nil:
+		return put(starlark.None)
+	case bool:
+		return put(starlark.Bool(typed))
+	case int:
+		return put(starlark.MakeInt(typed))
+	case int64:
+		return put(starlark.MakeInt64(typed))
+	case float64:
+		return put(starlark.Float(typed))
+	case string:
+		return put(starlark.String(typed))
+	case []any:
+		list, err := toStarlarkList(typed)
+		if err != nil {
+			return err
+		}
+
+		return put(list)
+	case map[string]any:
+		dict, err := toStarlarkDict(typed)
+		if err != nil {
+			return err
+		}
+
+		return put(dict)
+	default:
+		return fmt.Errorf("%w: %T", errUnmappableValue, value)
+	}
 }
 
 // fromStarlarkValue maps one Starlark value back to a JSON-shaped Go value. A

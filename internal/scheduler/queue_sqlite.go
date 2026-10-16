@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -147,7 +149,7 @@ func (q *SQLiteQueue) Claim(ctx context.Context, now time.Time, ackWait time.Dur
 	if err != nil {
 		return nil, fmt.Errorf("claim begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollbackUnlessDone(tx)
 
 	rows, err := tx.QueryContext(ctx,
 		"SELECT "+workItemColumns+" FROM work_item WHERE state = ? AND available_at <= ? ORDER BY available_at ASC, id ASC LIMIT ?",
@@ -186,8 +188,7 @@ func (q *SQLiteQueue) Claim(ctx context.Context, now time.Time, ackWait time.Dur
 // leaseClaimed marks the selected items leased in one UPDATE with an IN list, so
 // a prefetch of N rows costs one statement rather than N.
 func leaseClaimed(ctx context.Context, tx *sql.Tx, items []WorkItem, leaseUntil time.Time) error {
-	args := make([]any, 0, len(items)+3)
-	args = append(args, string(WorkLeased), storedTime(leaseUntil), string(WorkReady))
+	args := slices.Grow([]any{string(WorkLeased), storedTime(leaseUntil), string(WorkReady)}, len(items))
 
 	for idx := range items {
 		args = append(args, items[idx].ID)
@@ -214,8 +215,7 @@ func (q *SQLiteQueue) Renew(ctx context.Context, ids []string, leaseUntil time.T
 		return nil
 	}
 
-	args := make([]any, 0, len(ids)+2)
-	args = append(args, storedTime(leaseUntil), string(WorkLeased))
+	args := slices.Grow([]any{storedTime(leaseUntil), string(WorkLeased)}, len(ids))
 
 	for _, id := range ids {
 		args = append(args, id)
@@ -255,7 +255,7 @@ func (q *SQLiteQueue) Nak(ctx context.Context, id string, now time.Time, backoff
 	if err != nil {
 		return "", fmt.Errorf("nak begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollbackUnlessDone(tx)
 
 	var deliveries int
 	if scanErr := tx.QueryRowContext(ctx, "SELECT deliveries FROM work_item WHERE id = ?", id).Scan(&deliveries); scanErr != nil {
@@ -323,7 +323,7 @@ func (q *SQLiteQueue) SweepExpired(ctx context.Context, now time.Time, maxDelive
 	if err != nil {
 		return 0, 0, fmt.Errorf("sweep begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer rollbackUnlessDone(tx)
 
 	nowStr := storedTime(now)
 
@@ -417,6 +417,16 @@ func (q *SQLiteQueue) setState(ctx context.Context, operation, id, query string,
 	}
 
 	return nil
+}
+
+// rollbackUnlessDone abandons tx on an early return. Once Commit has run, the
+// rollback reports sql.ErrTxDone, which carries no news. Any other failure is
+// logged, because the deferred call has no caller left to hand it to and the
+// function is already returning its own error.
+func rollbackUnlessDone(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		slog.Warn("work queue rollback failed", "error", err)
+	}
 }
 
 // execCount runs a write statement in tx and returns its affected-row count.

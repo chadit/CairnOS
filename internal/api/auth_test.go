@@ -42,6 +42,13 @@ const hs256EnvName = "CAIRNOS_AUTH_HS256_SECRET" //nolint:gosec // environment v
 // authTTL keeps the fixture's expiry math obvious.
 const authTTL = time.Hour
 
+// testIssuer and testAudience are the iss and aud claims the auth fixtures
+// mint and verify under.
+const (
+	testIssuer   = "cairnos-test"
+	testAudience = "cairnos"
+)
+
 // bearerPrefix is the Authorization scheme under test.
 const bearerPrefix = "Bearer "
 
@@ -160,8 +167,8 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 	clock := &authClock{now: time.Now()}
 
 	authn := auth.New(authStore, material, auth.Config{
-		Issuer:     "cairnos-test",
-		Audience:   "cairnos",
+		Issuer:     testIssuer,
+		Audience:   testAudience,
 		TTL:        authTTL,
 		RequireExp: true,
 		RequireJTI: true,
@@ -932,7 +939,9 @@ func TestNetworkBindPolicy(t *testing.T) {
 				shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), shutdownTimeout)
 				defer cancel()
 
-				_ = server.Shutdown(shutdownCtx)
+				if err := server.Shutdown(shutdownCtx); err != nil {
+					t.Errorf("shutdown server: %v", err)
+				}
 			})
 
 			gotWarn := strings.Contains(logBuf.String(), "WITHOUT AUTHENTICATION")

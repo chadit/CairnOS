@@ -483,8 +483,7 @@ func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 	// The indicator costs a POST bounded only by the client timeout, and pump is
 	// the socket's only consumer, so raising it inline stalls the read that would
 	// have delivered the next post. It is decoration either way (FR17, NFR2).
-	indicator := addr
-	go agent.out.typing(ctx, &indicator)
+	go b.typing(ctx, agent, post.ChannelID, turn.thread)
 
 	b.core.Handle(ctx, &bridge.Inbound{
 		Addr:   addr,
@@ -510,6 +509,16 @@ func (b *Bridge) acknowledge(ctx context.Context, agent *identity, postID string
 	if err := agent.client.AddReaction(ctx, postID, agent.ackReaction); err != nil {
 		b.log.DebugContext(ctx, "mattermost ack reaction failed",
 			"identity", agent.name, "post_id", postID, "emoji", agent.ackReaction, "error", err)
+	}
+}
+
+// typing raises the typing indicator for one turn off the socket's consumer,
+// like acknowledge. A turn that runs without the indicator is still a turn, so a
+// failure is logged at debug and never costs the reply (FR17).
+func (b *Bridge) typing(ctx context.Context, agent *identity, channelID, threadID string) {
+	if err := agent.client.Typing(ctx, channelID, threadID); err != nil {
+		b.log.DebugContext(ctx, "mattermost typing indicator failed",
+			"identity", agent.name, "channel_id", channelID, "error", err)
 	}
 }
 

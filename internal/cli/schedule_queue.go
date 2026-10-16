@@ -196,33 +196,41 @@ func (a *QueueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) 
 	return fmt.Errorf("run queued workflow %q: %w", payload.WorkflowName, err)
 }
 
-// openWorkQueue opens the durable work-queue for the configured backend. On
-// Postgres it borrows the schedule store's pool (one pool per node), so the
-// returned closer is a no-op; on sqlite it opens the same database file the run
-// store uses, sharing it through a disjoint table, and the closer releases that
-// handle.
-func openWorkQueue(ctx context.Context, dir string, cfg *config.Config, scheds scheduleStore) (scheduler.WorkQueue, func() error, error) {
-	if pgScheds, ok := scheds.(*scheduler.Postgres); ok {
-		queue, err := scheduler.NewPostgresQueue(ctx, pgScheds.Pool())
-		if err != nil {
-			return nil, nil, fmt.Errorf("open work queue: %w", err)
-		}
+// workQueue is the durable work queue plus the poll cursors a poll fire keeps
+// beside it. Both shipped queues persist cursors, so the poll path shares the
+// one handle it enqueues on.
+type workQueue interface {
+	scheduler.WorkQueue
+	scheduler.PollCursors
+}
 
-		return queue, func() error { return nil }, nil
+// workQueueBackends opens the work queue beside scheds. Postgres borrows scheds'
+// pool and has nothing of its own to close; sqlite opens the run store's file
+// through a disjoint table, and ownedCloser releases that handle.
+func workQueueBackends(scheds scheduleStore) storeBackends[workQueue] {
+	return storeBackends[workQueue]{
+		postgres: func(ctx context.Context, _ string) (workQueue, error) {
+			pool, err := schedulePool(scheds)
+			if err != nil {
+				return nil, fmt.Errorf("open work queue: %w", err)
+			}
+
+			queue, err := scheduler.NewPostgresQueue(ctx, pool)
+			if err != nil {
+				return nil, fmt.Errorf("open work queue: %w", err)
+			}
+
+			return queue, nil
+		},
+		sqlite: func(path string) (workQueue, error) {
+			queue, err := scheduler.OpenSQLiteQueue(path)
+			if err != nil {
+				return nil, fmt.Errorf("open work queue: %w", err)
+			}
+
+			return queue, nil
+		},
 	}
-
-	path := storePath(dir, cfg.Store.DSN)
-	if err := ensureDataDir(path); err != nil {
-		return nil, nil, err
-	}
-
-	//nolint:contextcheck // OpenSQLiteQueue carries no ctx by contract: schema setup is process-lifetime initialization, not request work
-	queue, err := scheduler.OpenSQLiteQueue(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open work queue: %w", err)
-	}
-
-	return queue, queue.Close, nil
 }
 
 // newQueueWorker builds the queue worker from the [scheduler] config block. It
@@ -481,20 +489,9 @@ type PollAwareRunner struct {
 	logger  *slog.Logger
 }
 
-// newPollAwareRunner wraps inner with poll awareness and the reach gate. Both
-// shipped work queues persist poll cursors, so the wrapper reads the queue as a
-// pollQueue. A queue without cursor support falls back to inner, so poll
-// workflows fail at fire time rather than panicking the process; in practice
-// that branch is unreachable.
-func newPollAwareRunner(inner scheduler.Runner, queue scheduler.WorkQueue, sources poll.Sources, pauses pollPauseChecker, monitor *reach.Monitor, logger *slog.Logger) scheduler.Runner {
-	cursors, ok := queue.(pollQueue)
-	if !ok {
-		logger.Warn("work queue does not persist poll cursors; poll workflows disabled")
-
-		return inner
-	}
-
-	return &PollAwareRunner{inner: inner, queue: cursors, sources: sources, pauses: pauses, reach: monitor, logger: logger}
+// newPollAwareRunner wraps inner with poll awareness and the reach gate.
+func newPollAwareRunner(inner scheduler.Runner, queue pollQueue, sources poll.Sources, pauses pollPauseChecker, monitor *reach.Monitor, logger *slog.Logger) *PollAwareRunner {
+	return &PollAwareRunner{inner: inner, queue: queue, sources: sources, pauses: pauses, reach: monitor, logger: logger}
 }
 
 // A workflow whose required host is down is skipped without enqueueing, so an
@@ -530,9 +527,9 @@ func (r *PollAwareRunner) Fire(ctx context.Context, sched *scheduler.Schedule) e
 		return nil
 	}
 
-	source, err := r.sources.Get(flow.Poll.Source)
-	if err != nil {
-		return fmt.Errorf("poll %s: %w", flow.Name, err)
+	source, ok := r.sources[flow.Poll.Source]
+	if !ok {
+		return fmt.Errorf("poll %s: %w: %q", flow.Name, poll.ErrUnknownSource, flow.Poll.Source)
 	}
 
 	paused := r.paused(ctx, flow.Name)
@@ -679,14 +676,18 @@ func buildPollSources(registry *runner.Registry) poll.Sources {
 // worker (the consumer) until ctx cancels, returning the first error either
 // reports. Both return nil on a clean ctx-cancel shutdown.
 func runProducerAndWorker(ctx context.Context, daemon *scheduler.Scheduler, worker *scheduler.Worker) error {
-	errs := make(chan error, 2)
+	// One slot per goroutine, so the one that finishes second never blocks on
+	// a send nobody reads.
+	const loops = 2
+
+	errs := make(chan error, loops)
 
 	go func() { errs <- daemon.Run(ctx) }()
 	go func() { errs <- worker.Run(ctx) }()
 
 	var firstErr error
 
-	for range 2 {
+	for range loops {
 		if err := <-errs; err != nil && firstErr == nil {
 			firstErr = err
 		}

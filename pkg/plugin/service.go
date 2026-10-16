@@ -136,16 +136,23 @@ func runStreaming(ctx context.Context, task *runner.Task, streamer runner.Stream
 		case chunk := <-chunks:
 			forwarding = sendChunk(stream, &chunk, forwarding)
 		case final := <-done:
-			// The runner finished but may have buffered chunks racing the
-			// outcome; drain them before the terminal event.
-			for {
-				select {
-				case chunk := <-chunks:
-					forwarding = sendChunk(stream, &chunk, forwarding)
-				default:
-					return final.result, final.err
-				}
-			}
+			drainChunks(stream, chunks, forwarding)
+
+			return final.result, final.err
+		}
+	}
+}
+
+// drainChunks forwards the chunks still buffered once the runner has finished.
+// A runner's last chunks can race its outcome, and the terminal event has to
+// follow every one of them.
+func drainChunks(stream grpc.ServerStreamingServer[pluginv1.ExecuteEvent], chunks <-chan runner.Chunk, forwarding bool) {
+	for {
+		select {
+		case chunk := <-chunks:
+			forwarding = sendChunk(stream, &chunk, forwarding)
+		default:
+			return
 		}
 	}
 }

@@ -170,7 +170,7 @@ func (s *Postgres) runDocumentQuery(ctx context.Context, sqlText string, args []
 // "IN ()", leaving start unchanged.
 func pgInClause(values []string, start int) (string, []any, int) {
 	if len(values) == 0 {
-		return "NULL", nil, start
+		return emptyInList, nil, start
 	}
 
 	placeholders := make([]string, len(values))

@@ -26,6 +26,12 @@ func newServiceFixture(t *testing.T, sender *fakeSender) (*messaging.Service, *f
 	return messaging.NewService(registry, metrics), metrics
 }
 
+// mentionText carries an @here mention, which has to reach the sender as sent.
+const (
+	mentionText  = "deploy finished, @here"
+	threadRootID = "root-1"
+)
+
 func TestSendMessagePostsThroughTheSender(t *testing.T) {
 	t.Parallel()
 
@@ -39,8 +45,8 @@ func TestSendMessagePostsThroughTheSender(t *testing.T) {
 	resp, err := service.SendMessage(t.Context(), &cairnosv1.MessagingServiceSendMessageRequest{
 		Identity: identityName,
 		To:       "#" + channelName,
-		Text:     "deploy finished, @here",
-		ThreadId: "root-1",
+		Text:     mentionText,
+		ThreadId: threadRootID,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
@@ -58,8 +64,8 @@ func TestSendMessagePostsThroughTheSender(t *testing.T) {
 	got := sender.calls[0]
 	want := fakeSend{
 		target:   messaging.Target{Kind: messaging.KindChannelName, Value: channelName},
-		text:     "deploy finished, @here",
-		threadID: "root-1",
+		text:     mentionText,
+		threadID: threadRootID,
 	}
 
 	// The mention has to arrive unmodified; Mattermost is what renders it
@@ -189,8 +195,8 @@ func TestListIdentitiesDescribesTheRegistry(t *testing.T) {
 	want := messaging.Identity{
 		Name:        identityName,
 		Transport:   transportMattermost,
-		Username:    "ops",
-		DisplayName: "Ops Bot",
+		Username:    botUsername,
+		DisplayName: botDisplayName,
 		URL:         serverURL,
 	}
 

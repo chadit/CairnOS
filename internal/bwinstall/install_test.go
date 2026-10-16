@@ -97,9 +97,13 @@ func serveBody(handler http.Handler) (string, *http.Client) {
 }
 
 // archiveServer serves a fixed body.
-func archiveServer(body []byte) http.Handler {
+func archiveServer(t *testing.T, body []byte) http.Handler {
+	t.Helper()
+
 	return http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write(body)
+		if _, err := writer.Write(body); err != nil {
+			t.Errorf("archive server: write body: %v", err)
+		}
 	})
 }
 
@@ -114,7 +118,7 @@ func options(t *testing.T, entries map[string]string, sum string) *bwinstall.Opt
 		sum = actual
 	}
 
-	url, client := serveBody(archiveServer(body))
+	url, client := serveBody(archiveServer(t, body))
 
 	return &bwinstall.Options{
 		URL:           url,
@@ -302,7 +306,7 @@ func TestInstallRefusesAnArchiveWithATraversalEntry(t *testing.T) {
 func TestInstallRefusesAnOversizedDownload(t *testing.T) {
 	t.Parallel()
 
-	url, client := serveBody(archiveServer(bytes.Repeat([]byte("a"), 4096)))
+	url, client := serveBody(archiveServer(t, bytes.Repeat([]byte("a"), 4096)))
 
 	opts := &bwinstall.Options{
 		URL:             url,

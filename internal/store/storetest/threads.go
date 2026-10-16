@@ -18,7 +18,7 @@ const (
 
 // testMessageThreadRoundTrip proves a bound root reads back, which is what lets
 // the next run reply in the thread the first one opened.
-func testMessageThreadRoundTrip(t *testing.T, openFn OpenFunc) {
+func testMessageThreadRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -33,7 +33,7 @@ func testMessageThreadRoundTrip(t *testing.T, openFn OpenFunc) {
 
 // testMessageThreadRebindUpserts proves a replacement root overwrites the old
 // one, the path the runner takes when the original root post was deleted.
-func testMessageThreadRebindUpserts(t *testing.T, openFn OpenFunc) {
+func testMessageThreadRebindUpserts[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -49,7 +49,7 @@ func testMessageThreadRebindUpserts(t *testing.T, openFn OpenFunc) {
 
 // testMessageThreadIsolatesEveryKeyPart proves a root is found only under the
 // exact identity, target, key, and workspace that bound it.
-func testMessageThreadIsolatesEveryKeyPart(t *testing.T, openFn OpenFunc) {
+func testMessageThreadIsolatesEveryKeyPart[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)

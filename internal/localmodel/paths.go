@@ -8,11 +8,12 @@ import (
 )
 
 // Filesystem permissions for the managed tree: group-readable directories,
-// owner-only files, and an executable bit on what the supervisor runs.
+// owner-only files, and an owner-only executable bit on what the supervisor
+// runs. The supervisor is a per-user unit, so no other account runs the server.
 const (
 	dirPerm  = 0o750
 	filePerm = 0o600
-	execPerm = 0o750
+	execPerm = 0o700
 )
 
 // subdirModel is the directory the whole local-model footprint lives under,

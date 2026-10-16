@@ -35,7 +35,5 @@ func Unusable(err error) bool {
 // answered is the vault's verdict on the master password and reads the same
 // from any build, while one that got no answer is the transport failing again.
 func answered(err error) bool {
-	_, ok := errors.AsType[statusError](err)
-
-	return ok
+	return errors.Is(err, errAnswered)
 }

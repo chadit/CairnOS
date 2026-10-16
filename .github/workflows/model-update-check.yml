@@ -22,7 +22,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # The issues step uses GH_TOKEN, not git, so the checkout keeps no token.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # go.mod decides the toolchain, so the check runs on the same Go that
       # `make` resolves locally instead of whatever the runner image ships.
       - uses: actions/setup-go@v7

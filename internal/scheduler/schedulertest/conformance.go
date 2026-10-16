@@ -51,14 +51,22 @@ func queueBaseTime() time.Time {
 	return time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
 }
 
+// Queue is the handle a backend gives the suite: the work-queue contract plus
+// the poll cursors every backend keeps beside its work-item table.
+type Queue interface {
+	scheduler.WorkQueue
+	scheduler.PollCursors
+}
+
 // RunWorkQueueConformance drives one backend through the queue contract. Each
 // case gets a fresh, empty queue from newQueue, so the cases stay independent
-// and parallel.
-func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.WorkQueue) {
+// and parallel. Q is the backend's own queue type, so newQueue returns the
+// concrete handle it opened.
+func RunWorkQueueConformance[Q Queue](t *testing.T, newQueue func(*testing.T) Q) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(*testing.T, scheduler.WorkQueue)
+		run  func(*testing.T, Queue)
 		name string
 	}{
 		{name: "EnqueueIsExactlyOnce", run: testQueueEnqueueExactlyOnce},
@@ -89,7 +97,7 @@ func RunWorkQueueConformance(t *testing.T, newQueue func(*testing.T) scheduler.W
 	}
 }
 
-func testQueueEnqueueExactlyOnce(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueEnqueueExactlyOnce(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -118,7 +126,7 @@ func testQueueEnqueueExactlyOnce(t *testing.T, queue scheduler.WorkQueue) {
 // its own ready and leased occurrences do, an acked one does not, and neither a
 // poll event of the same schedule nor another schedule whose id merely starts
 // with the same characters ever does.
-func testQueueOccurrencePending(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueOccurrencePending(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -146,7 +154,7 @@ func testQueueOccurrencePending(t *testing.T, queue scheduler.WorkQueue) {
 // that dies mid-run leaves its lease behind, and once that lease runs out the
 // occurrence stops holding the schedule back. Without this the next fire is
 // skipped for the rest of the lease, every time, with nothing to clear it.
-func testQueueOccurrencePendingIgnoresExpiredLease(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueOccurrencePendingIgnoresExpiredLease(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -161,7 +169,7 @@ func testQueueOccurrencePendingIgnoresExpiredLease(t *testing.T, queue scheduler
 // testQueueRenewHoldsTheLease pins the other half: a worker that is still
 // running its item keeps the occurrence in flight past the original deadline,
 // and the sweep leaves a renewed lease alone.
-func testQueueRenewHoldsTheLease(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueRenewHoldsTheLease(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -185,7 +193,7 @@ func testQueueRenewHoldsTheLease(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueClaimLeasesDueItems(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueClaimLeasesDueItems(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -218,7 +226,7 @@ func testQueueClaimLeasesDueItems(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueClaimSkipsFutureItems(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueClaimSkipsFutureItems(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -244,7 +252,7 @@ func testQueueClaimSkipsFutureItems(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueAckRemovesItem(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueAckRemovesItem(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -262,7 +270,7 @@ func testQueueAckRemovesItem(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueNakRequeuesWithBackoff(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueNakRequeuesWithBackoff(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -294,7 +302,7 @@ func testQueueNakRequeuesWithBackoff(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueNakDeadLettersAtLimit(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueNakDeadLettersAtLimit(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -316,7 +324,7 @@ func testQueueNakDeadLettersAtLimit(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueueSweepReclaimsExpiredLease(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueSweepReclaimsExpiredLease(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -339,7 +347,7 @@ func testQueueSweepReclaimsExpiredLease(t *testing.T, queue scheduler.WorkQueue)
 	}
 }
 
-func testQueueSweepDeadLettersExhaustedLease(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueSweepDeadLettersExhaustedLease(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -357,7 +365,7 @@ func testQueueSweepDeadLettersExhaustedLease(t *testing.T, queue scheduler.WorkQ
 	}
 }
 
-func testQueueHoldThenResume(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueHoldThenResume(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -413,7 +421,7 @@ func testQueueHoldThenResume(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testQueuePurgeDeadRemovesOldItems(t *testing.T, queue scheduler.WorkQueue) {
+func testQueuePurgeDeadRemovesOldItems(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -435,7 +443,7 @@ func testQueuePurgeDeadRemovesOldItems(t *testing.T, queue scheduler.WorkQueue) 
 	}
 }
 
-func testQueueStatsReportsOldestReadyAge(t *testing.T, queue scheduler.WorkQueue) {
+func testQueueStatsReportsOldestReadyAge(t *testing.T, queue Queue) {
 	t.Helper()
 
 	base := queueBaseTime()
@@ -461,10 +469,8 @@ const (
 	cursorValueSecond = "2026-06-13T12:05:00Z"
 )
 
-func testCursorSetThenGet(t *testing.T, queue scheduler.WorkQueue) {
+func testCursorSetThenGet(t *testing.T, cursors Queue) {
 	t.Helper()
-
-	cursors := mustCursors(t, queue)
 
 	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
 		t.Fatalf("set cursor: %v", err)
@@ -480,10 +486,8 @@ func testCursorSetThenGet(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testCursorUpsertOverwrites(t *testing.T, queue scheduler.WorkQueue) {
+func testCursorUpsertOverwrites(t *testing.T, cursors Queue) {
 	t.Helper()
-
-	cursors := mustCursors(t, queue)
 
 	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
 		t.Fatalf("first set: %v", err)
@@ -503,20 +507,16 @@ func testCursorUpsertOverwrites(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-func testCursorMissingReportsNotFound(t *testing.T, queue scheduler.WorkQueue) {
+func testCursorMissingReportsNotFound(t *testing.T, cursors Queue) {
 	t.Helper()
-
-	cursors := mustCursors(t, queue)
 
 	if _, err := cursors.GetCursor(t.Context(), cursorScheduleA); !errors.Is(err, scheduler.ErrCursorNotFound) {
 		t.Fatalf("get missing cursor err = %v, want ErrCursorNotFound", err)
 	}
 }
 
-func testCursorPerScheduleIsolation(t *testing.T, queue scheduler.WorkQueue) {
+func testCursorPerScheduleIsolation(t *testing.T, cursors Queue) {
 	t.Helper()
-
-	cursors := mustCursors(t, queue)
 
 	if err := cursors.SetCursor(t.Context(), cursorScheduleA, cursorValueFirst); err != nil {
 		t.Fatalf("set A: %v", err)
@@ -545,21 +545,8 @@ func testCursorPerScheduleIsolation(t *testing.T, queue scheduler.WorkQueue) {
 	}
 }
 
-// mustCursors asserts the queue backend also implements PollCursors, the poll
-// half of the same handle; a backend that forgets it fails here loudly.
-func mustCursors(t *testing.T, queue scheduler.WorkQueue) scheduler.PollCursors {
-	t.Helper()
-
-	cursors, ok := queue.(scheduler.PollCursors)
-	if !ok {
-		t.Fatalf("queue backend %T does not implement PollCursors", queue)
-	}
-
-	return cursors
-}
-
 // mustEnqueue enqueues a ready item keyed by dedup, failing the test on error.
-func mustEnqueue(t *testing.T, queue scheduler.WorkQueue, dedup string, availableAt time.Time) bool {
+func mustEnqueue(t *testing.T, queue scheduler.ProducerQueue, dedup string, availableAt time.Time) bool {
 	t.Helper()
 
 	inserted, err := queue.Enqueue(t.Context(), &scheduler.WorkItem{
@@ -578,7 +565,7 @@ func mustEnqueue(t *testing.T, queue scheduler.WorkQueue, dedup string, availabl
 // assertPending reads the pending-occurrence answer for the schedule under test
 // at now and fails when it differs from want; stage names the queue state it is
 // read in.
-func assertPending(t *testing.T, queue scheduler.WorkQueue, now time.Time, want bool, stage string) {
+func assertPending(t *testing.T, queue scheduler.OccurrenceQueue, now time.Time, want bool, stage string) {
 	t.Helper()
 
 	got, err := queue.OccurrencePending(t.Context(), pendingScheduleID, now)
@@ -593,7 +580,7 @@ func assertPending(t *testing.T, queue scheduler.WorkQueue, now time.Time, want 
 
 // mustClaimOne claims exactly one item, failing when the queue yields a
 // different count.
-func mustClaimOne(t *testing.T, queue scheduler.WorkQueue, now time.Time) scheduler.WorkItem {
+func mustClaimOne(t *testing.T, queue scheduler.LeaseQueue, now time.Time) scheduler.WorkItem {
 	t.Helper()
 
 	claimed, err := queue.Claim(t.Context(), now, time.Minute, claimLimit)
@@ -609,7 +596,7 @@ func mustClaimOne(t *testing.T, queue scheduler.WorkQueue, now time.Time) schedu
 }
 
 // mustStats reads the queue snapshot, failing the test on error.
-func mustStats(t *testing.T, queue scheduler.WorkQueue, now time.Time) scheduler.QueueStats {
+func mustStats(t *testing.T, queue scheduler.SweepQueue, now time.Time) scheduler.QueueStats {
 	t.Helper()
 
 	stats, err := queue.Stats(t.Context(), now)

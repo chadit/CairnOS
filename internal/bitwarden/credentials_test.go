@@ -111,8 +111,10 @@ func TestLoadCredentialsFallsBackToTheEnvironment(t *testing.T) {
 
 	path := writeCredentials(t, bitwarden.EnvClientID+"="+fixtureID+"\n", 0o600)
 
+	const envSecret = "env-sec"
+
 	env := map[string]string{
-		bitwarden.EnvClientSecret: "env-sec",
+		bitwarden.EnvClientSecret: envSecret,
 		bitwarden.EnvMasterKey:    "env-mk",
 	}
 
@@ -121,7 +123,7 @@ func TestLoadCredentialsFallsBackToTheEnvironment(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if creds.ClientID != fixtureID || creds.ClientSecret != "env-sec" {
+	if creds.ClientID != fixtureID || creds.ClientSecret != envSecret {
 		t.Fatalf("creds = %+v, want the file to win and the environment to fill in", creds)
 	}
 }

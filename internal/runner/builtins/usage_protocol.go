@@ -35,6 +35,10 @@ const (
 	codexUsageMethod       = "account/rateLimits/read"
 )
 
+// claudeStreamFormat is the line-delimited JSON mode the Claude CLI reads and
+// writes for the usage exchange.
+const claudeStreamFormat = "stream-json"
+
 // Line markers the decoders match on.
 const (
 	claudeResponseType = "control_response"
@@ -101,8 +105,8 @@ func claudeDialog() usageDialog {
 	return usageDialog{
 		args: []string{
 			"-p",
-			"--input-format", "stream-json",
-			"--output-format", "stream-json",
+			"--input-format", claudeStreamFormat,
+			"--output-format", claudeStreamFormat,
 			"--verbose",
 		},
 		stdinLines: []string{claudeInitRequest, claudeUsageRequest},
@@ -116,7 +120,7 @@ func claudeDialog() usageDialog {
 // without answering.
 func codexDialog(version string) (usageDialog, error) {
 	initialize, err := codexRequestLine(codexInitID, codexInitMethod, map[string]any{
-		"clientInfo": map[string]any{"name": "cairnos", "version": version},
+		"clientInfo": map[string]any{keyName: clientName, "version": version},
 	})
 	if err != nil {
 		return usageDialog{}, err
@@ -141,7 +145,7 @@ func codexDialog(version string) (usageDialog, error) {
 func codexRequestLine(id int64, method string, params map[string]any) (string, error) {
 	encoded, err := json.Marshal(map[string]any{
 		"jsonrpc": jsonRPCVersion,
-		"id":      id,
+		keyID:     id,
 		"method":  method,
 		"params":  params,
 	})
@@ -415,9 +419,10 @@ func codexText(fields map[string]json.RawMessage, key string) string {
 // codexWindows renders the primary window and the secondary when the plan has
 // one. A plan with a single weekly window reports only the primary.
 func codexWindows(limits map[string]json.RawMessage) []UsageWindow {
-	windows := make([]UsageWindow, 0, 2)
+	keys := []string{codexPrimaryKey, codexSecondaryKey}
+	windows := make([]UsageWindow, 0, len(keys))
 
-	for _, key := range []string{codexPrimaryKey, codexSecondaryKey} {
+	for _, key := range keys {
 		window, ok := codexWindow(limits[key])
 		if !ok {
 			continue

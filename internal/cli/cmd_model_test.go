@@ -243,7 +243,9 @@ func TestModelStatusSeesAnAnsweringServer(t *testing.T) {
 	// Real socket on purpose: status probes the port it was handed, so there is
 	// nothing to answer unless something is bound to it.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		if _, err := w.Write([]byte(`{"data":[]}`)); err != nil {
+			t.Errorf("write models response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -399,18 +401,27 @@ func TestModelStatusRejectsABadPort(t *testing.T) {
 func TestManualStartHintIsRunnable(t *testing.T) {
 	t.Parallel()
 
-	opts := cli.NewModelOptions(t.TempDir(), localmodel.DefaultModel, 9100, 3, 4096)
+	home := t.TempDir()
+	opts := cli.NewModelOptions(home, localmodel.DefaultModel, 9100, 3, 4096)
 
 	target, err := cli.ResolveModelTarget(opts, environ.Map(nil))
 	if err != nil {
 		t.Fatalf("resolve target: %v", err)
 	}
 
+	model, err := localmodel.Lookup(localmodel.DefaultModel)
+	if err != nil {
+		t.Fatalf("look up the default model: %v", err)
+	}
+
+	// The paths come from the layout itself, so the case pins where install puts
+	// the files rather than what the target reports about them.
+	layout := localmodel.NewLayout(home)
 	hint := cli.ManualStartHint(target, opts)
 
 	for _, want := range []string{
-		target.ServerPath(),
-		target.ModelPath(),
+		layout.ServerPath(),
+		layout.ModelPath(&model),
 		"--port 9100", "--threads 3", "--ctx-size 4096", "--host 127.0.0.1", "--jinja",
 	} {
 		if !strings.Contains(hint, want) {

@@ -20,7 +20,7 @@ const (
 func dashedPromptTask() *runner.Task {
 	return &runner.Task{
 		RunID:      testRunID,
-		ActionName: "cli",
+		ActionName: actionCLI,
 		Params:     map[string]any{promptKey: dashedPromptText},
 		Resolved:   true,
 	}
@@ -80,7 +80,7 @@ func TestCLIAllowsDashedPromptWhenOptedIn(t *testing.T) {
 func TestCLIAllowsDashedPromptAfterTerminator(t *testing.T) {
 	t.Parallel()
 
-	cfg := map[string]any{argsKey: []any{"--flag", "--", promptArg}}
+	cfg := map[string]any{argsKey: []any{flagArg, argTerminator, promptArg}}
 
 	cli, err := builtins.NewCLI(builtins.CodexName, builtins.CLITool{Binary: codexBinary}, cfg)
 	if err != nil {

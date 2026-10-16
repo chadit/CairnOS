@@ -41,6 +41,18 @@ const (
 	runOld          = "run-old"
 	runMid          = "run-mid"
 	runNew          = "run-new"
+	absentID        = "missing"
+
+	transcriptPayload = "transcript payload"
+	keyArguments      = "arguments"
+	keyTool           = "tool"
+	keyRunner         = "runner"
+	keyMaxTokens      = "max_tokens"
+	evidenceRunner    = "anthropic"
+
+	sugOpenOld  = "sug-open-old"
+	sugOpenNew  = "sug-open-new"
+	sugApproved = "sug-approved"
 
 	suggestionTarget    = "alpha-workflow.fetch"
 	suggestionRationale = "the action repeated itself"
@@ -71,21 +83,54 @@ const (
 	// as the wrong total.
 	acmeCost   = 1.0
 	globexCost = 2.0
+
+	// The action-result round trip gives every usage field its own value, so a
+	// swapped column shows up as a mismatch.
+	retryAttempt      = 2
+	usageInputTokens  = 100
+	usageOutputTokens = 50
+	usageCachedTokens = 10
+	usageCostUSD      = 0.25
+	usageLatency      = 1500 * time.Millisecond
+
+	// listLimit is below the three seeded runs, so the limit case proves a cap.
+	listLimit = 2
+
+	// The agent-step transcript case: step numbers and per-step usage.
+	stepToolCall       = 2
+	stepFinal          = 3
+	driverInputTokens  = 10
+	driverOutputTokens = 5
+	driverCost         = 0.5
+	finalStepCost      = 0.25
+
+	// The suggestion round trip's evidence and estimated savings.
+	evidenceMaxTokens = 4096
+	savingsCostUSD    = 0.42
+	savingsLatency    = 250 * time.Millisecond
+)
+
+// Retention cutoffs the prune cases pass in PruneOptions.
+const (
+	day             = 24 * time.Hour
+	retentionWindow = 90 * day
+	outputRetention = 30 * day
 )
 
 // OpenFunc hands the suite a fresh, empty store. The implementation
 // registers cleanup (t.Cleanup with Close) so each subtest gets an isolated
-// database. Returning the interface keeps the suite backend-agnostic.
-type OpenFunc func(t *testing.T) store.Store
+// database. S is the backend's own type, so a backend's opener returns what it
+// opened while the suite drives only the store.Store methods.
+type OpenFunc[S store.Store] func(t *testing.T) S
 
 // RunConformance runs the full store.Store behavioral suite against the
 // store openFn hands out. Each named subtest opens its own store, so they
 // are independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "RunActionRoundTrip", run: testRunActionRoundTrip},
@@ -197,7 +242,7 @@ func seedSuggestion(t *testing.T, db store.Store, id string, status store.Sugges
 // testCreateRunRejectsDuplicateID proves a second create on a taken id is
 // refused with a sentinel the caller can act on, rather than silently
 // replacing a run that may already be executing.
-func testCreateRunRejectsDuplicateID(t *testing.T, openFn OpenFunc) {
+func testCreateRunRejectsDuplicateID[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -234,7 +279,7 @@ func testCreateRunRejectsDuplicateID(t *testing.T, openFn OpenFunc) {
 // testUpsertActionResultRejectsUnknownRun proves an action write naming a run
 // nothing created is refused instead of stranding an orphan row that no run
 // query will ever return.
-func testUpsertActionResultRejectsUnknownRun(t *testing.T, openFn OpenFunc) {
+func testUpsertActionResultRejectsUnknownRun[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -251,7 +296,7 @@ func testUpsertActionResultRejectsUnknownRun(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
+func testRunActionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -283,14 +328,14 @@ func testRunActionRoundTrip(t *testing.T, openFn OpenFunc) {
 		ActionName: actionFetch,
 		Runner:     runnerMock,
 		Status:     store.ActionFailed,
-		Attempt:    2,
+		Attempt:    retryAttempt,
 		Output:     map[string]any{"score": float64(scoreValue), "note": "partial"},
 		Usage: runner.Usage{
-			InputTokens:  100,
-			OutputTokens: 50,
-			CachedTokens: 10,
-			CostUSD:      0.25,
-			Latency:      1500 * time.Millisecond,
+			InputTokens:  usageInputTokens,
+			OutputTokens: usageOutputTokens,
+			CachedTokens: usageCachedTokens,
+			CostUSD:      usageCostUSD,
+			Latency:      usageLatency,
 			Retries:      1,
 		},
 		Meta:       map[string]string{"model": "mock-1", "request_id": "req-9"},
@@ -375,7 +420,7 @@ func sameActionColumns(got, want *store.ActionResult) bool {
 // child run created with ParentRunID set reads it back, while a root run reads
 // the empty string. Replay, workflow-call, and error-workflow children all
 // rely on this link (.agents/spec/parity/workflow-language.md).
-func testParentRunIDRoundTrip(t *testing.T, openFn OpenFunc) {
+func testParentRunIDRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -419,7 +464,7 @@ func testParentRunIDRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
+func testUpdateRunStatusStampsTimestamps[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -488,23 +533,23 @@ func testUpdateRunStatusStampsTimestamps(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testRunNotFound(t *testing.T, openFn OpenFunc) {
+func testRunNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	if _, err := db.GetRun(ctx, "missing"); !errors.Is(err, store.ErrRunNotFound) {
+	if _, err := db.GetRun(ctx, absentID); !errors.Is(err, store.ErrRunNotFound) {
 		t.Errorf("GetRun error = %v, want ErrRunNotFound", err)
 	}
 
-	err := db.UpdateRunStatus(ctx, "missing", store.RunRunning, nil)
+	err := db.UpdateRunStatus(ctx, absentID, store.RunRunning, nil)
 	if !errors.Is(err, store.ErrRunNotFound) {
 		t.Errorf("UpdateRunStatus error = %v, want ErrRunNotFound", err)
 	}
 }
 
-func testListRunsFiltersAndOrdersNewestFirst(t *testing.T, openFn OpenFunc) {
+func testListRunsFiltersAndOrdersNewestFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -536,7 +581,7 @@ func testListRunsFiltersAndOrdersNewestFirst(t *testing.T, openFn OpenFunc) {
 		},
 		{
 			name:   "limit caps the newest",
-			filter: store.ListFilter{Limit: 2},
+			filter: store.ListFilter{Limit: listLimit},
 			want:   []string{runThird, runSecond},
 		},
 		{
@@ -572,7 +617,7 @@ func testListRunsFiltersAndOrdersNewestFirst(t *testing.T, openFn OpenFunc) {
 // another, for GetRun, ListRuns, and ListActionResults
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"). The context carries
 // the workspace; the store filters by it.
-func testWorkspaceIsolatesRunsAndActions(t *testing.T, openFn OpenFunc) {
+func testWorkspaceIsolatesRunsAndActions[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -587,8 +632,8 @@ func testWorkspaceIsolatesRunsAndActions(t *testing.T, openFn OpenFunc) {
 	createRunIn(t, db, acmeCtx, acmeRun, base)
 	createRunIn(t, db, globexCtx, globexRun, base.Add(time.Hour))
 
-	upsertActionIn(t, db, acmeCtx, acmeRun, actionFetch)
-	upsertActionIn(t, db, globexCtx, globexRun, actionFetch)
+	upsertActionIn(t, db, acmeCtx, acmeRun)
+	upsertActionIn(t, db, globexCtx, globexRun)
 
 	// Acme sees only its own run.
 	acmeRuns, err := db.ListRuns(acmeCtx, store.ListFilter{})
@@ -630,7 +675,7 @@ func testWorkspaceIsolatesRunsAndActions(t *testing.T, openFn OpenFunc) {
 // testSpendSinceIsolatesByWorkspace proves budgets are per-workspace: two
 // workspaces running the same workflow name accumulate spend separately, so
 // one tenant's runs never count against another's budget.
-func testSpendSinceIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testSpendSinceIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -690,21 +735,22 @@ func createRunIn(t *testing.T, db store.Store, ctx context.Context, id string, c
 	}
 }
 
-// upsertActionIn stages one succeeded action on a run in the workspace ctx
-// carries, so the isolation test's workspace-scoped reads have a row to find.
+// upsertActionIn stages one succeeded fetch action on a run in the workspace
+// ctx carries, so the isolation test's workspace-scoped reads have a row to
+// find.
 //
 //nolint:revive // t leads every helper here for the t.Fatalf calls; ctx follows to carry the workspace
-func upsertActionIn(t *testing.T, db store.Store, ctx context.Context, runID, action string) {
+func upsertActionIn(t *testing.T, db store.Store, ctx context.Context, runID string) {
 	t.Helper()
 
 	err := db.UpsertActionResult(ctx, &store.ActionResult{
 		RunID:      runID,
-		ActionName: action,
+		ActionName: actionFetch,
 		Runner:     runnerMock,
 		Status:     store.ActionSucceeded,
 	})
 	if err != nil {
-		t.Fatalf("upsert action %s/%s: %v", runID, action, err)
+		t.Fatalf("upsert action %s/%s: %v", runID, actionFetch, err)
 	}
 }
 
@@ -737,7 +783,7 @@ func runIDs(runs []*store.Run) []string {
 	return ids
 }
 
-func testReconcileInterruptedFailsRunningWork(t *testing.T, openFn OpenFunc) {
+func testReconcileInterruptedFailsRunningWork[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -751,7 +797,7 @@ func testReconcileInterruptedFailsRunningWork(t *testing.T, openFn OpenFunc) {
 
 	stage := []*store.ActionResult{
 		{RunID: runLive, ActionName: actionFetch, Runner: runnerMock, Status: store.ActionRunning},
-		{RunID: runLive, ActionName: "score", Runner: runnerMock, Status: store.ActionSucceeded},
+		{RunID: runLive, ActionName: actionBrain, Runner: runnerMock, Status: store.ActionSucceeded},
 		{RunID: runDone, ActionName: actionFetch, Runner: runnerMock, Status: store.ActionSucceeded},
 	}
 	for _, result := range stage {
@@ -823,13 +869,12 @@ func assertReconciledActions(t *testing.T, results []*store.ActionResult) {
 	}
 }
 
-func testPruneRunsAndOutputs(t *testing.T, openFn OpenFunc) {
+func testPruneRunsAndOutputs[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	day := 24 * time.Hour
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 	createRun(t, db, runOld, workflowAlpha, store.RunSucceeded, now.Add(-100*day))
@@ -853,7 +898,7 @@ func testPruneRunsAndOutputs(t *testing.T, openFn OpenFunc) {
 			ActionName: actionBrain,
 			Step:       1,
 			Kind:       store.StepFinal,
-			Output:     "transcript payload",
+			Output:     transcriptPayload,
 			CreatedAt:  now,
 		}
 		if err := db.AppendAgentStep(ctx, step); err != nil {
@@ -862,8 +907,8 @@ func testPruneRunsAndOutputs(t *testing.T, openFn OpenFunc) {
 	}
 
 	stats, err := db.Prune(ctx, store.PruneOptions{
-		RunsOlderThan:    90 * day,
-		OutputsOlderThan: 30 * day,
+		RunsOlderThan:    retentionWindow,
+		OutputsOlderThan: outputRetention,
 		Now:              now,
 	})
 	if err != nil {
@@ -954,12 +999,12 @@ func assertOutputsIntact(t *testing.T, db store.Store, runID string) {
 		t.Fatalf("list intact agent steps: %v", err)
 	}
 
-	if len(steps) != 1 || steps[0].Output != "transcript payload" {
+	if len(steps) != 1 || steps[0].Output != transcriptPayload {
 		t.Errorf("intact agent steps = %#v, want the transcript output kept", steps)
 	}
 }
 
-func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
+func testAgentStepsRoundTripInOrder[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -974,14 +1019,14 @@ func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
 			ActionName: actionBrain,
 			Step:       1,
 			Kind:       store.StepDriverCall,
-			Output:     map[string]any{"tool": runnerMock, "arguments": map[string]any{paramOutput: echoValue}},
-			Usage:      runner.Usage{InputTokens: 10, OutputTokens: 5, CostUSD: 0.5},
+			Output:     map[string]any{keyTool: runnerMock, keyArguments: map[string]any{paramOutput: echoValue}},
+			Usage:      runner.Usage{InputTokens: driverInputTokens, OutputTokens: driverOutputTokens, CostUSD: driverCost},
 			CreatedAt:  time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			RunID:      runID,
 			ActionName: actionBrain,
-			Step:       2,
+			Step:       stepToolCall,
 			Kind:       store.StepToolCall,
 			Tool:       runnerMock,
 			Input:      map[string]any{paramOutput: echoValue},
@@ -991,10 +1036,10 @@ func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
 		{
 			RunID:      runID,
 			ActionName: actionBrain,
-			Step:       3,
+			Step:       stepFinal,
 			Kind:       store.StepFinal,
 			Output:     "done",
-			Usage:      runner.Usage{CostUSD: 0.25},
+			Usage:      runner.Usage{CostUSD: finalStepCost},
 			CreatedAt:  time.Date(2026, 6, 1, 0, 0, 2, 0, time.UTC),
 		},
 	}
@@ -1032,7 +1077,7 @@ func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
 	}
 
 	// JSON round trips land as generic shapes: ints come back float64.
-	wantOutput := map[string]any{"tool": runnerMock, "arguments": map[string]any{paramOutput: echoValue}}
+	wantOutput := map[string]any{keyTool: runnerMock, keyArguments: map[string]any{paramOutput: echoValue}}
 	if !reflect.DeepEqual(steps[0].Output, wantOutput) {
 		t.Errorf("driver step output = %#v, want %#v", steps[0].Output, wantOutput)
 	}
@@ -1051,7 +1096,7 @@ func testAgentStepsRoundTripInOrder(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testConcurrentUpsertActionResult(t *testing.T, openFn OpenFunc) {
+func testConcurrentUpsertActionResult[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1102,7 +1147,7 @@ func testConcurrentUpsertActionResult(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSuggestionRoundTrip(t *testing.T, openFn OpenFunc) {
+func testSuggestionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1116,15 +1161,15 @@ func testSuggestionRoundTrip(t *testing.T, openFn OpenFunc) {
 		Target:    suggestionTarget,
 		Rationale: suggestionRationale,
 		Evidence: map[string]any{
-			"runner":     "anthropic",
-			"max_tokens": float64(4096),
+			keyRunner:    evidenceRunner,
+			keyMaxTokens: float64(evidenceMaxTokens),
 		},
 		Proposed: map[string]any{
-			"max_tokens": float64(proposedTokens),
+			keyMaxTokens: float64(proposedTokens),
 		},
 		EstSavings: store.Savings{
-			CostUSDPerRun: 0.42,
-			LatencyDelta:  250 * time.Millisecond,
+			CostUSDPerRun: savingsCostUSD,
+			LatencyDelta:  savingsLatency,
 			Confidence:    store.ConfidenceLow,
 		},
 		Status:    store.SuggestionOpen,
@@ -1152,11 +1197,11 @@ func testSuggestionRoundTrip(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("savings = %+v, want %+v", got.EstSavings, want.EstSavings)
 	}
 
-	if got.Evidence["runner"] != "anthropic" || got.Evidence["max_tokens"] != float64(4096) {
+	if got.Evidence[keyRunner] != evidenceRunner || got.Evidence[keyMaxTokens] != float64(evidenceMaxTokens) {
 		t.Fatalf("evidence = %+v, want runner and max_tokens preserved", got.Evidence)
 	}
 
-	if got.Proposed["max_tokens"] != float64(proposedTokens) {
+	if got.Proposed[keyMaxTokens] != float64(proposedTokens) {
 		t.Fatalf("proposed = %+v, want max_tokens 128", got.Proposed)
 	}
 
@@ -1165,7 +1210,7 @@ func testSuggestionRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSaveSuggestionDefaults(t *testing.T, openFn OpenFunc) {
+func testSaveSuggestionDefaults[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1198,16 +1243,16 @@ func testSaveSuggestionDefaults(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListSuggestionsFilters(t *testing.T, openFn OpenFunc) {
+func testListSuggestionsFilters[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
 	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
-	seedSuggestion(t, db, "sug-open-old", store.SuggestionOpen, base)
-	seedSuggestion(t, db, "sug-open-new", store.SuggestionOpen, base.Add(time.Hour))
-	seedSuggestion(t, db, "sug-approved", store.SuggestionApproved, base.Add(twoUnits*time.Hour))
+	seedSuggestion(t, db, sugOpenOld, store.SuggestionOpen, base)
+	seedSuggestion(t, db, sugOpenNew, store.SuggestionOpen, base.Add(time.Hour))
+	seedSuggestion(t, db, sugApproved, store.SuggestionApproved, base.Add(twoUnits*time.Hour))
 
 	tests := []struct {
 		name    string
@@ -1217,17 +1262,17 @@ func testListSuggestionsFilters(t *testing.T, openFn OpenFunc) {
 		{
 			name:    "no filter lists newest first",
 			filter:  store.SuggestionFilter{},
-			wantIDs: []string{"sug-approved", "sug-open-new", "sug-open-old"},
+			wantIDs: []string{sugApproved, sugOpenNew, sugOpenOld},
 		},
 		{
 			name:    "status filter narrows to open",
 			filter:  store.SuggestionFilter{Status: store.SuggestionOpen},
-			wantIDs: []string{"sug-open-new", "sug-open-old"},
+			wantIDs: []string{sugOpenNew, sugOpenOld},
 		},
 		{
 			name:    "limit caps the listing",
 			filter:  store.SuggestionFilter{Limit: 1},
-			wantIDs: []string{"sug-approved"},
+			wantIDs: []string{sugApproved},
 		},
 		{
 			name:    "kind filter matches the batching rows",
@@ -1263,7 +1308,7 @@ func testListSuggestionsFilters(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testUpdateSuggestionStatus(t *testing.T, openFn OpenFunc) {
+func testUpdateSuggestionStatus[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1285,36 +1330,35 @@ func testUpdateSuggestionStatus(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSuggestionNotFound(t *testing.T, openFn OpenFunc) {
+func testSuggestionNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	if _, err := db.GetSuggestion(ctx, "missing"); !errors.Is(err, store.ErrSuggestionNotFound) {
+	if _, err := db.GetSuggestion(ctx, absentID); !errors.Is(err, store.ErrSuggestionNotFound) {
 		t.Fatalf("get missing suggestion err = %v, want ErrSuggestionNotFound", err)
 	}
 
-	err := db.UpdateSuggestionStatus(ctx, "missing", store.SuggestionRejected)
+	err := db.UpdateSuggestionStatus(ctx, absentID, store.SuggestionRejected)
 	if !errors.Is(err, store.ErrSuggestionNotFound) {
 		t.Fatalf("update missing suggestion err = %v, want ErrSuggestionNotFound", err)
 	}
 }
 
-func testPruneDeletesStaleSuggestions(t *testing.T, openFn OpenFunc) {
+func testPruneDeletesStaleSuggestions[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	staleAge := 90 * 24 * time.Hour
 
-	seedSuggestion(t, db, "sug-stale", store.SuggestionOpen, now.Add(-staleAge-time.Hour))
-	seedSuggestion(t, db, "sug-stale-approved", store.SuggestionApproved, now.Add(-staleAge-2*time.Hour))
+	seedSuggestion(t, db, "sug-stale", store.SuggestionOpen, now.Add(-retentionWindow-time.Hour))
+	seedSuggestion(t, db, "sug-stale-approved", store.SuggestionApproved, now.Add(-retentionWindow-2*time.Hour))
 	seedSuggestion(t, db, "sug-fresh", store.SuggestionOpen, now.Add(-time.Hour))
 
-	stats, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: staleAge, Now: now})
+	stats, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: retentionWindow, Now: now})
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
@@ -1338,7 +1382,7 @@ func testPruneDeletesStaleSuggestions(t *testing.T, openFn OpenFunc) {
 // scoped to the request tenant (.agents/spec/12-ui-and-governance.md,
 // "Multi-tenancy"). A non-admin token in one tenant must not read another's
 // suggestion, which embeds workflow names and costs.
-func testSuggestionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testSuggestionIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1415,7 +1459,7 @@ func suggestionIDs(suggestions []*store.Suggestion) []string {
 // context scoped to another workspace, matching ListActionResults: agent steps
 // for a run in workspace A read as empty under a workspace-B context
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testAgentStepsIsolateByWorkspace(t *testing.T, openFn OpenFunc) {
+func testAgentStepsIsolateByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -1460,7 +1504,7 @@ func testAgentStepsIsolateByWorkspace(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPruneKeepsSuggestionsWithoutRunWindow(t *testing.T, openFn OpenFunc) {
+func testPruneKeepsSuggestionsWithoutRunWindow[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)

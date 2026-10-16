@@ -77,16 +77,22 @@ type Users interface {
 	CachedUser(id string) (User, bool)
 }
 
+// Directory is every lookup that turns a name or an id into a channel or a user,
+// the half of Conn that resolves rather than posts.
+type Directory interface {
+	Channels
+	Users
+}
+
 // Conn is the whole slice of Client one identity's runtime drives, composed from
-// the five capabilities above so each consumer depends on the part it uses. It
-// exists so the bridge tests run against a scripted server without an HTTP
-// listener, the way the Telegram adapter tests run against a fake BotAPI.
+// the capabilities above. It exists so the bridge tests run against a scripted
+// server without an HTTP listener, the way the Telegram adapter tests run
+// against a fake BotAPI.
 type Conn interface {
 	Session
 	Listener
 	Poster
-	Channels
-	Users
+	Directory
 }
 
 // outbound is the Mattermost side of bridge.Outbound: it turns the core's
@@ -149,13 +155,6 @@ func (o *outbound) Expired(ctx context.Context, addr *bridge.Address, _ string) 
 // at the width this server enforces rather than a compiled-in guess (FR18).
 func (o *outbound) MaxChars() int {
 	return o.client.MaxPostSize()
-}
-
-// typing raises the typing indicator for one turn and drops the error. The
-// indicator is decoration: a turn that runs without it is still a turn, and a
-// failure here must not cost the reply (FR17).
-func (o *outbound) typing(ctx context.Context, addr *bridge.Address) {
-	_ = o.client.Typing(ctx, addr.Channel, addr.Thread)
 }
 
 // shortDuration renders a whole-hour or whole-minute span without the zero tail

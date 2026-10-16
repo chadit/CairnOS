@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -294,15 +295,11 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 	tempPath := temp.Name()
 
 	if err := finishTempFile(temp, content, perm); err != nil {
-		_ = os.Remove(tempPath)
-
-		return err
+		return errors.Join(err, removeLeftover(tempPath))
 	}
 
 	if err := os.Rename(tempPath, path); err != nil {
-		_ = os.Remove(tempPath)
-
-		return fmt.Errorf("replace %s: %w", path, err)
+		return errors.Join(fmt.Errorf("replace %s: %w", path, err), removeLeftover(tempPath))
 	}
 
 	if err := syncDir(dir); err != nil {

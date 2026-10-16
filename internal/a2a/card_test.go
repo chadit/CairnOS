@@ -19,6 +19,13 @@ const (
 	nodeVersion = "1.2.3"
 )
 
+// Tamper values a forger writes into a signed card; verification must reject
+// every one of them.
+const (
+	evilEndpoint = "grpc://evil:9999"
+	imposterName = "imposter"
+)
+
 // newSignedCard mints a key pair, builds a card, and signs it, returning the
 // card and the public half a verifier would hold.
 func newSignedCard(t *testing.T) (*a2a.Card, ed25519.PublicKey) {
@@ -86,11 +93,11 @@ func TestCardTamperDetected(t *testing.T) {
 	}{
 		{
 			name:   "endpoint changed",
-			mutate: func(card *a2a.Card) { card.Endpoint = "grpc://evil:9999" },
+			mutate: func(card *a2a.Card) { card.Endpoint = evilEndpoint },
 		},
 		{
 			name:   "name changed",
-			mutate: func(card *a2a.Card) { card.Name = "imposter" },
+			mutate: func(card *a2a.Card) { card.Name = imposterName },
 		},
 		{
 			name:   "skill appended",
@@ -107,7 +114,7 @@ func TestCardTamperDetected(t *testing.T) {
 		{
 			name: "channel appended",
 			mutate: func(card *a2a.Card) {
-				card.Channels = append(card.Channels, a2a.Channel{Type: channelTypeMattermost, Username: "imposter"})
+				card.Channels = append(card.Channels, a2a.Channel{Type: channelTypeMattermost, Username: imposterName})
 			},
 		},
 	}
@@ -140,7 +147,7 @@ func TestCardForgedKeyRejected(t *testing.T) {
 		t.Fatalf("generate attacker key: %v", err)
 	}
 
-	card.Endpoint = "grpc://evil:9999"
+	card.Endpoint = evilEndpoint
 
 	if err := card.Sign(attackerPriv); err != nil {
 		t.Fatalf("attacker re-sign: %v", err)

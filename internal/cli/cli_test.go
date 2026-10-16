@@ -24,16 +24,20 @@ import (
 // Subcommand, flag, and layout literals the tests reuse, named so goconst
 // stays quiet and a typo fails loudly in one place.
 const (
-	runCmd       = "run"
-	memoryCmd    = "memory"
-	serveCmd     = "serve"
-	flagDirArg   = "--dir"
-	flagInputArg = "--input"
+	runCmd        = "run"
+	memoryCmd     = "memory"
+	serveCmd      = "serve"
+	flagDirArg    = "--dir"
+	flagInputArg  = "--input"
+	flagDryRunArg = "--dry-run"
 
 	dataDirName     = "data"
 	examplesDirName = "examples"
 	helloFileName   = "hello.toml"
-	dbFileName      = "cairnos.db"
+
+	// helloWorkflowName is the name the scaffolded hello.toml declares.
+	helloWorkflowName = "hello"
+	dbFileName        = "cairnos.db"
 )
 
 // staleAge puts an inserted run past the default 90d retention window.
@@ -117,11 +121,17 @@ func runEnvCLI(t *testing.T, env map[string]string, args ...string) (int, string
 	return code, stdout.String(), stderr.String()
 }
 
+// pathEnvKey is the variable the command search reads, staged per case.
+const pathEnvKey = "PATH"
+
+// cliTrigger is the trigger a run started from this binary records.
+const cliTrigger = "cli"
+
 // pathEnv is the staged environment for a case that puts one directory in front
 // of the command's PATH search. Nothing else is inherited, so a bw on the
 // developer's own machine can never answer for the fake.
 func pathEnv(dir string) map[string]string {
-	return map[string]string{"PATH": dir}
+	return map[string]string{pathEnvKey: dir}
 }
 
 // fakeBridgeToken stands in for a bridge credential. It is not a real token and
@@ -140,7 +150,7 @@ func tokenEnv(name, value string) map[string]string {
 // runs beside every other one.
 func withSourcePath(env map[string]string) map[string]string {
 	staged := maps.Clone(env)
-	staged["PATH"] = os.Getenv("PATH")
+	staged[pathEnvKey] = os.Getenv(pathEnvKey)
 
 	return staged
 }
@@ -291,7 +301,7 @@ func TestInitScaffoldsRunnableLayout(t *testing.T) {
 		t.Fatalf("example workflow does not parse: %v", err)
 	}
 
-	if flow.Name != "hello" || len(flow.Actions) != 2 {
+	if flow.Name != helloWorkflowName || len(flow.Actions) != 2 {
 		t.Fatalf("example = %q with %d actions, want hello with 2", flow.Name, len(flow.Actions))
 	}
 
@@ -440,7 +450,7 @@ func TestRunsListAndShowDisplayRun(t *testing.T) {
 	runID := runs[0].ID
 
 	code, stdout, _ := runCLI(t, "runs", "list", flagDirArg, dir)
-	if code != cli.ExitOK || !strings.Contains(stdout, runID) || !strings.Contains(stdout, "hello") {
+	if code != cli.ExitOK || !strings.Contains(stdout, runID) || !strings.Contains(stdout, helloWorkflowName) {
 		t.Fatalf("runs list (exit %d) missing the run:\n%s", code, stdout)
 	}
 
@@ -618,7 +628,7 @@ func TestPruneDeletesOldRuns(t *testing.T) {
 		ID:           "stale-run",
 		WorkflowName: "old",
 		Status:       store.RunSucceeded,
-		Trigger:      "cli",
+		Trigger:      cliTrigger,
 		CreatedAt:    time.Now().Add(-staleAge),
 	}
 	if err := db.CreateRun(t.Context(), stale); err != nil {

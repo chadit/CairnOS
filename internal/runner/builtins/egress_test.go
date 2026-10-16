@@ -24,6 +24,9 @@ const allowPrivateKey = "allow_private_targets"
 // runner name.
 const blockedTargetSuffix = ".blocked_target"
 
+// fileTarget is the file:// URL the scheme-guard cases aim a runner at.
+const fileTarget = "file:///etc/passwd"
+
 // loopbackServer starts an httptest server (bound to 127.0.0.1) that answers
 // every request with a 200, so a fetch that reaches it is observable as a
 // success and a fetch that the guard refuses never lands. Real sockets on
@@ -34,7 +37,7 @@ func loopbackServer(t *testing.T) *httptest.Server {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		writeBody(t, w, "ok")
 	}))
 	t.Cleanup(server.Close)
 
@@ -83,7 +86,7 @@ func TestHTTPRefusesLoopbackByDefault(t *testing.T) {
 
 	server := loopbackServer(t)
 
-	guarded, err := builtins.HTTPFactory(nil)
+	guarded, err := builtins.HTTPFactory()(nil)
 	if err != nil {
 		t.Fatalf("build guarded http runner: %v", err)
 	}
@@ -100,7 +103,7 @@ func TestHTTPAllowsLoopbackWhenOptedIn(t *testing.T) {
 
 	server := loopbackServer(t)
 
-	guarded, err := builtins.HTTPFactory(map[string]any{allowPrivateKey: true})
+	guarded, err := builtins.HTTPFactory()(map[string]any{allowPrivateKey: true})
 	if err != nil {
 		t.Fatalf("build opted-in http runner: %v", err)
 	}
@@ -131,7 +134,7 @@ func TestHTTPRefusesRedirectToLoopback(t *testing.T) {
 	}))
 	t.Cleanup(redirector.Close)
 
-	guarded, err := builtins.HTTPFactory(nil)
+	guarded, err := builtins.HTTPFactory()(nil)
 	if err != nil {
 		t.Fatalf("build guarded http runner: %v", err)
 	}
@@ -148,12 +151,12 @@ func TestHTTPRefusesRedirectToFileScheme(t *testing.T) {
 	t.Parallel()
 
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", "file:///etc/passwd")
+		w.Header().Set("Location", fileTarget)
 		w.WriteHeader(http.StatusFound)
 	}))
 	t.Cleanup(redirector.Close)
 
-	guarded, err := builtins.HTTPFactory(map[string]any{allowPrivateKey: true})
+	guarded, err := builtins.HTTPFactory()(map[string]any{allowPrivateKey: true})
 	if err != nil {
 		t.Fatalf("build opted-in http runner: %v", err)
 	}
@@ -167,12 +170,12 @@ func TestHTTPRefusesRedirectToFileScheme(t *testing.T) {
 func TestHTTPRefusesFileScheme(t *testing.T) {
 	t.Parallel()
 
-	guarded, err := builtins.HTTPFactory(nil)
+	guarded, err := builtins.HTTPFactory()(nil)
 	if err != nil {
 		t.Fatalf("build guarded http runner: %v", err)
 	}
 
-	_, err = guarded.Execute(t.Context(), httpTask(map[string]any{urlKey: "file:///etc/passwd"}))
+	_, err = guarded.Execute(t.Context(), httpTask(map[string]any{urlKey: fileTarget}))
 	assertBlocked(t, err)
 }
 
@@ -183,7 +186,7 @@ func TestWebhookRefusesLoopbackByDefault(t *testing.T) {
 
 	server := loopbackServer(t)
 
-	guarded, err := builtins.WebhookFactory(nil)
+	guarded, err := builtins.WebhookFactory()(nil)
 	if err != nil {
 		t.Fatalf("build guarded webhook runner: %v", err)
 	}
@@ -199,7 +202,7 @@ func TestWebhookAllowsLoopbackWhenOptedIn(t *testing.T) {
 
 	server := loopbackServer(t)
 
-	guarded, err := builtins.WebhookFactory(map[string]any{allowPrivateKey: true})
+	guarded, err := builtins.WebhookFactory()(map[string]any{allowPrivateKey: true})
 	if err != nil {
 		t.Fatalf("build opted-in webhook runner: %v", err)
 	}
@@ -216,7 +219,7 @@ func TestWebhookAllowsLoopbackWhenOptedIn(t *testing.T) {
 func TestMCPClientRefusesLoopbackByDefault(t *testing.T) {
 	t.Parallel()
 
-	guarded, err := builtins.MCPClientFactory(map[string]any{
+	guarded, err := builtins.MCPClientFactory()(map[string]any{
 		serverURLKey: loopbackMCPServer(t),
 		toolKey:      echoTool,
 	})
@@ -234,7 +237,7 @@ func TestMCPClientRefusesLoopbackByDefault(t *testing.T) {
 func TestMCPClientAllowsLoopbackWhenOptedIn(t *testing.T) {
 	t.Parallel()
 
-	guarded, err := builtins.MCPClientFactory(map[string]any{
+	guarded, err := builtins.MCPClientFactory()(map[string]any{
 		serverURLKey:    loopbackMCPServer(t),
 		toolKey:         echoTool,
 		allowPrivateKey: true,
@@ -261,8 +264,8 @@ func TestMCPClientAllowsLoopbackWhenOptedIn(t *testing.T) {
 func TestMCPClientRefusesFileScheme(t *testing.T) {
 	t.Parallel()
 
-	guarded, err := builtins.MCPClientFactory(map[string]any{
-		serverURLKey:    "file:///etc/passwd",
+	guarded, err := builtins.MCPClientFactory()(map[string]any{
+		serverURLKey:    fileTarget,
 		toolKey:         echoTool,
 		allowPrivateKey: true,
 	})

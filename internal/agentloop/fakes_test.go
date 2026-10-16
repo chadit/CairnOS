@@ -35,6 +35,12 @@ const (
 	mockEcho      = "tool data"
 	plainName     = "plain"
 
+	// unregisteredName names nothing in the test registry. unknownToolName is
+	// the flow's investigate action: an action name is not a runner, so a tools
+	// entry naming it must fail to resolve.
+	unregisteredName = "ghost"
+	unknownToolName  = "investigate"
+
 	// turnCost is the standard estimated spend per scripted driver turn.
 	turnCost = 0.1
 )
@@ -661,7 +667,7 @@ func newTestRegistry(t *testing.T, driver runner.Runner, mem memory.Store) *runn
 		t.Fatalf("register driver: %v", err)
 	}
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
 	}
 

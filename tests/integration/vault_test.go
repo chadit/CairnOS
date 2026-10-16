@@ -17,7 +17,7 @@ import (
 // openVault opens a vault store in its own Postgres schema off the shared
 // container, matching the per-case isolation the sqlite backend gets from a temp
 // file. The schema is a fresh lowercased ULID; cleanup drops it.
-func openVault(t *testing.T) vault.Store {
+func openVault(t *testing.T) *vault.Postgres {
 	t.Helper()
 
 	ctx := t.Context()

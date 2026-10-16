@@ -17,7 +17,7 @@ import (
 // openMemory opens a memory store in its own Postgres schema off the shared
 // container, matching the per-case isolation the sqlite backend gets from a temp
 // file. The schema is a fresh lowercased ULID; cleanup drops it.
-func openMemory(t *testing.T) memory.Store {
+func openMemory(t *testing.T) *memory.Postgres {
 	t.Helper()
 
 	ctx := t.Context()

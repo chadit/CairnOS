@@ -26,7 +26,7 @@ func killProcessTree(t *testing.T, pid int) {
 		t.Fatalf("open plugin process %d: %v", pid, err)
 	}
 
-	defer func() { _ = windows.CloseHandle(handle) }()
+	defer closeProcessHandle(t, handle, pid)
 
 	if err := windows.TerminateProcess(handle, killTestExitCode); err != nil {
 		t.Fatalf("terminate plugin process %d: %v", pid, err)
@@ -44,7 +44,7 @@ func requireProcessGone(t *testing.T, pid int) {
 		return
 	}
 
-	defer func() { _ = windows.CloseHandle(handle) }()
+	defer closeProcessHandle(t, handle, pid)
 
 	var code uint32
 
@@ -54,5 +54,15 @@ func requireProcessGone(t *testing.T, pid int) {
 
 	if code == stillActive {
 		t.Fatalf("plugin process %d still running after Close", pid)
+	}
+}
+
+// closeProcessHandle releases a handle a helper opened, failing the test when
+// Windows refuses, since a leaked handle can keep the process object alive.
+func closeProcessHandle(t *testing.T, handle windows.Handle, pid int) {
+	t.Helper()
+
+	if err := windows.CloseHandle(handle); err != nil {
+		t.Errorf("close handle for plugin process %d: %v", pid, err)
 	}
 }

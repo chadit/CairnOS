@@ -18,6 +18,12 @@ import (
 // struct is wide, and Query returns a QueryResult so the semantic fallback
 // stays visible to callers.
 type Store interface {
+	DocumentStore
+	Retriever
+}
+
+// DocumentStore writes, reads, and removes one document at a time by id.
+type DocumentStore interface {
 	// Put persists a new document or overwrites an existing one when the
 	// document carries an id, returning the id. It rewrites the document's
 	// outbound links so backlink derivation stays in sync.
@@ -29,7 +35,11 @@ type Store interface {
 	// Delete removes one document and its outbound link rows. Inbound links
 	// from other documents are dropped too, so no dangling backlink survives.
 	Delete(ctx context.Context, id string) error
+}
 
+// Retriever reads documents in bulk, by recency or by the typed graph query,
+// rather than by a known id.
+type Retriever interface {
 	// List returns documents in the workspace, newest first, optionally
 	// capped. Bodies are included; backlinks are not, since a list view does
 	// not need the per-document inbound edges a Get carries.

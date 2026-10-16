@@ -80,9 +80,10 @@ func (echoRunner) ExecuteStream(ctx context.Context, task *runner.Task, out chan
 
 	if shouldCrash(task) {
 		// An uncatchable kill of this process simulates a hard plugin crash
-		// mid-task; the host turns it into a transient plugin_down.
-		if self, err := os.FindProcess(os.Getpid()); err == nil {
-			_ = self.Kill()
+		// mid-task; the host turns it into a transient plugin_down. A kill
+		// that cannot be sent fails the task instead of passing as a result.
+		if err := killSelf(); err != nil {
+			return runner.Result{}, runner.NewError(runner.ClassPermanent, runnerName+".crash_failed", err.Error())
 		}
 	}
 
@@ -139,6 +140,20 @@ func shouldCrash(task *runner.Task) bool {
 	crash, isBool := task.Params["crash"].(bool)
 
 	return isBool && crash
+}
+
+// killSelf sends this process the uncatchable kill the crash param asks for.
+func killSelf() error {
+	self, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return fmt.Errorf("find own process: %w", err)
+	}
+
+	if err := self.Kill(); err != nil {
+		return fmt.Errorf("kill own process: %w", err)
+	}
+
+	return nil
 }
 
 // configuredFailure maps the fail_class param onto a classified error, the
@@ -208,7 +223,8 @@ func main() {
 }
 
 // serve hands the runner to the SDK, which owns the socket, the gRPC server,
-// and the SIGTERM/SIGINT shutdown; nothing else is needed here.
+// and the shutdown on SIGTERM, SIGINT, or a closed stdin pipe; nothing else
+// is needed here.
 func serve() int {
 	if err := plugin.Serve(echoRunner{}); err != nil {
 		slog.Error("echo plugin stopped", "error", err)

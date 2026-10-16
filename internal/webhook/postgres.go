@@ -55,12 +55,6 @@ func NewPostgresWebhooks(ctx context.Context, pool *pgxpool.Pool) (*PostgresWebh
 	return &PostgresWebhooks{pool: pool}, nil
 }
 
-// Close is a no-op: the backend borrows the pool and its creator closes it. The
-// method exists so PostgresWebhooks satisfies Store like the sqlite backend.
-func (*PostgresWebhooks) Close() error {
-	return nil
-}
-
 // Add persists a registration, filling the id and created_at the caller left
 // zero. ON CONFLICT on workflow_name reports zero rows affected, which maps to
 // ErrDuplicate: one registration per workflow.

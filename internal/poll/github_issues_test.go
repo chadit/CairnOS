@@ -19,6 +19,14 @@ import (
 // issuesBody mixes a fresh issue, a stale issue GitHub's since (updated_at)
 // filter would still return, and a pull request arriving as an issue row. The
 // list_issues op keeps only the fresh issue, so the adapter sees one event.
+const (
+	// freshCreatedAt is the created_at of the one issue in issuesBody that
+	// survives the filter, so it becomes the next cursor.
+	freshCreatedAt = "2026-06-20T00:00:00Z"
+	issuesRepo     = "octocat/hello-world"
+	repoParam      = "repo"
+)
+
 const issuesBody = `[
 	{"number": 10, "title": "new bug", "body": "found it", "html_url": "https://github.test/o/r/issues/10", "created_at": "2026-06-20T00:00:00Z", "user": {"login": "octocat"}},
 	{"number": 9, "title": "old churn", "body": "still open", "html_url": "https://github.test/o/r/issues/9", "created_at": "2026-06-01T00:00:00Z", "user": {"login": "hubber"}},
@@ -44,13 +52,15 @@ func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery
 
-		_, _ = io.WriteString(w, issuesBody)
+		if _, err := io.WriteString(w, issuesBody); err != nil {
+			t.Errorf("write issues body: %v", err)
+		}
 	}))
 
 	const cursor = "2026-06-15T00:00:00Z"
 
 	events, next, err := newIssuesSource(t, server).Poll(t.Context(),
-		map[string]any{"repo": "octocat/hello-world", "state": "all"}, cursor)
+		map[string]any{repoParam: issuesRepo, "state": "all"}, cursor)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -63,7 +73,7 @@ func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 		t.Fatalf("got %d events, want 1 (stale issue and PR row dropped)", len(events))
 	}
 
-	if next != "2026-06-20T00:00:00Z" {
+	if next != freshCreatedAt {
 		t.Fatalf("next cursor = %q, want the newest created_at seen", next)
 	}
 
@@ -74,7 +84,7 @@ func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 
 	if event.Inputs["number"] != int64(10) || event.Inputs["title"] != "new bug" ||
 		event.Inputs["body"] != "found it" || event.Inputs["url"] != "https://github.test/o/r/issues/10" ||
-		event.Inputs["author"] != "octocat" || event.Inputs["created_at"] != "2026-06-20T00:00:00Z" {
+		event.Inputs["author"] != "octocat" || event.Inputs["created_at"] != freshCreatedAt {
 		t.Fatalf("event inputs = %#v", event.Inputs)
 	}
 
@@ -101,11 +111,13 @@ func TestGitHubIssuesPollEmptyCursorNoBackfill(t *testing.T) {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 
-		_, _ = io.WriteString(w, issuesBody)
+		if _, err := io.WriteString(w, issuesBody); err != nil {
+			t.Errorf("write issues body: %v", err)
+		}
 	}))
 
 	events, next, err := newIssuesSource(t, server).Poll(t.Context(),
-		map[string]any{"repo": "octocat/hello-world"}, "")
+		map[string]any{repoParam: issuesRepo}, "")
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}

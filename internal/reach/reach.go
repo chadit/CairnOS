@@ -352,11 +352,11 @@ func (e *UnreachableError) Unwrap() error {
 	return e.Cause
 }
 
-// IsUnreachable reports whether err is, or wraps, an UnreachableError.
+// IsUnreachable reports whether err is, or wraps, an UnreachableError. It reads
+// through HoldKey, whose key is never empty for one, so the two never disagree
+// about which errors hold a queue item.
 func IsUnreachable(err error) bool {
-	_, ok := errors.AsType[*UnreachableError](err)
-
-	return ok
+	return HoldKey(err) != ""
 }
 
 // HoldKey is the queue hold key for err, naming the workflow whose requirement

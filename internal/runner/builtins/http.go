@@ -49,10 +49,12 @@ const (
 	outputHeaders = "headers"
 )
 
-// contentTypeJSON is the response media type that triggers JSON parsing even
-// when the json param is unset, matched on the leading token before any
-// charset suffix.
-const contentTypeJSON = "application/json"
+// Request body media types. A JSON response also triggers parsing when the json
+// param is unset, matched on the leading token before any charset suffix.
+const (
+	contentTypeJSON = "application/json"
+	contentTypeText = "text/plain; charset=utf-8"
+)
 
 // HTTP performs a single configurable HTTP request, the read-capable sibling to
 // the webhook notification sink. It reaches the GET feeds and JSON APIs that
@@ -112,8 +114,8 @@ func NewHTTPWithCredentials(cfg map[string]any, client *http.Client, lookup Toke
 // HTTPFactory adapts the runner to the registry contract with no credential
 // lookup, so a credential key fails the build. It is HTTPFactoryWithCredentials
 // with a nil lookup.
-func HTTPFactory(cfg map[string]any) (runner.Runner, error) {
-	return HTTPFactoryWithCredentials(nil)(cfg)
+func HTTPFactory() runner.Factory {
+	return HTTPFactoryWithCredentials(nil)
 }
 
 // HTTPFactoryWithCredentials returns a registry factory that wires lookup into
@@ -414,7 +416,7 @@ func requestBody(value any) (io.Reader, string, error) {
 	}
 
 	if text, isString := value.(string); isString {
-		return strings.NewReader(text), "text/plain; charset=utf-8", nil
+		return strings.NewReader(text), contentTypeText, nil
 	}
 
 	encoded, err := json.Marshal(value)

@@ -3,7 +3,6 @@ package notify_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -35,13 +34,17 @@ func captureServer(t *testing.T, status int) (*nettest.Fake, chan string) {
 	bodies := make(chan string, 16)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-
 		var payload struct {
 			Content string `json:"content"`
 		}
 
-		_ = json.Unmarshal(raw, &payload)
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode webhook body: %v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
 		bodies <- payload.Content
 
 		w.WriteHeader(status)
@@ -209,9 +212,9 @@ func TestFanoutMatchesNotifyBody(t *testing.T) {
 	notifier := notify.NewDiscordNotifierOver(server.URL, server.Transport())
 
 	alert := notify.ReauthAlert{
-		Tool:        "codex",
-		Remediation: "codex exited (re-authenticate the codex CLI)",
-		DedupKey:    "sched-7|2026-06-13T00:00:00Z",
+		Tool:        toolCodex,
+		Remediation: alertRemediation,
+		DedupKey:    alertDedupKey,
 	}
 
 	if err := notifier.Notify(t.Context(), alert); err != nil {
@@ -230,7 +233,7 @@ func TestFanoutMatchesNotifyBody(t *testing.T) {
 			t.Fatalf("fan-out posted %q, want the direct body %q", routed, direct)
 		}
 
-		if !strings.Contains(routed, "codex") {
+		if !strings.Contains(routed, toolCodex) {
 			t.Fatalf("held line dropped the tool name: %q", routed)
 		}
 	case <-time.After(2 * time.Second):

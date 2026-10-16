@@ -24,8 +24,9 @@ func baseTime() time.Time {
 
 // RunConformance drives one backend through the store contract. Each case gets
 // a fresh, empty store from newStore, so the cases stay independent and run in
-// parallel.
-func RunConformance(t *testing.T, newStore func(*testing.T) webhook.Store) {
+// parallel. S is the backend's own type, so newStore returns the concrete
+// handle it opened.
+func RunConformance[S webhook.Store](t *testing.T, newStore func(*testing.T) S) {
 	t.Helper()
 
 	cases := []struct {

@@ -3,7 +3,6 @@ package builtins_test
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -21,6 +20,7 @@ const (
 	priceInKey      = "price_in"
 	priceOutKey     = "price_out"
 	testModel       = "test-model"
+	servedModel     = "test-model-1"
 	testAPIKey      = "sk-test" // #nosec G101 -- fixture value for httptest servers, not a credential
 	actionLLM       = "llm"
 	unresolved      = "${{ pick.output }}"
@@ -31,12 +31,31 @@ const (
 	systemBrief     = "be brief"
 )
 
-// Case names the provider classification tables share.
+// Case names that more than one runner's test table uses.
 const (
-	case401           = "401 is permanent auth"
-	case429           = "429 honors retry-after"
-	case500           = "500 is transient"
-	caseMissingPrompt = "missing prompt"
+	case401              = "401 is permanent auth"
+	case404              = "404 is permanent"
+	case408              = "408 is transient"
+	case429              = "429 honors retry-after"
+	case500              = "500 is transient"
+	caseMissingPrompt    = "missing prompt"
+	caseMissingModel     = "missing model everywhere"
+	caseUnresolvedModel  = "unresolved model reference defers"
+	caseMissingAPIKey    = "missing api key"
+	caseConfigSuffices   = "config model and key suffice"
+	caseMissingURL       = "missing url everywhere"
+	caseMissingOp        = "missing op"
+	caseUnknownOp        = "unknown op"
+	caseMissingTo        = "missing to"
+	caseMissingBody      = "missing body"
+	caseUnresolvedDefers = "unresolved reference defers"
+)
+
+// The two deltas both golden stream bodies emit, and the text they join into.
+const (
+	streamHead = "Hel"
+	streamTail = "lo"
+	streamText = streamHead + streamTail
 )
 
 // openaiSuccessBody is the golden non-streaming chat-completions response.
@@ -133,7 +152,7 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, openaiSuccessBody)
+		writeBody(t, w, openaiSuccessBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -152,7 +171,7 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 
 	assertLLMUsage(t, result.Usage)
 
-	if result.Meta[modelKey] != "test-model-1" || result.Meta["stop_reason"] != "stop" {
+	if result.Meta[modelKey] != servedModel || result.Meta["stop_reason"] != "stop" {
 		t.Fatalf("meta = %v", result.Meta)
 	}
 
@@ -179,7 +198,7 @@ func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, openaiJSONContentBody)
+		writeBody(t, w, openaiJSONContentBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -221,7 +240,7 @@ func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, openaiProseContentBody)
+		writeBody(t, w, openaiProseContentBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -255,7 +274,7 @@ func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, openaiSuccessBody)
+		writeBody(t, w, openaiSuccessBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -308,7 +327,7 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.status)
-				_, _ = io.WriteString(w, `{"error":{"message":"nope"}}`)
+				writeBody(t, w, `{"error":{"message":"nope"}}`)
 			}))
 
 			llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -347,7 +366,7 @@ func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, openaiStreamBody)
+		writeBody(t, w, openaiStreamBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -370,11 +389,11 @@ func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 		deltas = append(deltas, chunk.Data)
 	}
 
-	if len(deltas) != 2 || deltas[0] != "Hel" || deltas[1] != "lo" {
+	if len(deltas) != 2 || deltas[0] != streamHead || deltas[1] != streamTail {
 		t.Fatalf("chunks = %v", deltas)
 	}
 
-	if result.Output != "Hello" {
+	if result.Output != streamText {
 		t.Fatalf("output = %#v", result.Output)
 	}
 
@@ -407,19 +426,19 @@ func TestOpenAIValidate(t *testing.T) {
 			params: map[string]any{}, key: testAPIKey, resolved: true, wantErr: true,
 		},
 		{
-			name: "missing model everywhere", cfg: nil,
+			name: caseMissingModel, cfg: nil,
 			params: map[string]any{promptKey: testPrompt}, key: testAPIKey, resolved: true, wantErr: true,
 		},
 		{
-			name: "unresolved model reference defers", cfg: nil,
+			name: caseUnresolvedModel, cfg: nil,
 			params: map[string]any{promptKey: testPrompt, modelKey: unresolved}, key: testAPIKey, wantErr: false,
 		},
 		{
-			name: "missing api key", cfg: map[string]any{modelKey: testModel},
+			name: caseMissingAPIKey, cfg: map[string]any{modelKey: testModel},
 			params: map[string]any{promptKey: testPrompt}, key: "", resolved: true, wantErr: true,
 		},
 		{
-			name: "config model and key suffice", cfg: map[string]any{modelKey: testModel},
+			name: caseConfigSuffices, cfg: map[string]any{modelKey: testModel},
 			params: map[string]any{promptKey: testPrompt}, key: testAPIKey, resolved: true, wantErr: false,
 		},
 		{

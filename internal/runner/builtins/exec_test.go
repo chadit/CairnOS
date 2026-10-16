@@ -17,6 +17,10 @@ const (
 	actionReconcile = "reconcile"
 	binTrue         = "/bin/true"
 
+	// wantPositiveTimeout pins the start of the exec runner's complaint about a
+	// zero or negative timeout.
+	wantPositiveTimeout = "timeout must be a positive"
+
 	// hostEnvName and cfgEnvName are the two variables the environment case
 	// reads back out of the child, one inherited and one from config.
 	hostEnvName = "CAIRNOS_EXEC_HOST"
@@ -142,7 +146,7 @@ func TestExecValidateParams(t *testing.T) {
 		},
 		{
 			name:     "args is not a list",
-			params:   map[string]any{cmdKey: binTrue, argsKey: "--flag"},
+			params:   map[string]any{cmdKey: binTrue, argsKey: flagArg},
 			resolved: true,
 			wantCode: codeExecBadArgs,
 		},
@@ -212,12 +216,12 @@ func TestExecFactoryRejectsBadConfig(t *testing.T) {
 		{
 			name:     "zero timeout",
 			cfg:      execConfig(map[string]any{cfgTimeout: int64(0)}),
-			wantText: "timeout must be a positive",
+			wantText: wantPositiveTimeout,
 		},
 		{
 			name:     "negative timeout",
 			cfg:      execConfig(map[string]any{cfgTimeout: int64(-5)}),
-			wantText: "timeout must be a positive",
+			wantText: wantPositiveTimeout,
 		},
 		{
 			name:     "non-integer timeout",
@@ -260,7 +264,7 @@ func TestExecFactoryRejectsBadConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := builtins.ExecFactory(tt.cfg)
+			_, err := builtins.ExecFactory()(tt.cfg)
 			if !errors.Is(err, builtins.ErrConfigValue) {
 				t.Fatalf("error %v does not wrap ErrConfigValue", err)
 			}
@@ -282,7 +286,7 @@ func TestExecBuildsWithoutAConfigBlock(t *testing.T) {
 	t.Parallel()
 
 	for _, cfg := range []map[string]any{nil, {}} {
-		instance, err := builtins.ExecFactory(cfg)
+		instance, err := builtins.ExecFactory()(cfg)
 		if err != nil {
 			t.Fatalf("factory rejected an unconfigured block: %v", err)
 		}
@@ -313,7 +317,7 @@ echo "warn" >&2`)
 		t.Fatalf("exit_code = %q, want 0", result.Meta["exit_code"])
 	}
 
-	if result.Meta["stderr_tail"] != "warn" {
+	if result.Meta["stderr_tail"] != shimStderr {
 		t.Fatalf("stderr_tail = %q, want warn", result.Meta["stderr_tail"])
 	}
 

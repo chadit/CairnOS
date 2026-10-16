@@ -74,6 +74,9 @@ const (
 // CheckRedirect otherwise replaces with no limit at all.
 const maxRedirects = 10
 
+// httpsScheme is the only URL scheme a download or a redirect hop may use.
+const httpsScheme = "https"
+
 // waitDelay bounds how long the probe waits for a child that kept stdout open
 // after its context fired. Without it a bw that forks blocks the read forever
 // and the install hangs with nothing on screen.
@@ -171,7 +174,7 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 		return Result{}, err
 	}
 
-	defer func() { _ = os.Remove(archive) }()
+	defer removeTemp(archive, opts.log())
 
 	if extractErr := extract(archive, opts); extractErr != nil {
 		return Result{}, extractErr
@@ -200,7 +203,7 @@ func checkSource(source string) error {
 		return cairnerr.Wrapf(err, CodeSource, "parse the download URL: %v", err)
 	}
 
-	if parsed.Scheme != "https" {
+	if parsed.Scheme != httpsScheme {
 		return cairnerr.Newf(CodeSource, "the download URL must be https, not %q", parsed.Scheme)
 	}
 
@@ -406,13 +409,13 @@ func download(ctx context.Context, opts *Options, dir string) (string, error) {
 
 	sum, err := copyChecked(temp, body, maxArchive(opts))
 	if err != nil {
-		_ = os.Remove(temp.Name())
+		removeTemp(temp.Name(), opts.log())
 
 		return "", err
 	}
 
 	if !strings.EqualFold(sum, opts.ArchiveSHA256) {
-		_ = os.Remove(temp.Name())
+		removeTemp(temp.Name(), opts.log())
 
 		return "", cairnerr.Newf(CodeChecksum,
 			"%s has sha256 %s, want the pinned %s", opts.URL, sum, opts.ArchiveSHA256)
@@ -540,13 +543,13 @@ func place(source io.Reader, opts *Options) error {
 	}
 
 	if err := fill(temp, source, opts); err != nil {
-		_ = os.Remove(temp.Name())
+		removeTemp(temp.Name(), opts.log())
 
 		return err
 	}
 
 	if err := os.Rename(temp.Name(), opts.Dest); err != nil {
-		_ = os.Remove(temp.Name())
+		removeTemp(temp.Name(), opts.log())
 
 		return cairnerr.Wrapf(err, CodeInstall, "move the binary into %s: %v", opts.Dest, err)
 	}
@@ -609,7 +612,7 @@ func client(opts *Options) *http.Client {
 // refuseDowngrade stops a redirect chain that leaves https, and keeps the
 // standard library's own hop limit.
 func refuseDowngrade(request *http.Request, via []*http.Request) error {
-	if request.URL.Scheme != "https" {
+	if request.URL.Scheme != httpsScheme {
 		return cairnerr.Newf(CodeSource, "the download was redirected to %q, which is not https",
 			request.URL.Scheme)
 	}
@@ -619,6 +622,15 @@ func refuseDowngrade(request *http.Request, via []*http.Request) error {
 	}
 
 	return nil
+}
+
+// removeTemp deletes a download or install temp file the run no longer needs.
+// A failure only leaves a stray file beside the destination, and the caller is
+// already returning the error that matters, so it is logged instead.
+func removeTemp(path string, logger *slog.Logger) {
+	if err := os.Remove(path); err != nil {
+		logger.Warn("remove a Bitwarden CLI temp file", "path", path, "error", err)
+	}
 }
 
 // log resolves the logger, so every call site can write a line without a nil

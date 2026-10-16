@@ -15,7 +15,7 @@
 // driver calls it. Instead the turn stops with a ConfirmationRequired event
 // carrying the proposed workflow, its inputs, and the estimated budget, and
 // waits for an explicit ConfirmAction from the user. Only an approval, on a
-// token additionally carrying write:workflow, fires the workflow, and it runs
+// token that also carries write:workflow, fires the workflow, and it runs
 // under the normal engine governance (Phase 5b budgets and pause) at depth
 // exactly one: the spawned run's own actions still obey the one-level rule, so
 // nothing it does can start a third loop.

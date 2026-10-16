@@ -118,29 +118,22 @@ func TestLoadCredentialRejectsPlaintextSecrets(t *testing.T) {
 func TestLoadCredentialRejectsUnknownKeys(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		key  string
-	}{
-		{name: "token", key: "token"},
-		{name: "access_token", key: "access_token"},
-		{name: "api_key", key: "api_key"},
-		{name: "private_key", key: "private_key"},
-		{name: "typo", key: "cliennt_id"},
-	}
+	// Each subtest is named for the key it writes. cliennt_id is a typo of
+	// client_id, so a misspelling fails the same way a secret-shaped key does.
+	keys := []string{"token", "access_token", "api_key", "private_key", "cliennt_id"}
 
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := config.Load(writeConfig(t, credentialTOML(tt.key+" = \"LEAK\"")))
+			_, err := config.Load(writeConfig(t, credentialTOML(key+" = \"LEAK\"")))
 			if !errors.Is(err, config.ErrInvalidConfig) {
 				t.Fatalf("error = %v, want ErrInvalidConfig", err)
 			}
 
 			message := err.Error()
-			if !strings.Contains(message, tt.key) {
-				t.Fatalf("error should name the unknown key %q: %v", tt.key, err)
+			if !strings.Contains(message, key) {
+				t.Fatalf("error should name the unknown key %q: %v", key, err)
 			}
 
 			if strings.Contains(message, "LEAK") {

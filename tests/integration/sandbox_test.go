@@ -36,7 +36,7 @@ const (
 // newSandboxRunner builds the real runner against the live runtime with no
 // `runtime` override, so detection runs for real: podman on the dev machine,
 // docker on CI, or the podman-backed docker wrapper when both are on PATH.
-func newSandboxRunner(t *testing.T) runner.Runner {
+func newSandboxRunner(t *testing.T) *builtins.SandboxExec {
 	t.Helper()
 
 	sandbox, err := builtins.NewSandboxExec(map[string]any{

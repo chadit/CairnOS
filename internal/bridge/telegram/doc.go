@@ -24,12 +24,14 @@
 // loop emit, including the backoff and up/down lines.
 //
 // The Bot API base URL is fixed to DefaultBaseURL (https://api.telegram.org) on
-// the production path. New builds the client through NewClient(token,
-// DefaultBaseURL, ...) whenever Config.API is nil, and nothing in the serve
-// wiring sets Config.API, so a running bridge always talks to the real host. The
-// base URL is a parameter of NewClient only so the client's own tests can point
-// it at an httptest server, and Config.API is the seam an adapter test injects a
-// recorder through. Neither is ever read from a config file or an env var. That
+// the production path. New builds the client through NewClientOver(token,
+// DefaultBaseURL, ..., Config.Transport) whenever Config.API is nil, and nothing
+// in the serve wiring sets Config.API, so a running bridge always addresses the
+// real host. The base URL is a parameter of NewClient only so the client's own
+// tests can point it at an httptest server. Config.API is the seam an adapter
+// suite injects a recorder through, and Config.Transport is how serve's suite
+// answers the poll in the process. None of them is ever read from a config file
+// or an env var. That
 // keeps the token-exfiltration boundary intact: a configurable base URL over a
 // token-in-path API would let an operator or attacker redirect the next call,
 // and the token with it, to another host. The redirect stays a compile-time test

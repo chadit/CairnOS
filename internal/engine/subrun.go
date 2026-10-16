@@ -22,6 +22,10 @@ const triggerWorkflow = "workflow"
 // it (.agents/spec/parity/workflow-language.md, "Workflow call").
 const detailChildRunID = "child_run_id"
 
+// fieldRunID is the run-id key in the maps the engine hands a workflow: a
+// workflow-call action's output and an error workflow's failure context.
+const fieldRunID = "run_id"
+
 // The depth caps recursion, and the ancestry both prints the offending chain
 // and, by growing without bound, catches an A->B->A cycle without separate cycle
 // tracking. callInfo is deliberately engine-internal: context.WithoutCancel
@@ -121,9 +125,9 @@ func (e *Engine) workflowCallOutcome(ctx context.Context, child *store.Run) atte
 	return attemptOutcome{
 		attempts: 1,
 		result: runner.Result{Output: map[string]any{
-			"run_id":  child.ID,
-			"status":  string(child.Status),
-			"outputs": outputs,
+			fieldRunID: child.ID,
+			"status":   string(child.Status),
+			"outputs":  outputs,
 		}},
 	}
 }

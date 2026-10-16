@@ -16,6 +16,13 @@ import (
 // struct this large by pointer, and Search returns a SearchResult so the
 // semantic fallback is visible to callers.
 type Store interface {
+	EntryStore
+	Retriever
+}
+
+// EntryStore reads and writes one entry at a time by id, the surface an
+// import needs to upsert without searching.
+type EntryStore interface {
 	// Add persists a new entry and returns its id, generating a ULID when
 	// the entry does not bring one.
 	Add(ctx context.Context, entry *Entry) (string, error)
@@ -29,7 +36,11 @@ type Store interface {
 
 	// Delete removes one entry by id.
 	Delete(ctx context.Context, id string) error
+}
 
+// Retriever finds entries by query, scope, or prompt budget rather than by
+// id, the surface prompts, search, and export read through.
+type Retriever interface {
 	// Search returns entries relevant to the query: keyword (FTS5) by
 	// default, semantic when a vector backend is configured and the query
 	// is embedded.

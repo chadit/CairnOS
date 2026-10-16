@@ -23,6 +23,8 @@ const (
 	textKey      = "text"
 	actionMCP    = "mcp"
 	echoInput    = "hi"
+	echoPrefix   = "echo: "
+	echoOutput   = echoPrefix + echoInput
 	exampleMCP   = "http://mcp.test"
 	stubCommand  = "mcp-server"
 )
@@ -43,7 +45,7 @@ func newMCPHandler() http.Handler {
 	mcp.AddTool(server, &mcp.Tool{Name: echoTool, Description: echoDesc},
 		func(_ context.Context, _ *mcp.CallToolRequest, args echoArgs) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "echo: " + args.Text}},
+				Content: []mcp.Content{&mcp.TextContent{Text: echoPrefix + args.Text}},
 			}, nil, nil
 		})
 
@@ -104,7 +106,7 @@ func TestMCPClientNameFollowsRegistration(t *testing.T) {
 		},
 		{
 			name:     "built-in factory reports mcp_client",
-			build:    func() (runner.Runner, error) { return builtins.MCPClientFactory(cfg) },
+			build:    func() (runner.Runner, error) { return builtins.MCPClientFactory()(cfg) },
 			wantName: builtins.MCPClientName,
 		},
 		{
@@ -156,7 +158,7 @@ func TestMCPClientCallsRemoteTool(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 
-	if result.Output != "echo: hi" {
+	if result.Output != echoOutput {
 		t.Fatalf("output = %#v", result.Output)
 	}
 
@@ -355,7 +357,7 @@ func TestMCPClientCredentialSendsBearer(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 
-	if result.Output != "echo: hi" {
+	if result.Output != echoOutput {
 		t.Fatalf("output = %#v", result.Output)
 	}
 

@@ -51,10 +51,8 @@ func integrationKey(t *testing.T) []byte {
 }
 
 // openSecretsSchema opens a secret store in its own Postgres schema off the
-// shared container under keys, dropping the schema on cleanup. It returns the
-// Store interface so the shared conformance suite drives it the same way the
-// sqlite backend is driven.
-func openSecretsSchema(t *testing.T, schema string, keys secretstest.KeySet) secrets.Store {
+// shared container under keys, dropping the schema on cleanup.
+func openSecretsSchema(t *testing.T, schema string, keys secretstest.KeySet) *secrets.Postgres {
 	t.Helper()
 
 	ctx := t.Context()

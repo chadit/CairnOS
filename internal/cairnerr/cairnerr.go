@@ -54,12 +54,9 @@ func (e *Error) Error() string {
 }
 
 // Equal reports whether two errors carry the same wire form: the code, the
-// message, and the structured details. The cause is deliberately left out. It
-// is process-local, never serialized, and never round-tripped through a store,
-// so two errors that describe the same failure can hold different chains.
-//
-// This exists because comparing these values with reflect.DeepEqual compares
-// the chain as well, which no consumer of the wire form ever sees.
+// message, and the structured details. The cause is left out because it is
+// process-local and never serialized, so two errors describing one failure can
+// hold different chains. reflect.DeepEqual would compare those chains too.
 func Equal(first, second *Error) bool {
 	if first == nil || second == nil {
 		return first == second

@@ -19,7 +19,7 @@ import (
 // openStore opens a store in its own Postgres schema off the shared container,
 // matching the per-case isolation the sqlite backend gets from a temp file. The
 // schema is a fresh lowercased ULID; cleanup drops it and closes the pool.
-func openStore(t *testing.T) store.Store {
+func openStore(t *testing.T) *postgres.Store {
 	t.Helper()
 
 	ctx := t.Context()
@@ -97,13 +97,15 @@ func TestOpenReAddsParentRunIDColumn(t *testing.T) {
 		}
 	})
 
+	const parentRunID = "run-parent"
+
 	child := &store.Run{
 		ID:           "run-child",
 		WorkflowName: "alpha",
 		WorkflowHash: "hash",
 		Status:       store.RunPending,
 		Trigger:      "replay",
-		ParentRunID:  "run-parent",
+		ParentRunID:  parentRunID,
 		CreatedAt:    time.Now(),
 	}
 	if createRunErr := reopened.CreateRun(ctx, child); createRunErr != nil {
@@ -115,7 +117,7 @@ func TestOpenReAddsParentRunIDColumn(t *testing.T) {
 		t.Fatalf("get child run: %v", err)
 	}
 
-	if got.ParentRunID != "run-parent" {
+	if got.ParentRunID != parentRunID {
 		t.Errorf("child parent_run_id = %q, want run-parent", got.ParentRunID)
 	}
 }

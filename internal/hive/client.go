@@ -130,14 +130,14 @@ type publishRequest struct {
 // counts on them; the tip itself the host cannot read.
 type sealedPublishRequest struct {
 	NodePseudonym string    `json:"node_pseudonym"`
-	SealedTip     sealedTip `json:"sealed_tip"`
+	SealedTip     SealedTip `json:"sealed_tip"`
 	Observations  int       `json:"observations"`
 }
 
 // sealedSubscribeResponse is the sealed counterpart of subscribeResponse: a
 // list of encrypted envelopes the node opens with the shared key.
 type sealedSubscribeResponse struct {
-	Tips []sealedTip `json:"tips"`
+	Tips []SealedTip `json:"tips"`
 }
 
 // NewHTTPClient builds an HTTP hive client from the config and an injected

@@ -343,42 +343,12 @@ func TestUpdateCheckAgainstARelease(t *testing.T) {
 
 	revision := strings.Repeat("b", 40)
 
-	release := withDefaultSums(&stagedRelease{
-		tag:       updateStagedTag,
-		revision:  revision,
-		assetName: releaseAssetFor(runtime.GOOS, runtime.GOARCH),
-		asset:     []byte("an asset the check never downloads\n"),
-		annotated: true,
-	})
-
-	api := startReleaseServer(t, release)
-
-	var stdout, stderr bytes.Buffer
-
-	code, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(),
-		&cli.UpdateRun{
-			APIBase:    api.base,
-			Transport:  api.transport,
-			Executable: filepath.Join(t.TempDir(), updateLinkName),
-			Home:       t.TempDir(),
-			Check:      true,
-		}, failingSteps(t))
-	if err != nil {
-		t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
-	}
-
-	if code != cli.ExitBehind {
-		t.Fatalf("exit = %d, want %d", code, cli.ExitBehind)
-	}
-
-	if !strings.Contains(stdout.String(), revision) {
-		t.Errorf("stdout does not name the tag's commit:\n%s", stdout.String())
-	}
+	assertCheckExit(t, releaseCheckRun(t, revision), revision, cli.ExitBehind)
 }
 
 // TestUpdateCheckExitCodes pins the contract a scheduled check elsewhere keys
-// on, including the match that DriveUpdate cannot reach: nothing on a test host
-// runs the revision a staged release names.
+// on. Running stands in for the service's stamp, so a case reaches the match
+// with no service on the host.
 func TestUpdateCheckExitCodes(t *testing.T) {
 	t.Parallel()
 
@@ -387,31 +357,84 @@ func TestUpdateCheckExitCodes(t *testing.T) {
 	cases := []struct {
 		name    string
 		running string
-		wanted  string
 		code    int
 	}{
-		{"the service runs the wanted revision", revision, revision, cli.ExitOK},
-		{"the service runs something older", strings.Repeat("d", 40), revision, cli.ExitBehind},
-		{"nothing is running", "", revision, cli.ExitBehind},
-		{"both sides are dirty", revision + "+dirty", revision + "+dirty", cli.ExitBehind},
+		{"the service runs the wanted revision", revision, cli.ExitOK},
+		{"the service runs something older", strings.Repeat("d", 40), cli.ExitBehind},
+		{"nothing is running", "", cli.ExitBehind},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			var stdout bytes.Buffer
+			run := releaseCheckRun(t, revision)
+			run.Running = testCase.running
 
-			code := cli.New(&stdout, &bytes.Buffer{}).
-				UpdateRevisionReport(testCase.running, testCase.wanted)
-			if code != testCase.code {
-				t.Fatalf("exit = %d, want %d", code, testCase.code)
-			}
-
-			if !strings.Contains(stdout.String(), testCase.wanted) {
-				t.Errorf("stdout does not name the wanted revision:\n%s", stdout.String())
-			}
+			assertCheckExit(t, run, revision, testCase.code)
 		})
+	}
+
+	// Two builds both stamped "+dirty" say nothing about whether they hold the
+	// same uncommitted change, so a match still reads as behind.
+	t.Run("both sides are dirty", func(t *testing.T) {
+		t.Parallel()
+		requireGit(t)
+
+		work, _ := stageClonePair(t)
+		writeFile(t, filepath.Join(work, "main.go"), stagedModuleMain+"// wip\n")
+
+		wanted := gitOut(t, work, "rev-parse", "HEAD") + "+dirty"
+
+		run := sourceRun(t, work, wanted)
+		run.Check = true
+		run.NoFetch = true
+
+		assertCheckExit(t, run, wanted, cli.ExitBehind)
+	})
+}
+
+// releaseCheckRun stages a published release at revision, behind an annotated
+// tag so the lookup also dereferences the tag object, and returns a --check
+// invocation against it.
+func releaseCheckRun(t *testing.T, revision string) *cli.UpdateRun {
+	t.Helper()
+
+	api := startReleaseServer(t, &stagedRelease{
+		tag:       updateStagedTag,
+		revision:  revision,
+		assetName: releaseAssetFor(runtime.GOOS, runtime.GOARCH),
+		asset:     []byte("an asset the check never downloads\n"),
+		annotated: true,
+	})
+
+	return &cli.UpdateRun{
+		APIBase:    api.base,
+		Transport:  api.transport,
+		Executable: filepath.Join(t.TempDir(), updateLinkName),
+		Home:       t.TempDir(),
+		Check:      true,
+	}
+}
+
+// assertCheckExit runs a --check invocation and pins its exit code and the
+// wanted revision it prints. failingSteps proves the check changed nothing.
+func assertCheckExit(t *testing.T, run *cli.UpdateRun, wanted string, code int) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	got, err := cli.New(&stdout, &stderr).DriveUpdate(t.Context(), run, failingSteps(t))
+	if err != nil {
+		t.Fatalf("DriveUpdate() error = %v\nstderr: %s", err, stderr.String())
+	}
+
+	if got != code {
+		t.Fatalf("exit = %d, want %d\nstdout: %s", got, code, stdout.String())
+	}
+
+	if !strings.Contains(stdout.String(), "wanted:  "+wanted) {
+		t.Errorf("stdout does not name the wanted revision %s:\n%s", wanted, stdout.String())
 	}
 }
 
@@ -420,7 +443,7 @@ func TestUpdateCheckExitCodes(t *testing.T) {
 // side of that contract fails this test.
 func releaseAssetFor(goos, goarch string) string {
 	name := fmt.Sprintf("cairnos_%s_%s", goos, goarch)
-	if goos == "windows" {
+	if goos == goosWindows {
 		return name + ".exe"
 	}
 
@@ -484,7 +507,7 @@ func startCountingReleaseServer(t *testing.T, release *stagedRelease) releaseAPI
 
 	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls.Add(1)
-		serveRelease(writer, request, release)
+		serveRelease(t, writer, request, release)
 	})
 
 	return releaseAPI{base: releaseHost, transport: nettest.Transport(handler), calls: &calls}
@@ -492,20 +515,22 @@ func startCountingReleaseServer(t *testing.T, release *stagedRelease) releaseAPI
 
 // serveRelease answers the three endpoints the lookup reads plus the download
 // the install streams, with the asset URLs pointing back at this server.
-func serveRelease(writer http.ResponseWriter, request *http.Request, release *stagedRelease) {
+func serveRelease(t *testing.T, writer http.ResponseWriter, request *http.Request, release *stagedRelease) {
+	t.Helper()
+
 	base := "http://" + request.Host
 
 	switch {
 	case strings.HasSuffix(request.URL.Path, "/releases/latest"):
-		writeLatest(writer, release, base)
+		writeLatest(t, writer, release, base)
 	case strings.Contains(request.URL.Path, "/git/ref/tags/"):
-		writeTagRef(writer, release)
+		writeTagRef(t, writer, release)
 	case strings.Contains(request.URL.Path, "/git/tags/"):
-		writeJSON(writer, fmt.Sprintf(`{"object":{"type":"commit","sha":%q}}`, release.revision))
+		writeJSON(t, writer, fmt.Sprintf(`{"object":{"type":"commit","sha":%q}}`, release.revision))
 	case request.URL.Path == "/dl/"+release.assetName:
-		_, _ = writer.Write(release.asset)
+		writeBody(t, writer, release.asset)
 	case request.URL.Path == "/dl/checksums.txt":
-		_, _ = writer.Write([]byte(release.sums))
+		writeBody(t, writer, []byte(release.sums))
 	default:
 		writer.WriteHeader(http.StatusNotFound)
 	}
@@ -513,7 +538,9 @@ func serveRelease(writer http.ResponseWriter, request *http.Request, release *st
 
 // writeLatest publishes the release payload, or the status a case staged in
 // place of it.
-func writeLatest(writer http.ResponseWriter, release *stagedRelease, base string) {
+func writeLatest(t *testing.T, writer http.ResponseWriter, release *stagedRelease, base string) {
+	t.Helper()
+
 	if release.latestCode != http.StatusOK {
 		writer.WriteHeader(release.latestCode)
 
@@ -527,24 +554,38 @@ func writeLatest(writer http.ResponseWriter, release *stagedRelease, base string
 		assets += fmt.Sprintf(`,{"name":"checksums.txt","browser_download_url":"%s/dl/checksums.txt"}`, base)
 	}
 
-	writeJSON(writer, fmt.Sprintf(`{"tag_name":%q,"assets":[%s]}`, release.tag, assets))
+	writeJSON(t, writer, fmt.Sprintf(`{"tag_name":%q,"assets":[%s]}`, release.tag, assets))
 }
 
 // writeTagRef answers the ref endpoint, pointing at a tag object when the case
 // staged an annotated tag and at the commit itself otherwise.
-func writeTagRef(writer http.ResponseWriter, release *stagedRelease) {
+func writeTagRef(t *testing.T, writer http.ResponseWriter, release *stagedRelease) {
+	t.Helper()
+
 	kind := "commit"
 	if release.annotated {
 		kind = "tag"
 	}
 
-	writeJSON(writer, fmt.Sprintf(`{"object":{"type":%q,"sha":%q}}`, kind, release.revision))
+	writeJSON(t, writer, fmt.Sprintf(`{"object":{"type":%q,"sha":%q}}`, kind, release.revision))
 }
 
 // writeJSON sends one API body with the content type the client expects.
-func writeJSON(writer http.ResponseWriter, body string) {
+func writeJSON(t *testing.T, writer http.ResponseWriter, body string) {
+	t.Helper()
+
 	writer.Header().Set("Content-Type", "application/json")
-	_, _ = writer.Write([]byte(body))
+	writeBody(t, writer, []byte(body))
+}
+
+// writeBody sends one response body. A failed write means the client hung up
+// mid-case, which the case should report rather than pass on a partial body.
+func writeBody(t *testing.T, writer http.ResponseWriter, body []byte) {
+	t.Helper()
+
+	if _, err := writer.Write(body); err != nil {
+		t.Errorf("write release response: %v", err)
+	}
 }
 
 // recordingSteps names every step as it runs. install performs the real

@@ -2,7 +2,6 @@ package builtins_test
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"testing"
 
@@ -23,12 +22,14 @@ func TestOpenAIEmbedderPostsAndDecodes(t *testing.T) {
 			Input string `json:"input"`
 		}
 
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode embeddings request: %v", err)
+		}
+
 		gotModel, gotInput = req.Model, req.Input
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
+		w.Header().Set("Content-Type", mediaJSON)
+		writeBody(t, w, `{"data":[{"embedding":[0.1,0.2,0.3]}]}`)
 	}))
 
 	// An empty model falls back to the default, proving the fallback is wired.
@@ -67,7 +68,7 @@ func TestOpenAIEmbedderEmptyVectorIsError(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		writeBody(t, w, `{"data":[]}`)
 	}))
 
 	embedder := builtins.NewOpenAIEmbedder("text-embedding-3-large", server.URL, server.Client(), openAIKey(testAPIKey))

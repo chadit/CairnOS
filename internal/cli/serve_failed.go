@@ -142,8 +142,13 @@ func (n *serveFailNotifier) statePath() string {
 func (n *serveFailNotifier) oneShotRegistry() *messaging.Registry {
 	name := n.cfg.Notify.Mattermost.Identity
 
-	sender, built := n.oneShotSender(name)
+	bridge, built := n.oneShotBridge(name)
 	if !built {
+		return nil
+	}
+
+	sender, ok := bridge.Senders()[name]
+	if !ok {
 		return nil
 	}
 
@@ -153,10 +158,11 @@ func (n *serveFailNotifier) oneShotRegistry() *messaging.Registry {
 	return registry
 }
 
-// oneShotSender builds one identity's send surface without starting a bridge.
-// It opens no socket and never calls Connect, so a #channel target resolves on
-// one lookup while a @user target, which needs the bot's own id, does not.
-func (n *serveFailNotifier) oneShotSender(name string) (messaging.Sender, bool) {
+// oneShotBridge builds a bridge over one identity for its send surface alone.
+// It is never started: it opens no socket and never calls Connect, so a
+// #channel target resolves on one lookup while a @user target, which needs the
+// bot's own id, does not.
+func (n *serveFailNotifier) oneShotBridge(name string) (*mattermost.Bridge, bool) {
 	settings := &n.cfg.Bridge.Mattermost
 
 	declared, known := settings.Identity[name]
@@ -189,15 +195,11 @@ func (n *serveFailNotifier) oneShotSender(name string) (messaging.Sender, bool) 
 		return nil, false
 	}
 
-	senders := mattermost.New(&mattermost.Config{
+	return mattermost.New(&mattermost.Config{
 		Logger:     n.logger,
 		Identities: []mattermost.Identity{{Client: client, Name: name, Config: declared}},
 		Server:     *settings,
-	}).Senders()
-
-	sender, ok := senders[name]
-
-	return sender, ok
+	}), true
 }
 
 // serveFailedLine names the host and the stage, and says what the box is doing

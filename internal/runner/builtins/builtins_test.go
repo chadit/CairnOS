@@ -14,9 +14,15 @@ import (
 const (
 	testRunID      = "run1"
 	classTransient = "transient"
+	classPermanent = "permanent"
 	actionFlaky    = "flaky"
 	actionCalc     = "calc"
 	paramFn        = "fn"
+	paramFailClass = "fail_class"
+
+	// fnDouble and fnBroken are the local functions the local_fn cases register.
+	fnDouble = "double"
+	fnBroken = "broken"
 )
 
 func TestMockReturnsConfiguredOutputAndCost(t *testing.T) {
@@ -54,7 +60,7 @@ func TestMockFailsWithConfiguredClass(t *testing.T) {
 		wantClass runner.ErrorClass
 	}{
 		{name: "transient failure", failClass: classTransient, wantClass: runner.ClassTransient},
-		{name: "permanent", failClass: "permanent", wantClass: runner.ClassPermanent},
+		{name: "permanent failure", failClass: classPermanent, wantClass: runner.ClassPermanent},
 		{name: "rate limited", failClass: "rate_limited", wantClass: runner.ClassRateLimited},
 	}
 
@@ -66,7 +72,7 @@ func TestMockFailsWithConfiguredClass(t *testing.T) {
 			task := &runner.Task{
 				RunID:      testRunID,
 				ActionName: tt.name,
-				Params:     map[string]any{"fail_class": tt.failClass},
+				Params:     map[string]any{paramFailClass: tt.failClass},
 			}
 
 			_, err := mock.Execute(t.Context(), task)
@@ -90,7 +96,7 @@ func TestMockFailTimesRecoversAfterN(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: actionFlaky,
-		Params:     map[string]any{"fail_class": classTransient, "fail_times": int64(2)},
+		Params:     map[string]any{paramFailClass: classTransient, "fail_times": int64(2)},
 	}
 
 	for attempt := range 2 {
@@ -133,7 +139,7 @@ func TestLocalFnCallsRegisteredFunction(t *testing.T) {
 	t.Parallel()
 
 	funcs := map[string]builtins.Func{
-		"double": func(_ context.Context, task *runner.Task) (any, error) {
+		fnDouble: func(_ context.Context, task *runner.Task) (any, error) {
 			num, _ := task.Params["n"].(int64)
 
 			return num * 2, nil
@@ -144,7 +150,7 @@ func TestLocalFnCallsRegisteredFunction(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: actionCalc,
-		Params:     map[string]any{paramFn: "double", "n": int64(21)},
+		Params:     map[string]any{paramFn: fnDouble, "n": int64(21)},
 		Resolved:   true,
 	}
 
@@ -184,7 +190,7 @@ func TestLocalFnDefersUnresolvedFnReference(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: actionCalc,
-		Params:     map[string]any{paramFn: "${{ pick.output }}"},
+		Params:     map[string]any{paramFn: unresolved},
 		Resolved:   false,
 	}
 
@@ -200,7 +206,7 @@ func TestLocalFnKeepsClassifiedErrors(t *testing.T) {
 		actionFlaky: func(_ context.Context, _ *runner.Task) (any, error) {
 			return nil, runner.NewError(runner.ClassTransient, "flaky.blip", "try again")
 		},
-		"broken": func(_ context.Context, _ *runner.Task) (any, error) {
+		fnBroken: func(_ context.Context, _ *runner.Task) (any, error) {
 			return nil, errors.New("plain failure")
 		},
 	}
@@ -219,7 +225,7 @@ func TestLocalFnKeepsClassifiedErrors(t *testing.T) {
 
 	_, err = localFn.Execute(t.Context(), &runner.Task{
 		RunID: "r", ActionName: "b",
-		Params: map[string]any{paramFn: "broken"}, Resolved: true,
+		Params: map[string]any{paramFn: fnBroken}, Resolved: true,
 	})
 
 	permanentErr, isWrapped := errors.AsType[*runner.Error](err)
@@ -233,11 +239,11 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); err != nil {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
-	if err := registry.Register(builtins.MockName, builtins.MockFactory); !errors.Is(err, runner.ErrDuplicateRunner) {
+	if err := registry.Register(builtins.MockName, builtins.MockFactory()); !errors.Is(err, runner.ErrDuplicateRunner) {
 		t.Fatalf("duplicate register error = %v, want ErrDuplicateRunner", err)
 	}
 

@@ -49,16 +49,27 @@ type cronFieldStep struct {
 	maxStep int
 }
 
+// Each cron field's span, last value minus first: the widest step that still
+// reaches a second value in the field.
+const (
+	secondsSpan    = 59 // 0-59
+	minutesSpan    = 59 // 0-59
+	hoursSpan      = 23 // 0-23
+	dayOfMonthSpan = 30 // 1-31
+	monthSpan      = 11 // 1-12
+	dayOfWeekSpan  = 6  // 0-6, Sunday first
+)
+
 // fieldSteps lists the step limits in six-field order; a five-field expression
 // drops the leading seconds entry.
 func fieldSteps() []cronFieldStep {
 	return []cronFieldStep{
-		{name: "seconds", maxStep: 59},
-		{name: "minutes", maxStep: 59},
-		{name: "hours", maxStep: 23},
-		{name: "day of month", maxStep: 30},
-		{name: "month", maxStep: 11},
-		{name: "day of week", maxStep: 6},
+		{name: "seconds", maxStep: secondsSpan},
+		{name: "minutes", maxStep: minutesSpan},
+		{name: "hours", maxStep: hoursSpan},
+		{name: "day of month", maxStep: dayOfMonthSpan},
+		{name: "month", maxStep: monthSpan},
+		{name: "day of week", maxStep: dayOfWeekSpan},
 	}
 }
 
@@ -136,7 +147,7 @@ func checkFireRate(expr string, sched cron.Schedule) error {
 // parseCron translates an @-shorthand, parses the resulting expression, and
 // holds it to the fire-rate floor, wrapping each failure in its own sentinel so
 // callers can tell a malformed expression from an overly eager one.
-func parseCron(expr string) (cron.Schedule, error) {
+func parseCron(expr string) (*cron.SpecSchedule, error) {
 	if translated, ok := shorthands[expr]; ok {
 		expr = translated
 	}
@@ -146,15 +157,22 @@ func parseCron(expr string) (cron.Schedule, error) {
 		return nil, fmt.Errorf("%w: %q: %w", ErrBadCron, expr, err)
 	}
 
+	// fieldParser has no Descriptor option, so every expression it accepts is a
+	// field schedule; the check guards a parser change, not a live path.
+	spec, ok := parsed.(*cron.SpecSchedule)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q parsed to %T, not a field schedule", ErrBadCron, expr, parsed)
+	}
+
 	if err := checkSteps(expr); err != nil {
 		return nil, err
 	}
 
-	if err := checkFireRate(expr, parsed); err != nil {
+	if err := checkFireRate(expr, spec); err != nil {
 		return nil, err
 	}
 
-	return parsed, nil
+	return spec, nil
 }
 
 // ValidateCron reports whether expr is a supported @-shorthand, a 5-field cron

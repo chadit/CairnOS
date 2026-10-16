@@ -13,8 +13,8 @@ import (
 // per-call header wins).
 const cfgKeyCredential = "credential"
 
-// headerAuthorization is the request header a credential bearer token sets, and
-// the one an explicit config or per-call header overrides.
+// headerAuthorization carries every bearer token the runners send. A credential
+// token yields to an explicit config or per-call header of the same name.
 const headerAuthorization = "Authorization"
 
 // TokenLookup mints a bearer token for a named outbound credential. The

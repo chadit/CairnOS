@@ -79,7 +79,7 @@ func (a *App) cmdKeysAdd(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	authStore, _, code, proceed := a.openAuthAt(ctx, "keys add", *dirFlag)
+	authStore, _, code, proceed := openAt(ctx, a, "keys add", *dirFlag, authBackends())
 	if !proceed {
 		return code
 	}
@@ -117,7 +117,7 @@ func (a *App) cmdKeysList(ctx context.Context, args []string) int {
 		return code
 	}
 
-	authStore, _, code, proceed := a.openAuthAt(ctx, "keys list", *dirFlag)
+	authStore, _, code, proceed := openAt(ctx, a, "keys list", *dirFlag, authBackends())
 	if !proceed {
 		return code
 	}
@@ -174,7 +174,7 @@ func (a *App) cmdKeysSetEnabled(ctx context.Context, label string, args []string
 		return ExitUsage
 	}
 
-	authStore, cfg, code, proceed := a.openAuthAt(ctx, label, *dirFlag)
+	authStore, cfg, code, proceed := openAt(ctx, a, label, *dirFlag, authBackends())
 	if !proceed {
 		return code
 	}

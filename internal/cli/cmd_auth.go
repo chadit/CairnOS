@@ -56,7 +56,7 @@ func (a *App) cmdAuthRevoke(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	authStore, cfg, code, proceed := a.openAuthAt(ctx, "auth revoke", *dirFlag)
+	authStore, cfg, code, proceed := openAt(ctx, a, "auth revoke", *dirFlag, authBackends())
 	if !proceed {
 		return code
 	}

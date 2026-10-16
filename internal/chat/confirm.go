@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/chadit/CairnOS/internal/store"
 )
@@ -118,14 +119,16 @@ func (a *Agent) recordRunStart(ctx context.Context, sessionID, workflowName, run
 		fmt.Sprintf("Confirmed. Started workflow %q as run %s.", workflowName, runID))
 }
 
-// recordAssistant appends one assistant message, swallowing the persistence
-// error: the run has already started or finished, so a failed history write
-// must not change the streamed outcome. The error is returned by the store's
-// own logging path, not surfaced here.
+// recordAssistant appends one assistant message. A failed write is logged, not
+// returned: the run has already started or finished, so a lost history line
+// must not change the streamed outcome.
 func (a *Agent) recordAssistant(ctx context.Context, sessionID, content string) {
-	_ = a.cfg.Store.AppendMessage(ctx, &store.ChatMessage{
+	err := a.cfg.Store.AppendMessage(ctx, &store.ChatMessage{
 		SessionID: sessionID,
 		Role:      store.ChatRoleAssistant,
 		Content:   content,
 	})
+	if err != nil {
+		slog.WarnContext(ctx, "chat history write failed", "session", sessionID, "error", err)
+	}
 }

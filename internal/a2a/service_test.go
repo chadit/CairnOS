@@ -11,6 +11,9 @@ import (
 	a2av1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1"
 )
 
+// clientTaskID is the caller-chosen task id CreateTask must echo back.
+const clientTaskID = "client-123"
+
 func TestCreateTaskStartsRun(t *testing.T) {
 	t.Parallel()
 
@@ -18,7 +21,7 @@ func TestCreateTaskStartsRun(t *testing.T) {
 
 	resp, err := fix.a2a.CreateTask(t.Context(), &a2av1.CreateTaskRequest{
 		Skill:        helloSkill,
-		ClientTaskId: "client-123",
+		ClientTaskId: clientTaskID,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -33,7 +36,7 @@ func TestCreateTaskStartsRun(t *testing.T) {
 		t.Fatalf("task skill = %q, want %q", task.GetSkill(), helloSkill)
 	}
 
-	if resp.GetClientTaskId() != "client-123" {
+	if resp.GetClientTaskId() != clientTaskID {
 		t.Fatalf("client task id = %q, want it echoed back", resp.GetClientTaskId())
 	}
 }

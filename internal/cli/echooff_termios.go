@@ -16,7 +16,7 @@ import (
 //
 // ICANON goes off with it, so a read returns per keystroke and the prompt can
 // star it. ISIG stays on, so Ctrl+C still works.
-func echoOff(file *os.File) (func(), error) {
+func echoOff(file *os.File) (func() error, error) {
 	descriptor := int(file.Fd())
 
 	before, err := currentTermios(descriptor)
@@ -30,7 +30,13 @@ func echoOff(file *os.File) (func(), error) {
 		return nil, fmt.Errorf("turn terminal echo off: %w", err)
 	}
 
-	return func() { _ = unix.IoctlSetTermios(descriptor, ioctlWriteTermios, before) }, nil
+	return func() error {
+		if err := unix.IoctlSetTermios(descriptor, ioctlWriteTermios, before); err != nil {
+			return fmt.Errorf("turn terminal echo back on: %w", err)
+		}
+
+		return nil
+	}, nil
 }
 
 // currentTermios reads the terminal settings, answering errNotATerminal for the

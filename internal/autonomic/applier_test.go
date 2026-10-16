@@ -18,6 +18,10 @@ const (
 	workflowName    = "cache_me"
 	workflowRunner  = "openai"
 	suggestionIDOne = "sug-1"
+
+	// evidenceWorkflowKey mirrors the applier's unexported key: Apply reads
+	// the target workflow name from this evidence field.
+	evidenceWorkflowKey = "workflow"
 )
 
 // minimalWorkflow is a valid single-action workflow the applier can find and
@@ -82,6 +86,19 @@ func newFixture(t *testing.T, enabled bool) *fixture {
 	return &fixture{db: db, applier: applier, workflowPath: workflowPath}
 }
 
+// readWorkflow returns the workflow file's current content, failing the test
+// when the file cannot be read so a missing file never passes as a mismatch.
+func (f *fixture) readWorkflow(t *testing.T) string {
+	t.Helper()
+
+	content, err := os.ReadFile(f.workflowPath)
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+
+	return string(content)
+}
+
 // fixedClock returns a clock pinned to a known instant so audit and version
 // timestamps are reproducible.
 func fixedClock() func() time.Time {
@@ -100,7 +117,7 @@ func seedApproved(t *testing.T, db store.Store, id string, kind store.Suggestion
 		Kind:      kind,
 		Target:    workflowName + ".fetch",
 		Rationale: "repeated identical call",
-		Evidence:  map[string]any{"workflow": workflowName, "action": "fetch", "runner": workflowRunner},
+		Evidence:  map[string]any{evidenceWorkflowKey: workflowName, "action": "fetch", "runner": workflowRunner},
 		Status:    store.SuggestionApproved,
 		CreatedAt: time.Now(),
 	})
@@ -122,8 +139,7 @@ func TestApplyDisabledByDefault(t *testing.T) {
 		t.Fatalf("apply error = %v, want ErrAutoApplyDisabled", err)
 	}
 
-	original, _ := os.ReadFile(fix.workflowPath)
-	if string(original) != minimalWorkflow {
+	if fix.readWorkflow(t) != minimalWorkflow {
 		t.Error("disabled apply still modified the workflow file")
 	}
 }
@@ -153,8 +169,7 @@ func TestApplyCachingRecordsRollbackAndAnnotates(t *testing.T) {
 	}
 
 	// The file now carries the annotation marker and still parses.
-	updated, _ := os.ReadFile(fix.workflowPath)
-	if !strings.Contains(string(updated), "cairnos auto-apply") {
+	if !strings.Contains(fix.readWorkflow(t), "cairnos auto-apply") {
 		t.Error("apply did not annotate the workflow file")
 	}
 
@@ -205,7 +220,7 @@ func TestApplyRefusesUnapproved(t *testing.T) {
 		ID:        suggestionIDOne,
 		Kind:      store.SuggestionCaching,
 		Target:    workflowName + ".fetch",
-		Evidence:  map[string]any{"workflow": workflowName},
+		Evidence:  map[string]any{evidenceWorkflowKey: workflowName},
 		Status:    store.SuggestionOpen,
 		CreatedAt: time.Now(),
 	})
@@ -233,8 +248,7 @@ func TestRevertRestoresPriorVersion(t *testing.T) {
 	}
 
 	// Sanity: the file changed.
-	afterApply, _ := os.ReadFile(fix.workflowPath)
-	if string(afterApply) == minimalWorkflow {
+	if fix.readWorkflow(t) == minimalWorkflow {
 		t.Fatal("apply did not change the file, so revert proves nothing")
 	}
 
@@ -243,8 +257,7 @@ func TestRevertRestoresPriorVersion(t *testing.T) {
 		t.Fatalf("revert: %v", err)
 	}
 
-	afterRevert, _ := os.ReadFile(fix.workflowPath)
-	if string(afterRevert) != minimalWorkflow {
+	if afterRevert := fix.readWorkflow(t); afterRevert != minimalWorkflow {
 		t.Errorf("revert did not restore the prior content\ngot:  %q\nwant: %q", afterRevert, minimalWorkflow)
 	}
 
@@ -322,8 +335,7 @@ func TestApplyThenReannotateReplacesBlock(t *testing.T) {
 		t.Fatalf("second apply: %v", err)
 	}
 
-	updated, _ := os.ReadFile(fix.workflowPath)
-	if got := strings.Count(string(updated), "cairnos auto-apply"); got != 2 {
+	if got := strings.Count(fix.readWorkflow(t), "cairnos auto-apply"); got != 2 {
 		// The marker text appears twice per block (begin and end). Two markers
 		// means exactly one block, so re-apply replaced rather than stacked.
 		t.Errorf("annotation marker count = %d, want 2 (one block, begin+end)", got)

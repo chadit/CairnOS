@@ -11,11 +11,20 @@ import (
 )
 
 // identityOps is the sample identity name these tests declare and assert
-// against; workspaceDefault is the workspace every sample identity stamps.
+// against, opsIdentityEnv the variable it reads its bot token from, and
+// identityRelease the second identity a fixture adds. workspaceDefault is the
+// workspace every sample identity stamps, personalityOps the one the full
+// fixture binds. The env names are overrides several cases set.
 const (
-	identityOps       = "ops"
-	workspaceDefault  = "default"
-	eventBudgetDenied = "budget_denied"
+	identityOps     = "ops"
+	opsIdentityEnv  = "CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN"
+	identityRelease = "release"
+
+	workspaceDefault = "default"
+	personalityOps   = "ops"
+
+	mattermostURLEnv  = "CAIRNOS_BRIDGE_MATTERMOST_URL"
+	notifyIdentityEnv = "CAIRNOS_NOTIFY_MATTERMOST_IDENTITY"
 )
 
 // Both fixtures declare one usable identity and end inside its table, so a case
@@ -186,7 +195,7 @@ func TestLoadMattermostIdentitiesFromFile(t *testing.T) {
 		t.Fatalf("identity names not overlaid: %+v", ops)
 	}
 
-	if ops.Workspace != workspaceDefault || ops.Personality != "ops" {
+	if ops.Workspace != workspaceDefault || ops.Personality != personalityOps {
 		t.Fatalf("identity workspace/personality not overlaid: %+v", ops)
 	}
 
@@ -196,7 +205,7 @@ func TestLoadMattermostIdentitiesFromFile(t *testing.T) {
 
 	// The second entry sets only the two required keys, so the rest keep their
 	// zero values: a map entry replaces wholesale, it does not merge.
-	release, exists := cfg.Bridge.Mattermost.Identity["release"]
+	release, exists := cfg.Bridge.Mattermost.Identity[identityRelease]
 	if !exists {
 		t.Fatalf("second identity missing: %+v", cfg.Bridge.Mattermost.Identity)
 	}
@@ -245,6 +254,11 @@ channel  = "#alerts"
 events   = ["held"]
 `
 
+	const (
+		envTeam        = "env-team"
+		envAckReaction = "thumbsup"
+	)
+
 	cases := []struct {
 		got   func(config.Config) any
 		want  any
@@ -253,14 +267,14 @@ events   = ["held"]
 		value string
 	}{
 		{
-			name: "url", env: "CAIRNOS_BRIDGE_MATTERMOST_URL", value: envURL,
+			name: "url", env: mattermostURLEnv, value: envURL,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.URL },
 			want: envURL,
 		},
 		{
-			name: "team", env: "CAIRNOS_BRIDGE_MATTERMOST_TEAM", value: "env-team",
+			name: "team", env: "CAIRNOS_BRIDGE_MATTERMOST_TEAM", value: envTeam,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.Team },
-			want: "env-team",
+			want: envTeam,
 		},
 		{
 			name: "insecure http", env: "CAIRNOS_BRIDGE_MATTERMOST_INSECURE_HTTP", value: envOn,
@@ -268,12 +282,12 @@ events   = ["held"]
 			want: true,
 		},
 		{
-			name: "send timeout", env: "CAIRNOS_BRIDGE_MATTERMOST_SEND_TIMEOUT", value: "3s",
+			name: "send timeout", env: "CAIRNOS_BRIDGE_MATTERMOST_SEND_TIMEOUT", value: envSendTimeout,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.SendTimeout },
 			want: 3 * time.Second,
 		},
 		{
-			name: "confirm ttl", env: "CAIRNOS_BRIDGE_MATTERMOST_CONFIRM_TTL", value: "2m",
+			name: "confirm ttl", env: "CAIRNOS_BRIDGE_MATTERMOST_CONFIRM_TTL", value: envConfirmTTL,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.ConfirmTTL },
 			want: 2 * time.Minute,
 		},
@@ -288,9 +302,9 @@ events   = ["held"]
 			want: 33,
 		},
 		{
-			name: "ack reaction", env: "CAIRNOS_BRIDGE_MATTERMOST_ACK_REACTION", value: "thumbsup",
+			name: "ack reaction", env: "CAIRNOS_BRIDGE_MATTERMOST_ACK_REACTION", value: envAckReaction,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.AckReaction },
-			want: "thumbsup",
+			want: envAckReaction,
 		},
 		{
 			name: "bot loop max events", env: "CAIRNOS_BRIDGE_MATTERMOST_BOT_LOOP_MAX_EVENTS", value: "5",
@@ -298,7 +312,7 @@ events   = ["held"]
 			want: 5,
 		},
 		{
-			name: "bot loop window", env: "CAIRNOS_BRIDGE_MATTERMOST_BOT_LOOP_WINDOW", value: "45s",
+			name: "bot loop window", env: "CAIRNOS_BRIDGE_MATTERMOST_BOT_LOOP_WINDOW", value: envMediumWait,
 			got:  func(c config.Config) any { return c.Bridge.Mattermost.BotLoop.Window },
 			want: 45 * time.Second,
 		},
@@ -329,7 +343,7 @@ func TestLoadNotifyMattermostEventsEnvOverridesFile(t *testing.T) {
 	t.Parallel()
 
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_NOTIFY_MATTERMOST_EVENTS": "run_failed, budget_denied",
+		"CAIRNOS_NOTIFY_MATTERMOST_EVENTS": envEvents,
 	})
 
 	fileTOML := teamedMattermostTOML + `
@@ -367,9 +381,11 @@ channel  = "#alerts"
 func TestLoadNotifyMattermostTargetEnvOverridesFile(t *testing.T) {
 	t.Parallel()
 
+	const releaseChannel = "#releases"
+
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_NOTIFY_MATTERMOST_IDENTITY": "release",
-		"CAIRNOS_NOTIFY_MATTERMOST_CHANNEL":  "#releases",
+		notifyIdentityEnv:                   identityRelease,
+		"CAIRNOS_NOTIFY_MATTERMOST_CHANNEL": releaseChannel,
 	})
 
 	cfg, err := config.LoadWith(writeConfig(t, twoIdentityTOML), envOverrides)
@@ -377,12 +393,12 @@ func TestLoadNotifyMattermostTargetEnvOverridesFile(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if cfg.Notify.Mattermost.Identity != "release" {
-		t.Errorf("notify.mattermost.identity = %q, want release", cfg.Notify.Mattermost.Identity)
+	if cfg.Notify.Mattermost.Identity != identityRelease {
+		t.Errorf("notify.mattermost.identity = %q, want %q", cfg.Notify.Mattermost.Identity, identityRelease)
 	}
 
-	if cfg.Notify.Mattermost.Channel != "#releases" {
-		t.Errorf("notify.mattermost.channel = %q, want #releases", cfg.Notify.Mattermost.Channel)
+	if cfg.Notify.Mattermost.Channel != releaseChannel {
+		t.Errorf("notify.mattermost.channel = %q, want %q", cfg.Notify.Mattermost.Channel, releaseChannel)
 	}
 }
 
@@ -393,7 +409,7 @@ func TestLoadRejectsUndeclaredNotifyIdentityFromEnv(t *testing.T) {
 	t.Parallel()
 
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_NOTIFY_MATTERMOST_IDENTITY": "nope",
+		notifyIdentityEnv: "nope",
 	})
 
 	_, err := config.LoadWith(writeConfig(t, twoIdentityTOML), envOverrides)
@@ -409,7 +425,7 @@ func TestLoadMattermostIdentitiesAreFileOnly(t *testing.T) {
 	t.Parallel()
 
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_BRIDGE_MATTERMOST_URL": envURL,
+		mattermostURLEnv: envURL,
 	})
 
 	cfg, err := config.LoadWith(writeConfig(t, validMattermostTOML), envOverrides)
@@ -658,7 +674,7 @@ func TestLoadAcceptsEveryNotifyMattermostEvent(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	want := []string{eventHeld, eventRunFailed, "dead_lettered", eventBudgetDenied}
+	want := []string{eventHeld, eventRunFailed, eventDeadLettered, eventBudgetDenied}
 	if !slices.Equal(cfg.Notify.Mattermost.Events, want) {
 		t.Fatalf("notify.mattermost.events = %v, want %v", cfg.Notify.Mattermost.Events, want)
 	}
@@ -687,7 +703,7 @@ func TestMattermostTokenEnv(t *testing.T) {
 		identity string
 		want     string
 	}{
-		{name: "single word", identity: identityOps, want: "CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN"},
+		{name: "single word", identity: identityOps, want: opsIdentityEnv},
 		{name: "underscored", identity: "release_bot", want: "CAIRNOS_BRIDGE_MATTERMOST_RELEASE_BOT_TOKEN"},
 		{name: "digits", identity: "ops2", want: "CAIRNOS_BRIDGE_MATTERMOST_OPS2_TOKEN"},
 	}
@@ -713,12 +729,12 @@ func TestLoadMattermostKeepsTokenEnv(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	identity := cfg.Bridge.Mattermost.Identity["ops"]
+	identity := cfg.Bridge.Mattermost.Identity[identityOps]
 	if identity.TokenEnv != secondBotTokenEnv {
 		t.Fatalf("token_env = %q, want the configured name", identity.TokenEnv)
 	}
 
-	envs := config.MattermostTokenEnvs(&identity, "ops")
+	envs := config.MattermostTokenEnvs(&identity, identityOps)
 	if len(envs) != 1 || envs[0] != secondBotTokenEnv {
 		t.Fatalf("token envs = %v, want only the configured name", envs)
 	}
@@ -734,9 +750,9 @@ func TestLoadMattermostWithoutTokenEnvTakesTheDefault(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	identity := cfg.Bridge.Mattermost.Identity["ops"]
+	identity := cfg.Bridge.Mattermost.Identity[identityOps]
 
-	envs := config.MattermostTokenEnvs(&identity, "ops")
+	envs := config.MattermostTokenEnvs(&identity, identityOps)
 	if len(envs) != 2 || envs[1] != config.DefaultMattermostTokenEnv {
 		t.Fatalf("token envs = %v, want the shared default last", envs)
 	}

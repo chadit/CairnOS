@@ -3,6 +3,10 @@ package cli_test
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +21,7 @@ import (
 const (
 	secretsCmd      = "secrets"
 	setSub          = "set"
+	lsSub           = "ls"
 	storeSecretName = "db_password"
 	storeSecretVal  = "store-only-sentinel"
 	envSecretVal    = "env-sentinel"
@@ -242,6 +247,31 @@ func TestSecretsRefuseWithoutStoreBackend(t *testing.T) {
 	}
 }
 
+// TestSecretsMissingKeyLeavesAFreshHomeUntouched pins the order of the store
+// open: the master key is checked before the sqlite data directory exists, so a
+// first `secrets ls` without a key fails on the key and writes nothing.
+func TestSecretsMissingKeyLeavesAFreshHomeUntouched(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	env := storeEnv(t)
+	delete(env, masterKeyEnvVar)
+
+	code, stderr := runEnvCLIStdin(t, env, "", secretsCmd, lsSub, flagDirArg, dir)
+	if code == cli.ExitOK {
+		t.Fatal("secrets ls succeeded with no master key")
+	}
+
+	if !strings.Contains(stderr, masterKeyEnvVar) {
+		t.Errorf("the failure does not name %s:\n%s", masterKeyEnvVar, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, dataDirName)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the data directory exists after a failed open (stat error %v)", err)
+	}
+}
+
 func TestSecretsKeygenPrintsFreshCsprngKey(t *testing.T) {
 	t.Parallel()
 
@@ -276,13 +306,13 @@ func TestSecretsNeverLogsValue(t *testing.T) {
 
 	// Across ls and rotate, the sealed value must never reach stderr (the log
 	// stream). get is the one command that writes it, and only to stdout.
-	for _, sub := range []string{"ls", "rotate"} {
+	for _, sub := range []string{lsSub, "rotate"} {
 		_, stdout, stderr := runEnvCLI(t, env, secretsCmd, sub, flagDirArg, dir)
 		if strings.Contains(stderr, storeSecretVal) {
 			t.Fatalf("secrets %s leaked the value to stderr:\n%s", sub, stderr)
 		}
 
-		if sub == "ls" && strings.Contains(stdout, storeSecretVal) {
+		if sub == lsSub && strings.Contains(stdout, storeSecretVal) {
 			t.Fatalf("secrets ls leaked the value to stdout:\n%s", stdout)
 		}
 	}

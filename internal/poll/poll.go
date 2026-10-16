@@ -9,7 +9,6 @@ package poll
 
 import (
 	"context"
-	"fmt"
 )
 
 // Event is one observed app event: a stable id for dedup plus the input values
@@ -32,21 +31,10 @@ type Source interface {
 }
 
 // Sources is the registry of poll sources keyed by the [workflow.poll] source
-// name. The wiring builds it from the runner registry; Get is the fire-time
-// lookup a poll workflow's source name resolves through.
+// name. The wiring builds it once from the runner registry and only reads it
+// after, so a plain map needs no lock. A fire-time lookup that misses reports
+// ErrUnknownSource with the name, which is a config value, not a secret.
 type Sources map[string]Source
-
-// Get returns the source registered under name, or ErrUnknownSource when a
-// [workflow.poll] table names one that was never registered. The name is a
-// config value, not a secret, so it rides the error for a clear message.
-func (s Sources) Get(name string) (Source, error) {
-	src, ok := s[name]
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownSource, name)
-	}
-
-	return src, nil
-}
 
 // BuiltinSourceInputs returns the input keys every event from the named source
 // carries, and false when no wiring builds a source under that name. A poll

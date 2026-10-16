@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 	}
 
 	isolateGitConfig()
-	goleak.VerifyTestMain(m, knownLeaks()...)
+	goleak.VerifyTestMain(m)
 }
 
 // isolateGitConfig keeps the developer's git settings out of the git commands
@@ -33,23 +33,5 @@ func isolateGitConfig() {
 		if err := os.Setenv(key, os.DevNull); err != nil {
 			panic("set " + key + ": " + err.Error())
 		}
-	}
-}
-
-// knownLeaks lists what the sweep found already present, so the check reports
-// what this work introduces rather than what it inherited.
-func knownLeaks() []goleak.Option {
-	return []goleak.Option{
-		// One name lookup, three stacks. The serve tests point the bridge at a
-		// host that does not resolve, and the resolver's parallel queries have
-		// no cancel path. Each frame is named because goleak matches a
-		// goroutine's own frames, never its creator's.
-		goleak.IgnoreAnyFunction("net.(*Resolver).lookupIPAddr.func2"),
-		goleak.IgnoreAnyFunction("net.(*Resolver).goLookupIPCNAMEOrder"),
-		goleak.IgnoreAnyFunction("net.(*Resolver).tryOneName"),
-
-		// The MCP SDK's streamable connection keeps its reader until the peer
-		// closes, which a test's in-process peer never does.
-		goleak.IgnoreAnyFunction("github.com/modelcontextprotocol/go-sdk/mcp.(*streamableServerConn).Read"),
 	}
 }

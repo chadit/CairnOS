@@ -82,7 +82,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 	result, err := built.Execute(t.Context(), messageTask(map[string]any{
 		identityKey: testIdentity,
 		toKey:       testChannel,
-		textKey:     "deploy finished",
+		textKey:     testBody,
 		threadKey:   testRootID,
 	}))
 	if err != nil {
@@ -93,7 +93,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 		t.Fatalf("output = %v, want the created message id", result.Output)
 	}
 
-	want := sentMessage{Identity: testIdentity, To: testChannel, Text: "deploy finished", Thread: testRootID}
+	want := sentMessage{Identity: testIdentity, To: testChannel, Text: testBody, Thread: testRootID}
 	if len(sender.sent) != 1 || sender.sent[0] != want {
 		t.Fatalf("sends = %+v, want exactly %+v", sender.sent, want)
 	}
@@ -104,7 +104,7 @@ func TestMessageSendsThroughSeam(t *testing.T) {
 func TestMessageOmitsThreadWhenAbsent(t *testing.T) {
 	t.Parallel()
 
-	sender := &recordingSender{postID: "post-1"}
+	sender := &recordingSender{postID: testMessagePID}
 
 	built, err := builtins.MessageFactory(sender, nil)(nil)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestMessageOmitsThreadWhenAbsent(t *testing.T) {
 	}
 
 	if _, err := built.Execute(t.Context(), messageTask(map[string]any{
-		identityKey: testIdentity, toKey: "@alice", textKey: "ping",
+		identityKey: testIdentity, toKey: "@alice", textKey: testBody,
 	})); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestMessageValidateRejectsBadParams(t *testing.T) {
 			wantCode: "message.missing_identity",
 		},
 		{
-			name:     "missing to",
+			name:     caseMissingTo,
 			params:   map[string]any{identityKey: testIdentity, textKey: testBody},
 			wantCode: "message.missing_to",
 		},
@@ -373,7 +373,7 @@ func TestMessageThreadKeyKeepsOtherSendFailures(t *testing.T) {
 	t.Parallel()
 
 	sender := &recordingSender{fail: errMessageTransport}
-	threads := &threadStore{roots: map[string]string{threadRow(testIdentity, testChannel, testThreadKey): "post-1"}}
+	threads := &threadStore{roots: map[string]string{threadRow(testIdentity, testChannel, testThreadKey): testRootID}}
 
 	built, err := builtins.MessageFactory(sender, threads)(nil)
 	if err != nil {

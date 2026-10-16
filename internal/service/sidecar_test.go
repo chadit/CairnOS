@@ -12,7 +12,7 @@ import (
 // setup run would have produced.
 func sidecarOptions() service.SidecarOptions {
 	return service.SidecarOptions{
-		Home:        "/home/operator/.cairnos",
+		Home:        linuxDataHome,
 		Server:      "/home/operator/.cairnos/model/runtime/llama-server",
 		Model:       "/home/operator/.cairnos/model/models/gemma.gguf",
 		Port:        8089,
@@ -111,8 +111,8 @@ func unsupportedHosts() map[string]*service.Host {
 	noSystemd.HasSystemd = false
 
 	return map[string]*service.Host{
-		"windows":               {GOOS: "windows", EUID: -1},
-		"linux without systemd": noSystemd,
+		goosWindows:   {GOOS: goosWindows, EUID: -1},
+		caseNoSystemd: noSystemd,
 	}
 }
 

@@ -122,7 +122,7 @@ func TestCheckFlagsNewWeights(t *testing.T) {
 func TestCheckFailsWhenUpstreamIsUnreachable(t *testing.T) {
 	t.Parallel()
 
-	upstream := localmodel.NewUpstream(localmodel.UpstreamOptions{GitHubAPI: "http://127.0.0.1:1", GitHubDownload: "http://127.0.0.1:1"})
+	upstream := localmodel.NewUpstream(localmodel.UpstreamOptions{GitHubAPI: unreachableOrigin, GitHubDownload: unreachableOrigin})
 
 	if _, err := localmodel.Check(t.Context(), upstream); err == nil {
 		t.Fatal("check against an unreachable upstream returned no error")

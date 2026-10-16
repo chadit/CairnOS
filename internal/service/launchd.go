@@ -94,7 +94,7 @@ func planLaunchdUninstall(host *Host) Plan {
 			{Argv: []string{launchctlBin, cmdBootout, launchdTarget(host)}, Optional: true},
 		},
 		Removals: []string{launchdAgentPath(host)},
-		Notices:  []string{"config, data, and the env file were left in place"},
+		Notices:  []string{noticeConfigKept},
 	}
 }
 

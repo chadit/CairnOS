@@ -27,19 +27,25 @@ func attachMessagingServe(apiCfg *api.Config, registry *messaging.Registry, tel 
 	apiCfg.Extensions = append(apiCfg.Extensions, messaging.Extension(registry, tel.Recorder()))
 }
 
-// messageSenderAdapter maps the identity registry onto the narrow seam the
+// MessageSenderAdapter maps the identity registry onto the narrow seam the
 // message runner drives, keeping internal/runner/builtins free of any messaging
 // import the way bridgeMetricsAdapter keeps internal/bridge free of telemetry.
-type messageSenderAdapter struct {
+type MessageSenderAdapter struct {
 	registry *messaging.Registry
 	logger   *slog.Logger
+}
+
+// NewMessageSender builds serve's send adapter. It is exported so a test drives
+// the message runner through the same error translation serve applies.
+func NewMessageSender(registry *messaging.Registry, logger *slog.Logger) *MessageSenderAdapter {
+	return &MessageSenderAdapter{registry: registry, logger: logger}
 }
 
 // Send resolves the identity and the target, then posts. Both resolution
 // failures are permanent: a retry sends the same unknown identity to the same
 // unparseable target, so the engine should fail the action rather than queue it
 // again.
-func (s *messageSenderAdapter) Send(ctx context.Context, identity, recipient, text, thread string) (string, error) {
+func (s *MessageSenderAdapter) Send(ctx context.Context, identity, recipient, text, thread string) (string, error) {
 	sender, known := s.registry.Get(identity)
 	if !known {
 		return "", runner.NewError(runner.ClassPermanent, "message.identity_not_found",

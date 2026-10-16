@@ -51,6 +51,9 @@ const (
 	actionSignB = "sign_b"
 )
 
+// actionSignoff is the approval gate gatedTOML parks on.
+const actionSignoff = "signoff"
+
 // twoGateTOML parks on two parallel approvals, making the omitted-name
 // request ambiguous.
 const twoGateTOML = `
@@ -162,7 +165,7 @@ func TestApproveRunResumesHeldRun(t *testing.T) {
 		t.Fatalf("ApproveRun: %v", err)
 	}
 
-	if ack.GetActionName() != "signoff" || !ack.GetApproved() || ack.GetStatus() != "resuming" {
+	if ack.GetActionName() != actionSignoff || !ack.GetApproved() || ack.GetStatus() != "resuming" {
 		t.Fatalf("ack = %q/%v/%q, want signoff/true/resuming",
 			ack.GetActionName(), ack.GetApproved(), ack.GetStatus())
 	}
@@ -220,9 +223,9 @@ func TestApproveRunRefusesTerminalRun(t *testing.T) {
 	if err := fix.db.CreateRun(t.Context(), &store.Run{
 		ID:           runID,
 		WorkflowName: helloName,
-		WorkflowHash: "deadbeef",
+		WorkflowHash: staleWorkflowHash,
 		Status:       store.RunSucceeded,
-		Trigger:      "cli",
+		Trigger:      triggerCLI,
 		CreatedAt:    time.Now(),
 	}); err != nil {
 		t.Fatalf("seed finished run: %v", err)
@@ -240,7 +243,7 @@ func TestApproveRunUnknownRunNotFound(t *testing.T) {
 
 	fix := startServer(t)
 
-	_, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{RunId: "no-such-run", Approve: true})
+	_, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{RunId: unknownRunID, Approve: true})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("approve of an unknown run code = %v (%v), want NotFound", status.Code(err), err)
 	}
@@ -272,7 +275,7 @@ func TestApproveRunUnknownActionNotFound(t *testing.T) {
 		t.Fatalf("list pending approvals: %v", err)
 	}
 
-	if len(pending) != 1 || pending[0].ActionName != "signoff" {
+	if len(pending) != 1 || pending[0].ActionName != actionSignoff {
 		t.Fatalf("pending gates after the bad name = %+v, want signoff still pending", pending)
 	}
 }

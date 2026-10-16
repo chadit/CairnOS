@@ -39,7 +39,7 @@ const (
 // testChatSessionRoundTrip proves a session and its ordered messages persist
 // and read back, the conversation-context-persisted contract Phase 9 rests on
 // (.agents/spec/13-roadmap.md, Phase 9).
-func testChatSessionRoundTrip(t *testing.T, openFn OpenFunc) {
+func testChatSessionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -111,7 +111,7 @@ func testChatSessionRoundTrip(t *testing.T, openFn OpenFunc) {
 // the OpenAI-compatible adapter seeds when a client sends a `system` message
 // (.agents/spec/parity/openai-compat.md). The role column is a plain string, so
 // this is the store proving it accepts the value with no schema change.
-func testChatSessionSeedsSystemRole(t *testing.T, openFn OpenFunc) {
+func testChatSessionSeedsSystemRole[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -151,18 +151,18 @@ func testChatSessionSeedsSystemRole(t *testing.T, openFn OpenFunc) {
 // testChatSessionNotFound proves GetSession and AppendMessage report the
 // not-found sentinel for an unknown session, so callers classify it instead
 // of seeing a silent empty answer.
-func testChatSessionNotFound(t *testing.T, openFn OpenFunc) {
+func testChatSessionNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	if _, err := db.GetSession(ctx, "missing"); !errors.Is(err, store.ErrChatSessionNotFound) {
+	if _, err := db.GetSession(ctx, absentID); !errors.Is(err, store.ErrChatSessionNotFound) {
 		t.Errorf("GetSession error = %v, want ErrChatSessionNotFound", err)
 	}
 
 	appendErr := db.AppendMessage(ctx, &store.ChatMessage{
-		SessionID: "missing",
+		SessionID: absentID,
 		Role:      store.ChatRoleUser,
 		Content:   chatHello,
 	})
@@ -174,7 +174,7 @@ func testChatSessionNotFound(t *testing.T, openFn OpenFunc) {
 // testChatSessionListNewestFirst proves ListSessions orders by updated_at,
 // not creation, so appending to an older session floats it to the top: the
 // "most recent conversation first" behavior a session picker needs.
-func testChatSessionListNewestFirst(t *testing.T, openFn OpenFunc) {
+func testChatSessionListNewestFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -217,7 +217,7 @@ func testChatSessionListNewestFirst(t *testing.T, openFn OpenFunc) {
 // testChatSessionIsolatesByWorkspace proves a session created in one workspace
 // is invisible to another, the tenancy boundary every chat read honors
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testChatSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testChatSessionIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -261,7 +261,7 @@ func testChatSessionIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 // messages content-intact, best match first, with equal-relevance ties broken
 // on (session_id, seq) so the order is stable across runs. bm25 and ts_rank
 // disagree on scores, so ordering is only asserted where both rankers agree.
-func testChatSearchRanksBestMatchFirst(t *testing.T, openFn OpenFunc) {
+func testChatSearchRanksBestMatchFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -288,7 +288,7 @@ func testChatSearchRanksBestMatchFirst(t *testing.T, openFn OpenFunc) {
 // testChatSearchFiltersBySession proves the SessionID filter narrows hits to
 // one session, and that naming a missing session matches nothing rather than
 // reporting not-found: it is a filter, not a lookup.
-func testChatSearchFiltersBySession(t *testing.T, openFn OpenFunc) {
+func testChatSearchFiltersBySession[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -301,7 +301,7 @@ func testChatSearchFiltersBySession(t *testing.T, openFn OpenFunc) {
 
 	assertChatHits(t, hits, []chatHit{{session: sessionB, seq: 1, content: chatSearchWeak}})
 
-	missing, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, SessionID: "missing"})
+	missing, err := db.SearchMessages(t.Context(), store.ChatSearchQuery{Text: chatSearchTerm, SessionID: absentID})
 	if err != nil {
 		t.Fatalf("search messages with missing session filter: %v", err)
 	}
@@ -314,7 +314,7 @@ func testChatSearchFiltersBySession(t *testing.T, openFn OpenFunc) {
 // testChatSearchLimitsResults proves Limit caps the hit count from the top of
 // the ranking while zero returns everything, the same contract as
 // ChatSessionFilter.Limit.
-func testChatSearchLimitsResults(t *testing.T, openFn OpenFunc) {
+func testChatSearchLimitsResults[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -346,7 +346,7 @@ func testChatSearchLimitsResults(t *testing.T, openFn OpenFunc) {
 // sees another's messages, even when both hold the same matching content: the
 // tenancy boundary every chat read honors
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testChatSearchIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -361,8 +361,8 @@ func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	createSessionIn(t, db, acmeCtx, acmeSession, base)
 	createSessionIn(t, db, globexCtx, globexSession, base)
 
-	appendMessageIn(t, db, acmeCtx, acmeSession, chatSearchWeak)
-	appendMessageIn(t, db, globexCtx, globexSession, chatSearchWeak)
+	appendMessageIn(t, db, acmeCtx, acmeSession)
+	appendMessageIn(t, db, globexCtx, globexSession)
 
 	acmeHits, err := db.SearchMessages(acmeCtx, store.ChatSearchQuery{Text: chatSearchTerm})
 	if err != nil {
@@ -383,7 +383,7 @@ func testChatSearchIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 // an OR matches literally instead of smuggling FTS operators in. If the OR
 // reached FTS5 as an operator, the decoy message (which only shares the last
 // word) would come back too.
-func testChatSearchTreatsQuerySyntaxLiterally(t *testing.T, openFn OpenFunc) {
+func testChatSearchTreatsQuerySyntaxLiterally[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -406,7 +406,7 @@ func testChatSearchTreatsQuerySyntaxLiterally(t *testing.T, openFn OpenFunc) {
 // testChatSearchEmptyTextReturnsNothing proves an empty or blank query
 // returns no rows and no error at the store. Rejecting it loudly is the API
 // layer's job; the store just stays quiet.
-func testChatSearchEmptyTextReturnsNothing(t *testing.T, openFn OpenFunc) {
+func testChatSearchEmptyTextReturnsNothing[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -488,17 +488,17 @@ func chatHitIDs(messages []*store.ChatMessage) []string {
 	return ids
 }
 
-// appendMessageIn records one user message through the workspace ctx carries,
-// so the isolation case's messages land in the right tenant.
+// appendMessageIn records the weak-match user message through the workspace
+// ctx carries, so the isolation case's messages land in the right tenant.
 //
 //nolint:revive // t leads every helper here for the t.Fatalf calls; ctx follows to carry the workspace
-func appendMessageIn(t *testing.T, db store.Store, ctx context.Context, sessionID, content string) {
+func appendMessageIn(t *testing.T, db store.Store, ctx context.Context, sessionID string) {
 	t.Helper()
 
 	err := db.AppendMessage(ctx, &store.ChatMessage{
 		SessionID: sessionID,
 		Role:      store.ChatRoleUser,
-		Content:   content,
+		Content:   chatSearchWeak,
 	})
 	if err != nil {
 		t.Fatalf("append message to %s: %v", sessionID, err)

@@ -27,6 +27,13 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
+// Chat inputs the tests send: a message that asks for the hello workflow, and
+// search text whose only job is to reach the store.
+const (
+	msgRunHello   = "run hello"
+	anySearchText = "anything"
+)
+
 // chatHelloTOML is the mock workflow a confirmed chat proposal fires.
 const chatHelloTOML = `
 [workflow]
@@ -234,7 +241,7 @@ func TestChatConfirmationGateStreamsRunOverGRPC(t *testing.T) {
 
 	sendStream, err := fix.chat.SendMessage(ctx, &cairnosv1.SendMessageRequest{
 		SessionId: session.GetSession().GetId(),
-		Message:   "run hello",
+		Message:   msgRunHello,
 	})
 	if err != nil {
 		t.Fatalf("send message: %v", err)
@@ -384,7 +391,7 @@ func drainChatStream(stream grpc.ServerStreamingClient[cairnosv1.ChatEvent]) err
 		}
 
 		if err != nil {
-			return err //nolint:wrapcheck // the test asserts on the gRPC status code, which wrapping would hide
+			return err
 		}
 	}
 }
@@ -464,7 +471,7 @@ func openChatSession(t *testing.T, fix *authFixture, ctx context.Context) string
 func drainSendUntilGate(t *testing.T, fix *authFixture, ctx context.Context, sessionID string) {
 	t.Helper()
 
-	stream, err := fix.chat.SendMessage(ctx, &cairnosv1.SendMessageRequest{SessionId: sessionID, Message: "run hello"})
+	stream, err := fix.chat.SendMessage(ctx, &cairnosv1.SendMessageRequest{SessionId: sessionID, Message: msgRunHello})
 	if err != nil {
 		t.Fatalf("send message: %v", err)
 	}
@@ -567,7 +574,7 @@ func TestChatSearchScopeEnforced(t *testing.T) {
 
 		ctx := authedCtx(t, fix.token(t, auth.ScopeReadRun))
 
-		_, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: "anything"})
+		_, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: anySearchText})
 		wantGRPCCode(t, err, codes.PermissionDenied)
 	})
 
@@ -576,7 +583,7 @@ func TestChatSearchScopeEnforced(t *testing.T) {
 
 		ctx := authedCtx(t, fix.token(t, auth.ScopeChatSession))
 
-		if _, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: "anything"}); err != nil {
+		if _, err := fix.chat.SearchMessages(ctx, &cairnosv1.SearchMessagesRequest{Text: anySearchText}); err != nil {
 			t.Fatalf("search with chat:session should succeed, got: %v", err)
 		}
 	})
@@ -610,7 +617,7 @@ func TestChatSearchEmptyTextRejected(t *testing.T) {
 		t.Fatalf("parse error envelope %q: %v", body, err)
 	}
 
-	if envelope.Status != statusError || envelope.Error.Code != "api.invalid_argument" {
+	if envelope.Status != statusError || envelope.Error.Code != wireInvalidArgument {
 		t.Fatalf("envelope = %s, want status error with code api.invalid_argument", body)
 	}
 }

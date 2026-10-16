@@ -8,11 +8,13 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 )
 
-// bwItem is the vault item every fixture names, and bwTokenVar one rendered
-// variable. Both are spelled the way a host config would spell them.
+// bwItem is the vault item every fixture names, bwTokenVar one rendered
+// variable, and bwTokenField the item field it reads. All are spelled the way a
+// host config would spell them.
 const (
-	bwItem     = "chezmoi"
-	bwTokenVar = "CAIRNOS_RUNNER_OPENAI_API_KEY"
+	bwItem       = "chezmoi"
+	bwTokenVar   = "CAIRNOS_RUNNER_OPENAI_API_KEY"
+	bwTokenField = "openai key"
 
 	// wantNameRefusal is the grammar guard's message, asserted for three shapes
 	// a shell could not parse back out of the generated file.
@@ -60,7 +62,7 @@ func TestLoadBitwardenParsesBlockAndDefaults(t *testing.T) {
 		t.Fatalf("env_file = %q, want the default", block.EnvFile)
 	}
 
-	if block.Fields[bwTokenVar] != "openai key" {
+	if block.Fields[bwTokenVar] != bwTokenField {
 		t.Fatalf("fields = %+v, want the openai mapping", block.Fields)
 	}
 }
@@ -140,7 +142,7 @@ func TestLoadBitwardenAcceptsFieldsWithoutAnItem(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if cfg.Secrets.Bitwarden.Fields[bwTokenVar] != "openai key" {
+	if cfg.Secrets.Bitwarden.Fields[bwTokenVar] != bwTokenField {
 		t.Fatalf("fields = %+v, want the openai mapping", cfg.Secrets.Bitwarden.Fields)
 	}
 }
@@ -154,7 +156,7 @@ func TestLoadBitwardenRejectsBadBlocks(t *testing.T) {
 		want string
 	}{
 		{
-			name: "unknown key",
+			name: "unknown vault key",
 			toml: bitwardenTOML(
 				[]string{`item = "` + bwItem + `"`, `vault = "personal"`},
 				[]string{bwTokenVar + ` = "openai key"`},

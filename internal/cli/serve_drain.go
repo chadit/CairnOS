@@ -15,20 +15,26 @@ import (
 // a tighter loop only costs a lock.
 const drainPoll = time.Second
 
-// drainGateRunner stops the scheduler dispatching once a restart has been
+// DrainGateRunner stops the scheduler dispatching once a restart has been
 // asked for. It wraps the outermost runner so a poll fire and a plain cron fire
 // stop together; webhook deliveries enqueue past it, so nothing arriving during
 // the drain is lost.
-type drainGateRunner struct {
+type DrainGateRunner struct {
 	inner  scheduler.Runner
 	drain  *api.Drain
 	logger *slog.Logger
 }
 
+// NewDrainGateRunner wraps inner in the gate serve puts in front of its daemon.
+// It is exported so a test drives the skip without standing up a whole serve.
+func NewDrainGateRunner(inner scheduler.Runner, drain *api.Drain, logger *slog.Logger) *DrainGateRunner {
+	return &DrainGateRunner{inner: inner, drain: drain, logger: logger}
+}
+
 // Fire skips the occurrence while draining and delegates otherwise. Skipping
 // rather than erroring is what keeps the drain quiet: the schedule's next fire
 // after the restart picks the workflow up again.
-func (r *drainGateRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
+func (r *DrainGateRunner) Fire(ctx context.Context, sched *scheduler.Schedule) error {
 	if r.drain.Draining() {
 		r.logger.Debug("skipping fire while draining for a restart",
 			"schedule", sched.ID, "workflow", sched.WorkflowName)

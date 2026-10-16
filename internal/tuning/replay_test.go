@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/registry"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/tuning"
 	"github.com/chadit/CairnOS/pkg/runner"
@@ -53,19 +54,13 @@ func (r *scriptedRunner) seenTasks() []*runner.Task {
 	return r.tasks
 }
 
-// soloSource is a RunnerSource holding exactly one runner.
-type soloSource struct {
-	target runner.Runner
-	name   string
-}
+// soleRunner is a runner table holding target under the one runner name every
+// replay fixture resolves.
+func soleRunner(target runner.Runner) *registry.Table[runner.Runner] {
+	runners := &registry.Table[runner.Runner]{}
+	runners.Add(runnerAnthropic, target)
 
-// Get implements tuning.RunnerSource.
-func (s *soloSource) Get(name string) (runner.Runner, bool) {
-	if name != s.name {
-		return nil, false
-	}
-
-	return s.target, true
+	return runners
 }
 
 // paramSuggestionFixture builds an output-changing suggestion the way the
@@ -92,7 +87,7 @@ func paramSuggestionFixture(confidence string) *store.Suggestion {
 // runner and the exact-match comparator.
 func replayEngine(target runner.Runner) *tuning.Engine {
 	cfg := tuning.DefaultConfig()
-	cfg.Runners = &soloSource{name: runnerAnthropic, target: target}
+	cfg.Runners = soleRunner(target)
 
 	return tuning.New(nil, cfg)
 }
@@ -105,7 +100,7 @@ func TestReplayIdenticalOutputStands(t *testing.T) {
 	suggestion := paramSuggestionFixture(store.ConfidenceLow)
 
 	samples := []tuning.Sample{{
-		Params:         map[string]any{"prompt": promptText, keyMaxTokens: int64(4096)},
+		Params:         map[string]any{paramPrompt: promptText, keyMaxTokens: int64(4096)},
 		Inputs:         map[string]any{"topic": queryJobs},
 		RecordedOutput: sameOutput,
 	}}
@@ -133,7 +128,7 @@ func TestReplayIdenticalOutputStands(t *testing.T) {
 
 	// The proposed cap must override the recorded value while the rest of
 	// the recorded params ride along.
-	if tasks[0].Params["max_tokens"] != int64(128) || tasks[0].Params["prompt"] != promptText {
+	if tasks[0].Params[keyMaxTokens] != int64(128) || tasks[0].Params[paramPrompt] != promptText {
 		t.Fatalf("replayed params = %v, want proposed max_tokens over recorded prompt", tasks[0].Params)
 	}
 }
@@ -149,7 +144,7 @@ func TestReplayDivergenceDowngradesWithReason(t *testing.T) {
 	suggestion := paramSuggestionFixture(store.ConfidenceMedium)
 
 	samples := []tuning.Sample{{
-		Params:         map[string]any{"prompt": promptText},
+		Params:         map[string]any{paramPrompt: promptText},
 		RecordedOutput: sameOutput,
 	}}
 

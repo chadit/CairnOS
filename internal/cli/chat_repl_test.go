@@ -26,6 +26,8 @@ import (
 // one place. Every test continues startSessionID via --session, so session
 // creation observed by the scripted server always comes from a slash command.
 const (
+	chatCmd = "chat"
+
 	startSessionID    = "sess-1"
 	startPersonality  = "base"
 	zenPersonality    = "zen"
@@ -38,6 +40,11 @@ const (
 
 	searchQueryText = "hive"
 
+	// pastSessionA and pastSessionB are sessions already on the server, the
+	// ones search hits and session listings name.
+	pastSessionA = "sess-a"
+	pastSessionB = "sess-b"
+
 	// Hit lines in the shared "session <id> #<seq> [role] <text>" format,
 	// the output contract both /search and --search print in.
 	searchHitUserLine      = "session sess-a #1 [user] deploy the hive"
@@ -48,8 +55,8 @@ const (
 // sessions and both roles so the shared hit format is fully exercised.
 func searchHitFixtures() []*cairnosv1.ChatMessage {
 	return []*cairnosv1.ChatMessage{
-		{SessionId: "sess-a", Seq: 1, Role: "user", Content: "deploy the hive"},
-		{SessionId: "sess-b", Seq: 4, Role: "assistant", Content: "hive deployed"},
+		{SessionId: pastSessionA, Seq: 1, Role: "user", Content: "deploy the hive"},
+		{SessionId: pastSessionB, Seq: 4, Role: "assistant", Content: "hive deployed"},
 	}
 }
 
@@ -225,12 +232,17 @@ func startScriptedChat(t *testing.T, script *scriptedChatServer) string {
 	server := grpc.NewServer()
 	cairnosv1.RegisterChatServiceServer(server, script)
 
-	go func() {
-		// Serve exits with ErrServerStopped when the cleanup fires.
-		_ = server.Serve(listener)
-	}()
+	served := make(chan error, 1)
 
-	t.Cleanup(server.Stop)
+	go func() { served <- server.Serve(listener) }()
+
+	t.Cleanup(func() {
+		server.Stop()
+
+		if err := <-served; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve: %v", err)
+		}
+	})
 
 	return listener.Addr().String()
 }
@@ -270,7 +282,7 @@ func (failingReader) Read([]byte) (int, error) {
 
 // chatArgs builds the chat invocation continuing the seeded starting session.
 func chatArgs(addr string) []string {
-	return []string{"chat", "--addr", addr, "--session", startSessionID}
+	return []string{chatCmd, flagAddrArg, addr, "--session", startSessionID}
 }
 
 // runChatCLI drives one scripted conversation through the full chat command,
@@ -324,8 +336,8 @@ func TestChatSlashCommands(t *testing.T) {
 			stdin: "/session list\n/quit\n",
 			configure: func(script *scriptedChatServer) {
 				script.listed = []*cairnosv1.ChatSession{
-					{Id: "sess-b", Personality: zenPersonality, UpdatedAt: updated},
-					{Id: "sess-a", Personality: startPersonality, UpdatedAt: updated},
+					{Id: pastSessionB, Personality: zenPersonality, UpdatedAt: updated},
+					{Id: pastSessionA, Personality: startPersonality, UpdatedAt: updated},
 				}
 			},
 			wantOut: []string{
@@ -710,7 +722,7 @@ func runChatArgs(t *testing.T, args []string) (int, string, string) {
 
 // searchArgs builds the one-shot search invocation, plus any extra flags.
 func searchArgs(addr, query string, extra ...string) []string {
-	return append([]string{"chat", "--addr", addr, "--search", query}, extra...)
+	return append([]string{chatCmd, flagAddrArg, addr, "--search", query}, extra...)
 }
 
 // requireOneSearch asserts exactly one search request was recorded and

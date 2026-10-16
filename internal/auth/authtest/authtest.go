@@ -40,17 +40,18 @@ var baseTime = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
 // OpenFunc hands the suite a fresh, empty auth store. The implementation
 // registers cleanup (t.Cleanup with Close) so each subtest gets an isolated
-// database. Returning the interface keeps the suite backend-agnostic.
-type OpenFunc func(t *testing.T) auth.Store
+// database. S is the backend's own type, so a backend's opener returns what it
+// opened while the suite drives only the auth.Store methods.
+type OpenFunc[S auth.Store] func(t *testing.T) S
 
 // RunConformance runs the full auth.Store behavioral suite against the store
 // openFn hands out. Each named subtest opens its own store, so they are
 // independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "KeyCRUD", run: testKeyCRUD},
@@ -92,7 +93,7 @@ func seedKey(t *testing.T, store auth.Store, scopes []string) (*auth.Key, string
 	return key, plaintext
 }
 
-func testKeyCRUD(t *testing.T, openFn OpenFunc) {
+func testKeyCRUD[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -129,7 +130,7 @@ func testKeyCRUD(t *testing.T, openFn OpenFunc) {
 // key created with a workspace reads it back, so login can mint the workspace
 // claim, while an empty-workspace key reads back the default workspace
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testKeyWorkspaceRoundTrip(t *testing.T, openFn OpenFunc) {
+func testKeyWorkspaceRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -171,7 +172,7 @@ func testKeyWorkspaceRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testGetKeyNotFound(t *testing.T, openFn OpenFunc) {
+func testGetKeyNotFound[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -181,7 +182,7 @@ func testGetKeyNotFound(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testCreateKeyRejectsDuplicateID(t *testing.T, openFn OpenFunc) {
+func testCreateKeyRejectsDuplicateID[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -192,7 +193,7 @@ func testCreateKeyRejectsDuplicateID(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSetKeyEnabled(t *testing.T, openFn OpenFunc) {
+func testSetKeyEnabled[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -216,7 +217,7 @@ func testSetKeyEnabled(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testIsDeniedWindow(t *testing.T, openFn OpenFunc) {
+func testIsDeniedWindow[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -268,7 +269,7 @@ func testIsDeniedWindow(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testDenyExtendsButNeverShortens(t *testing.T, openFn OpenFunc) {
+func testDenyExtendsButNeverShortens[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -294,7 +295,7 @@ func testDenyExtendsButNeverShortens(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testRemoveKeyDenialsLiftsOnlySubRows(t *testing.T, openFn OpenFunc) {
+func testRemoveKeyDenialsLiftsOnlySubRows[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -331,7 +332,7 @@ func testRemoveKeyDenialsLiftsOnlySubRows(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPruneDenylistDropsExpiredRows(t *testing.T, openFn OpenFunc) {
+func testPruneDenylistDropsExpiredRows[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -380,7 +381,7 @@ func testPruneDenylistDropsExpiredRows(t *testing.T, openFn OpenFunc) {
 
 // testIssuedExpRoundTrip records one token's exp and reads it back, and
 // confirms an unknown jti reports not-found rather than an error (spec M2).
-func testIssuedExpRoundTrip(t *testing.T, openFn OpenFunc) {
+func testIssuedExpRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -416,7 +417,7 @@ func testIssuedExpRoundTrip(t *testing.T, openFn OpenFunc) {
 
 // testMaxIssuedExp confirms MaxIssuedExp returns the latest exp across a
 // subject's tokens and reports not-found for a subject with none.
-func testMaxIssuedExp(t *testing.T, openFn OpenFunc) {
+func testMaxIssuedExp[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -459,7 +460,7 @@ func testMaxIssuedExp(t *testing.T, openFn OpenFunc) {
 // testDenyKeySinceSparesFreshTokens is the M3 store invariant: a key
 // revoked at an instant denies tokens minted at or before it but spares
 // tokens minted after, so a still-enabled key keeps issuing usable tokens.
-func testDenyKeySinceSparesFreshTokens(t *testing.T, openFn OpenFunc) {
+func testDenyKeySinceSparesFreshTokens[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)
@@ -493,7 +494,7 @@ func testDenyKeySinceSparesFreshTokens(t *testing.T, openFn OpenFunc) {
 
 // testPruneDropsExpiredIssuedRows confirms PruneDenylist also clears expired
 // issued-token records, so the M2 lookup table does not grow without bound.
-func testPruneDropsExpiredIssuedRows(t *testing.T, openFn OpenFunc) {
+func testPruneDropsExpiredIssuedRows[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	store := openFn(t)

@@ -163,10 +163,10 @@ func TestNewEmbeddingComparatorClampsThreshold(t *testing.T) {
 }
 
 // embeddingReplayEngine wires an engine whose comparator is the embedding one,
-// reusing the scripted runner and solo source from replay_test.go.
+// reusing the scripted runner and soleRunner from replay_test.go.
 func embeddingReplayEngine(target runner.Runner, comparator tuning.Comparator) *tuning.Engine {
 	cfg := tuning.DefaultConfig()
-	cfg.Runners = &soloSource{name: runnerAnthropic, target: target}
+	cfg.Runners = soleRunner(target)
 	cfg.Comparator = comparator
 
 	return tuning.New(nil, cfg)
@@ -175,13 +175,15 @@ func embeddingReplayEngine(target runner.Runner, comparator tuning.Comparator) *
 func TestReplayEmbeddingRecordsCalibrationScores(t *testing.T) {
 	t.Parallel()
 
+	const replayedAnswer = "new answer"
+
 	// Recorded and replayed map to the same vector, so cosine is 1.0 and the
 	// suggestion stands, with the score and threshold recorded for calibration.
 	comparator := embeddingComparatorFor(0.9, map[string][]float64{
-		oldAnswer:    {1, 0, 0},
-		"new answer": {1, 0, 0},
+		oldAnswer:      {1, 0, 0},
+		replayedAnswer: {1, 0, 0},
 	})
-	scripted := &scriptedRunner{output: "new answer"}
+	scripted := &scriptedRunner{output: replayedAnswer}
 	engine := embeddingReplayEngine(scripted, comparator)
 	suggestion := paramSuggestionFixture(store.ConfidenceLow)
 
@@ -212,13 +214,15 @@ func TestReplayEmbeddingRecordsCalibrationScores(t *testing.T) {
 func TestReplayEmbeddingDivergenceRecordsScoreAndDowngrades(t *testing.T) {
 	t.Parallel()
 
+	const replayedAnswer = "unrelated answer"
+
 	// Orthogonal vectors give cosine 0, below the threshold, so the suggestion
 	// downgrades and the diverging score is still recorded for calibration.
 	comparator := embeddingComparatorFor(0.9, map[string][]float64{
-		oldAnswer:          {1, 0, 0},
-		"unrelated answer": {0, 1, 0},
+		oldAnswer:      {1, 0, 0},
+		replayedAnswer: {0, 1, 0},
 	})
-	scripted := &scriptedRunner{output: "unrelated answer"}
+	scripted := &scriptedRunner{output: replayedAnswer}
 	engine := embeddingReplayEngine(scripted, comparator)
 	suggestion := paramSuggestionFixture(store.ConfidenceMedium)
 

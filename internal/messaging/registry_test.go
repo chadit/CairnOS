@@ -6,6 +6,12 @@ import (
 	"github.com/chadit/CairnOS/internal/messaging"
 )
 
+// Each of these identities uses its name as its username too.
+const (
+	alertsName = "alerts"
+	zedName    = "zed"
+)
+
 func TestRegistryAddAndGet(t *testing.T) {
 	t.Parallel()
 
@@ -43,9 +49,9 @@ func TestRegistryListIsSortedByName(t *testing.T) {
 	registry := messaging.NewRegistry()
 
 	want := []messaging.Identity{
-		{Name: "alerts", Transport: transportMattermost, Username: "alerts", DisplayName: "Alerts", URL: serverURL},
-		{Name: identityName, Transport: transportMattermost, Username: "ops", DisplayName: "Ops Bot", URL: serverURL},
-		{Name: "zed", Transport: "telegram", Username: "zed", DisplayName: "Zed", URL: "https://t.example"},
+		{Name: alertsName, Transport: transportMattermost, Username: alertsName, DisplayName: "Alerts", URL: serverURL},
+		{Name: identityName, Transport: transportMattermost, Username: botUsername, DisplayName: botDisplayName, URL: serverURL},
+		{Name: zedName, Transport: "telegram", Username: zedName, DisplayName: "Zed", URL: "https://t.example"},
 	}
 
 	// Insert out of order: a map iteration would otherwise reshuffle the

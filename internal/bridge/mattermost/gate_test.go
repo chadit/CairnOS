@@ -7,14 +7,21 @@ import (
 	"github.com/chadit/CairnOS/internal/bridge/mattermost"
 )
 
-// Prop names and the value Mattermost writes for a boolean prop, shared with
+// Prop names and the values Mattermost writes for a boolean prop, shared with
 // the fixture assertions in ws_test.go.
 const (
-	propFromBot     = "from_bot"
-	propFromWebhook = "from_webhook"
-	propActivateAI  = "activate_ai"
-	propTrue        = "true"
+	propFromBot      = "from_bot"
+	propFromWebhook  = "from_webhook"
+	propFromPlugin   = "from_plugin"
+	propFromOAuthApp = "from_oauth_app"
+	propActivateAI   = "activate_ai"
+	propTrue         = "true"
+	propFalse        = "false"
 )
+
+// hyphenatedUsername is a bot account whose name a word boundary would split,
+// so the mention cases prove it still matches as one name.
+const hyphenatedUsername = "cairn-bot"
 
 func TestMentionsInText(t *testing.T) {
 	t.Parallel()
@@ -35,7 +42,7 @@ func TestMentionsInText(t *testing.T) {
 		{name: "longer username", message: "@cairnbot is a different account", username: botUsername, want: false},
 		{name: "hyphenated sibling username", message: "@cairn-bot is a different account", username: botUsername, want: false},
 		{name: "dotted sibling username", message: "@cairn.ops is a different account", username: botUsername, want: false},
-		{name: "hyphenated username matches itself", message: "@cairn-bot what broke?", username: "cairn-bot", want: true},
+		{name: "hyphenated username matches itself", message: "@cairn-bot what broke?", username: hyphenatedUsername, want: true},
 		{name: "dotted username matches itself", message: "@cairn.ops what broke?", username: "cairn.ops", want: true},
 		{name: "email address", message: "mail ops@cairn about it", username: botUsername, want: false},
 		{name: "inside inline code", message: "run `@cairn help` to see this", username: botUsername, want: false},
@@ -75,22 +82,12 @@ func TestStripMention(t *testing.T) {
 		want     string
 	}{
 		{name: "leading mention", message: "@cairn summarize this", username: botUsername, want: "summarize this"},
-		{name: "case folded", message: "@Cairn summarize this", username: botUsername, want: "summarize this"},
+		{name: "case folded mention", message: "@Cairn check the deploy", username: botUsername, want: "check the deploy"},
 		{name: "leading whitespace", message: "  @cairn go", username: botUsername, want: "go"},
 		{name: "only the mention", message: "@cairn", username: botUsername, want: ""},
 		{name: "one space only", message: "@cairn   padded", username: botUsername, want: "  padded"},
 		{name: "newline after the mention", message: "@cairn\ndo the thing", username: botUsername, want: "\ndo the thing"},
-		{name: "mention not first", message: "hey @cairn go", username: botUsername, want: "hey @cairn go"},
-		{name: "longer username", message: "@cairnbot go", username: botUsername, want: "@cairnbot go"},
-		{
-			name:     "hyphenated sibling username keeps the message whole",
-			message:  "@ops-team can @ops summarize last night?",
-			username: "ops",
-			want:     "@ops-team can @ops summarize last night?",
-		},
-		{name: "dotted sibling username", message: "@cairn.ops go", username: botUsername, want: "@cairn.ops go"},
-		{name: "hyphenated username strips itself", message: "@cairn-bot go", username: "cairn-bot", want: "go"},
-		{name: "no mention", message: "plain text", username: botUsername, want: "plain text"},
+		{name: "hyphenated username strips itself", message: "@cairn-bot rerun it", username: hyphenatedUsername, want: "rerun it"},
 	}
 
 	for _, testCase := range cases {
@@ -104,18 +101,39 @@ func TestStripMention(t *testing.T) {
 	}
 }
 
-func TestStripMentionKeepsMessageWithoutAUsername(t *testing.T) {
+// TestStripMentionKeepsOtherMessagesWhole covers every message StripMention must
+// hand back unchanged, so each row states its input once.
+func TestStripMentionKeepsOtherMessagesWhole(t *testing.T) {
 	t.Parallel()
 
-	const message = "@cairn go"
+	cases := []struct {
+		name     string
+		message  string
+		username string
+	}{
+		{name: "mention not first", message: "hey @cairn go", username: botUsername},
+		{name: "longer username is another account", message: "@cairnbot go", username: botUsername},
+		{name: "hyphenated sibling is another account", message: "@ops-team can @ops summarize last night?", username: "ops"},
+		{name: "dotted sibling is another account", message: "@cairn.ops go", username: botUsername},
+		{name: "nothing to strip", message: "plain text", username: botUsername},
+		{name: "empty username strips nothing", message: "@cairn go", username: ""},
+	}
 
-	if got := mattermost.StripMention(message, ""); got != message {
-		t.Fatalf("StripMention with no username = %q, want %q", got, message)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := mattermost.StripMention(testCase.message, testCase.username); got != testCase.message {
+				t.Fatalf("StripMention(%q, %q) = %q, want the message unchanged", testCase.message, testCase.username, got)
+			}
+		})
 	}
 }
 
 func TestIsAutomated(t *testing.T) {
 	t.Parallel()
+
+	const authorID = "u1"
 
 	cases := []struct {
 		props map[string]string
@@ -124,14 +142,14 @@ func TestIsAutomated(t *testing.T) {
 		want  bool
 	}{
 		{name: "human post", want: false},
-		{name: "from_bot", props: map[string]string{propFromBot: propTrue}, want: true},
-		{name: "from_webhook", props: map[string]string{propFromWebhook: propTrue}, want: true},
-		{name: "from_plugin", props: map[string]string{"from_plugin": propTrue}, want: true},
-		{name: "from_oauth_app", props: map[string]string{"from_oauth_app": propTrue}, want: true},
-		{name: "prop set to false", props: map[string]string{propFromBot: "false"}, want: false},
+		{name: propFromBot, props: map[string]string{propFromBot: propTrue}, want: true},
+		{name: propFromWebhook, props: map[string]string{propFromWebhook: propTrue}, want: true},
+		{name: propFromPlugin, props: map[string]string{propFromPlugin: propTrue}, want: true},
+		{name: propFromOAuthApp, props: map[string]string{propFromOAuthApp: propTrue}, want: true},
+		{name: "prop set to false", props: map[string]string{propFromBot: propFalse}, want: false},
 		{name: "unrelated prop", props: map[string]string{"override_username": "ci"}, want: false},
-		{name: "bot user no props", user: &mattermost.User{ID: "u1", IsBot: true}, want: true},
-		{name: "human user no props", user: &mattermost.User{ID: "u1"}, want: false},
+		{name: "bot user no props", user: &mattermost.User{ID: authorID, IsBot: true}, want: true},
+		{name: "human user no props", user: &mattermost.User{ID: authorID}, want: false},
 	}
 
 	for _, testCase := range cases {
@@ -168,7 +186,7 @@ func TestActivateAI(t *testing.T) {
 		want  bool
 	}{
 		{name: "opted in", props: map[string]string{propActivateAI: propTrue}, want: true},
-		{name: "opted out", props: map[string]string{propActivateAI: "false"}, want: false},
+		{name: "opted out", props: map[string]string{propActivateAI: propFalse}, want: false},
 		{name: "absent", props: map[string]string{propFromBot: propTrue}, want: false},
 		{name: "no props", want: false},
 	}

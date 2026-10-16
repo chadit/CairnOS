@@ -40,17 +40,18 @@ func (c *countingConn) ChannelByName(ctx context.Context, team, name string) (ma
 	return c.fakeConn.ChannelByName(ctx, team, name)
 }
 
-// senderFor builds a bridge over one connection and returns that identity's
-// registered send surface, with the target cache on its default window.
-func senderFor(t *testing.T, conn mattermost.Conn) messaging.Sender {
+// bridgeFor builds a bridge over one connection with the target cache on its
+// default window. It fails the case unless the ops identity registered a send
+// surface, so a case can index Senders()[identityOps] directly.
+func bridgeFor(t *testing.T, conn mattermost.Conn) *mattermost.Bridge {
 	t.Helper()
 
-	return senderWithCacheTTL(t, conn, 0)
+	return bridgeWithCacheTTL(t, conn, 0)
 }
 
-// senderWithCacheTTL is senderFor with the resolved-target window spelled out,
+// bridgeWithCacheTTL is bridgeFor with the resolved-target window spelled out,
 // for the case that asserts on re-resolution.
-func senderWithCacheTTL(t *testing.T, conn mattermost.Conn, cacheTTL time.Duration) messaging.Sender {
+func bridgeWithCacheTTL(t *testing.T, conn mattermost.Conn, cacheTTL time.Duration) *mattermost.Bridge {
 	t.Helper()
 
 	built := mattermost.New(&mattermost.Config{
@@ -64,12 +65,11 @@ func senderWithCacheTTL(t *testing.T, conn mattermost.Conn, cacheTTL time.Durati
 		},
 	})
 
-	sender, registered := built.Senders()[identityOps]
-	if !registered {
+	if _, registered := built.Senders()[identityOps]; !registered {
 		t.Fatalf("identity %q has no send surface; registered: %+v", identityOps, built.Senders())
 	}
 
-	return sender
+	return built
 }
 
 // TestSenderDescribesIdentity proves the description a listing and the A2A card
@@ -77,13 +77,13 @@ func senderWithCacheTTL(t *testing.T, conn mattermost.Conn, cacheTTL time.Durati
 func TestSenderDescribesIdentity(t *testing.T) {
 	t.Parallel()
 
-	got := senderFor(t, newFakeConn(botUserID, botUsername)).Describe()
+	got := bridgeFor(t, newFakeConn(botUserID, botUsername)).Senders()[identityOps].Describe()
 
 	want := messaging.Identity{
 		Name:        identityOps,
 		Transport:   "mattermost",
 		Username:    botUsername,
-		DisplayName: "Ops Agent",
+		DisplayName: botDisplayName,
 		URL:         serverURL,
 	}
 
@@ -121,7 +121,7 @@ func TestSenderResolvesEveryTargetForm(t *testing.T) {
 				t.Fatalf("ParseTarget(%q): %v", testCase.target, err)
 			}
 
-			ref, err := senderFor(t, conn).Send(t.Context(), target, "hello", "")
+			ref, err := bridgeFor(t, conn).Senders()[identityOps].Send(t.Context(), target, "hello", "")
 			if err != nil {
 				t.Fatalf("Send to %q: %v", testCase.target, err)
 			}
@@ -145,7 +145,7 @@ func TestSenderPassesThreadThrough(t *testing.T) {
 	conn := newFakeConn(botUserID, botUsername)
 	target := messaging.Target{Kind: messaging.KindChannelID, Value: channelID}
 
-	if _, err := senderFor(t, conn).Send(t.Context(), target, "in thread", "root-9"); err != nil {
+	if _, err := bridgeFor(t, conn).Senders()[identityOps].Send(t.Context(), target, "in thread", "root-9"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -163,7 +163,7 @@ func TestSenderCachesNameLookups(t *testing.T) {
 	conn := newCountingConn()
 	conn.channels[channelName] = mattermost.Channel{ID: channelID, Name: channelName}
 
-	sender := senderFor(t, conn)
+	sender := bridgeFor(t, conn).Senders()[identityOps]
 	target := messaging.Target{Kind: messaging.KindChannelName, Value: channelName}
 
 	for range 3 {
@@ -192,7 +192,7 @@ func TestSenderReportsLookupFailure(t *testing.T) {
 
 	target := messaging.Target{Kind: messaging.KindChannelName, Value: "missing"}
 
-	_, err := senderFor(t, conn).Send(t.Context(), target, "hello", "")
+	_, err := bridgeFor(t, conn).Senders()[identityOps].Send(t.Context(), target, "hello", "")
 	if !errors.Is(err, errLookup) {
 		t.Fatalf("Send error = %v, want it to wrap the lookup failure", err)
 	}
@@ -211,12 +211,17 @@ func TestSenderReresolvesAStaleNameEntry(t *testing.T) {
 
 	// A one-nanosecond window makes every entry stale by the time the next call
 	// reads it, so the case proves re-resolution without waiting on a clock.
-	const cacheTTL = time.Nanosecond
+	const (
+		cacheTTL = time.Nanosecond
+
+		// reusedNameChannelID is the fresh channel that takes over the old name.
+		reusedNameChannelID = "chan-2"
+	)
 
 	conn := newCountingConn()
 	conn.channels[channelName] = mattermost.Channel{ID: channelID, Name: channelName}
 
-	sender := senderWithCacheTTL(t, conn, cacheTTL)
+	sender := bridgeWithCacheTTL(t, conn, cacheTTL).Senders()[identityOps]
 	target := messaging.Target{Kind: messaging.KindChannelName, Value: channelName}
 
 	if _, err := sender.Send(t.Context(), target, "hello", ""); err != nil {
@@ -225,7 +230,7 @@ func TestSenderReresolvesAStaleNameEntry(t *testing.T) {
 
 	// The channel is renamed and a different one takes the name, which is exactly
 	// what the cached id cannot see.
-	conn.channels[channelName] = mattermost.Channel{ID: "chan-2", Name: channelName}
+	conn.channels[channelName] = mattermost.Channel{ID: reusedNameChannelID, Name: channelName}
 
 	if _, err := sender.Send(t.Context(), target, "hello again", ""); err != nil {
 		t.Fatalf("Send after the window: %v", err)
@@ -236,7 +241,7 @@ func TestSenderReresolvesAStaleNameEntry(t *testing.T) {
 	}
 
 	posts := conn.Posts()
-	if len(posts) != 2 || posts[1].ChannelID != "chan-2" {
+	if len(posts) != 2 || posts[1].ChannelID != reusedNameChannelID {
 		t.Fatalf("posts = %+v, want the second one in the re-resolved channel", posts)
 	}
 }
@@ -249,13 +254,13 @@ type goneRootConn struct {
 
 // CreatePost refuses the post the way the server refuses a reply to a gone root.
 func (*goneRootConn) CreatePost(_ context.Context, _, _, _ string) (mattermost.Post, error) {
-	return mattermost.Post{}, &mattermost.APIError{Class: mattermost.ClassNotFound, Method: "CreatePost", Status: 404}
+	return mattermost.Post{}, &mattermost.APIError{Class: mattermost.ClassNotFound, Method: createPostMethod, Status: 404}
 }
 
 func TestSenderReportsAMissingThreadRoot(t *testing.T) {
 	t.Parallel()
 
-	sender := senderFor(t, &goneRootConn{fakeConn: newFakeConn(botUserID, botUsername)})
+	sender := bridgeFor(t, &goneRootConn{fakeConn: newFakeConn(botUserID, botUsername)}).Senders()[identityOps]
 	target := messaging.Target{Kind: messaging.KindChannelID, Value: channelID}
 
 	if _, err := sender.Send(t.Context(), target, "in thread", "root-9"); !errors.Is(err, messaging.ErrThreadNotFound) {

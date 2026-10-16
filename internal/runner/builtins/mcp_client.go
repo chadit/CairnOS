@@ -35,8 +35,12 @@ const codeMCPNotConfigured = MCPClientName + ".not_configured"
 // context of its own in the Describer contract.
 const describeTimeout = 30 * time.Second
 
-// mcpClientVersion is the client identity sent during the MCP handshake.
-const mcpClientVersion = "0.1.0"
+// clientName is the identity CairnOS announces in a handshake, to MCP servers
+// and to the codex app-server alike. Only MCP also takes mcpClientVersion.
+const (
+	clientName       = "cairnos"
+	mcpClientVersion = "0.1.0"
+)
 
 // The SDK reports transport- and session-level failures (connection refused,
 // peer closing, session header mismatch) as wire errors in this
@@ -180,8 +184,8 @@ func buildMCPClient(
 
 // MCPClientFactory adapts buildMCPClient to the registry contract with no
 // credential lookup. It is MCPClientFactoryWithCredentials with a nil lookup.
-func MCPClientFactory(cfg map[string]any) (runner.Runner, error) {
-	return buildMCPClient(MCPClientName, cfg, nil, nil)
+func MCPClientFactory() runner.Factory {
+	return MCPClientFactoryWithCredentials(nil)
 }
 
 // MCPClientFactoryWithCredentials returns a registry factory that wires lookup
@@ -299,31 +303,31 @@ func (m *MCPClient) Describe() runner.ToolSpec {
 	return spec
 }
 
-// connect opens one session against the configured transport. Connection
-// failures classify as transport errors, since an unreachable server is the
-// retryable case.
+// connect opens one session over streamable HTTP for server_url or stdio for
+// command. The HTTP path rides the guarded client so every dial, including
+// redirect hops, passes the egress checks. Connection failures classify as
+// transport errors, since an unreachable server is the retryable case.
 func (m *MCPClient) connect(ctx context.Context) (*mcp.ClientSession, error) {
-	client := mcp.NewClient(&mcp.Implementation{Name: "cairnos", Version: mcpClientVersion}, nil)
+	if m.serverURL != "" {
+		return openSession(ctx, &mcp.StreamableClientTransport{Endpoint: m.serverURL, HTTPClient: m.httpClient})
+	}
 
-	session, err := client.Connect(ctx, m.transport(ctx), nil)
+	// #nosec G204 -- the argv array comes from the operator's own runner
+	// config block, not from workflow params or network input.
+	return openSession(ctx, &mcp.CommandTransport{Command: exec.CommandContext(ctx, m.command[0], m.command[1:]...)})
+}
+
+// openSession runs the MCP handshake over transport, whichever kind connect
+// picked, so both paths classify a failed connect the same way.
+func openSession(ctx context.Context, transport mcp.Transport) (*mcp.ClientSession, error) {
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: mcpClientVersion}, nil)
+
+	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, classifyMCPError(ctx, err)
 	}
 
 	return session, nil
-}
-
-// transport picks streamable HTTP for server_url and stdio for command. The
-// HTTP path rides the guarded client so every dial, including redirect hops,
-// passes the egress checks.
-func (m *MCPClient) transport(ctx context.Context) mcp.Transport {
-	if m.serverURL != "" {
-		return &mcp.StreamableClientTransport{Endpoint: m.serverURL, HTTPClient: m.httpClient}
-	}
-
-	// #nosec G204 -- the argv array comes from the operator's own runner
-	// config block, not from workflow params or network input.
-	return &mcp.CommandTransport{Command: exec.CommandContext(ctx, m.command[0], m.command[1:]...)}
 }
 
 // fetchSpec lists the server's tools and translates the configured one. The

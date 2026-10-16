@@ -25,6 +25,7 @@ const (
 	keyErrors   = "errors"
 	keyNaming   = "naming"
 	valWrap     = "wrap"
+	valSnake    = "snake"
 )
 
 // twoRows is the unmerged row count testListRules expects (one default plus
@@ -32,18 +33,19 @@ const (
 const twoRows = 2
 
 // OpenFunc hands the suite a fresh, empty rules store. The implementation
-// registers cleanup so each subtest gets an isolated database. Returning the
-// interface keeps the suite backend-agnostic.
-type OpenFunc func(t *testing.T) rules.Service
+// registers cleanup so each subtest gets an isolated database. S is the
+// backend's own type, so a backend's opener returns what it opened while the
+// suite drives only the rules.Service methods.
+type OpenFunc[S rules.Service] func(t *testing.T) S
 
 // RunConformance runs the full rules.Service behavioral suite against the
 // store openFn hands out. Each named subtest opens its own store, so they are
 // independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "PutAndGetDefaults", run: testPutAndGetDefaults},
@@ -78,7 +80,7 @@ func ruleMap(set rules.RuleSet) map[string]string {
 	return set.AsMap()
 }
 
-func testPutAndGetDefaults(t *testing.T, openFn OpenFunc) {
+func testPutAndGetDefaults[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -101,7 +103,7 @@ func testPutAndGetDefaults(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testProjectOverride(t *testing.T, openFn OpenFunc) {
+func testProjectOverride[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -112,7 +114,7 @@ func testProjectOverride(t *testing.T, openFn OpenFunc) {
 
 	// Project rules: one replaces a default key, one adds a new key.
 	putRule(t, svc, &rules.Rule{Language: langGo, Project: projFinance, Key: keyMaxLine, Value: "100"})
-	putRule(t, svc, &rules.Rule{Language: langGo, Project: projFinance, Key: keyNaming, Value: "snake"})
+	putRule(t, svc, &rules.Rule{Language: langGo, Project: projFinance, Key: keyNaming, Value: valSnake})
 
 	set, err := svc.GetRules(t.Context(), langGo, projFinance)
 	if err != nil {
@@ -124,16 +126,16 @@ func testProjectOverride(t *testing.T, openFn OpenFunc) {
 	}
 
 	want := map[string]string{
-		keyMaxLine: "100",   // project override wins
-		keyErrors:  valWrap, // language default survives
-		keyNaming:  "snake", // project-only key lands
+		keyMaxLine: "100",    // project override wins
+		keyErrors:  valWrap,  // language default survives
+		keyNaming:  valSnake, // project-only key lands
 	}
 	if got := ruleMap(set); !reflect.DeepEqual(got, want) {
 		t.Errorf("merged rules = %v, want %v", got, want)
 	}
 }
 
-func testMissingProjectFallsBack(t *testing.T, openFn OpenFunc) {
+func testMissingProjectFallsBack[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -153,7 +155,7 @@ func testMissingProjectFallsBack(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testUnknownLanguage(t *testing.T, openFn OpenFunc) {
+func testUnknownLanguage[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -163,7 +165,7 @@ func testUnknownLanguage(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPutRejectsEmptyKey(t *testing.T, openFn OpenFunc) {
+func testPutRejectsEmptyKey[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -177,7 +179,7 @@ func testPutRejectsEmptyKey(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListLanguages(t *testing.T, openFn OpenFunc) {
+func testListLanguages[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -198,7 +200,7 @@ func testListLanguages(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListRules(t *testing.T, openFn OpenFunc) {
+func testListRules[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)
@@ -223,7 +225,7 @@ func testListRules(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testRuleSetAsMap(t *testing.T, openFn OpenFunc) {
+func testRuleSetAsMap[S rules.Service](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	svc := openFn(t)

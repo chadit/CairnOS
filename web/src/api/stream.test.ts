@@ -18,6 +18,16 @@ import { streamRunEvents } from './stream';
 // check the consumer yields RunEvents in stream order and surfaces a
 // mid-stream error envelope as a CairnApiError.
 
+/** eventTypes drains a run stream that ends cleanly and returns each event's
+ * type in arrival order. */
+async function eventTypes(...args: Parameters<typeof streamRunEvents>): Promise<string[]> {
+  const types: string[] = [];
+  for await (const event of streamRunEvents(...args)) {
+    types.push(event.type);
+  }
+  return types;
+}
+
 describe('streamRunEvents', () => {
   it('yields events in the order the stream sent them', async () => {
     server.use(
@@ -31,15 +41,32 @@ describe('streamRunEvents', () => {
       ),
     );
 
-    const types: string[] = [];
-    for await (const event of streamRunEvents('hello', {})) {
-      types.push(event.type);
-    }
-
-    expect(types).toEqual([
+    expect(await eventTypes('hello', {})).toEqual([
       'RUN_EVENT_TYPE_RUN_STARTED',
       'RUN_EVENT_TYPE_ACTION_TRANSITION',
       'RUN_EVENT_TYPE_ACTION_TRANSITION',
+      'RUN_EVENT_TYPE_RUN_FINISHED',
+    ]);
+  });
+
+  it('skips blank lines and keeps a final line that has no trailing newline', async () => {
+    server.use(
+      http.post(
+        '/v1/workflows/hello/runs',
+        () =>
+          new HttpResponse(
+            [
+              resultLine({ runId: 'r1', type: 'RUN_EVENT_TYPE_RUN_STARTED' }),
+              '',
+              runFinishedLine('r1'),
+            ].join('\n'),
+            { headers: { 'Content-Type': 'application/x-ndjson' } },
+          ),
+      ),
+    );
+
+    expect(await eventTypes('hello', {})).toEqual([
+      'RUN_EVENT_TYPE_RUN_STARTED',
       'RUN_EVENT_TYPE_RUN_FINISHED',
     ]);
   });
@@ -66,9 +93,7 @@ describe('streamRunEvents', () => {
 
     expect(seen).toEqual(['RUN_EVENT_TYPE_RUN_STARTED']);
     expect(isCairnApiError(caught)).toBe(true);
-    if (isCairnApiError(caught)) {
-      expect(caught.code).toBe('workflow.cycle_detected');
-    }
+    expect(caught).toHaveProperty('code', 'workflow.cycle_detected');
   });
 
   it('sends the inline definition as base64 toml only when the option is set', async () => {
@@ -116,8 +141,6 @@ describe('streamRunEvents', () => {
     expect(seen).toEqual([]);
 
     expect(isCairnApiError(caught)).toBe(true);
-    if (isCairnApiError(caught)) {
-      expect(caught.message).toBe('no such workflow');
-    }
+    expect(caught).toHaveProperty('message', 'no such workflow');
   });
 });

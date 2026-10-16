@@ -118,20 +118,20 @@ type HoldQueue interface {
 	ListHeld(ctx context.Context) ([]WorkItem, error)
 }
 
-// WorkQueue is the durable work-queue behind the scheduler. The SQLite backend
-// is single-node (its write lock serializes the claim); the Postgres backend
-// claims with FOR UPDATE SKIP LOCKED so several workers across nodes pull
-// disjoint items. Both satisfy the same contract, proven by one conformance
-// suite (.agents/spec/14-open-decisions.md, S8).
-type WorkQueue interface {
+// ProducerQueue is the side a cron fire or poll event writes through: it checks
+// for an unfinished occurrence, then lands the fire as one exactly-once row.
+type ProducerQueue interface {
 	OccurrenceQueue
-	HoldQueue
 
 	// Enqueue inserts a ready item. It is exactly-once on DedupKey: a duplicate
 	// key is a no-op that reports inserted=false, so a cron fire that several
 	// nodes observe lands a single row.
 	Enqueue(ctx context.Context, item *WorkItem) (inserted bool, err error)
+}
 
+// LeaseQueue is the worker's side of one delivery: lease an item, keep the
+// lease alive while it runs, then settle it.
+type LeaseQueue interface {
 	// Claim leases up to limit ready items whose AvailableAt has passed, moving
 	// them to leased with LeaseUntil = now + ackWait and incrementing Deliveries.
 	// An idle queue returns an empty slice, not an error.
@@ -151,7 +151,11 @@ type WorkQueue interface {
 	// Deliveries has reached maxDeliveries, in which case it dead-letters.
 	// Reports the resulting state.
 	Nak(ctx context.Context, id string, now time.Time, backoff time.Duration, maxDeliveries int) (WorkState, error)
+}
 
+// SweepQueue is what the worker's periodic sweep calls: reclaim abandoned
+// leases, drop expired dead letters, and report depth for the dashboard.
+type SweepQueue interface {
 	// SweepExpired reclaims leases whose LeaseUntil has passed (a crashed or
 	// stalled worker): each goes back to ready, or dead-letters once it has hit
 	// maxDeliveries. Reports how many were reclaimed and how many dead-lettered.
@@ -163,6 +167,18 @@ type WorkQueue interface {
 
 	// Stats returns the queue-depth snapshot for the dashboard.
 	Stats(ctx context.Context, now time.Time) (QueueStats, error)
+}
+
+// WorkQueue is the durable work-queue behind the scheduler. The SQLite backend
+// is single-node (its write lock serializes the claim); the Postgres backend
+// claims with FOR UPDATE SKIP LOCKED so several workers across nodes pull
+// disjoint items. Both satisfy the same contract, proven by one conformance
+// suite (.agents/spec/14-open-decisions.md, S8).
+type WorkQueue interface {
+	ProducerQueue
+	LeaseQueue
+	HoldQueue
+	SweepQueue
 }
 
 // Compile-time proof both backends satisfy the queue contract, so a signature

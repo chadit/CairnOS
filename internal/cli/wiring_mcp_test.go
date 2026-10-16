@@ -37,6 +37,10 @@ runner = "mcp_client"
 params = { text = "wired" }
 `
 
+// mcpEchoTool is the one tool the in-process server exposes and the tool the
+// imported runner block calls.
+const mcpEchoTool = "echo"
+
 // mcpEchoArgs is the echo tool's typed input; the SDK derives the input
 // schema from it.
 type mcpEchoArgs struct {
@@ -52,7 +56,7 @@ func newMCPEchoServerURL(t *testing.T) string {
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "cairnos-test", Version: "0.0.1"}, nil)
 
-	mcp.AddTool(server, &mcp.Tool{Name: "echo", Description: "echoes text back"},
+	mcp.AddTool(server, &mcp.Tool{Name: mcpEchoTool, Description: "echoes text back"},
 		func(_ context.Context, _ *mcp.CallToolRequest, args mcpEchoArgs) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "echo: " + args.Text}},
@@ -80,7 +84,7 @@ func appendMCPBlock(t *testing.T, dir, name, serverURL string) {
 	block := "\n[runner." + name + "]\n" +
 		"type                  = \"mcp_client\"\n" +
 		"server_url            = " + strconv.Quote(serverURL) + "\n" +
-		"tool                  = \"echo\"\n" +
+		"tool                  = " + strconv.Quote(mcpEchoTool) + "\n" +
 		"allow_private_targets = true\n"
 
 	appendConfig(t, dir, block)

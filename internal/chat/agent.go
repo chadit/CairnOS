@@ -215,6 +215,12 @@ func truncateResult(text string) string {
 	return text[:maxToolResultChars] + "... (truncated)"
 }
 
+// Each history line reads "role: content", one message per line.
+const (
+	historyRoleSep = ": "
+	historyLineEnd = "\n"
+)
+
 // joinHistory renders the persisted messages into the prompt's conversation
 // section, so the next turn sees the whole thread (.agents/spec/13-roadmap.md,
 // Phase 9: context persisted across turns).
@@ -222,7 +228,7 @@ func joinHistory(messages []*store.ChatMessage) string {
 	var total int
 
 	for _, message := range messages {
-		total += len(message.Role) + len(message.Content) + 3
+		total += len(message.Role) + len(historyRoleSep) + len(message.Content) + len(historyLineEnd)
 	}
 
 	var text strings.Builder
@@ -232,9 +238,9 @@ func joinHistory(messages []*store.ChatMessage) string {
 
 	for _, message := range messages {
 		text.WriteString(message.Role)
-		text.WriteString(": ")
+		text.WriteString(historyRoleSep)
 		text.WriteString(message.Content)
-		text.WriteByte('\n')
+		text.WriteString(historyLineEnd)
 	}
 
 	return text.String()

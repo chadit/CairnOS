@@ -178,8 +178,8 @@ func (s *Service) decodeRequest(w http.ResponseWriter, r *http.Request) (*comple
 	var req completionRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			return nil, errRequestTooLarge("request body exceeds the configured size limit")
+		if tooLarge, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return nil, errRequestTooLarge(fmt.Sprintf("request body exceeds the %d-byte size limit", tooLarge.Limit))
 		}
 
 		return nil, errInvalidBody("request body is not valid JSON")
@@ -381,16 +381,20 @@ func renderConfirmation(proposal *chat.Proposal, sessionID string) string {
 	)
 }
 
+// emptyJSONObject stands in for inputs that are absent or will not encode, so
+// the confirmation line always reads as JSON.
+const emptyJSONObject = "{}"
+
 // compactInputs renders proposal inputs as compact JSON, showing an empty object
 // when there are none so the line always reads as JSON.
 func compactInputs(inputs map[string]any) string {
 	if len(inputs) == 0 {
-		return "{}"
+		return emptyJSONObject
 	}
 
 	encoded, err := json.Marshal(inputs)
 	if err != nil {
-		return "{}"
+		return emptyJSONObject
 	}
 
 	return string(encoded)

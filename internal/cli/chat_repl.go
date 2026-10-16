@@ -35,12 +35,24 @@ const chatHelpText = `commands:
 // chatClient is the slice of ChatServiceClient the REPL drives; the real
 // grpc client satisfies it, tests fake it without a network.
 type chatClient interface {
+	chatSessions
+	chatTurns
+}
+
+// chatSessions is the unary half: session lookup and creation plus transcript
+// search, all the one-shot paths need before or instead of a REPL.
+type chatSessions interface {
 	CreateSession(ctx context.Context, req *cairnosv1.CreateSessionRequest, opts ...grpc.CallOption) (*cairnosv1.CreateSessionResponse, error)
 	GetSession(ctx context.Context, req *cairnosv1.GetSessionRequest, opts ...grpc.CallOption) (*cairnosv1.GetSessionResponse, error)
 	ListSessions(ctx context.Context, req *cairnosv1.ListSessionsRequest, opts ...grpc.CallOption) (*cairnosv1.ListSessionsResponse, error)
+	SearchMessages(ctx context.Context, req *cairnosv1.SearchMessagesRequest, opts ...grpc.CallOption) (*cairnosv1.SearchMessagesResponse, error)
+}
+
+// chatTurns is the streaming half: a sent message and an approved action each
+// stream the turn's events back.
+type chatTurns interface {
 	SendMessage(ctx context.Context, req *cairnosv1.SendMessageRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[cairnosv1.ChatEvent], error)
 	ConfirmAction(ctx context.Context, req *cairnosv1.ConfirmActionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[cairnosv1.ChatEvent], error)
-	SearchMessages(ctx context.Context, req *cairnosv1.SearchMessagesRequest, opts ...grpc.CallOption) (*cairnosv1.SearchMessagesResponse, error)
 }
 
 // chatREPL holds one interactive conversation's state.
@@ -107,32 +119,38 @@ func (r *chatREPL) loop(ctx context.Context) int {
 			return r.scannerExit()
 		}
 
-		line := strings.TrimSpace(r.scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		if strings.HasPrefix(line, "/") {
-			if quit := r.dispatch(ctx, line); quit {
-				return ExitOK
-			}
-
-			continue
-		}
-
-		message, sendable := r.readMultiline(line)
-		if !sendable {
-			// EOF mid-block: send nothing and exit cleanly.
-			return r.scannerExit()
-		}
-
-		if err := r.runTurn(ctx, message); err != nil {
-			// A turn error is not an exit path: the session survives
-			// server-side, so print the error and offer the next prompt
-			// instead of letting a transient stream failure kill the REPL.
-			r.app.printErrf("chat: %v\n", err)
+		if code, stop := r.handleLine(ctx, strings.TrimSpace(r.scanner.Text())); stop {
+			return code
 		}
 	}
+}
+
+// handleLine runs one entered line, a slash command or a message, and reports
+// whether the REPL stops and with which exit code. It keeps loop down to
+// reading.
+func (r *chatREPL) handleLine(ctx context.Context, line string) (int, bool) {
+	if line == "" {
+		return ExitOK, false
+	}
+
+	if strings.HasPrefix(line, "/") {
+		return ExitOK, r.dispatch(ctx, line)
+	}
+
+	message, sendable := r.readMultiline(line)
+	if !sendable {
+		// EOF mid-block: send nothing and exit cleanly.
+		return r.scannerExit(), true
+	}
+
+	if err := r.runTurn(ctx, message); err != nil {
+		// A turn error is not an exit path: the session survives
+		// server-side, so print the error and offer the next prompt
+		// instead of letting a transient stream failure kill the REPL.
+		r.app.printErrf("chat: %v\n", err)
+	}
+
+	return ExitOK, false
 }
 
 // scannerExit reports the exit code after the input stream ends: a scan error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,7 +22,7 @@ func OpenSchema(ctx context.Context, dsn, schema string) (*Store, error) {
 	}
 
 	// search_path takes effect on every pooled connection, so the unqualified
-	// table names in the store's queries resolve to this schema. quoteIdent
+	// table names in the store's queries resolve to this schema. Sanitize
 	// guards the schema name even though tests only pass generated ones.
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
@@ -34,7 +35,7 @@ func OpenSchema(ctx context.Context, dsn, schema string) (*Store, error) {
 		return nil, fmt.Errorf("open postgres pool: %w", err)
 	}
 
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoteIdent(schema)); err != nil {
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
 		pool.Close()
 
 		return nil, fmt.Errorf("create schema %s: %w", schema, err)
@@ -52,31 +53,10 @@ func OpenSchema(ctx context.Context, dsn, schema string) (*Store, error) {
 // DropSchema removes a test schema and everything in it. Called from a
 // subtest's cleanup so a finished run leaves no tables behind.
 func DropSchema(ctx context.Context, s *Store, schema string) error {
-	_, err := s.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+quoteIdent(schema)+" CASCADE")
+	_, err := s.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 	if err != nil {
 		return fmt.Errorf("drop schema %s: %w", schema, err)
 	}
 
 	return nil
-}
-
-// quoteIdent wraps a SQL identifier in double quotes, doubling any embedded
-// quote, so a generated schema name can never break out of the identifier
-// context. Test schema names are machine-generated, but quoting keeps the
-// DDL injection-safe regardless.
-func quoteIdent(name string) string {
-	quoted := make([]byte, 0, len(name)+2)
-	quoted = append(quoted, '"')
-
-	for i := range len(name) {
-		if name[i] == '"' {
-			quoted = append(quoted, '"')
-		}
-
-		quoted = append(quoted, name[i])
-	}
-
-	quoted = append(quoted, '"')
-
-	return string(quoted)
 }

@@ -22,39 +22,34 @@ const (
 	keyBody = "body"
 )
 
-// schemaDescription is the JSON-schema description keyword. A const keeps the
-// package under the goconst repeat threshold, since run_workflow_tool.go
-// already carries the literal twice.
-const schemaDescription = "description"
-
-// skillTool is the descriptor-plus-runner the driver calls to load a skill by
+// SkillTool is the descriptor-plus-runner the driver calls to load a skill by
 // name. Unlike run_workflow it executes for real rather than raising a gate:
 // Execute reads the named skill through the SkillSource and returns its body,
 // which runReadTool persists raw so the tool path carries byte-identical text
 // to a slash invocation.
-type skillTool struct {
+type SkillTool struct {
 	source SkillSource
 }
 
 var (
-	_ runner.Runner    = (*skillTool)(nil)
-	_ runner.Describer = (*skillTool)(nil)
+	_ runner.Runner    = (*SkillTool)(nil)
+	_ runner.Describer = (*SkillTool)(nil)
 )
 
 // NewSkillTool builds the skill read tool over a skill source. The CLI wiring
 // registers it into the chat read tools when a source is configured; a nil
 // source leaves the tool out, so a node without a skills directory never offers
 // it.
-func NewSkillTool(source SkillSource) runner.Runner {
-	return &skillTool{source: source}
+func NewSkillTool(source SkillSource) *SkillTool {
+	return &SkillTool{source: source}
 }
 
 // Name implements runner.Runner.
-func (*skillTool) Name() string { return SkillToolName }
+func (*SkillTool) Name() string { return SkillToolName }
 
 // Validate implements runner.Runner: name is required so a load always names a
 // skill. Load-time validation (unresolved params) checks structure only.
-func (*skillTool) Validate(task *runner.Task) error {
+func (*SkillTool) Validate(task *runner.Task) error {
 	if !task.Resolved {
 		return nil
 	}
@@ -71,7 +66,7 @@ func (*skillTool) Validate(task *runner.Task) error {
 // unknown name is a permanent skill.not_found: retrying cannot conjure a skill
 // the operator never wrote, and executeTool renders it as the usual error
 // transcript value the driver reads.
-func (s *skillTool) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
+func (s *SkillTool) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return runner.Result{}, runner.NewError(runner.ClassTransient, SkillToolName+".canceled", err.Error())
 	}
@@ -94,7 +89,7 @@ func (s *skillTool) Execute(ctx context.Context, task *runner.Task) (runner.Resu
 // Describe implements runner.Describer. The description tells the driver the
 // tool loads a listed skill's guidance for this turn, so the model reaches for
 // it when a skill's system-prompt description matches the task.
-func (*skillTool) Describe() runner.ToolSpec {
+func (*SkillTool) Describe() runner.ToolSpec {
 	return runner.ToolSpec{
 		Name: SkillToolName,
 		Description: "Load one operator-authored skill by name and read its body. " +
@@ -102,13 +97,13 @@ func (*skillTool) Describe() runner.ToolSpec {
 			"for this turn only, not a new tool, budget, or permission.",
 		InputSchema: map[string]any{
 			schemaType: schemaObject,
-			"properties": map[string]any{
+			schemaProperties: map[string]any{
 				argName: map[string]any{
 					schemaType:        schemaString,
 					schemaDescription: "the skill name to load",
 				},
 			},
-			"required": []string{argName},
+			schemaRequired: []string{argName},
 		},
 	}
 }

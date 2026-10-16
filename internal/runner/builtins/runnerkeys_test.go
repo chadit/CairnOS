@@ -35,7 +35,7 @@ func askTask() *runner.Task {
 // remoteConfig points a runner at an endpoint somebody else operates, which is
 // what makes the key required at all.
 func remoteConfig() map[string]any {
-	return map[string]any{"model": "a-model", "base_url": "https://api.z.ai/v1"}
+	return map[string]any{modelKey: testModel, baseURLKey: "https://api.z.ai/v1"}
 }
 
 // noKeys is the environment of a host that set neither variable.
@@ -170,8 +170,8 @@ func TestLocalNamedRunnerNeedsNoKey(t *testing.T) {
 	t.Parallel()
 
 	llm, err := builtins.NewOpenAIFor("local", map[string]any{
-		"model":    "a-model",
-		"base_url": "http://127.0.0.1:8089/v1",
+		modelKey:   testModel,
+		baseURLKey: "http://127.0.0.1:8089/v1",
 	}, &http.Client{Timeout: time.Second}, noKeys())
 	if err != nil {
 		t.Fatalf("new openai: %v", err)
@@ -228,7 +228,6 @@ func validateTypeNamed(t *testing.T, kind string, lookup environ.Lookup) error {
 			t.Fatalf("new anthropic: %v", err)
 		}
 
-		//nolint:wrapcheck // the case reads the runner's own error
 		return llm.Validate(task)
 	}
 
@@ -237,6 +236,5 @@ func validateTypeNamed(t *testing.T, kind string, lookup environ.Lookup) error {
 		t.Fatalf("new openai: %v", err)
 	}
 
-	//nolint:wrapcheck // the case reads the runner's own error
 	return llm.Validate(task)
 }

@@ -3,7 +3,6 @@ package builtins_test
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,11 +22,22 @@ const (
 	limitKey     = "limit"
 	sinceKey     = "since"
 	stateKey     = "state"
+	labelsKey    = "labels"
+	stateAll     = "all"
 	testRepo     = "chadit/CairnOS"
 	opReleases   = "releases"
 	opNewIssue   = "create_issue"
 	opListIssues = "list_issues"
 	actionWatch  = "watch"
+
+	// issueTitle is the title the create_issue case sends and reads back, and
+	// testTimestamp an RFC 3339 instant: the newer golden release's
+	// published_at, and a valid since value.
+	issueTitle    = "release v0.2.0"
+	testTimestamp = "2026-06-01T00:00:00Z"
+
+	githubRateLimited = "github.rate_limited"
+	githubAuth        = "github.auth"
 )
 
 // githubReleasesBody is the golden release-feed response.
@@ -62,7 +72,7 @@ func TestGitHubListsReleases(t *testing.T) {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths <- r.URL.Path + "?" + r.URL.RawQuery
 
-		_, _ = io.WriteString(w, githubReleasesBody)
+		writeBody(t, w, githubReleasesBody)
 	}))
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
@@ -85,7 +95,7 @@ func TestGitHubListsReleases(t *testing.T) {
 
 	first, isMap := items[0].(map[string]any)
 	if !isMap || first["tag"] != "v0.2.0" || first["name"] != "Second" ||
-		first["published_at"] != "2026-06-01T00:00:00Z" || first[bodyKey] != "notes two" {
+		first["published_at"] != testTimestamp || first[bodyKey] != "notes two" {
 		t.Fatalf("first release = %#v", items[0])
 	}
 }
@@ -104,15 +114,15 @@ func TestGitHubCreatesIssue(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, githubIssueBody)
+		writeBody(t, w, githubIssueBody)
 	}))
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
-		opKey:    opNewIssue,
-		repoKey:  testRepo,
-		titleKey: "release v0.2.0",
-		bodyKey:  "new release spotted",
-		"labels": []any{"release", "automated"},
+		opKey:     opNewIssue,
+		repoKey:   testRepo,
+		titleKey:  issueTitle,
+		bodyKey:   "new release spotted",
+		labelsKey: []any{"release", "automated"},
 	}))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -126,8 +136,8 @@ func TestGitHubCreatesIssue(t *testing.T) {
 
 	select {
 	case request := <-requests:
-		labels, _ := request["labels"].([]any)
-		if request[titleKey] != "release v0.2.0" || len(labels) != 2 {
+		labels, _ := request[labelsKey].([]any)
+		if request[titleKey] != issueTitle || len(labels) != 2 {
 			t.Fatalf("request = %v", request)
 		}
 	default:
@@ -152,14 +162,14 @@ func TestGitHubListsIssues(t *testing.T) {
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery
 
-		_, _ = io.WriteString(w, githubIssuesBody)
+		writeBody(t, w, githubIssuesBody)
 	}))
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
 		opKey:    opListIssues,
 		repoKey:  testRepo,
 		sinceKey: "2026-06-15T00:00:00Z",
-		stateKey: "all",
+		stateKey: stateAll,
 	}))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -195,7 +205,7 @@ func TestGitHubListsIssuesEmptySinceKeepsAll(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, githubIssuesBody)
+		writeBody(t, w, githubIssuesBody)
 	}))
 
 	result, err := newGitHub(t, server).Execute(t.Context(), githubTask(map[string]any{
@@ -225,20 +235,20 @@ func TestGitHubClassifiesStatusCodes(t *testing.T) {
 		{
 			name: "403 with exhausted rate limit", status: http.StatusForbidden,
 			headers:   map[string]string{"X-Ratelimit-Remaining": "0"},
-			wantClass: runner.ClassRateLimited, wantCode: "github.rate_limited",
+			wantClass: runner.ClassRateLimited, wantCode: githubRateLimited,
 		},
 		{
 			name: "403 with secondary retry-after", status: http.StatusForbidden,
 			headers:   map[string]string{"Retry-After": "7"},
-			wantClass: runner.ClassRateLimited, wantCode: "github.rate_limited",
+			wantClass: runner.ClassRateLimited, wantCode: githubRateLimited,
 		},
 		{
 			name: "plain 403 is permanent auth", status: http.StatusForbidden,
-			wantClass: runner.ClassPermanent, wantCode: "github.auth",
+			wantClass: runner.ClassPermanent, wantCode: githubAuth,
 		},
 		{
 			name: "401 is permanent", status: http.StatusUnauthorized,
-			wantClass: runner.ClassPermanent, wantCode: "github.auth",
+			wantClass: runner.ClassPermanent, wantCode: githubAuth,
 		},
 		{
 			name: "500 retries", status: http.StatusInternalServerError,
@@ -287,8 +297,8 @@ func TestGitHubValidate(t *testing.T) {
 		resolved bool
 		wantErr  bool
 	}{
-		{name: "missing op", params: map[string]any{repoKey: testRepo}, resolved: true, wantErr: true},
-		{name: "unknown op", params: map[string]any{opKey: "stargaze", repoKey: testRepo}, resolved: true, wantErr: true},
+		{name: caseMissingOp, params: map[string]any{repoKey: testRepo}, resolved: true, wantErr: true},
+		{name: caseUnknownOp, params: map[string]any{opKey: "stargaze", repoKey: testRepo}, resolved: true, wantErr: true},
 		{name: "unresolved op defers", params: map[string]any{opKey: unresolved}, wantErr: false},
 		{name: "missing repo", params: map[string]any{opKey: opReleases}, resolved: true, wantErr: true},
 		{name: "repo without owner", params: map[string]any{opKey: opReleases, repoKey: "CairnOS"}, resolved: true, wantErr: true},
@@ -297,11 +307,11 @@ func TestGitHubValidate(t *testing.T) {
 		{name: "releases ok", params: map[string]any{opKey: opReleases, repoKey: testRepo, limitKey: int64(5)}, resolved: true, wantErr: false},
 		{name: "issue missing title", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, bodyKey: "x"}, resolved: true, wantErr: true},
 		{name: "issue missing body", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x"}, resolved: true, wantErr: true},
-		{name: "non-string label", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x", bodyKey: "y", "labels": []any{int64(1)}}, resolved: true, wantErr: true},
+		{name: "non-string label", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x", bodyKey: "y", labelsKey: []any{int64(1)}}, resolved: true, wantErr: true},
 		{name: "issue ok", params: map[string]any{opKey: opNewIssue, repoKey: testRepo, titleKey: "x", bodyKey: "y"}, resolved: true, wantErr: false},
 		{name: "list_issues missing repo", params: map[string]any{opKey: opListIssues}, resolved: true, wantErr: true},
 		{name: "list_issues ok", params: map[string]any{opKey: opListIssues, repoKey: testRepo}, resolved: true, wantErr: false},
-		{name: "list_issues with since and state", params: map[string]any{opKey: opListIssues, repoKey: testRepo, sinceKey: "2026-06-01T00:00:00Z", stateKey: "all"}, resolved: true, wantErr: false},
+		{name: "list_issues with since and state", params: map[string]any{opKey: opListIssues, repoKey: testRepo, sinceKey: testTimestamp, stateKey: stateAll}, resolved: true, wantErr: false},
 		{name: "list_issues non-string since", params: map[string]any{opKey: opListIssues, repoKey: testRepo, sinceKey: int64(1)}, resolved: true, wantErr: true},
 	}
 

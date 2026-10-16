@@ -84,9 +84,11 @@ func Setup(ctx context.Context, cfg config.Telemetry, version string) (*Telemetr
 	tel := &Telemetry{tracerProvider: tracerProvider}
 
 	if err := tel.startMeters(ctx, cfg, res); err != nil {
-		// Construction failed midway; the cleanup error would only bury
-		// the real one.
-		_ = tel.Shutdown(ctx)
+		// Construction failed midway. The setup error is the one the caller
+		// acts on, so a cleanup failure is logged rather than returned over it.
+		if shutdownErr := tel.Shutdown(ctx); shutdownErr != nil {
+			slog.WarnContext(ctx, "shutdown after failed telemetry setup", "error", shutdownErr)
+		}
 
 		return nil, err
 	}
@@ -143,12 +145,12 @@ func (t *Telemetry) startMeters(ctx context.Context, cfg config.Telemetry, res *
 	options := []sdkmetric.Option{sdkmetric.WithResource(res)}
 
 	if cfg.Prometheus != "" {
-		readerOption, err := t.startPrometheus(ctx, cfg.Prometheus)
+		promExporter, err := t.startPrometheus(ctx, cfg.Prometheus)
 		if err != nil {
 			return err
 		}
 
-		options = append(options, readerOption)
+		options = append(options, sdkmetric.WithReader(promExporter))
 	}
 
 	if cfg.OTLPEndpoint != "" {
@@ -179,7 +181,7 @@ func (t *Telemetry) startMeters(ctx context.Context, cfg config.Telemetry, res *
 // when the API is disabled (and in embedders without the gateway), and the
 // gateway's loopback-only guard never constrains where an operator points
 // Prometheus; the metrics bind is the operator's own choice.
-func (t *Telemetry) startPrometheus(ctx context.Context, bind string) (sdkmetric.Option, error) {
+func (t *Telemetry) startPrometheus(ctx context.Context, bind string) (*otelprom.Exporter, error) {
 	registry := prometheus.NewRegistry()
 
 	exporter, err := otelprom.New(
@@ -211,7 +213,7 @@ func (t *Telemetry) startPrometheus(ctx context.Context, bind string) (sdkmetric
 		}
 	}()
 
-	return sdkmetric.WithReader(exporter), nil
+	return exporter, nil
 }
 
 // buildResource names the service for every exported span and metric.

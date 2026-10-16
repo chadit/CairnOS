@@ -3,7 +3,6 @@ package builtins_test
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -14,6 +13,9 @@ import (
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
+
+// anthropicEndTurn is the stop reason the golden Messages bodies report.
+const anthropicEndTurn = "end_turn"
 
 // anthropicSuccessBody is the golden Messages response, priced like the
 // OpenAI golden body so assertLLMUsage covers both providers.
@@ -91,7 +93,7 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, anthropicSuccessBody)
+		writeBody(t, w, anthropicSuccessBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -110,7 +112,7 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 
 	assertLLMUsage(t, result.Usage)
 
-	if result.Meta["stop_reason"] != "end_turn" {
+	if result.Meta["stop_reason"] != anthropicEndTurn {
 		t.Fatalf("meta = %v", result.Meta)
 	}
 
@@ -138,7 +140,7 @@ func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, anthropicJSONContentBody)
+		writeBody(t, w, anthropicJSONContentBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -180,7 +182,7 @@ func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, anthropicProseContentBody)
+		writeBody(t, w, anthropicProseContentBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -214,7 +216,7 @@ func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, anthropicSuccessBody)
+		writeBody(t, w, anthropicSuccessBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -269,7 +271,7 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 				}
 
 				w.WriteHeader(tt.status)
-				_, _ = io.WriteString(w, `{"error":{"message":"nope"}}`)
+				writeBody(t, w, `{"error":{"message":"nope"}}`)
 			}))
 
 			llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -308,7 +310,7 @@ func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, anthropicStreamBody)
+		writeBody(t, w, anthropicStreamBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -331,17 +333,17 @@ func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 		deltas = append(deltas, chunk.Data)
 	}
 
-	if len(deltas) != 2 || deltas[0] != "Hel" || deltas[1] != "lo" {
+	if len(deltas) != 2 || deltas[0] != streamHead || deltas[1] != streamTail {
 		t.Fatalf("chunks = %v", deltas)
 	}
 
-	if result.Output != "Hello" {
+	if result.Output != streamText {
 		t.Fatalf("output = %#v", result.Output)
 	}
 
 	assertLLMUsage(t, result.Usage)
 
-	if result.Meta["stop_reason"] != "end_turn" || result.Meta[modelKey] != "test-model-1" {
+	if result.Meta["stop_reason"] != anthropicEndTurn || result.Meta[modelKey] != servedModel {
 		t.Fatalf("meta = %v", result.Meta)
 	}
 
@@ -371,19 +373,19 @@ func TestAnthropicValidate(t *testing.T) {
 			params: map[string]any{}, key: testAPIKey, resolved: true, wantErr: true,
 		},
 		{
-			name: "missing model everywhere", cfg: nil,
+			name: caseMissingModel, cfg: nil,
 			params: map[string]any{promptKey: testPrompt}, key: testAPIKey, resolved: true, wantErr: true,
 		},
 		{
-			name: "unresolved model reference defers", cfg: nil,
+			name: caseUnresolvedModel, cfg: nil,
 			params: map[string]any{promptKey: testPrompt, modelKey: unresolved}, key: testAPIKey, wantErr: false,
 		},
 		{
-			name: "missing api key", cfg: map[string]any{modelKey: testModel},
+			name: caseMissingAPIKey, cfg: map[string]any{modelKey: testModel},
 			params: map[string]any{promptKey: testPrompt}, key: "", resolved: true, wantErr: true,
 		},
 		{
-			name: "config model and key suffice", cfg: map[string]any{modelKey: testModel},
+			name: caseConfigSuffices, cfg: map[string]any{modelKey: testModel},
 			params: map[string]any{promptKey: testPrompt}, key: testAPIKey, resolved: true, wantErr: false,
 		},
 	}

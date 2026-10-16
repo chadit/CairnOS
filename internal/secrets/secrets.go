@@ -58,9 +58,9 @@ func NewEnvWith(lookup environ.Lookup) *Env {
 	return &Env{prefix: EnvPrefix, lookup: lookup}
 }
 
-// Get resolves one secret name. Names are uppercased and dashes/dots become
-// underscores, so secrets.db-password and secrets.db_password read the same
-// variable rather than failing on a styling difference.
+// Get resolves one secret name. Names are uppercased and each dash or dot
+// becomes an underscore, so secrets.db-password and secrets.db_password read
+// the same variable rather than failing on a styling difference.
 func (e *Env) Get(ctx context.Context, name string) (string, error) {
 	// Environment lookups cannot block, but honoring an already-canceled
 	// context keeps this source interchangeable with remote ones that can.

@@ -24,6 +24,10 @@ const (
 	tagFinance   = "finance"
 	wordKafka    = "kafka"
 	contentKafka = "kafka consumer lag spiked during the friday deploy"
+
+	contentReplaced = "new content"
+	wordOriginal    = "bravo"
+	wordReplacement = "charlie"
 )
 
 // Fixture numbers named so the suite reads as code rather than tripping the
@@ -35,26 +39,36 @@ const (
 	bigCost        = 40
 	tooBigCost     = 50
 	smallCost      = 10
+	originalImp    = 50
 	replaceImp     = 90
 	replaceCost    = 33
 	tieImportance  = 90
 	tieCost        = 5
 	fullBudget     = 100
+
+	// outOfScopeImp outranks every in-scope entry, so it showing up in a Load
+	// means the scope filter failed rather than the importance order.
+	outOfScopeImp = 99
+
+	// bytesPerToken is the Phase 0 estimate both backends apply to a zero
+	// TokenCost on Add.
+	bytesPerToken = 4
 )
 
 // OpenFunc hands the suite a fresh, empty memory store. The implementation
 // registers cleanup (t.Cleanup with Close) so each subtest gets an isolated
-// database. Returning the interface keeps the suite backend-agnostic.
-type OpenFunc func(t *testing.T) memory.Store
+// database. S is the backend's own type, so a backend's opener returns what it
+// opened while the suite drives only the memory.Store methods.
+type OpenFunc[S memory.Store] func(t *testing.T) S
 
 // RunConformance runs the full memory.Store behavioral suite against the
 // store openFn hands out. Each named subtest opens its own store, so they
 // are independent and the caller may run the suite under t.Parallel.
-func RunConformance(t *testing.T, openFn OpenFunc) {
+func RunConformance[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	cases := []struct {
-		run  func(t *testing.T, openFn OpenFunc)
+		run  func(t *testing.T, openFn OpenFunc[S])
 		name string
 	}{
 		{name: "SatisfiesInterface", run: testSatisfiesInterface},
@@ -123,7 +137,7 @@ func listIDs(t *testing.T, mem memory.Store, scope string) []string {
 	return ids
 }
 
-func testSatisfiesInterface(t *testing.T, openFn OpenFunc) {
+func testSatisfiesInterface[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -133,7 +147,7 @@ func testSatisfiesInterface(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testAddGetRoundTrip(t *testing.T, openFn OpenFunc) {
+func testAddGetRoundTrip[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -165,7 +179,7 @@ func testAddGetRoundTrip(t *testing.T, openFn OpenFunc) {
 
 	// A zero TokenCost on Add is estimated as content bytes divided by four,
 	// the documented Phase 0 heuristic both backends share.
-	if want := len(content) / 4; got.TokenCost != want {
+	if want := len(content) / bytesPerToken; got.TokenCost != want {
 		t.Errorf("token cost = %d, want estimated %d", got.TokenCost, want)
 	}
 
@@ -174,7 +188,7 @@ func testAddGetRoundTrip(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
+func testReplaceAndDelete[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -183,7 +197,7 @@ func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
 	id := addEntry(t, mem, &memory.Entry{
 		Scope:      scopeProject,
 		Content:    "old content",
-		Importance: 50,
+		Importance: originalImp,
 		CreatedAt:  time.Date(2026, 4, 1, 8, 0, 0, 0, time.UTC),
 	})
 
@@ -194,7 +208,7 @@ func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
 
 	replacement := &memory.Entry{
 		Scope:      scopeProject,
-		Content:    "new content",
+		Content:    contentReplaced,
 		Importance: replaceImp,
 		Tags:       []string{tagFinance},
 		TokenCost:  replaceCost,
@@ -208,7 +222,7 @@ func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("get after replace: %v", err)
 	}
 
-	if after.Content != "new content" || after.Importance != replaceImp || after.TokenCost != replaceCost {
+	if after.Content != contentReplaced || after.Importance != replaceImp || after.TokenCost != replaceCost {
 		t.Errorf("replaced entry = %+v, want new content, importance 90, cost 33", after)
 	}
 
@@ -233,7 +247,7 @@ func testReplaceAndDelete(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testLoadRespectsBudgetAndImportance(t *testing.T, openFn OpenFunc) {
+func testLoadRespectsBudgetAndImportance[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -241,7 +255,7 @@ func testLoadRespectsBudgetAndImportance(t *testing.T, openFn OpenFunc) {
 	bigID := addEntry(t, mem, &memory.Entry{Scope: scopeGlobal, Content: "most important", Importance: tieImportance, TokenCost: bigCost})
 	tooBigID := addEntry(t, mem, &memory.Entry{Scope: scopeGlobal, Content: "does not fit", Importance: importanceHigh, TokenCost: tooBigCost})
 	smallID := addEntry(t, mem, &memory.Entry{Scope: scopeGlobal, Content: "small filler", Importance: importanceMid, TokenCost: smallCost})
-	addEntry(t, mem, &memory.Entry{Scope: "other-scope", Content: "wrong scope", Importance: 99, TokenCost: 1})
+	addEntry(t, mem, &memory.Entry{Scope: "other-scope", Content: "wrong scope", Importance: outOfScopeImp, TokenCost: 1})
 
 	loaded, err := mem.Load(t.Context(), scopeGlobal, loadBudget)
 	if err != nil {
@@ -272,7 +286,7 @@ func testLoadRespectsBudgetAndImportance(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testLoadBreaksTiesByCreation(t *testing.T, openFn OpenFunc) {
+func testLoadBreaksTiesByCreation[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -293,7 +307,7 @@ func testLoadBreaksTiesByCreation(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testListScopeWorkspaceAndOrder(t *testing.T, openFn OpenFunc) {
+func testListScopeWorkspaceAndOrder[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	// Explicit ids so the created_at tie-break is checkable: idA and idB share
@@ -338,7 +352,7 @@ func testListScopeWorkspaceAndOrder(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSearchFindsByContentAndTag(t *testing.T, openFn OpenFunc) {
+func testSearchFindsByContentAndTag[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -394,7 +408,7 @@ func testSearchFindsByContentAndTag(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSemanticFallsBack(t *testing.T, openFn OpenFunc) {
+func testSemanticFallsBack[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -423,7 +437,7 @@ func testSemanticFallsBack(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSearchIndexStaysInSync(t *testing.T, openFn OpenFunc) {
+func testSearchIndexStaysInSync[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	mem := openFn(t)
@@ -431,7 +445,7 @@ func testSearchIndexStaysInSync(t *testing.T, openFn OpenFunc) {
 
 	id := addEntry(t, mem, &memory.Entry{Scope: scopeGlobal, Content: "alpha bravo memo"})
 
-	if ids := searchIDs(t, mem, memory.Query{Text: "bravo"}); len(ids) != 1 || ids[0] != id {
+	if ids := searchIDs(t, mem, memory.Query{Text: wordOriginal}); len(ids) != 1 || ids[0] != id {
 		t.Fatalf("fresh entry not searchable: %v", ids)
 	}
 
@@ -440,11 +454,11 @@ func testSearchIndexStaysInSync(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("replace: %v", err)
 	}
 
-	if ids := searchIDs(t, mem, memory.Query{Text: "bravo"}); len(ids) != 0 {
+	if ids := searchIDs(t, mem, memory.Query{Text: wordOriginal}); len(ids) != 0 {
 		t.Errorf("old content still indexed after replace: %v", ids)
 	}
 
-	if ids := searchIDs(t, mem, memory.Query{Text: "charlie"}); len(ids) != 1 || ids[0] != id {
+	if ids := searchIDs(t, mem, memory.Query{Text: wordReplacement}); len(ids) != 1 || ids[0] != id {
 		t.Errorf("new content not indexed after replace: %v", ids)
 	}
 
@@ -452,7 +466,7 @@ func testSearchIndexStaysInSync(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	if ids := searchIDs(t, mem, memory.Query{Text: "charlie"}); len(ids) != 0 {
+	if ids := searchIDs(t, mem, memory.Query{Text: wordReplacement}); len(ids) != 0 {
 		t.Errorf("deleted entry still indexed: %v", ids)
 	}
 }

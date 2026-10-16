@@ -247,6 +247,13 @@ func validateMattermost(mattermost *Mattermost, notifyChannel string) error {
 	return nil
 }
 
+// Config keys of the bot-loop spans, which both the duration parse and the
+// positive-value check name in their errors.
+const (
+	keyBotLoopWindow   = "bridge.mattermost.bot_loop.window"
+	keyBotLoopCooldown = "bridge.mattermost.bot_loop.cooldown"
+)
+
 // validateMattermostLimits rejects a non-positive tuning value. NewBucket and
 // NewLoopLimiter coerce anything at or below zero back to their own defaults, so
 // rate_per_sec = 0 meaning "do not throttle" silently becomes ten per second and
@@ -259,8 +266,8 @@ func validateMattermostLimits(mattermost *Mattermost) error {
 	}
 
 	spans := map[string]time.Duration{
-		"bridge.mattermost.bot_loop.window":   mattermost.BotLoop.Window,
-		"bridge.mattermost.bot_loop.cooldown": mattermost.BotLoop.Cooldown,
+		keyBotLoopWindow:   mattermost.BotLoop.Window,
+		keyBotLoopCooldown: mattermost.BotLoop.Cooldown,
 	}
 
 	for _, key := range slices.Sorted(maps.Keys(counts)) {
@@ -310,11 +317,11 @@ func validateMattermostURL(mattermost *Mattermost) error {
 		return fmt.Errorf("%w: bridge.mattermost.url %q names no host", ErrInvalidConfig, mattermost.URL)
 	}
 
-	if parsed.Scheme == "https" {
+	if parsed.Scheme == schemeHTTPS {
 		return nil
 	}
 
-	if parsed.Scheme == "http" && mattermost.InsecureHTTP {
+	if parsed.Scheme == schemeHTTP && mattermost.InsecureHTTP {
 		return nil
 	}
 

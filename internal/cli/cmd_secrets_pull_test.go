@@ -66,6 +66,9 @@ type bwFakeSettings struct {
 	RefuseUnlock bool   `json:"refuse_unlock"`
 }
 
+// bwStatusCmd is the bw subcommand every vault read opens with.
+const bwStatusCmd = "status"
+
 // runFakeBW is the fake CLI. It answers --version, status and login, and serves
 // the item fixture over HTTP for the daemon protocol.
 func runFakeBW(argv []string) int {
@@ -92,7 +95,7 @@ func runFakeBW(argv []string) int {
 		fmt.Println(settings.Version)
 
 		return 0
-	case "status":
+	case bwStatusCmd:
 		return runFakeStatus(settings)
 	case "login":
 		fmt.Println("logged-in")
@@ -162,7 +165,7 @@ func bwFakeHandler(settings bwFakeSettings) http.Handler {
 		}
 
 		if !strings.HasPrefix(request.URL.Path, "/list/object/items") {
-			_, _ = writer.Write([]byte(`{"success":true}`))
+			writeFakeBody(writer, []byte(`{"success":true}`))
 
 			return
 		}
@@ -174,8 +177,16 @@ func bwFakeHandler(settings bwFakeSettings) http.Handler {
 			return
 		}
 
-		_, _ = writer.Write(items)
+		writeFakeBody(writer, items)
 	})
+}
+
+// writeFakeBody answers with body, noting a failed write on the fake's stderr,
+// which is where the parent test reads what went wrong in this process.
+func writeFakeBody(writer http.ResponseWriter, body []byte) {
+	if _, err := writer.Write(body); err != nil {
+		fmt.Fprintf(os.Stderr, "fake bw: write response: %v\n", err)
+	}
 }
 
 // loadBWFakeSettings reads the settings beside the symlink.
@@ -277,6 +288,13 @@ func stageFakeBWAt(t *testing.T, dir string, fields map[string]string, settings 
 	}
 }
 
+// Keys of the bw list response the fake answers with. The payload nests a data
+// object inside the outer data key, the way the real CLI wraps its list output.
+const (
+	bwKeyName = "name"
+	bwKeyData = "data"
+)
+
 // encodeItems renders the list response through encoding/json. Building it by
 // concatenation would corrupt any value holding a quote, a backslash or a
 // newline, which are exactly the values the escaping cases are about.
@@ -285,13 +303,13 @@ func encodeItems(t *testing.T, fields map[string]string) string {
 
 	entries := make([]map[string]string, 0, len(fields))
 	for name, value := range fields {
-		entries = append(entries, map[string]string{"name": name, "value": value})
+		entries = append(entries, map[string]string{bwKeyName: name, "value": value})
 	}
 
 	payload := map[string]any{
 		"success": true,
-		"data": map[string]any{
-			"data": []map[string]any{{"name": pullItem, "fields": entries}},
+		bwKeyData: map[string]any{
+			bwKeyData: []map[string]any{{bwKeyName: pullItem, "fields": entries}},
 		},
 	}
 
@@ -662,7 +680,7 @@ func TestSecretsPullTargetsWhereTheUnitReads(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			argv := append([]string{secretsCmd, "pull", flagDirArg, dir, "--dry-run"}, testCase.args...)
+			argv := append([]string{secretsCmd, "pull", flagDirArg, dir, flagDryRunArg}, testCase.args...)
 
 			code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), argv...)
 			if code != cli.ExitOK {

@@ -486,7 +486,14 @@ func (s *Server) startGateway(ctx context.Context) error {
 // with. A configured transport supplies the dialer, so a server running on
 // in-memory listeners reaches itself without a host socket.
 func (s *Server) gatewayDialOptions() []grpc.DialOption {
-	options := []grpc.DialOption{grpc.WithTransportCredentials(s.gatewayDialCreds())}
+	// No configured client credential means the plaintext loopback default;
+	// under mTLS the gateway must present the node's own certificate.
+	dialCreds := s.cfg.GatewayDialCreds
+	if dialCreds == nil {
+		dialCreds = insecure.NewCredentials()
+	}
+
+	options := []grpc.DialOption{grpc.WithTransportCredentials(dialCreds)}
 
 	if s.cfg.Transport != nil {
 		options = append(options, grpc.WithContextDialer(s.cfg.Transport.Dial))
@@ -508,17 +515,6 @@ func (s *Server) gatewayTarget() string {
 	}
 
 	return s.grpcLis.Addr().String()
-}
-
-// gatewayDialCreds picks the credential the gateway dials the backend with:
-// the configured client credential when one is set (mTLS), or insecure for the
-// plaintext loopback default.
-func (s *Server) gatewayDialCreds() credentials.TransportCredentials {
-	if s.cfg.GatewayDialCreds != nil {
-		return s.cfg.GatewayDialCreds
-	}
-
-	return insecure.NewCredentials()
 }
 
 // mountExtensionRoutes mounts each extension's extra HTTP handlers on the root

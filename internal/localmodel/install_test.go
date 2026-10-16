@@ -17,14 +17,24 @@ import (
 // server, standing in for the ggml backends a real release carries.
 const fixtureRuntimeLib = "libggml-base.so"
 
+const (
+	// fixtureLibraryBody is what fixtureRuntimeLib holds in every fixture
+	// archive.
+	fixtureLibraryBody = "library"
+
+	// upgradeServerBody is the server a second install pass delivers, so a
+	// case can tell the upgraded runtime from the first one.
+	upgradeServerBody = "broken build"
+)
+
 // installHarness is one install pass wired to fixture servers: a synthetic
 // release archive and a synthetic GGUF, both digest-pinned the way the real
 // registry pins the real ones.
 type installHarness struct {
-	opts    localmodel.InstallOptions
 	hits    map[string]int
 	layout  localmodel.Layout
 	archive []byte
+	opts    localmodel.InstallOptions
 
 	// mu guards archive, which a test swaps between passes to stand in for a
 	// moved pin while the fixture server is still able to serve it.
@@ -38,7 +48,7 @@ func (h *installHarness) serveRuntime(t *testing.T, body string) {
 
 	archive := tarGzFixture(t, []fixtureEntry{
 		{Name: localmodel.HostServerBinary(), Content: body},
-		{Name: fixtureRuntimeLib, Content: "library"},
+		{Name: fixtureRuntimeLib, Content: fixtureLibraryBody},
 	})
 
 	h.mu.Lock()
@@ -279,7 +289,7 @@ func TestFailedUpgradeRestoresBothTheBinaryAndTheRecord(t *testing.T) {
 		t.Fatalf("read manifest: %v", err)
 	}
 
-	harness.serveRuntime(t, "broken build")
+	harness.serveRuntime(t, upgradeServerBody)
 
 	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
@@ -290,7 +300,7 @@ func TestFailedUpgradeRestoresBothTheBinaryAndTheRecord(t *testing.T) {
 		t.Fatal("the upgrade did not displace the previous runtime")
 	}
 
-	if harness.serverBody(t) != "broken build" {
+	if harness.serverBody(t) != upgradeServerBody {
 		t.Fatal("the upgrade did not install the new build")
 	}
 
@@ -332,7 +342,7 @@ func TestPassAfterAFailedUpgradeStillReinstalls(t *testing.T) {
 		t.Fatalf("first install: %v", err)
 	}
 
-	harness.serveRuntime(t, "broken build")
+	harness.serveRuntime(t, upgradeServerBody)
 
 	result, err := localmodel.Install(t.Context(), &harness.opts)
 	if err != nil {
@@ -352,7 +362,7 @@ func TestPassAfterAFailedUpgradeStillReinstalls(t *testing.T) {
 		t.Error("the retry short-circuited on a manifest entry the disk does not match")
 	}
 
-	if got := harness.serverBody(t); got != "broken build" {
+	if got := harness.serverBody(t); got != upgradeServerBody {
 		t.Errorf("installed server = %q, want the pinned build re-fetched", got)
 	}
 }
@@ -390,7 +400,7 @@ func newInstallHarness(t *testing.T) *installHarness {
 
 	archive := tarGzFixture(t, []fixtureEntry{
 		{Name: localmodel.HostServerBinary(), Content: "server binary"},
-		{Name: fixtureRuntimeLib, Content: "library"},
+		{Name: fixtureRuntimeLib, Content: fixtureLibraryBody},
 		{Name: fixtureOtherTool, Content: "another tool"},
 	})
 	weights := []byte("gguf weights fixture")
@@ -404,12 +414,12 @@ func newInstallHarness(t *testing.T) *installHarness {
 		harness.hits[r.URL.Path]++
 
 		if strings.HasSuffix(r.URL.Path, ".tar.gz") {
-			_, _ = w.Write(harness.archive)
+			writeResponse(t, w, harness.archive)
 
 			return
 		}
 
-		_, _ = w.Write(weights)
+		writeResponse(t, w, weights)
 	}))
 
 	build := localmodel.Build{

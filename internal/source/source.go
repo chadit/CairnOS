@@ -36,6 +36,10 @@ const (
 // hung network mount blocks serve start with nothing left to unwind it.
 const logReadyTimeout = 10 * time.Second
 
+// unknownHead stands in for the commit when a log line's HEAD read fails, so
+// the event is still recorded.
+const unknownHead = "unknown"
+
 // Wall-clock bounds on the two entry points. Ensure covers a first clone of a
 // large repository at serve start; Sync covers a fetch and a fast-forward and
 // runs inside a scheduled task whose own deadline can cut it shorter.
@@ -421,7 +425,7 @@ func logRepositioned(ctx context.Context, git Git, spec Spec, logger *slog.Logge
 
 	moved, err := shortHead(ctx, git, spec.Dest)
 	if err != nil {
-		moved = "unknown"
+		moved = unknownHead
 	}
 
 	logger.Info("source repositioned", "source", spec.Name, "dest", spec.Dest,
@@ -696,7 +700,7 @@ func logReady(ctx context.Context, git Git, spec Spec, logger *slog.Logger) {
 
 	head, err := shortHead(logCtx, git, spec.Dest)
 	if err != nil {
-		head = "unknown"
+		head = unknownHead
 	}
 
 	logger.Info("source ready", "source", spec.Name, "dest", spec.Dest, "ref", spec.Ref, "head", head)

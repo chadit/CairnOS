@@ -17,7 +17,7 @@ func TestEnvVarNameCanonicalizes(t *testing.T) {
 
 	env := secrets.NewEnv()
 
-	for _, name := range []string{"db_password", "db-password", "DB.PASSWORD"} {
+	for _, name := range []string{testName, "db-password", dottedName} {
 		if got := env.EnvVarName(name); got != "CAIRNOS_SECRET_DB_PASSWORD" {
 			t.Fatalf("EnvVarName(%q) = %q, want CAIRNOS_SECRET_DB_PASSWORD", name, got)
 		}

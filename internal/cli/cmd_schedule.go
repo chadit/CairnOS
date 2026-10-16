@@ -35,9 +35,9 @@ func (a *App) cmdSchedule(ctx context.Context, args []string) int {
 		return a.cmdScheduleAdd(ctx, args[1:])
 	case subcmdList:
 		return a.cmdScheduleList(ctx, args[1:])
-	case "remove":
+	case subcmdRemove:
 		return a.cmdScheduleRemove(ctx, args[1:])
-	case "run":
+	case subcmdRun:
 		return a.cmdScheduleRun(ctx, args[1:])
 	default:
 		a.printErrf("unknown schedule subcommand %q\n", args[0])
@@ -49,10 +49,9 @@ func (a *App) cmdSchedule(ctx context.Context, args []string) int {
 
 // cmdScheduleAdd stores a workflow file's schedule key
 // (.agents/spec/02-workflow-schema.md) as an absolute path, so the daemon can
-// load it from any directory. Two mistakes parse fine and then fail at every
-// fire: a required input with no default that the fire never supplies, and an
-// unregistered poll source. Add refuses the first and warns on the second while
-// the operator is watching, rather than leaving both to the daemon log.
+// load it from any directory. A required input no fire supplies and an
+// unregistered poll source both parse fine and fail every fire, so add refuses
+// the first and warns on the second while the operator is watching.
 func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("schedule add", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -103,7 +102,7 @@ func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	scheds, code, proceed := a.openSchedulesAt(ctx, "schedule add", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "schedule add", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
@@ -135,7 +134,7 @@ func (a *App) cmdScheduleList(ctx context.Context, args []string) int {
 		return code
 	}
 
-	scheds, code, proceed := a.openSchedulesAt(ctx, "schedule list", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "schedule list", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
@@ -182,7 +181,7 @@ func (a *App) cmdScheduleRemove(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	scheds, code, proceed := a.openSchedulesAt(ctx, "schedule remove", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "schedule remove", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
@@ -234,19 +233,19 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return code
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "schedule run", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "schedule run", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(db)
 
-	scheds, code, proceed := a.openSchedulesAt(ctx, "schedule run", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "schedule run", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(scheds)
 
-	mem, code, proceed := a.openMemoryAt(ctx, "schedule run", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "schedule run", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -269,7 +268,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 
 		return ExitFailure
 	}
-	defer func() { _ = closeSource() }()
+	defer a.runCloser("secret source", closeSource)
 
 	credManager, err := buildCredentialManager(ctx, &cfg, source)
 	if err != nil {
@@ -294,18 +293,13 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		eng: engine.New(engCfg, registry, db),
 	}
 
-	queue, closeQueue, err := openWorkQueue(ctx, dir, &cfg, scheds)
+	queue, err := workQueueBackends(scheds).open(ctx, dir, &cfg)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
 		return ExitFailure
 	}
-	defer func() { _ = closeQueue() }()
-
-	coord, closeCoord := newCoordinator(scheds)
-	if closeCoord != nil {
-		defer closeCoord(context.WithoutCancel(ctx))
-	}
+	defer a.runCloser("work queue", ownedCloser(queue))
 
 	fanoutCtx, stopFanout := context.WithCancel(ctx)
 	fanout := BuildFanout(&cfg, nil, a.envLookup(), a.logger, nil)
@@ -315,12 +309,13 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	enqueue := scheduler.NewSkipOverlapping(&scheduleEnqueueRunner{queue: queue, logger: a.logger}, queue, a.logger)
 	pollRunner := newPollAwareRunner(enqueue, queue, buildPollSources(registry), db, monitor, a.logger)
 
-	daemon := scheduler.New(scheduler.Config{
-		Store:       scheds,
-		Runner:      pollRunner,
-		Coordinator: coord,
-		Logger:      a.logger,
-	})
+	daemonCfg := scheduler.Config{Store: scheds, Runner: pollRunner, Logger: a.logger}
+	if coord := newCoordinator(scheds); coord != nil {
+		daemonCfg.Coordinator = coord
+		defer closeCoordinator(ctx, coord, a.logger)
+	}
+
+	daemon := scheduler.New(daemonCfg)
 
 	worker := newQueueWorker(queue, &QueueRunnerAdapter{fire: fireRunner, reach: monitor}, &cfg.Scheduler, nil, fanout, monitor, a.logger)
 
@@ -343,10 +338,10 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 }
 
 // requiredInputsWithoutDefault lists, sorted, the required inputs with no
-// default that a fire of flow never supplies, so the engine rejects every run
-// until each one gets a default. A plain scheduled fire supplies no inputs, and
-// a poll fire supplies only the keys its source emits. A poll source no wiring
-// builds is not checked, since its keys are unknown; add warns about it instead.
+// default that a fire of flow never supplies, so the engine rejects every run.
+// A plain scheduled fire supplies no inputs, and a poll fire only the keys its
+// source emits. A poll source no wiring builds is skipped, since its keys are
+// unknown; add warns about it instead.
 func requiredInputsWithoutDefault(flow *workflow.Workflow) []string {
 	var supplied []string
 

@@ -232,7 +232,7 @@ func TestLoopValidateActionEnforcesCapabilities(t *testing.T) {
 		},
 		{
 			name:     "unregistered driver",
-			mutate:   func(action *workflow.Action) { action.Driver = "ghost" },
+			mutate:   func(action *workflow.Action) { action.Driver = unregisteredName },
 			wantCode: agentloop.CodeDriverIncapable,
 		},
 		{
@@ -242,7 +242,7 @@ func TestLoopValidateActionEnforcesCapabilities(t *testing.T) {
 		},
 		{
 			name:     "tool that is not a registered runner",
-			mutate:   func(action *workflow.Action) { action.Tools = []string{"investigate"} },
+			mutate:   func(action *workflow.Action) { action.Tools = []string{unknownToolName} },
 			wantCode: workflow.CodeInvalid,
 		},
 		{
@@ -278,6 +278,37 @@ func TestLoopValidateActionEnforcesCapabilities(t *testing.T) {
 				t.Fatalf("code = %s, want %s (message: %s)", errs[0].Code, tt.wantCode, errs[0].Message)
 			}
 		})
+	}
+}
+
+// TestLoopReportsEveryUnresolvedEntryDriverFirst covers an action whose driver
+// and one tool are both unregistered: ValidateAction reports both problems,
+// driver first, and Execute fails on that first one before anything runs.
+func TestLoopReportsEveryUnresolvedEntryDriverFirst(t *testing.T) {
+	t.Parallel()
+
+	loop := agentloop.New(newTestRegistry(t, &scriptedDriver{}, &fakeMemory{}), nil, nil, nil)
+
+	action := agentAction([]string{builtins.MockName, unknownToolName})
+	action.Driver = unregisteredName
+
+	validateErr := loop.ValidateAction(action)
+
+	errs, isErrs := errors.AsType[cairnerr.Errors](validateErr)
+	if !isErrs || len(errs) != 2 {
+		t.Fatalf("ValidateAction = %v (%T), want two problems", validateErr, validateErr)
+	}
+
+	if errs[0].Code != agentloop.CodeDriverIncapable || errs[1].Code != workflow.CodeInvalid {
+		t.Fatalf("codes = %s, %s; want %s, %s",
+			errs[0].Code, errs[1].Code, agentloop.CodeDriverIncapable, workflow.CodeInvalid)
+	}
+
+	_, executeErr := loop.Execute(t.Context(), action, &runner.Task{})
+
+	first, isCanonical := errors.AsType[*cairnerr.Error](executeErr)
+	if !isCanonical || first.Code != errs[0].Code || first.Message != errs[0].Message {
+		t.Fatalf("Execute = %v, want the first validation problem %v", executeErr, errs[0])
 	}
 }
 
@@ -386,8 +417,10 @@ func assertNoForbiddenExecution(t *testing.T, steps []store.AgentStep) {
 func TestLoopTransientToolFailureSurfacesInTranscript(t *testing.T) {
 	t.Parallel()
 
+	const transientClass = "transient"
+
 	driver := &scriptedDriver{turns: []runner.Result{
-		toolTurn(builtins.MockName, map[string]any{"fail_class": "transient"}, turnCost),
+		toolTurn(builtins.MockName, map[string]any{"fail_class": transientClass}, turnCost),
 		finalTurn(),
 	}}
 	steps := &stepRecorder{}
@@ -415,7 +448,7 @@ func TestLoopTransientToolFailureSurfacesInTranscript(t *testing.T) {
 	assertStepSequence(t, recorded, []string{store.StepDriverCall, store.StepToolCall, store.StepFinal})
 
 	failed, isMap := recorded[1].Output.(map[string]any)
-	if !isMap || failed["class"] != "transient" {
+	if !isMap || failed["class"] != transientClass {
 		t.Fatalf("tool step output = %#v, want the classified error persisted", recorded[1].Output)
 	}
 }
@@ -448,18 +481,20 @@ func TestLoopStopsOnCanceledContext(t *testing.T) {
 func TestLoopSystemPromptOverride(t *testing.T) {
 	t.Parallel()
 
+	const customPrompt = "custom framing"
+
 	driver := &scriptedDriver{turns: []runner.Result{finalTurn()}}
 	loop := agentloop.New(newTestRegistry(t, driver, nil), nil, nil, nil)
 
 	action := agentAction(nil)
 	action.Tools = []string{}
-	action.SystemPrompt = "custom framing"
+	action.SystemPrompt = customPrompt
 
 	if _, err := loop.Execute(t.Context(), action, agentTask()); err != nil {
 		t.Fatalf("Execute with custom system prompt: %v", err)
 	}
 
-	if got := driver.systemAt(t, 0); got != "custom framing" {
+	if got := driver.systemAt(t, 0); got != customPrompt {
 		t.Fatalf("system = %q, want the action's system_prompt verbatim", got)
 	}
 

@@ -107,23 +107,18 @@ func New(registry *runner.Registry, memoryStore memory.Store, steps StepWriter, 
 // still return the usage spent so far, and every step is already persisted
 // by the time any wall fails the action.
 func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runner.Task) (runner.Result, error) {
-	driver, cerr := l.driverFor(action)
-	if cerr != nil {
-		return runner.Result{}, cerr
-	}
-
-	tools, specs, cerr := l.toolset(action)
-	if cerr != nil {
-		return runner.Result{}, cerr
+	bound := l.bind(action)
+	if len(bound.problems) > 0 {
+		return runner.Result{}, bound.problems[0]
 	}
 
 	execution := &loopRun{
 		loop:    l,
 		action:  action,
 		task:    task,
-		driver:  driver,
-		tools:   tools,
-		specs:   specs,
+		driver:  bound.driver,
+		tools:   bound.tools,
+		specs:   bound.specs(),
 		started: time.Now(),
 	}
 
@@ -141,91 +136,105 @@ func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runne
 // the driver must be a registered runner.ToolCaller (agent.driver_incapable
 // otherwise) and every tools entry a registered runner.Describer
 // (workflow.invalid otherwise). Tools resolve through the runner registry, except
-// "delegate", which describerFor supplies a descriptor for.
+// "delegate", which bindTool supplies a descriptor for.
 func (l *Loop) ValidateAction(action *workflow.Action) error {
-	var errs cairnerr.Errors
-
-	if _, cerr := l.driverFor(action); cerr != nil {
-		errs = append(errs, cerr)
-	}
-
-	for _, name := range action.Tools {
-		if _, _, cerr := l.describerFor(action, name); cerr != nil {
-			errs = append(errs, cerr)
-		}
-	}
-
-	if len(errs) > 0 {
-		return errs
+	if bound := l.bind(action); len(bound.problems) > 0 {
+		return bound.problems
 	}
 
 	return nil
 }
 
-// driverFor resolves the action's driver to its ToolCaller capability.
-// Execute re-checks what ValidateAction already proved, so a runner
-// vanishing mid-run still fails cleanly instead of panicking.
-func (l *Loop) driverFor(action *workflow.Action) (runner.ToolCaller, *cairnerr.Error) {
-	rnr, registered := l.registry.Get(action.Driver)
+// binding is what an agent action's driver and tools entries resolve to in the
+// runner registry. problems holds one error per entry that did not resolve,
+// driver first. ValidateAction reports them all; Execute re-checks what
+// validation proved and fails on the first, so a runner vanishing mid-run
+// still fails cleanly instead of panicking.
+type binding struct {
+	driver     runner.ToolCaller
+	tools      map[string]runner.Runner
+	describers []runner.Describer
+	problems   cairnerr.Errors
+}
+
+// bind resolves the action against the registry. It leaves descriptors unread
+// until specs, because an MCP tool's Describe fetches its schema over the
+// network and validation should not.
+func (l *Loop) bind(action *workflow.Action) *binding {
+	bound := &binding{tools: make(map[string]runner.Runner, len(action.Tools))}
+	bound.bindDriver(l.registry, action)
+
+	for _, name := range action.Tools {
+		bound.bindTool(l.registry, action, name)
+	}
+
+	return bound
+}
+
+// bindDriver resolves the action's driver to its ToolCaller capability.
+func (b *binding) bindDriver(registry *runner.Registry, action *workflow.Action) {
+	rnr, registered := registry.Get(action.Driver)
 	if !registered {
-		return nil, errf(CodeDriverIncapable,
-			"agent action %q driver %q is not a registered runner", action.Name, action.Driver)
+		b.problems = append(b.problems, errf(CodeDriverIncapable,
+			"agent action %q driver %q is not a registered runner", action.Name, action.Driver))
+
+		return
 	}
 
 	caller, capable := rnr.(runner.ToolCaller)
 	if !capable {
-		return nil, errf(CodeDriverIncapable,
+		b.problems = append(b.problems, errf(CodeDriverIncapable,
 			"agent action %q driver %q lacks native tool calling; drivers must implement runner.ToolCaller",
-			action.Name, action.Driver)
+			action.Name, action.Driver))
+
+		return
 	}
 
-	return caller, nil
+	b.driver = caller
 }
 
-// describerFor resolves one tools entry, enforcing registration and the
-// Describer capability (.agents/spec/15-agent-loop.md, "Tools"). The one
-// exception is "delegate", the loop-owned delegation tool: it is accepted
-// without a registry lookup and supplies its own descriptor, so ValidateAction
-// and toolset both admit it (internal/agentloop/delegate.go).
-func (l *Loop) describerFor(action *workflow.Action, name string) (runner.Runner, runner.Describer, *cairnerr.Error) {
+// bindTool resolves one tools entry, enforcing registration and the Describer
+// capability (.agents/spec/15-agent-loop.md, "Tools"). The one exception is
+// "delegate", the loop-owned delegation tool: it is accepted without a registry
+// lookup and supplies its own descriptor (internal/agentloop/delegate.go).
+func (b *binding) bindTool(registry *runner.Registry, action *workflow.Action, name string) {
 	if name == DelegateToolName {
-		tool := &delegateTool{}
+		tool := &DelegateTool{}
+		b.tools[name] = tool
+		b.describers = append(b.describers, tool)
 
-		return tool, tool, nil
+		return
 	}
 
-	rnr, registered := l.registry.Get(name)
+	rnr, registered := registry.Get(name)
 	if !registered {
-		return nil, nil, errf(workflow.CodeInvalid,
-			"agent action %q tool %q is not a registered runner", action.Name, name)
+		b.problems = append(b.problems, errf(workflow.CodeInvalid,
+			"agent action %q tool %q is not a registered runner", action.Name, name))
+
+		return
 	}
 
 	describer, describable := rnr.(runner.Describer)
 	if !describable {
-		return nil, nil, errf(workflow.CodeInvalid,
+		b.problems = append(b.problems, errf(workflow.CodeInvalid,
 			"agent action %q tool %q does not implement runner.Describer, so the driver cannot see it",
-			action.Name, name)
+			action.Name, name))
+
+		return
 	}
 
-	return rnr, describer, nil
+	b.tools[name] = rnr
+	b.describers = append(b.describers, describer)
 }
 
-// toolset resolves the allowlist to executable runners plus the
-// descriptors the driver sees, in the action's declared tool order.
-func (l *Loop) toolset(action *workflow.Action) (map[string]runner.Runner, []runner.ToolSpec, *cairnerr.Error) {
-	tools := make(map[string]runner.Runner, len(action.Tools))
-	specs := make([]runner.ToolSpec, 0, len(action.Tools))
+// specs reads the descriptors the driver sees, in the action's declared tool
+// order.
+func (b *binding) specs() []runner.ToolSpec {
+	specs := make([]runner.ToolSpec, 0, len(b.describers))
 
-	for _, name := range action.Tools {
-		rnr, describer, cerr := l.describerFor(action, name)
-		if cerr != nil {
-			return nil, nil, cerr
-		}
-
-		tools[name] = rnr
-
+	for _, describer := range b.describers {
 		specs = append(specs, describer.Describe())
 	}
 
-	return tools, specs, nil
+	return specs
 }

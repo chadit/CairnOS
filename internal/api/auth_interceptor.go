@@ -93,7 +93,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.ChatService/ListSessions", "/cairnos.v1.ChatService/ListMessages",
 		"/cairnos.v1.ChatService/SearchMessages":
 		// Every chat method takes chat:session (.agents/spec/13-roadmap.md,
-		// Phase 9). Approving a workflow trigger additionally needs
+		// Phase 9). Approving a workflow trigger also needs
 		// write:workflow, which ConfirmAction checks in-handler from the
 		// stamped scopes, since the method table grants one scope per method
 		// (.agents/spec/14-open-decisions.md, D9).

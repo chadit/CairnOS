@@ -23,7 +23,7 @@ const chezmoiConfigPath = ".config/chezmoi/chezmoi.toml"
 // environment would be.
 func homeEnvKey() string {
 	switch runtime.GOOS {
-	case "windows":
+	case goosWindows:
 		return "USERPROFILE"
 	case "plan9":
 		return "home"

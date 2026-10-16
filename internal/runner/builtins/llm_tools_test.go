@@ -2,7 +2,6 @@ package builtins_test
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"reflect"
 	"testing"
@@ -25,7 +24,7 @@ func memoryToolSpec() []runner.ToolSpec {
 	return []runner.ToolSpec{{
 		Name:        toolNameMemory,
 		Description: "search memory",
-		InputSchema: map[string]any{"type": "object"},
+		InputSchema: map[string]any{jsonSchemaType: jsonSchemaObject},
 	}}
 }
 
@@ -34,7 +33,7 @@ func memoryToolSpec() []runner.ToolSpec {
 func wantMemorySearchCall() map[string]any {
 	return map[string]any{
 		"tool":      toolNameMemory,
-		"arguments": map[string]any{"op": opSearch, queryKey: "failures"},
+		"arguments": map[string]any{opKey: opSearch, queryKey: "failures"},
 	}
 }
 
@@ -84,7 +83,7 @@ func TestOpenAIExecuteWithToolsParsesToolCall(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, openaiToolCallBody)
+		writeBody(t, w, openaiToolCallBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -141,7 +140,7 @@ func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, openaiSuccessBody)
+		writeBody(t, w, openaiSuccessBody)
 	}))
 
 	llm, err := builtins.NewOpenAI(pricedConfig(server.URL), server.Client(), openAIKey(testAPIKey))
@@ -177,7 +176,7 @@ func TestAnthropicExecuteWithToolsParsesToolUse(t *testing.T) {
 			requests <- decoded
 		}
 
-		_, _ = io.WriteString(w, anthropicToolUseBody)
+		writeBody(t, w, anthropicToolUseBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))
@@ -228,7 +227,7 @@ func TestAnthropicExecuteWithToolsReturnsFinalText(t *testing.T) {
 	t.Parallel()
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, anthropicSuccessBody)
+		writeBody(t, w, anthropicSuccessBody)
 	}))
 
 	llm, err := builtins.NewAnthropic(pricedConfig(server.URL), server.Client(), anthropicKey(testAPIKey))

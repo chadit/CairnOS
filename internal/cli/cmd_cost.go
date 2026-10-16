@@ -58,7 +58,7 @@ func (a *App) cmdCost(ctx context.Context, args []string) int {
 		cutoff = time.Now().Add(-window)
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "cost", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "cost", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}

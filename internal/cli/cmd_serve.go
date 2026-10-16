@@ -64,31 +64,31 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "serve", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "serve", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(db)
 
-	mem, code, proceed := a.openMemoryAt(ctx, "serve", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "serve", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(mem)
 
-	vaultDB, code, proceed := a.openVaultAt(ctx, "serve", *dirFlag)
+	vaultDB, _, code, proceed := openAt(ctx, a, "serve", *dirFlag, vaultBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(vaultDB)
 
-	rulesSvc, code, proceed := a.openRulesAt(ctx, "serve", *dirFlag)
+	rulesSvc, _, code, proceed := openAt(ctx, a, "serve", *dirFlag, rulesBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(rulesSvc)
 
-	scheds, code, proceed := a.openSchedulesAt(ctx, "serve", *dirFlag)
+	scheds, _, code, proceed := openAt(ctx, a, "serve", *dirFlag, scheduleBackends())
 	if !proceed {
 		return code
 	}
@@ -97,7 +97,7 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 	var keyStore authStore
 
 	if cfg.Auth.Enabled {
-		keyStore, _, code, proceed = a.openAuthAt(ctx, "serve", *dirFlag)
+		keyStore, _, code, proceed = openAt(ctx, a, "serve", *dirFlag, authBackends())
 		if !proceed {
 			return code
 		}
@@ -107,18 +107,22 @@ func (a *App) cmdServe(ctx context.Context, args []string) int {
 	var tenants tenancyStore
 
 	if cfg.OAuth.Enabled {
-		tenants, code, proceed = a.openTenancyAt(ctx, "serve", *dirFlag)
+		tenants, _, code, proceed = openAt(ctx, a, "serve", *dirFlag, tenancyBackends())
 		if !proceed {
 			return code
 		}
 		defer a.closeStore(tenants)
 	}
 
-	source, closeSource, code, proceed := a.openServeSecretSourceAt(ctx, &cfg, dir)
-	if !proceed {
-		return code
+	// The secret source opens here, beside the stores, so a key or store failure
+	// reports before any listener binds.
+	source, closeSource, err := a.buildSecretSource(ctx, dir, &cfg)
+	if err != nil {
+		a.printErrf("serve: %v\n", err)
+
+		return ExitFailure
 	}
-	defer func() { _ = closeSource() }()
+	defer a.runCloser("secret source", closeSource)
 
 	return a.runServe(ctx, &cfg, dir, &serveStores{
 		db:       db,
@@ -194,18 +198,18 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		return code
 	}
 
-	queue, closeQueue, err := openWorkQueue(ctx, dir, cfg, scheds)
+	queue, err := workQueueBackends(scheds).open(ctx, dir, cfg)
 	if err != nil {
 		return a.failServe(ctx, tel, "work queue", err)
 	}
-	defer func() { _ = closeQueue() }()
+	defer a.runCloser("work queue", ownedCloser(queue))
 
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
 
 	msgRegistry := messaging.NewRegistry()
 
 	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, a.envLookup(), mem, stores.rules, credManager,
-		&messageSenderAdapter{registry: msgRegistry, logger: logger}, db, logger)
+		NewMessageSender(msgRegistry, logger), db, logger)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}
@@ -299,7 +303,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	if !hooksMounted {
 		return code
 	}
-	defer func() { _ = closeHooks() }()
+	defer a.runCloser("webhook store", closeHooks)
 
 	if code, mcpMounted := a.attachMCPServe(ctx, cfg, tel, apiCfg, &mcpServeDeps{
 		manager:      manager,
@@ -362,7 +366,7 @@ type serveRuntime struct {
 	bridges  *bridgeRuntime
 	manager  *api.Manager
 	drain    *api.Drain
-	queue    scheduler.WorkQueue
+	queue    workQueue
 	registry *runner.Registry
 	tel      *telemetry.Telemetry
 	fanout   *notify.Fanout
@@ -487,22 +491,6 @@ func applyServeAuth(apiCfg *api.Config, cfg *config.Config, authn *auth.Authenti
 	apiCfg.StreamRecheck = cfg.Auth.StreamRecheck
 }
 
-// openServeSecretSourceAt builds the serve process's shared secret source, the
-// openStoreAt shape, so cmdServe opens it alongside the other stores and hands
-// runServe one bundle. Reporting a key or store failure on stderr here keeps the
-// failure ahead of any listener binding. The returned closer releases the store
-// handle at shutdown; the default env backend opens nothing.
-func (a *App) openServeSecretSourceAt(ctx context.Context, cfg *config.Config, dir string) (secrets.Source, func() error, int, bool) {
-	source, closeSource, err := a.buildSecretSource(ctx, dir, cfg)
-	if err != nil {
-		a.printErrf("serve: %v\n", err)
-
-		return nil, nil, ExitFailure, false
-	}
-
-	return source, closeSource, ExitOK, true
-}
-
 // serveEngineDeps bundles what buildServeEngine wires onto the serve-mode
 // engine, so the helper takes one argument instead of a long parameter list.
 type serveEngineDeps struct {
@@ -547,13 +535,6 @@ func buildServeEngine(ctx context.Context, cfg *config.Config, deps *serveEngine
 	return eng, nil
 }
 
-// releaseHivePrimary drops the primary lock on shutdown so another node takes
-// over promptly. The release rides a detached context, since ctx is already
-// canceled by the time this runs.
-func releaseHivePrimary(ctx context.Context, closeCoord func(context.Context)) {
-	closeCoord(context.WithoutCancel(ctx))
-}
-
 // announceHiveSubscribe prints the hive-subscribe banner when the loop is
 // running (a non-nil done channel), staying quiet when hive is off.
 func (a *App) announceHiveSubscribe(hiveDone <-chan struct{}) {
@@ -584,7 +565,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 		return nil
 	}
 
-	coord, closeCoord := newHiveCoordinator(scheds)
+	coord := newHiveCoordinator(scheds)
 	if coord == nil {
 		logger.Warn("hive subscribe loop not started: no postgres coordinator for the hive primary")
 
@@ -594,7 +575,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 	client, err := buildHiveClient(ctx, source, cfg)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
-		closeCoord(ctx)
+		closeCoordinator(ctx, coord, logger)
 
 		return nil
 	}
@@ -602,7 +583,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 	ingester, err := hive.NewIngester(db, store.NewID)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
-		closeCoord(ctx)
+		closeCoordinator(ctx, coord, logger)
 
 		return nil
 	}
@@ -612,7 +593,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 
 	go func() {
 		defer close(done)
-		defer releaseHivePrimary(ctx, closeCoord)
+		defer closeCoordinator(ctx, coord, logger)
 
 		runHiveSubscribeLoop(ctx, coord, client, ingester, categories, logger)
 	}()
@@ -620,10 +601,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 	return done
 }
 
-// runHiveSubscribeLoop pulls tips on the interval until ctx cancels. A failed
-// pull logs and waits for the next tick rather than tearing down serve:
-// network tips are a convenience, never load-bearing. Only the elected primary
-// pulls; a follower node skips the tick, so the cluster ingests each tip once.
+// runHiveSubscribeLoop pulls tips on the interval until ctx cancels.
 func runHiveSubscribeLoop(ctx context.Context, coord scheduler.Coordinator, client *hive.HTTPHiveClient, ingester *hive.Ingester, categories []hive.Category, logger *slog.Logger) {
 	ticker := time.NewTicker(hiveSubscribeInterval)
 	defer ticker.Stop()
@@ -633,35 +611,43 @@ func runHiveSubscribeLoop(ctx context.Context, coord scheduler.Coordinator, clie
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			primary, err := coord.Leader(ctx)
-			if err != nil {
-				logger.Warn("hive primary check", "error", err)
-
-				continue
-			}
-
-			if !primary {
-				continue
-			}
-
-			tips, err := client.Subscribe(ctx, categories)
-			if err != nil {
-				logger.Warn("hive subscribe", "error", err)
-
-				continue
-			}
-
-			saved, ingestErr := ingester.Ingest(ctx, tips)
-			if ingestErr != nil {
-				logger.Warn("hive ingest", "error", ingestErr)
-
-				continue
-			}
-
-			if saved > 0 {
-				logger.Info("hive tips ingested into suggestion queue", "count", saved)
-			}
+			pullHiveTips(ctx, coord, client, ingester, categories, logger)
 		}
+	}
+}
+
+// pullHiveTips runs one tick. A failed pull logs and waits for the next tick
+// rather than tearing down serve: network tips are a convenience, never
+// load-bearing. Only the elected primary pulls; a follower node skips the tick,
+// so the cluster ingests each tip once.
+func pullHiveTips(ctx context.Context, coord scheduler.Coordinator, client *hive.HTTPHiveClient, ingester *hive.Ingester, categories []hive.Category, logger *slog.Logger) {
+	primary, err := coord.Leader(ctx)
+	if err != nil {
+		logger.Warn("hive primary check", "error", err)
+
+		return
+	}
+
+	if !primary {
+		return
+	}
+
+	tips, err := client.Subscribe(ctx, categories)
+	if err != nil {
+		logger.Warn("hive subscribe", "error", err)
+
+		return
+	}
+
+	saved, err := ingester.Ingest(ctx, tips)
+	if err != nil {
+		logger.Warn("hive ingest", "error", err)
+
+		return
+	}
+
+	if saved > 0 {
+		logger.Info("hive tips ingested into suggestion queue", "count", saved)
 	}
 }
 
@@ -760,22 +746,22 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.L
 // Postgres backend, so only one serving node fires schedules, and the
 // SoloCoordinator on sqlite (.agents/spec/14-open-decisions.md, S2).
 func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
-	coord, closeCoord := newCoordinator(sched.scheds)
-	if closeCoord != nil {
-		defer closeCoord(context.WithoutCancel(ctx))
-	}
-
 	monitor := newReachMonitor(sched.fanout, a.logger)
 
 	enqueue := scheduler.NewSkipOverlapping(&scheduleEnqueueRunner{queue: sched.queue, logger: a.logger}, sched.queue, a.logger)
 	pollRunner := newPollAwareRunner(enqueue, sched.queue, sched.sources, sched.pauses, monitor, a.logger)
 
-	daemon := scheduler.New(scheduler.Config{
-		Store:       sched.scheds,
-		Runner:      &drainGateRunner{inner: pollRunner, drain: sched.drain, logger: a.logger},
-		Coordinator: coord,
-		Logger:      a.logger,
-	})
+	daemonCfg := scheduler.Config{
+		Store:  sched.scheds,
+		Runner: NewDrainGateRunner(pollRunner, sched.drain, a.logger),
+		Logger: a.logger,
+	}
+	if coord := newCoordinator(sched.scheds); coord != nil {
+		daemonCfg.Coordinator = coord
+		defer closeCoordinator(ctx, coord, a.logger)
+	}
+
+	daemon := scheduler.New(daemonCfg)
 
 	fire := api.NewFireRunner(sched.manager, sched.pauses, a.logger)
 	worker := newQueueWorker(sched.queue, &QueueRunnerAdapter{fire: fire, reach: monitor}, sched.cfg, sched.metrics, sched.fanout, monitor, a.logger)
@@ -823,7 +809,7 @@ type serveSchedulerDeps struct {
 	manager *api.Manager
 	drain   *api.Drain
 	pauses  api.SchedulePauseChecker
-	queue   scheduler.WorkQueue
+	queue   workQueue
 	sources poll.Sources
 	cfg     *config.Scheduler
 	metrics scheduler.QueueMetrics

@@ -53,7 +53,7 @@ func TestUsageValidateAcceptsAnAbsentHostAndLaunchers(t *testing.T) {
 func TestUsageValidateRefusesAnUnknownHost(t *testing.T) {
 	t.Parallel()
 
-	err := configuredUsage(t).Validate(usageTask(map[string]any{usageHostKey: "other_box"}))
+	err := configuredUsage(t).Validate(usageTask(map[string]any{usageHostKey: unknownBox}))
 	assertValidateCode(t, err, "usage.unknown_host")
 }
 

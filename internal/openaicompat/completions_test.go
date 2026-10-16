@@ -57,7 +57,7 @@ func TestNonStreamingPlainAnswer(t *testing.T) {
 		t.Fatalf("choices = %+v, want one assistant answer %q", body.Choices, plainAnswer)
 	}
 
-	if body.Choices[0].Message.Role != "assistant" || body.Choices[0].FinishReason != finishStop {
+	if body.Choices[0].Message.Role != roleAssistant || body.Choices[0].FinishReason != finishStop {
 		t.Errorf("choice = %+v, want assistant role and stop finish", body.Choices[0])
 	}
 
@@ -147,7 +147,7 @@ func TestTurnErrorReturnsServerError(t *testing.T) {
 	}
 
 	body := decodeError(t, data)
-	if body.Error.Type != "server_error" || body.Error.Code != chat.CodeDriverFailed {
+	if body.Error.Type != typeServerError || body.Error.Code != chat.CodeDriverFailed {
 		t.Errorf("error = %+v, want server_error / %s", body.Error, chat.CodeDriverFailed)
 	}
 }
@@ -158,64 +158,11 @@ func TestTurnErrorReturnsServerError(t *testing.T) {
 func TestAuthorization(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		token      func(t *testing.T, fix *fixture) string
-		name       string
-		wantCode   string
-		wantStatus int
-	}{
-		{
-			name:       "missing_token",
-			token:      func(_ *testing.T, _ *fixture) string { return "" },
-			wantStatus: http.StatusUnauthorized,
-			wantCode:   codeUnauthenticated,
-		},
-		{
-			name:       "invalid_token",
-			token:      func(_ *testing.T, _ *fixture) string { return "not-a-real-token" },
-			wantStatus: http.StatusUnauthorized,
-			wantCode:   codeUnauthenticated,
-		},
-		{
-			name: "wrong_scope",
-			token: func(t *testing.T, fix *fixture) string {
-				t.Helper()
+	runAuthCases(t, func(t *testing.T, fix *fixture, token string) (int, []byte) {
+		t.Helper()
 
-				return fix.token(t, auth.ScopeReadMemory)
-			},
-			wantStatus: http.StatusForbidden,
-			wantCode:   "auth.forbidden",
-		},
-		{
-			name: "chat_session_scope",
-			token: func(t *testing.T, fix *fixture) string {
-				t.Helper()
-
-				return fix.token(t, auth.ScopeChatSession)
-			},
-			wantStatus: http.StatusOK,
-			wantCode:   "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			fix := startFixture(t, fixtureOptions{authEnabled: true, agent: answerAgent()})
-
-			status, data := fix.post(t, tt.token(t, fix), simpleUserBody)
-			if status != tt.wantStatus {
-				t.Fatalf("status = %d, want %d (body: %s)", status, tt.wantStatus, data)
-			}
-
-			if tt.wantCode != "" {
-				if got := decodeError(t, data).Error.Code; got != tt.wantCode {
-					t.Errorf("code = %q, want %q", got, tt.wantCode)
-				}
-			}
-		})
-	}
+		return fix.post(t, token, simpleUserBody)
+	})
 }
 
 // TestExpiredTokenUnauthorized proves an expired token gets its own 401 code so
@@ -337,7 +284,7 @@ func TestValidationRejections(t *testing.T) {
 		{name: "trailing_assistant", body: `{"model":"assistant","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]}`, wantStatus: http.StatusBadRequest, wantCode: "trailing_message_not_user"},
 		{name: "non_text_part", body: `{"model":"assistant","messages":[{"role":"user","content":[{"type":"image_url","image_url":"x"}]}]}`, wantStatus: http.StatusBadRequest, wantCode: "unsupported_content_part"},
 		{name: "malformed_json", body: `{"model":`, wantStatus: http.StatusBadRequest, wantCode: "invalid_body"},
-		{name: "unknown_model", body: `{"model":"banana","messages":[{"role":"user","content":"hi"}]}`, wantStatus: http.StatusNotFound, wantCode: "model_not_found"},
+		{name: "unknown_model", body: `{"model":"banana","messages":[{"role":"user","content":"hi"}]}`, wantStatus: http.StatusNotFound, wantCode: codeModelNotFound},
 	}
 
 	for _, tt := range tests {
@@ -377,7 +324,7 @@ func TestCreateSessionUnknownPersonalityIs404(t *testing.T) {
 		t.Fatalf("status = %d, want 404 (body: %s)", status, data)
 	}
 
-	if got := decodeError(t, data).Error.Code; got != "model_not_found" {
+	if got := decodeError(t, data).Error.Code; got != codeModelNotFound {
 		t.Errorf("code = %q, want model_not_found", got)
 	}
 }
@@ -394,8 +341,13 @@ func TestBodyOverCapRejected(t *testing.T) {
 		t.Fatalf("status = %d, want 413 (body: %s)", status, data)
 	}
 
-	if got := decodeError(t, data).Error.Code; got != "request_too_large" {
-		t.Errorf("code = %q, want request_too_large", got)
+	failure := decodeError(t, data).Error
+	if failure.Code != "request_too_large" {
+		t.Errorf("code = %q, want request_too_large", failure.Code)
+	}
+
+	if !strings.Contains(failure.Message, "32-byte") {
+		t.Errorf("message = %q, want it to name the 32-byte limit", failure.Message)
 	}
 }
 

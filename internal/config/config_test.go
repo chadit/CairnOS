@@ -41,11 +41,20 @@ failure_threshold = 0.5
 `
 
 // envOn is the value an override carries to turn a flag on, and envURL the
-// endpoint the redirect cases point a bridge at. Both are named because the
-// package repeats them across enough tables for goconst to ask.
+// endpoint the redirect cases point a bridge at. The env cases share the
+// durations: each only has to differ from the default and the file value its
+// case writes. authEnabledEnv is the switch two auth cases set.
 const (
 	envOn  = "true"
 	envURL = "https://env.example.com"
+
+	envSendTimeout = "3s"
+	envConfirmTTL  = "2m"
+	envShortWait   = "20s"
+	envMediumWait  = "45s"
+	envLongWait    = "90s"
+
+	authEnabledEnv = "CAIRNOS_AUTH_ENABLED"
 )
 
 func writeConfig(t *testing.T, content string) string {
@@ -128,10 +137,12 @@ func TestLoadOverlaysFileOnDefaults(t *testing.T) {
 func TestLoadEnvOverridesBeatFile(t *testing.T) {
 	t.Parallel()
 
+	const envDSN = "file:/tmp/env.db"
+
 	envOverrides := environ.Map(map[string]string{
 		"CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS": "16",
 		"CAIRNOS_ENGINE_MAX_CALL_DEPTH":         "5",
-		"CAIRNOS_STORE_DSN":                     "file:/tmp/env.db",
+		"CAIRNOS_STORE_DSN":                     envDSN,
 		"CAIRNOS_ENV_ALLOWLIST":                 "HOME, USER",
 		"CAIRNOS_RETENTION_SWEEP":               "1d",
 	})
@@ -149,7 +160,7 @@ func TestLoadEnvOverridesBeatFile(t *testing.T) {
 		t.Fatalf("engine.max_call_depth env override = %d, want 5", cfg.Engine.MaxCallDepth)
 	}
 
-	if cfg.Store.DSN != "file:/tmp/env.db" {
+	if cfg.Store.DSN != envDSN {
 		t.Fatalf("dsn = %q", cfg.Store.DSN)
 	}
 
@@ -188,6 +199,8 @@ equivalence_threshold = 0.92
 func TestLoadEngineFallbackChainFromFile(t *testing.T) {
 	t.Parallel()
 
+	const lastFallback = "omp"
+
 	const fallbackTOML = `
 [engine.fallback]
 codex = ["qwen", "omp"]
@@ -199,11 +212,11 @@ qwen = ["omp"]
 		t.Fatalf("load: %v", err)
 	}
 
-	if got := cfg.Engine.Fallback["codex"]; !slices.Equal(got, []string{"qwen", "omp"}) {
+	if got := cfg.Engine.Fallback["codex"]; !slices.Equal(got, []string{"qwen", lastFallback}) {
 		t.Fatalf("codex fallback = %v, want [qwen omp]", got)
 	}
 
-	if got := cfg.Engine.Fallback["qwen"]; !slices.Equal(got, []string{"omp"}) {
+	if got := cfg.Engine.Fallback["qwen"]; !slices.Equal(got, []string{lastFallback}) {
 		t.Errorf("qwen fallback = %v, want [omp]", got)
 	}
 }
@@ -239,8 +252,10 @@ func TestLoadTuningEmbeddingDefaultsOff(t *testing.T) {
 func TestLoadTuningEmbeddingEnvOverrides(t *testing.T) {
 	t.Parallel()
 
+	const envModel = "text-embedding-3-large"
+
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_TUNING_EMBEDDING_MODEL":       "text-embedding-3-large",
+		"CAIRNOS_TUNING_EMBEDDING_MODEL":       envModel,
 		"CAIRNOS_TUNING_EQUIVALENCE_THRESHOLD": "0.97",
 	})
 
@@ -255,7 +270,7 @@ equivalence_threshold = 0.90
 		t.Fatalf("load: %v", err)
 	}
 
-	if cfg.Tuning.EmbeddingModel != "text-embedding-3-large" {
+	if cfg.Tuning.EmbeddingModel != envModel {
 		t.Fatalf("env did not beat file: %q", cfg.Tuning.EmbeddingModel)
 	}
 
@@ -327,10 +342,10 @@ func TestLoadAuthM1M4L2EnvOverrides(t *testing.T) {
 	t.Parallel()
 
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_AUTH_ENABLED":               envOn,
+		authEnabledEnv:                       envOn,
 		"CAIRNOS_AUTH_MAX_CONCURRENT_LOGINS": "8",
 		"CAIRNOS_AUTH_LOGIN_RATE_PER_MINUTE": "120",
-		"CAIRNOS_AUTH_STREAM_RECHECK":        "20s",
+		"CAIRNOS_AUTH_STREAM_RECHECK":        envShortWait,
 		"CAIRNOS_AUTH_CLOCK_SKEW":            "10s",
 	})
 
@@ -499,8 +514,10 @@ categories = ["job-search"]
 func TestLoadHiveKeyRefEnvOverride(t *testing.T) {
 	t.Parallel()
 
+	const rotatedKeyRef = "rotated_hive_key"
+
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_HIVE_KEY_REF": "rotated_hive_key",
+		"CAIRNOS_HIVE_KEY_REF": rotatedKeyRef,
 	})
 
 	cfg, err := config.LoadWith(writeConfig(t, "[hive]\nenabled = true\nkey_ref = \"hive_key\""), envOverrides)
@@ -508,8 +525,8 @@ func TestLoadHiveKeyRefEnvOverride(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if cfg.Hive.KeyRef != "rotated_hive_key" {
-		t.Fatalf("key_ref env override = %q, want rotated_hive_key", cfg.Hive.KeyRef)
+	if cfg.Hive.KeyRef != rotatedKeyRef {
+		t.Fatalf("key_ref env override = %q, want %q", cfg.Hive.KeyRef, rotatedKeyRef)
 	}
 }
 
@@ -652,7 +669,7 @@ func TestLoadSchedulerEnvOverrides(t *testing.T) {
 
 	envOverrides := environ.Map(map[string]string{
 		"CAIRNOS_SCHEDULER_WORKER_CONCURRENCY": "12",
-		"CAIRNOS_SCHEDULER_ACK_WAIT":           "90s",
+		"CAIRNOS_SCHEDULER_ACK_WAIT":           envLongWait,
 	})
 
 	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
@@ -686,12 +703,18 @@ func TestLoadMCPDefaults(t *testing.T) {
 func TestLoadMCPEnvOverrides(t *testing.T) {
 	t.Parallel()
 
+	const (
+		envPath      = "/env-mcp"
+		envRegistry  = "https://env-registry/v0"
+		envAdvertise = "https://env-node/mcp"
+	)
+
 	envOverrides := environ.Map(map[string]string{
 		"CAIRNOS_MCP_ENABLED":       envOn,
 		"CAIRNOS_MCP_TRANSPORT":     "stdio",
-		"CAIRNOS_MCP_PATH":          "/env-mcp",
-		"CAIRNOS_MCP_REGISTRY_URL":  "https://env-registry/v0",
-		"CAIRNOS_MCP_ADVERTISE_URL": "https://env-node/mcp",
+		"CAIRNOS_MCP_PATH":          envPath,
+		"CAIRNOS_MCP_REGISTRY_URL":  envRegistry,
+		"CAIRNOS_MCP_ADVERTISE_URL": envAdvertise,
 	})
 
 	cfg, err := config.LoadWith(filepath.Join(t.TempDir(), "absent.toml"), envOverrides)
@@ -699,11 +722,11 @@ func TestLoadMCPEnvOverrides(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if !cfg.MCP.Enabled || cfg.MCP.Transport != config.MCPTransportStdio || cfg.MCP.Path != "/env-mcp" {
+	if !cfg.MCP.Enabled || cfg.MCP.Transport != config.MCPTransportStdio || cfg.MCP.Path != envPath {
 		t.Fatalf("mcp env overrides missing: %+v", cfg.MCP)
 	}
 
-	if cfg.MCP.RegistryURL != "https://env-registry/v0" || cfg.MCP.AdvertiseURL != "https://env-node/mcp" {
+	if cfg.MCP.RegistryURL != envRegistry || cfg.MCP.AdvertiseURL != envAdvertise {
 		t.Fatalf("mcp registry env overrides missing: %+v", cfg.MCP)
 	}
 }
@@ -814,8 +837,8 @@ func TestLoadWebhookEnvOverrides(t *testing.T) {
 	envOverrides := environ.Map(map[string]string{
 		"CAIRNOS_WEBHOOK_ENABLED":         envOn,
 		"CAIRNOS_WEBHOOK_RATE_PER_MINUTE": "240",
-		"CAIRNOS_WEBHOOK_TEST_WAIT":       "45s",
-		"CAIRNOS_WEBHOOK_SIGNATURE_SKEW":  "90s",
+		"CAIRNOS_WEBHOOK_TEST_WAIT":       envMediumWait,
+		"CAIRNOS_WEBHOOK_SIGNATURE_SKEW":  envLongWait,
 	})
 
 	fileWithWebhook := "[webhook]\nenabled = false\nrate_per_minute = 60\ntest_wait = \"30s\"\nsignature_skew = \"5m\""
@@ -934,9 +957,11 @@ func TestLoadHiveEnvOverrides(t *testing.T) {
 func TestLoadAuthEnvOverrides(t *testing.T) {
 	t.Parallel()
 
+	const envIssuer = "env-node"
+
 	envOverrides := environ.Map(map[string]string{
-		"CAIRNOS_AUTH_ENABLED":          envOn,
-		"CAIRNOS_AUTH_ISSUER":           "env-node",
+		authEnabledEnv:                  envOn,
+		"CAIRNOS_AUTH_ISSUER":           envIssuer,
 		"CAIRNOS_AUTH_ACCESS_TOKEN_TTL": "2h",
 		"CAIRNOS_AUTH_TLS_TERMINATED":   envOn,
 	})
@@ -946,7 +971,7 @@ func TestLoadAuthEnvOverrides(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	if !cfg.Auth.Enabled || cfg.Auth.Issuer != "env-node" {
+	if !cfg.Auth.Enabled || cfg.Auth.Issuer != envIssuer {
 		t.Fatalf("env overlay missing: %+v", cfg.Auth)
 	}
 

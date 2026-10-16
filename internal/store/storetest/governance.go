@@ -15,7 +15,11 @@ const (
 	auditDetail   = "monthly budget exceeded"
 	pauseReason   = "manual hold"
 	costPerAction = 0.25
+	auditFirst    = "audit-1"
+	auditSecond   = "audit-2"
 	auditThird    = "audit-3"
+	auditOld      = "audit-old"
+	reasonRepause = "again"
 	// floatEpsilon bounds the spend-sum comparison: cost rides through JSON
 	// and a SQL SUM, so an exact float match is the wrong assertion.
 	floatEpsilon = 1e-9
@@ -51,7 +55,7 @@ func stageActionCost(t *testing.T, db store.Store, runID, workflow string, creat
 	}
 }
 
-func testAuditAppendListNewestFirst(t *testing.T, openFn OpenFunc) {
+func testAuditAppendListNewestFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -59,8 +63,8 @@ func testAuditAppendListNewestFirst(t *testing.T, openFn OpenFunc) {
 	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 
 	entries := []*store.AuditEntry{
-		{ID: "audit-1", Actor: actorAdmin, Action: store.AuditActionPause, Target: workflowAlpha, Detail: auditDetail, CreatedAt: base},
-		{ID: "audit-2", Actor: actorAdmin, Action: store.AuditActionResume, Target: workflowAlpha, CreatedAt: base.Add(time.Hour)},
+		{ID: auditFirst, Actor: actorAdmin, Action: store.AuditActionPause, Target: workflowAlpha, Detail: auditDetail, CreatedAt: base},
+		{ID: auditSecond, Actor: actorAdmin, Action: store.AuditActionResume, Target: workflowAlpha, CreatedAt: base.Add(time.Hour)},
 		{ID: auditThird, Actor: triggerCLI, Action: store.AuditActionTerminate, Target: runFirst, CreatedAt: base.Add(twoUnits * time.Hour)},
 	}
 	for _, entry := range entries {
@@ -74,7 +78,7 @@ func testAuditAppendListNewestFirst(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("list audit: %v", err)
 	}
 
-	wantOrder := []string{"audit-3", "audit-2", "audit-1"}
+	wantOrder := []string{auditThird, auditSecond, auditFirst}
 	if len(listed) != len(wantOrder) {
 		t.Fatalf("listed %d audit rows, want %d", len(listed), len(wantOrder))
 	}
@@ -99,12 +103,12 @@ func testAuditAppendListNewestFirst(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("list audit with limit: %v", err)
 	}
 
-	if len(limited) != 1 || limited[0].ID != "audit-3" {
+	if len(limited) != 1 || limited[0].ID != auditThird {
 		t.Errorf("limited audit = %+v, want only the newest row", limited)
 	}
 }
 
-func testAuditDefaultsStampIDAndTime(t *testing.T, openFn OpenFunc) {
+func testAuditDefaultsStampIDAndTime[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -134,7 +138,7 @@ func testAuditDefaultsStampIDAndTime(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
+func testWorkflowPauseSetGetClear[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -168,7 +172,7 @@ func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
 	}
 
 	// Re-pausing overwrites rather than failing.
-	if setWorkflowPauseErr := db.SetWorkflowPause(ctx, &store.WorkflowPause{WorkflowName: workflowAlpha, Actor: triggerCLI, Reason: "again"}); setWorkflowPauseErr != nil {
+	if setWorkflowPauseErr := db.SetWorkflowPause(ctx, &store.WorkflowPause{WorkflowName: workflowAlpha, Actor: triggerCLI, Reason: reasonRepause}); setWorkflowPauseErr != nil {
 		t.Fatalf("re-pause: %v", setWorkflowPauseErr)
 	}
 
@@ -177,7 +181,7 @@ func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("get re-paused: %v", err)
 	}
 
-	if pause.Actor != triggerCLI || pause.Reason != "again" {
+	if pause.Actor != triggerCLI || pause.Reason != reasonRepause {
 		t.Errorf("re-pause did not overwrite: %+v", pause)
 	}
 
@@ -201,7 +205,7 @@ func testWorkflowPauseSetGetClear(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testWorkflowPauseListNewestFirst(t *testing.T, openFn OpenFunc) {
+func testWorkflowPauseListNewestFirst[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -230,13 +234,12 @@ func testWorkflowPauseListNewestFirst(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testSpendSinceSumsCostInWindow(t *testing.T, openFn OpenFunc) {
+func testSpendSinceSumsCostInWindow[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	day := 24 * time.Hour
 	periodStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 	// Two in-window runs of alpha, one before the window, and one of a
@@ -271,7 +274,7 @@ func testSpendSinceSumsCostInWindow(t *testing.T, openFn OpenFunc) {
 // workflow name independently: a pause in workspace A does not pause it in
 // workspace B, and resuming in one tenant leaves the other's pause standing
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testWorkflowPauseIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testWorkflowPauseIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -318,7 +321,7 @@ func testWorkflowPauseIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 // testAuditIsolatesByWorkspace proves the audit trail is per tenant: a row
 // written under one workspace is invisible to another's ListAudit
 // (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
-func testAuditIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
+func testAuditIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
@@ -354,17 +357,16 @@ func testAuditIsolatesByWorkspace(t *testing.T, openFn OpenFunc) {
 	}
 }
 
-func testPruneLeavesAuditAndPauseRows(t *testing.T, openFn OpenFunc) {
+func testPruneLeavesAuditAndPauseRows[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
 	db := openFn(t)
 	ctx := t.Context()
 
-	day := 24 * time.Hour
 	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 
 	// An audit row and a pause flag both older than the run-retention window.
-	if err := db.AppendAudit(ctx, &store.AuditEntry{ID: "audit-old", Actor: actorAdmin, Action: store.AuditActionPause, Target: workflowAlpha, CreatedAt: now.Add(-100 * day)}); err != nil {
+	if err := db.AppendAudit(ctx, &store.AuditEntry{ID: auditOld, Actor: actorAdmin, Action: store.AuditActionPause, Target: workflowAlpha, CreatedAt: now.Add(-100 * day)}); err != nil {
 		t.Fatalf("append old audit: %v", err)
 	}
 
@@ -372,7 +374,7 @@ func testPruneLeavesAuditAndPauseRows(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("set old pause: %v", err)
 	}
 
-	if _, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: 90 * day, Now: now}); err != nil {
+	if _, err := db.Prune(ctx, store.PruneOptions{RunsOlderThan: retentionWindow, Now: now}); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 
@@ -381,7 +383,7 @@ func testPruneLeavesAuditAndPauseRows(t *testing.T, openFn OpenFunc) {
 		t.Fatalf("list audit after prune: %v", err)
 	}
 
-	if len(listed) != 1 || listed[0].ID != "audit-old" {
+	if len(listed) != 1 || listed[0].ID != auditOld {
 		t.Errorf("audit after prune = %+v, want the old row kept (audit survives retention)", listed)
 	}
 

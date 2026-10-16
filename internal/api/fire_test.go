@@ -17,6 +17,7 @@ const (
 	fireFlowName = "fire_flow"
 	fireTagKey   = "tag"
 	fireTagValue = "poll-value"
+	fireSchedule = "s1"
 )
 
 // fireWorkflow declares one optional input referenced by the action, so Fire
@@ -37,7 +38,7 @@ params = { output = "${{ inputs.tag }}" }
 // newFireRunner wires a FireRunner over a real sqlite store, the mock runner, and
 // a fixture workflow on disk, returning the runner, the store to read runs back,
 // and the workflow path.
-func newFireRunner(t *testing.T) (*api.FireRunner, store.Store, string) {
+func newFireRunner(t *testing.T) (*api.FireRunner, *sqlite.Store, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -80,7 +81,7 @@ func TestFireRunnerFireStampsScheduleTrigger(t *testing.T) {
 	t.Parallel()
 
 	runner, db, path := newFireRunner(t)
-	sched := &scheduler.Schedule{ID: "s1", WorkflowPath: path, WorkflowName: fireFlowName}
+	sched := &scheduler.Schedule{ID: fireSchedule, WorkflowPath: path, WorkflowName: fireFlowName}
 
 	if err := runner.Fire(t.Context(), sched); err != nil {
 		t.Fatalf("fire: %v", err)
@@ -99,7 +100,7 @@ func TestFireRunnerFireRunCarriesInputsAndPollTrigger(t *testing.T) {
 	t.Parallel()
 
 	runner, db, path := newFireRunner(t)
-	sched := &scheduler.Schedule{ID: "s1", WorkflowPath: path, WorkflowName: fireFlowName}
+	sched := &scheduler.Schedule{ID: fireSchedule, WorkflowPath: path, WorkflowName: fireFlowName}
 
 	if err := runner.Fire(t.Context(), sched); err != nil {
 		t.Fatalf("seed scheduled run: %v", err)

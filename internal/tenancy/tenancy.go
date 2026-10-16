@@ -19,6 +19,13 @@ import (
 // the run store's database file with disjoint tables; Postgres does the same
 // in one database.
 type Store interface {
+	WorkspaceStore
+	MembershipStore
+}
+
+// WorkspaceStore persists the workspace records themselves, the tenancy
+// boundaries every other row points at.
+type WorkspaceStore interface {
 	// CreateWorkspace persists a new workspace. A zero ID gets a fresh ULID
 	// and a zero CreatedAt the current time. A duplicate name is an error so
 	// the unique-name invariant holds.
@@ -30,7 +37,11 @@ type Store interface {
 
 	// ListWorkspaces returns every workspace, oldest first.
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
+}
 
+// MembershipStore persists which subjects belong to a workspace and with
+// what role; the login path reads a role here to pick the token's scopes.
+type MembershipStore interface {
 	// AddMember records (or updates) one user's role in a workspace. Re-adding
 	// the same subject overwrites the role rather than failing, so a role
 	// change is one call.

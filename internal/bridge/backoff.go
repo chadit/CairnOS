@@ -13,6 +13,9 @@ const (
 	// BackoffCap is the ceiling the doubling stops at, so a server that stays
 	// down is retried once a minute rather than never again.
 	BackoffCap = 1 * time.Minute
+
+	// backoffGrowth is the factor each failure multiplies the retry delay by.
+	backoffGrowth = 2
 )
 
 // Sleep waits for delay or for ctx to end, reporting false when ctx ended so the
@@ -33,7 +36,7 @@ func Sleep(ctx context.Context, delay time.Duration) bool {
 
 // NextBackoff doubles a retry delay up to BackoffCap.
 func NextBackoff(current time.Duration) time.Duration {
-	next := current * 2
+	next := current * backoffGrowth
 	if next > BackoffCap {
 		return BackoffCap
 	}

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/chadit/CairnOS/internal/oauth"
 	"github.com/chadit/CairnOS/internal/tenancy"
 )
@@ -119,6 +121,28 @@ func TestCallbackRefusesUnverifiedEmailDomain(t *testing.T) {
 	rec := runCallback(t, handler)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("unverified-email callback status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestCallbackMalformedEmailClaimFailsTheDomainGate proves a claims set that
+// will not decode drops the email instead of failing the login, and the
+// emptied email then fails the allowlist, the safe direction.
+func TestCallbackMalformedEmailClaimFailsTheDomainGate(t *testing.T) {
+	t.Parallel()
+
+	idp := newFakeIDP(t)
+	malformed := idp.signIDTokenClaims(t, allowedEmail, jwt.MapClaims{
+		claimEmail:         len(allowedEmail),
+		claimEmailVerified: true,
+	})
+
+	members := newTenancyStore(t)
+	handler := newHandlerWithPolicy(t, idp, newFakeExchanger(malformed), &stubMinter{}, members,
+		oauth.ProvisionPolicy{Enabled: true, AllowedEmailDomains: []string{allowedDomain}})
+
+	rec := runCallback(t, handler)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("malformed-email callback status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
 

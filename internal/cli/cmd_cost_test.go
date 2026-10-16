@@ -10,8 +10,11 @@ import (
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
-// costCmd is the subcommand under test.
-const costCmd = "cost"
+// The subcommand under test and the window flag its cases vary.
+const (
+	costCmd      = "cost"
+	flagSinceArg = "--since"
+)
 
 // costedWorkflow carries mock costs so the aggregation has real numbers:
 // two actions at $0.25 each, one run = $0.50.
@@ -94,12 +97,12 @@ func TestCostFiltersByWorkflowAndWindow(t *testing.T) {
 		},
 		{
 			name: "recent window includes the run",
-			args: []string{costCmd, "--since", "1h", flagDirArg, dir},
+			args: []string{costCmd, flagSinceArg, "1h", flagDirArg, dir},
 			want: "billable",
 		},
 		{
 			name: "bad since flag is a usage error",
-			args: []string{costCmd, "--since", "soonish", flagDirArg, dir},
+			args: []string{costCmd, flagSinceArg, "soonish", flagDirArg, dir},
 			want: "",
 		},
 	}

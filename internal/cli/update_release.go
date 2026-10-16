@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -57,8 +58,10 @@ const (
 )
 
 // stagedAssetPerm is the mode the downloaded asset gets while it sits in the
-// staging directory; the installed copy takes the mode of the file it replaces.
-const stagedAssetPerm = 0o700
+// staging directory. Nothing runs the staged file: the update hashes it, reads
+// its build stamp, and copies it, and the installed copy takes the mode of the
+// file it replaces, so it needs no executable bit.
+const stagedAssetPerm = 0o600
 
 // The module host and the path depth a release lookup needs: "github.com",
 // owner, repository.
@@ -66,10 +69,6 @@ const (
 	githubModuleHost = "github.com"
 	moduleSlugParts  = 3
 )
-
-// goosWindows is the one platform that cannot overwrite a file open for
-// execution, which is why the install renames the running image aside.
-const goosWindows = "windows"
 
 // releaseBuild is the release this run would install: the tag, the commit that
 // tag points at, and where the asset and its checksum list live.
@@ -500,35 +499,37 @@ func installBinary(target, staged string) error {
 	}
 
 	if err := replaceRunning(target, next); err != nil {
-		_ = os.Remove(next)
-
-		return err
+		return errors.Join(err, removeLeftover(next))
 	}
 
 	return nil
 }
 
 // replaceRunning moves next over target. Windows refuses to replace a file that
-// is open for execution, so the running image is renamed aside first; a failed
-// sweep of the leftover is harmless because the next install removes it.
+// is open for execution, so the running image is renamed aside first. It stays
+// there, locked while it runs, until the next install sweeps it; a sweep that
+// fails only matters when the rename aside then fails too.
 func replaceRunning(target, next string) error {
 	if runtime.GOOS != goosWindows {
 		return renameOver(next, target)
 	}
 
 	old := target + installOldSuffix
-
-	_ = os.Remove(old)
+	sweepErr := removeLeftover(old)
 
 	if err := os.Rename(target, old); err != nil {
-		return fmt.Errorf("move %s aside: %w", target, err)
+		return fmt.Errorf("move %s aside: %w", target, errors.Join(err, sweepErr))
 	}
 
-	if err := renameOver(next, target); err != nil {
-		return err
-	}
+	return renameOver(next, target)
+}
 
-	_ = os.Remove(old)
+// removeLeftover deletes a file an earlier or failed install may have left,
+// where a file already gone is the usual case rather than a failure.
+func removeLeftover(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove leftover %s: %w", path, err)
+	}
 
 	return nil
 }
@@ -553,12 +554,12 @@ func copyFile(sourcePath, destPath string, mode fs.FileMode) error {
 
 	defer func() { _ = source.Close() }()
 
-	_ = os.Remove(destPath)
+	staleErr := removeLeftover(destPath)
 
 	// #nosec G304 -- destPath is the running binary's own path with a fixed suffix
 	dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", destPath, err)
+		return fmt.Errorf("create %s: %w", destPath, errors.Join(err, staleErr))
 	}
 
 	if _, err := io.Copy(dest, source); err != nil {

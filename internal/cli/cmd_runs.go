@@ -39,7 +39,7 @@ func (a *App) cmdRuns(ctx context.Context, args []string) int {
 		return a.cmdRunsShow(ctx, args[1:])
 	case "replay":
 		return a.cmdRunsReplay(ctx, args[1:])
-	case "approve":
+	case subcmdApprove:
 		return a.cmdRunsApprove(ctx, args[1:])
 	default:
 		a.printErrf("unknown runs subcommand %q\n", args[0])
@@ -62,7 +62,7 @@ func (a *App) cmdRunsList(ctx context.Context, args []string) int {
 		return code
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "runs list", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "runs list", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -111,7 +111,7 @@ func (a *App) cmdRunsShow(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, _, code, proceed := a.openStoreAt(ctx, "runs show", *dirFlag)
+	db, _, code, proceed := openAt(ctx, a, "runs show", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -169,7 +169,7 @@ func (a *App) cmdRunsReplay(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "runs replay", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "runs replay", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
@@ -180,7 +180,7 @@ func (a *App) cmdRunsReplay(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	mem, code, proceed := a.openMemoryAt(ctx, "runs replay", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "runs replay", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -327,13 +327,13 @@ func (a *App) cmdRunsApprove(ctx context.Context, args []string) int {
 		req.actionName = positionals[1]
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, approveLabel, *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, approveLabel, *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(db)
 
-	mem, code, proceed := a.openMemoryAt(ctx, approveLabel, *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, approveLabel, *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}

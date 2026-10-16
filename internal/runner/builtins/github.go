@@ -204,7 +204,7 @@ func (g *GitHub) listReleases(ctx context.Context, task *runner.Task) (runner.Re
 	for _, release := range releases {
 		items = append(items, map[string]any{
 			"tag":          release.TagName,
-			"name":         release.Name,
+			keyName:        release.Name,
 			"published_at": release.PublishedAt,
 			paramBody:      release.Body,
 		})
@@ -387,7 +387,7 @@ func (g *GitHub) send(ctx context.Context, method, url string, payload any) ([]b
 	request.Header.Set("X-Github-Api-Version", githubAPIVersion)
 
 	if token := g.env.Get(githubTokenEnv); token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set(headerAuthorization, "Bearer "+token)
 	}
 
 	response, err := g.client.Do(request)

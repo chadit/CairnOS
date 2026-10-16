@@ -26,15 +26,15 @@ func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 
 	factories := map[string]runner.Factory{
 		builtins.EmailName:         builtins.EmailFactory(environ.Map(nil)),
-		builtins.WebhookName:       builtins.WebhookFactory,
-		builtins.CodeName:          builtins.CodeFactory,
-		builtins.LanguageRulesName: builtins.LanguageRulesFactory,
+		builtins.WebhookName:       builtins.WebhookFactory(),
+		builtins.CodeName:          builtins.CodeFactory(),
+		builtins.LanguageRulesName: builtins.LanguageRulesFactory(),
 		builtins.OpenAIName:        builtins.OpenAIFactory(environ.Map(nil)),
 		builtins.AnthropicName:     builtins.AnthropicFactory(environ.Map(nil)),
 		builtins.GitHubName:        builtins.GitHubFactory(environ.Map(nil)),
-		builtins.MCPClientName:     builtins.MCPClientFactory,
-		builtins.SandboxExecName:   builtins.SandboxExecFactory,
-		builtins.ExecName:          builtins.ExecFactory,
+		builtins.MCPClientName:     builtins.MCPClientFactory(),
+		builtins.SandboxExecName:   builtins.SandboxExecFactory(),
+		builtins.ExecName:          builtins.ExecFactory(),
 		builtins.UsageName:         builtins.UsageFactory(builtins.UsageOptions{}),
 	}
 
@@ -86,7 +86,7 @@ func TestExecBuildsFromItsConfigBlock(t *testing.T) {
 
 	registry := runner.NewRegistry()
 
-	if err := registry.Register(builtins.ExecName, builtins.ExecFactory); err != nil {
+	if err := registry.Register(builtins.ExecName, builtins.ExecFactory()); err != nil {
 		t.Fatalf("register %s: %v", builtins.ExecName, err)
 	}
 

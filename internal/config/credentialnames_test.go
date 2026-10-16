@@ -9,10 +9,11 @@ import (
 	"github.com/chadit/CairnOS/internal/config"
 )
 
-// The identity and the two runner blocks every case here names.
+// credRunnerName is the runner block most cases here name, and zaiKeyEnv the
+// one key variable both z-ai and z_ai render to.
 const (
-	credIdentity   = "ops"
 	credRunnerName = "zai"
+	zaiKeyEnv      = "CAIRNOS_RUNNER_Z_AI_API_KEY"
 
 	// secondBotTokenEnv is what an identity names when it must post as another
 	// bot on the same server.
@@ -33,7 +34,7 @@ func TestMattermostTokenEnvsResolutionOrder(t *testing.T) {
 	}{
 		{
 			name: "no token_env tries the identity name then the shared default",
-			want: []string{"CAIRNOS_BRIDGE_MATTERMOST_OPS_TOKEN", config.DefaultMattermostTokenEnv},
+			want: []string{opsIdentityEnv, config.DefaultMattermostTokenEnv},
 		},
 		{
 			// An operator who named the variable meant that one: falling back
@@ -50,7 +51,7 @@ func TestMattermostTokenEnvsResolutionOrder(t *testing.T) {
 
 			identity := config.MattermostIdentity{TokenEnv: testCase.tokenEnv}
 
-			if got := config.MattermostTokenEnvs(&identity, credIdentity); !slices.Equal(got, testCase.want) {
+			if got := config.MattermostTokenEnvs(&identity, identityOps); !slices.Equal(got, testCase.want) {
 				t.Fatalf("token envs = %v, want %v", got, testCase.want)
 			}
 		})
@@ -68,7 +69,7 @@ func TestResolveMattermostToken(t *testing.T) {
 		namedToken       = "token-from-token-env"
 	)
 
-	perIdentity := config.MattermostTokenEnv(credIdentity)
+	perIdentity := config.MattermostTokenEnv(identityOps)
 
 	cases := []struct {
 		env      map[string]string
@@ -118,7 +119,7 @@ func TestResolveMattermostToken(t *testing.T) {
 
 			identity := config.MattermostIdentity{TokenEnv: testCase.tokenEnv}
 
-			token, env := config.ResolveMattermostToken(&identity, credIdentity,
+			token, env := config.ResolveMattermostToken(&identity, identityOps,
 				func(name string) string { return testCase.env[name] })
 
 			if token != testCase.want || env != testCase.wantEnv {
@@ -158,7 +159,7 @@ func TestRunnerKeyEnvs(t *testing.T) {
 			// underscore cannot land on two different variables.
 			name:  "a punctuated name goes through the host token rule",
 			block: "z-ai",
-			want:  []string{"CAIRNOS_RUNNER_Z_AI_API_KEY", openaiKey},
+			want:  []string{zaiKeyEnv, openaiKey},
 		},
 	}
 
@@ -188,7 +189,7 @@ func TestLoadRefusesRunnerNamesThatShareOneKey(t *testing.T) {
 	}
 
 	message := err.Error()
-	for _, want := range []string{"runner.z-ai", "runner.z_ai", "CAIRNOS_RUNNER_Z_AI_API_KEY"} {
+	for _, want := range []string{"runner.z-ai", "runner.z_ai", zaiKeyEnv} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("load error %q does not mention %q", message, want)
 		}

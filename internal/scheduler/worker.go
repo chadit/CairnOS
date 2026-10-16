@@ -35,10 +35,8 @@ type QueueRunner interface {
 	Run(ctx context.Context, item *WorkItem) error
 }
 
-// QueueMetrics receives the worker's counters so a telemetry adapter can export
-// them to the dashboard (.agents/spec/06-observability-and-tuning.md). A nil
-// metrics value disables reporting; the worker never calls a nil.
-type QueueMetrics interface {
+// ItemMetrics counts how each work item settles.
+type ItemMetrics interface {
 	// ItemRun records one item finishing, ok=false on a nak.
 	ItemRun(ok bool)
 	// ItemDeadLettered records an item exhausting its deliveries.
@@ -48,10 +46,22 @@ type QueueMetrics interface {
 	// ItemResumed records a held item returned to ready after its credential
 	// became valid again (D12).
 	ItemResumed()
+}
+
+// SweepMetrics receives what the periodic sweep observes across the queue.
+type SweepMetrics interface {
 	// LeaseReclaimed records a crashed-worker lease the sweep returned to ready.
 	LeaseReclaimed(count int)
 	// Depth reports the queue-depth snapshot after a sweep.
 	Depth(stats QueueStats)
+}
+
+// QueueMetrics receives the worker's counters so a telemetry adapter can export
+// them to the dashboard (.agents/spec/06-observability-and-tuning.md). A nil
+// metrics value disables reporting; the worker never calls a nil.
+type QueueMetrics interface {
+	ItemMetrics
+	SweepMetrics
 }
 
 // WorkerConfig wires one Worker. Queue and Runner are required; every duration

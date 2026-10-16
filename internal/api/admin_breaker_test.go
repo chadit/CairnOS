@@ -46,7 +46,7 @@ func TestResetBreakerUnknownRunnerAnswersNotFound(t *testing.T) {
 
 	fix := startServer(t)
 
-	_, err := fix.admin.ResetBreaker(t.Context(), &cairnosv1.ResetBreakerRequest{Runner: "ghost"})
+	_, err := fix.admin.ResetBreaker(t.Context(), &cairnosv1.ResetBreakerRequest{Runner: unknownName})
 	if err == nil {
 		t.Fatal("ResetBreaker(ghost) succeeded, want NOT_FOUND")
 	}

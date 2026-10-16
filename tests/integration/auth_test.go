@@ -17,7 +17,7 @@ import (
 // openAuth opens an auth store in its own Postgres schema off the shared
 // container, matching the per-case isolation the sqlite backend gets from a temp
 // file. The schema is a fresh lowercased ULID; cleanup drops it.
-func openAuth(t *testing.T) auth.Store {
+func openAuth(t *testing.T) *auth.Postgres {
 	t.Helper()
 
 	ctx := t.Context()

@@ -12,6 +12,13 @@ import (
 	"github.com/chadit/CairnOS/internal/nettest"
 )
 
+// Registry entry names the import and list tests share: a remote peer node and
+// a tool name that appears twice so the dedupe path runs.
+const (
+	peerName        = "peer"
+	toolCreateIssue = "create_issue"
+)
+
 func TestNewRegistryClientRejectsEmptyURL(t *testing.T) {
 	t.Parallel()
 
@@ -98,7 +105,10 @@ func TestRegistryPublishSurfacesStatusError(t *testing.T) {
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, "token rejected")
+
+		if _, err := io.WriteString(w, "token rejected"); err != nil {
+			t.Errorf("write registry body: %v", err)
+		}
 	}))
 
 	client, err := mcp.NewRegistryClient(server.URL, "bad", server.Client())
@@ -127,6 +137,48 @@ func TestRegistryPublishSurfacesStatusError(t *testing.T) {
 	}
 }
 
+// TestRegistryStatusErrorSurvivesATruncatedBody proves a registry that drops
+// the connection mid-body still yields a typed RegistryError with its status,
+// and the read failure stays visible next to the partial body.
+func TestRegistryStatusErrorSurvivesATruncatedBody(t *testing.T) {
+	t.Parallel()
+
+	const partialBody = "registry overloaded"
+
+	// A real server, not the in-process fake, so the short body reaches the
+	// client as a dropped connection.
+	server := nettest.NewServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A declared length longer than what is written makes the server cut
+		// the connection, so the client's body read ends in an unexpected EOF.
+		w.Header().Set("Content-Length", "1024")
+		w.WriteHeader(http.StatusServiceUnavailable)
+
+		if _, err := io.WriteString(w, partialBody); err != nil {
+			t.Errorf("write partial registry body: %v", err)
+		}
+	}))
+
+	client, err := mcp.NewRegistryClient(server.URL, "", server.Client())
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	_, err = client.List(t.Context())
+
+	regErr, ok := errors.AsType[*mcp.RegistryError](err)
+	if !ok {
+		t.Fatalf("error %v is not a *RegistryError", err)
+	}
+
+	if regErr.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status code = %d, want 503", regErr.StatusCode)
+	}
+
+	if !strings.Contains(regErr.Body, partialBody) || !strings.Contains(regErr.Body, "reading the body failed") {
+		t.Errorf("body = %q, want the partial body and the read failure", regErr.Body)
+	}
+}
+
 func TestRegistryListDecodesServers(t *testing.T) {
 	t.Parallel()
 
@@ -136,7 +188,10 @@ func TestRegistryListDecodesServers(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"servers":[{"name":"peer","endpoint":"https://peer/mcp","tools":[{"name":"do_thing","description":"d"}]}]}`)
+
+		if _, err := io.WriteString(w, `{"servers":[{"name":"peer","endpoint":"https://peer/mcp","tools":[{"name":"do_thing","description":"d"}]}]}`); err != nil {
+			t.Errorf("write registry list: %v", err)
+		}
 	}))
 
 	client, err := mcp.NewRegistryClient(server.URL, "", server.Client())
@@ -149,7 +204,7 @@ func TestRegistryListDecodesServers(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 
-	if len(servers) != 1 || servers[0].Name != "peer" || len(servers[0].Tools) != 1 {
+	if len(servers) != 1 || servers[0].Name != peerName || len(servers[0].Tools) != 1 {
 		t.Fatalf("decoded servers = %+v", servers)
 	}
 }
@@ -180,8 +235,8 @@ func TestImportConfigRendersRunnerBlocks(t *testing.T) {
 			Name:     "GitHub MCP",
 			Endpoint: "https://mcp.example/github",
 			Tools: []mcp.ToolEntry{
-				{Name: "create_issue"},
-				{Name: "create_issue"}, // duplicate tool name -> deduped runner key
+				{Name: toolCreateIssue},
+				{Name: toolCreateIssue}, // duplicate tool name -> deduped runner key
 			},
 		},
 		{Name: "empty", Endpoint: ""}, // skipped: no endpoint
@@ -262,7 +317,7 @@ func TestImportConfigSkipsSelf(t *testing.T) {
 
 	servers := []mcp.ServerEntry{
 		{Name: "self", Endpoint: "https://me/mcp/", Tools: []mcp.ToolEntry{{Name: "x"}}},
-		{Name: "peer", Endpoint: "https://peer/mcp", Tools: []mcp.ToolEntry{{Name: "y"}}},
+		{Name: peerName, Endpoint: "https://peer/mcp", Tools: []mcp.ToolEntry{{Name: "y"}}},
 	}
 
 	_, names := mcp.ImportConfig(servers, "https://me/mcp")

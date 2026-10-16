@@ -4,10 +4,8 @@ import (
 	"context"
 	"flag"
 	"io"
-	"path/filepath"
 	"strings"
 
-	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/secrets"
 )
 
@@ -68,19 +66,19 @@ Only set, get, rm, ls, and rotate need [secrets] backend = "store".
 	}
 
 	switch args[0] {
-	case "set":
+	case subcmdSet:
 		return a.cmdSecretsSet(ctx, args[1:])
 	case subcmdGet:
 		return a.cmdSecretsGet(ctx, args[1:])
-	case "rm":
+	case subcmdRm:
 		return a.cmdSecretsRm(ctx, args[1:])
 	case "ls":
 		return a.cmdSecretsLs(ctx, args[1:])
-	case "rotate":
+	case subcmdRotate:
 		return a.cmdSecretsRotate(ctx, args[1:])
 	case "install-bw":
 		return a.cmdSecretsInstallBW(ctx, args[1:])
-	case "auth":
+	case subcmdAuth:
 		return a.cmdSecretsAuth(ctx, args[1:])
 	case "pull":
 		return a.cmdSecretsPull(ctx, args[1:])
@@ -92,49 +90,6 @@ Only set, get, rm, ls, and rotate need [secrets] backend = "store".
 
 		return ExitUsage
 	}
-}
-
-// openSecretsAt loads the config, refuses to run unless the store backend is
-// configured, and opens the encrypted store, the openStoreAt shape for the
-// secrets subcommands. The backend guard means nobody writes to a store the
-// engine is not reading. Key or store errors carry env var names only, never
-// key material.
-func (a *App) openSecretsAt(ctx context.Context, label, dirFlagValue string) (secrets.Store, int, bool) {
-	if err := ctx.Err(); err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	dir, err := resolveDir(dirFlagValue, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	cfg, err := config.LoadWith(filepath.Join(dir, configFileName), a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	if cfg.Secrets.Backend != config.SecretsBackendStore {
-		a.printErrf("%s: secret store is not configured; set [secrets] backend = %q (currently %q)\n",
-			label, config.SecretsBackendStore, cfg.Secrets.Backend)
-
-		return nil, ExitFailure, false
-	}
-
-	secretStore, err := openSecretsStore(ctx, dir, &cfg, a.envLookup())
-	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
-
-		return nil, ExitFailure, false
-	}
-
-	return secretStore, ExitOK, true
 }
 
 // cmdSecretsSet reads the value from stdin (never argv, which leaks into shell
@@ -159,7 +114,7 @@ func (a *App) cmdSecretsSet(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	secretStore, code, proceed := a.openSecretsAt(ctx, label, *dirFlag)
+	secretStore, _, code, proceed := openAt(ctx, a, label, *dirFlag, secretBackends(ctx, a.envLookup()))
 	if !proceed {
 		return code
 	}
@@ -204,7 +159,7 @@ func (a *App) cmdSecretsGet(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	secretStore, code, proceed := a.openSecretsAt(ctx, label, *dirFlag)
+	secretStore, _, code, proceed := openAt(ctx, a, label, *dirFlag, secretBackends(ctx, a.envLookup()))
 	if !proceed {
 		return code
 	}
@@ -243,7 +198,7 @@ func (a *App) cmdSecretsRm(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	secretStore, code, proceed := a.openSecretsAt(ctx, label, *dirFlag)
+	secretStore, _, code, proceed := openAt(ctx, a, label, *dirFlag, secretBackends(ctx, a.envLookup()))
 	if !proceed {
 		return code
 	}
@@ -275,7 +230,7 @@ func (a *App) cmdSecretsLs(ctx context.Context, args []string) int {
 		return code
 	}
 
-	secretStore, code, proceed := a.openSecretsAt(ctx, label, *dirFlag)
+	secretStore, _, code, proceed := openAt(ctx, a, label, *dirFlag, secretBackends(ctx, a.envLookup()))
 	if !proceed {
 		return code
 	}
@@ -333,7 +288,7 @@ func (a *App) cmdSecretsRotate(ctx context.Context, args []string) int {
 		return code
 	}
 
-	secretStore, code, proceed := a.openSecretsAt(ctx, label, *dirFlag)
+	secretStore, _, code, proceed := openAt(ctx, a, label, *dirFlag, secretBackends(ctx, a.envLookup()))
 	if !proceed {
 		return code
 	}

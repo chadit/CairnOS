@@ -24,6 +24,9 @@ const (
 	syncAction     = "sync"
 	headBefore     = "aaaaaaa"
 	headAfter      = "bbbbbbb"
+
+	// unresolvedSource is a source param still carrying its reference.
+	unresolvedSource = "${{ inputs.which }}"
 )
 
 // Git subcommands the fake answers by name.
@@ -143,7 +146,7 @@ func sourceSpec(dirtyReset bool) source.Spec {
 // sourceRunner builds the runner under test over one spec and one fake git, with
 // no observer: that is what the four one-shot commands wire, and the cases about
 // that seam build their own.
-func sourceRunner(t *testing.T, git *fakeGit) runner.Runner {
+func sourceRunner(t *testing.T, git *fakeGit) *builtins.Source {
 	t.Helper()
 
 	return sourceRunnerWith(t, git, sourceSpec(true), nil)
@@ -154,7 +157,7 @@ func sourceRunner(t *testing.T, git *fakeGit) runner.Runner {
 // operator reading a journal, not something a case asserts on.
 func sourceRunnerWith(
 	t *testing.T, git *fakeGit, spec source.Spec, obs builtins.SourceObserver,
-) runner.Runner {
+) *builtins.Source {
 	t.Helper()
 
 	built, err := builtins.SourceFactory([]source.Spec{spec}, git.run, nil, obs)(nil)
@@ -162,7 +165,12 @@ func sourceRunnerWith(
 		t.Fatalf("build source runner: %v", err)
 	}
 
-	return built
+	syncer, isSource := built.(*builtins.Source)
+	if !isSource {
+		t.Fatalf("source factory built %T, want *builtins.Source", built)
+	}
+
+	return syncer
 }
 
 // sourceTask builds a resolved task naming one source.
@@ -199,7 +207,7 @@ func TestSourceValidateDefersUnresolvedReference(t *testing.T) {
 	t.Parallel()
 
 	task := &runner.Task{
-		Params:     map[string]any{sourceParam: "${{ inputs.which }}"},
+		Params:     map[string]any{sourceParam: unresolvedSource},
 		ActionName: syncAction,
 	}
 
@@ -353,7 +361,7 @@ func TestSourceExecuteRefusesUnresolvedName(t *testing.T) {
 	t.Parallel()
 
 	task := &runner.Task{
-		Params:     map[string]any{sourceParam: "${{ inputs.which }}"},
+		Params:     map[string]any{sourceParam: unresolvedSource},
 		ActionName: syncAction,
 	}
 

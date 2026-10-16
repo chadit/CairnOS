@@ -59,7 +59,7 @@ func (a *App) cmdWorkspaceCreate(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	tenants, code, proceed := a.openTenancyAt(ctx, "workspace create", *dirFlag)
+	tenants, _, code, proceed := openAt(ctx, a, "workspace create", *dirFlag, tenancyBackends())
 	if !proceed {
 		return code
 	}
@@ -88,7 +88,7 @@ func (a *App) cmdWorkspaceList(ctx context.Context, args []string) int {
 		return code
 	}
 
-	tenants, code, proceed := a.openTenancyAt(ctx, "workspace list", *dirFlag)
+	tenants, _, code, proceed := openAt(ctx, a, "workspace list", *dirFlag, tenancyBackends())
 	if !proceed {
 		return code
 	}
@@ -146,7 +146,7 @@ func (a *App) cmdWorkspaceAddMember(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	tenants, code, proceed := a.openTenancyAt(ctx, "workspace add-member", *dirFlag)
+	tenants, _, code, proceed := openAt(ctx, a, "workspace add-member", *dirFlag, tenancyBackends())
 	if !proceed {
 		return code
 	}
@@ -185,7 +185,7 @@ func (a *App) cmdWorkspaceMembers(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	tenants, code, proceed := a.openTenancyAt(ctx, "workspace members", *dirFlag)
+	tenants, _, code, proceed := openAt(ctx, a, "workspace members", *dirFlag, tenancyBackends())
 	if !proceed {
 		return code
 	}

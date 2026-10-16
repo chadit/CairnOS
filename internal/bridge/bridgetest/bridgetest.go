@@ -39,6 +39,10 @@ const (
 	// opening turn routes under a known id.
 	FirstSessionID = "sess-1"
 
+	// proposalBudgetUSD is the estimated budget Proposal carries. It has a
+	// fractional part so a rendered card exercises the two-decimal formatting.
+	proposalBudgetUSD = 1.5
+
 	// waitTimeout bounds WaitFor. The paths it covers run off real goroutines and
 	// real timers, so the wait ticks off a real clock rather than synthetic time.
 	waitTimeout = 2 * time.Second
@@ -52,7 +56,7 @@ func Proposal() *chat.Proposal {
 	return &chat.Proposal{
 		WorkflowName:       WorkflowName,
 		Inputs:             map[string]any{"env": "prod"},
-		EstimatedBudgetUSD: 1.5,
+		EstimatedBudgetUSD: proposalBudgetUSD,
 	}
 }
 

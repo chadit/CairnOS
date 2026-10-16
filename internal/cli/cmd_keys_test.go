@@ -312,18 +312,20 @@ func TestAuthRevokeDemandsExactlyOneTarget(t *testing.T) {
 	dir := newKeysHome(t)
 
 	cases := []struct {
-		name string
-		args []string
+		name    string
+		targets []string
 	}{
-		{name: "neither", args: []string{"auth", "revoke", "--dir", dir}},
-		{name: "both", args: []string{"auth", "revoke", "--jti", "a", "--key", "b", "--dir", dir}},
+		{name: "neither"},
+		{name: "both", targets: []string{"--jti", "a", "--key", "b"}},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			code, _, stderr := runKeysCLI(t.Context(), t, tt.args...)
+			args := append([]string{"auth", "revoke", flagDirArg, dir}, tt.targets...)
+
+			code, _, stderr := runKeysCLI(t.Context(), t, args...)
 			if code != cli.ExitUsage {
 				t.Fatalf("exit = %d (stderr %q), want usage error", code, stderr)
 			}

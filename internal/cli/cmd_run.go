@@ -54,13 +54,13 @@ func (a *App) cmdRun(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	db, cfg, code, proceed := a.openStoreAt(ctx, "run", *dirFlag)
+	db, cfg, code, proceed := openAt(ctx, a, "run", *dirFlag, runStoreBackends())
 	if !proceed {
 		return code
 	}
 	defer a.closeStore(db)
 
-	mem, code, proceed := a.openMemoryAt(ctx, "run", *dirFlag)
+	mem, _, code, proceed := openAt(ctx, a, "run", *dirFlag, memoryBackends())
 	if !proceed {
 		return code
 	}
@@ -146,7 +146,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 	credManager, err := buildCredentialManager(ctx, cfg, source)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
-		a.closeSecretSource(closeSource)
+		a.runCloser("secret source", closeSource)
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, nil, ExitFailure, false
@@ -156,7 +156,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		nil, a.logger, nil)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
-		a.closeSecretSource(closeSource)
+		a.runCloser("secret source", closeSource)
 		a.printErrf("%s: %v\n", label, err)
 
 		return nil, nil, ExitFailure, false
@@ -174,8 +174,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 	cleanup := func() {
 		a.closeTelemetry(ctx, tel)
 		a.closeRegistry(registry)
-
-		_ = closeSource()
+		a.runCloser("secret source", closeSource)
 	}
 
 	if err := wireBreakerTelemetry(ctx, eng, tel.Recorder()); err != nil {
@@ -190,11 +189,12 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 
 // rejectedBeforeAnyRecord reports whether the engine refused before any run
 // record existed. Input, registration, and governance problems are
-// validation-shaped; store failures are not.
+// validation-shaped; store failures are not, and neither is a list naming no
+// problem.
 func rejectedBeforeAnyRecord(err error) bool {
-	_, isValidation := errors.AsType[cairnerr.Errors](err)
+	problems, isValidation := errors.AsType[cairnerr.Errors](err)
 
-	return isValidation
+	return isValidation && len(problems) > 0
 }
 
 // oneShotTelemetry drops the Prometheus listener from a telemetry config. A

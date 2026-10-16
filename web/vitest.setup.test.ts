@@ -25,7 +25,7 @@ afterAll(async () => {
 
 describe('shared MSW server', () => {
   it('rejects a request no handler matches before it reaches the network', async () => {
-    await expect(fetch(unhandledURL)).rejects.toThrow();
+    await expect(fetch(unhandledURL)).rejects.toThrow('fetch failed');
     expect(networkHits).toBe(0);
   });
 });

@@ -14,8 +14,11 @@ import (
 // testLabel names every key minted by these tests.
 const testLabel = "test-key"
 
-// caseEmpty names the shared empty-input table case.
-const caseEmpty = "empty"
+// Table case names shared across the key and token tests.
+const (
+	caseEmpty         = "empty"
+	caseMissingSecret = "missing secret"
+)
 
 // baseTime anchors created_at stamps; the value is arbitrary but fixed so
 // assertions never depend on the wall clock.
@@ -115,7 +118,7 @@ func TestVerifyKeyRejectsMalformedHash(t *testing.T) {
 }
 
 // TestSplitKeyKeepsUnderscoredSecrets pins the regression where a base64url
-// secret containing underscores was split apart and rejected.
+// secret containing the "_" separator was split apart and rejected.
 func TestSplitKeyKeepsUnderscoredSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -139,7 +142,7 @@ func TestSplitKeyRejectsMalformed(t *testing.T) {
 		{name: caseEmpty, plaintext: ""},
 		{name: "no separators", plaintext: "justonechunk"},
 		{name: "wrong prefix", plaintext: "xx_id_secret"},
-		{name: "missing secret", plaintext: "ck_id_"},
+		{name: caseMissingSecret, plaintext: "ck_id_"},
 		{name: "missing id", plaintext: "ck__secret"},
 	}
 
@@ -169,7 +172,7 @@ func TestParseScopes(t *testing.T) {
 			raw:  " read:memory, write:workflow ,read:memory",
 			want: []string{auth.ScopeReadMemory, auth.ScopeWriteWorkflow},
 		},
-		{name: "admin", raw: "admin", want: []string{auth.ScopeAdmin}},
+		{name: auth.ScopeAdmin, raw: "admin", want: []string{auth.ScopeAdmin}},
 		// message:send has to clear ValidScope, or `cairnos keys add
 		// --scopes message:send` refuses the only key the send path accepts.
 		{name: "message send", raw: "message:send", want: []string{auth.ScopeMessageSend}},

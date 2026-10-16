@@ -1,14 +1,19 @@
 package plugin_test
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +36,24 @@ const (
 	chunkTwo     = "beta"
 	chunkThree   = "gamma"
 	chunkFour    = "delta"
+	chunksKey    = "chunks"
+	countKey     = "count"
+	greeting     = "hello"
+	pingMessage  = "ping"
+
+	// The fail_class values the echo plugin turns into classified errors.
+	classTransient = "transient"
+	classPermanent = "permanent"
+
+	pluginDownCode = "echo.plugin_down"
+
+	// hostHelperEnv hands the echo binary path to the test binary that
+	// TestPluginExitsWhenHostDies re-executes as a stand-in host.
+	hostHelperEnv = "CAIRNOS_TEST_PLUGIN_HOST"
+
+	// orphanExitTimeout bounds how long a plugin whose host died may take to
+	// read the end of its stdin and exit.
+	orphanExitTimeout = 10 * time.Second
 )
 
 // buildEchoPlugin compiles the reference plugin into the test's own temp
@@ -81,8 +104,8 @@ func TestPluginExecuteRoundTripsNativeTypedOutput(t *testing.T) {
 	plug := newEchoPlugin(t)
 
 	params := map[string]any{
-		messageKey: "hello",
-		"count":    int64(3),
+		messageKey: greeting,
+		countKey:   int64(3),
 		"ratio":    0.5,
 		"flag":     true,
 		"list":     []any{chunkOne, chunkTwo},
@@ -97,14 +120,8 @@ func TestPluginExecuteRoundTripsNativeTypedOutput(t *testing.T) {
 	// Numbers come back float64: the JSON wire encoding keeps the engine's
 	// own encoding/json semantics end to end, and that is the documented
 	// shape of plugin output.
-	want := map[string]any{
-		messageKey: "hello",
-		"count":    float64(3),
-		"ratio":    0.5,
-		"flag":     true,
-		"list":     []any{chunkOne, chunkTwo},
-		"nested":   map[string]any{"key": "value"},
-	}
+	want := maps.Clone(params)
+	want[countKey] = float64(3)
 
 	if !reflect.DeepEqual(result.Output, want) {
 		t.Fatalf("output = %#v, want %#v", result.Output, want)
@@ -132,14 +149,14 @@ func TestPluginClassifiedFailuresSurviveTheWire(t *testing.T) {
 		wantRetryAfter time.Duration
 	}{
 		{
-			name:      "transient",
-			params:    map[string]any{failClassKey: "transient"},
+			name:      classTransient,
+			params:    map[string]any{failClassKey: classTransient},
 			wantClass: runner.ClassTransient,
 			wantCode:  "echo.transient",
 		},
 		{
-			name:      "permanent",
-			params:    map[string]any{failClassKey: "permanent"},
+			name:      classPermanent,
+			params:    map[string]any{failClassKey: classPermanent},
 			wantClass: runner.ClassPermanent,
 			wantCode:  "echo.permanent",
 		},
@@ -187,7 +204,7 @@ func TestPluginStreamsChunksInOrder(t *testing.T) {
 	out := make(chan runner.Chunk, 16)
 
 	_, err := plug.ExecuteStream(t.Context(), echoTask(map[string]any{
-		"chunks": []any{chunkOne, chunkTwo, chunkThree},
+		chunksKey: []any{chunkOne, chunkTwo, chunkThree},
 	}), out)
 	if err != nil {
 		t.Fatalf("execute stream: %v", err)
@@ -255,7 +272,7 @@ func TestPluginValidateTranslatesVerdicts(t *testing.T) {
 func pluginPID(t *testing.T, plug *plugin.Plugin) int {
 	t.Helper()
 
-	result, err := plug.Execute(t.Context(), echoTask(map[string]any{messageKey: "ping"}))
+	result, err := plug.Execute(t.Context(), echoTask(map[string]any{messageKey: pingMessage}))
 	if err != nil {
 		t.Fatalf("probe execute: %v", err)
 	}
@@ -292,7 +309,7 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 
 	go func() {
 		_, err := plug.ExecuteStream(t.Context(), echoTask(map[string]any{
-			"chunks": []any{chunkOne, chunkTwo, chunkThree, chunkFour},
+			chunksKey: []any{chunkOne, chunkTwo, chunkThree, chunkFour},
 		}), out)
 		done <- streamErr{err: err}
 	}()
@@ -310,8 +327,14 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 		t.Fatalf("error %v is not a runner.Error", outcome.err)
 	}
 
-	if classified.Class != runner.ClassTransient || classified.Code != "echo.plugin_down" {
-		t.Fatalf("class/code = %v/%q, want transient/echo.plugin_down", classified.Class, classified.Code)
+	if classified.Class != runner.ClassTransient || classified.Code != pluginDownCode {
+		t.Fatalf("class/code = %v/%q, want transient/%s", classified.Class, classified.Code, pluginDownCode)
+	}
+
+	// The host saw the process die, so the cause says how it exited.
+	exitErr, exited := errors.AsType[*exec.ExitError](outcome.err)
+	if !exited || exitErr.Success() {
+		t.Fatalf("error %v does not carry the plugin's failed exit status", outcome.err)
 	}
 
 	// The dead process must not wedge later calls either: they fail fast
@@ -319,7 +342,7 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 	_, err := plug.Execute(t.Context(), echoTask(map[string]any{messageKey: "after crash"}))
 
 	postCrash, isClassified := errors.AsType[*runner.Error](err)
-	if !isClassified || postCrash.Code != "echo.plugin_down" {
+	if !isClassified || postCrash.Code != pluginDownCode {
 		t.Fatalf("post-crash error = %v, want echo.plugin_down", err)
 	}
 }
@@ -349,6 +372,159 @@ func TestPluginCloseTerminatesProcessAndRemovesSocketDir(t *testing.T) {
 
 	if _, statErr := os.Stat(socketDir); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Fatalf("socket dir %q still present after Close (stat err = %v)", socketDir, statErr)
+	}
+}
+
+// TestHelperPluginHost is the stand-in host, not a test of its own. It starts
+// the echo plugin, prints the plugin's pid and socket directory on two lines,
+// then waits on its own stdin, so it lives until it is killed or the test that
+// started it goes away.
+func TestHelperPluginHost(t *testing.T) {
+	t.Parallel()
+
+	echoBinary := os.Getenv(hostHelperEnv)
+	if echoBinary == "" {
+		t.Skip("stand-in host for TestPluginExitsWhenHostDies")
+	}
+
+	plug, err := plugin.New(t.Context(), plugin.Config{Command: []string{echoBinary}, Name: echoName})
+	if err != nil {
+		t.Fatalf("new echo plugin: %v", err)
+	}
+
+	t.Cleanup(func() { _ = plug.Close() })
+
+	fmt.Println(pluginPID(t, plug))
+	fmt.Println(plug.SocketDir())
+
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatalf("read stand-in host stdin: %v", err)
+	}
+}
+
+// TestPluginExitsWhenHostDies kills a host that never called Close and expects
+// its plugin to exit on its own once the stdin pipe the host held is gone.
+func TestPluginExitsWhenHostDies(t *testing.T) {
+	t.Parallel()
+
+	// The plugin shares the host's stderr, so this pipe reads EOF only once both
+	// have exited. The plugin is not this test's child, so there is no Wait for
+	// it, and the pipe works the same on every OS.
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create shared stderr pipe: %v", err)
+	}
+
+	t.Cleanup(func() { _ = stderrRead.Close() })
+
+	host, pid := startHelperHost(t, stderrWrite)
+
+	if err := host.Process.Kill(); err != nil {
+		t.Fatalf("kill stand-in host: %v", err)
+	}
+
+	// A host that exited cleanly ran Close, which would pass this test without
+	// the plugin ever noticing a dead host.
+	waitErr := host.Wait()
+	if exitErr, exited := errors.AsType[*exec.ExitError](waitErr); !exited || exitErr.Success() {
+		t.Fatalf("stand-in host exit = %v, want killed", waitErr)
+	}
+
+	requirePluginExits(t, stderrRead, pid)
+}
+
+// startHelperHost re-executes this test binary as a host whose stderr is
+// stderrWrite and returns it once its plugin is serving, with the plugin's pid.
+// The host's stdin pipe is never written, so it holds until the host is killed.
+// A killed host never runs Close, so the test removes the socket directory.
+func startHelperHost(t *testing.T, stderrWrite *os.File) (*exec.Cmd, int) {
+	t.Helper()
+
+	host := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestHelperPluginHost$")
+	host.Env = append(os.Environ(), hostHelperEnv+"="+buildEchoPlugin(t))
+	host.Stderr = stderrWrite
+
+	if _, err := host.StdinPipe(); err != nil {
+		t.Fatalf("open stand-in host stdin: %v", err)
+	}
+
+	stdout, err := host.StdoutPipe()
+	if err != nil {
+		t.Fatalf("open stand-in host stdout: %v", err)
+	}
+
+	if err = host.Start(); err != nil {
+		t.Fatalf("start stand-in host: %v", err)
+	}
+
+	// Once started, only the host and its plugin may hold the write end, or the
+	// EOF the test waits for never comes.
+	if err = stderrWrite.Close(); err != nil {
+		t.Fatalf("close test copy of shared stderr: %v", err)
+	}
+
+	lines := bufio.NewReader(stdout)
+
+	pidLine := readHelperLine(t, lines)
+
+	pid, err := strconv.Atoi(pidLine)
+	if err != nil {
+		t.Fatalf("stand-in host printed %q, want a plugin pid", pidLine)
+	}
+
+	// Only an absolute path came from SocketDir; anything else is stray output
+	// that RemoveAll must not be pointed at.
+	socketDir := readHelperLine(t, lines)
+	if !filepath.IsAbs(socketDir) {
+		t.Fatalf("stand-in host printed %q, want an absolute socket directory", socketDir)
+	}
+
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketDir); err != nil {
+			t.Errorf("remove stand-in host socket directory: %v", err)
+		}
+	})
+
+	return host, pid
+}
+
+// readHelperLine reads one line the stand-in host printed, without its line
+// ending.
+func readHelperLine(t *testing.T, lines *bufio.Reader) string {
+	t.Helper()
+
+	line, err := lines.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read stand-in host output: %v (got %q)", err, line)
+	}
+
+	return strings.TrimSpace(line)
+}
+
+// requirePluginExits reads the shared stderr to EOF, which comes once the
+// plugin has exited. A plugin still running at the deadline is killed so the
+// failure leaves no process behind.
+func requirePluginExits(t *testing.T, stderr io.Reader, pid int) {
+	t.Helper()
+
+	drained := make(chan error, 1)
+
+	go func() {
+		_, err := io.Copy(io.Discard, stderr)
+		drained <- err
+	}()
+
+	timer := time.NewTimer(orphanExitTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-drained:
+		if err != nil {
+			t.Fatalf("read shared stderr: %v", err)
+		}
+	case <-timer.C:
+		killProcessTree(t, pid)
+		t.Fatalf("plugin %d still running %v after its host died", pid, orphanExitTimeout)
 	}
 }
 
@@ -444,7 +620,7 @@ func TestPluginEngineEndToEnd(t *testing.T) {
 	}
 
 	output, isMap := results[0].Output.(map[string]any)
-	if !isMap || output[messageKey] != "ping" {
+	if !isMap || output[messageKey] != pingMessage {
 		t.Fatalf("stored output = %#v, want the echoed params", results[0].Output)
 	}
 }

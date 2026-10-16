@@ -11,12 +11,19 @@ import (
 )
 
 // telegramUserID is the sample allowlist key the bridge tests bind and assert
-// against; a Telegram user ID is a numeric string. eventHeld and eventRunFailed
-// name the Discord fan-out events these tests assert on more than twice.
+// against; a Telegram user ID is a numeric string. chatOnlyWorkspace is the
+// second, chat-only user's workspace. The event names are the notify events
+// the Discord and Mattermost cases assert on; envEvents is the comma list both
+// env overrides carry.
 const (
-	telegramUserID = "123456789"
-	eventHeld      = "held"
-	eventRunFailed = "run_failed"
+	telegramUserID    = "123456789"
+	chatOnlyWorkspace = "ops"
+
+	eventHeld         = "held"
+	eventRunFailed    = "run_failed"
+	eventDeadLettered = "dead_lettered"
+	eventBudgetDenied = "budget_denied"
+	envEvents         = "run_failed, budget_denied"
 )
 
 func TestLoadBridgeDefaults(t *testing.T) {
@@ -117,7 +124,7 @@ events = ["held", "run_failed"]
 		t.Fatalf("second user missing: %+v", cfg.Bridge.Telegram.Users)
 	}
 
-	if chatOnly.Workspace != "ops" || chatOnly.Personality != "" || chatOnly.AllowConfirm {
+	if chatOnly.Workspace != chatOnlyWorkspace || chatOnly.Personality != "" || chatOnly.AllowConfirm {
 		t.Fatalf("chat-only user defaults wrong: %+v", chatOnly)
 	}
 
@@ -131,11 +138,11 @@ func TestLoadBridgeEnvOverridesBeatFile(t *testing.T) {
 
 	envOverrides := environ.Map(map[string]string{
 		"CAIRNOS_BRIDGE_TELEGRAM_ENABLED":      envOn,
-		"CAIRNOS_BRIDGE_TELEGRAM_POLL_TIMEOUT": "20s",
-		"CAIRNOS_BRIDGE_TELEGRAM_SEND_TIMEOUT": "3s",
-		"CAIRNOS_BRIDGE_TELEGRAM_CONFIRM_TTL":  "2m",
+		"CAIRNOS_BRIDGE_TELEGRAM_POLL_TIMEOUT": envShortWait,
+		"CAIRNOS_BRIDGE_TELEGRAM_SEND_TIMEOUT": envSendTimeout,
+		"CAIRNOS_BRIDGE_TELEGRAM_CONFIRM_TTL":  envConfirmTTL,
 		"CAIRNOS_BRIDGE_TELEGRAM_VERBOSE":      envOn,
-		"CAIRNOS_NOTIFY_DISCORD_EVENTS":        "run_failed, budget_denied",
+		"CAIRNOS_NOTIFY_DISCORD_EVENTS":        envEvents,
 	})
 
 	// The file carries different values and one allowlisted user so the enabled
@@ -172,7 +179,7 @@ events = ["held"]
 		t.Fatalf("bridge ttl/verbose env overrides missing: %+v", cfg.Bridge.Telegram)
 	}
 
-	if !slices.Equal(cfg.Notify.Discord.Events, []string{"run_failed", "budget_denied"}) {
+	if !slices.Equal(cfg.Notify.Discord.Events, []string{eventRunFailed, eventBudgetDenied}) {
 		t.Fatalf("notify.discord.events env override missing: %v", cfg.Notify.Discord.Events)
 	}
 
@@ -238,7 +245,7 @@ func TestLoadAcceptsEveryNotifyEvent(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
-	want := []string{"held", "run_failed", "dead_lettered", "budget_denied"}
+	want := []string{eventHeld, eventRunFailed, eventDeadLettered, eventBudgetDenied}
 	if !slices.Equal(cfg.Notify.Discord.Events, want) {
 		t.Fatalf("notify.discord.events = %v, want %v", cfg.Notify.Discord.Events, want)
 	}

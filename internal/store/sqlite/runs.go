@@ -124,7 +124,7 @@ func (s *Store) GetRun(ctx context.Context, id string) (*store.Run, error) {
 func (s *Store) ListRuns(ctx context.Context, filter store.ListFilter) ([]*store.Run, error) {
 	// Every list is scoped to the request workspace first, so a token bound to
 	// one workspace never sees another's run history.
-	clauses := []string{"workspace_id = ?"}
+	clauses := []string{workspaceClause}
 	args := []any{store.WorkspaceFromContext(ctx)}
 
 	if filter.WorkflowName != "" {
@@ -141,7 +141,7 @@ func (s *Store) ListRuns(ctx context.Context, filter store.ListFilter) ([]*store
 	// #nosec G202 -- every clause is a constant string; values bind as parameters.
 	query := "SELECT " + runColumns + " FROM runs WHERE " + strings.Join(clauses, " AND ")
 
-	query += " ORDER BY created_at DESC, id DESC"
+	query += newestFirst
 
 	if filter.Limit > 0 {
 		query += limitClause
