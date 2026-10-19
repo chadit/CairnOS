@@ -133,15 +133,20 @@ type Outbound interface {
 	Send(ctx context.Context, addr *Address, text string) (string, error)
 
 	// SendProposal renders a D9 proposal however the transport asks for a
-	// decision, returning the reference Expired is later called with.
+	// decision, returning the reference an Expirer is later called with.
 	SendProposal(ctx context.Context, addr *Address, sessionID string, proposal *chat.Proposal) (string, error)
-
-	// Expired marks a lapsed proposal so the operator sees it settled rather than
-	// still awaiting an answer.
-	Expired(ctx context.Context, addr *Address, ref string) error
 
 	// MaxChars is the transport's per-message limit, counted in runes.
 	MaxChars() int
+}
+
+// Expirer is the optional half of Outbound a transport implements when a lapsed
+// proposal leaves a posted message to settle. A request-scoped transport, as
+// A2A is, answered long before the TTL and has nothing left to mark.
+type Expirer interface {
+	// Expired marks a lapsed proposal so the operator sees it settled rather
+	// than still awaiting an answer.
+	Expired(ctx context.Context, addr *Address, ref string) error
 }
 
 // TurnCompleter is the optional half of Outbound a request-scoped transport

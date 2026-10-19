@@ -494,7 +494,7 @@ func compareValues(operator string, left, right any) (any, error) {
 	if leftNum, leftOK := toFloat(left); leftOK {
 		rightNum, rightOK := toFloat(right)
 		if !rightOK {
-			return nil, typeMismatch(operator, left, right)
+			return nil, &typeMismatchError{operator: operator, left: left, right: right}
 		}
 
 		return compareOrdered(operator, leftNum, rightNum), nil
@@ -503,7 +503,7 @@ func compareValues(operator string, left, right any) (any, error) {
 	if leftStr, leftOK := left.(string); leftOK {
 		rightStr, rightOK := right.(string)
 		if !rightOK {
-			return nil, typeMismatch(operator, left, right)
+			return nil, &typeMismatchError{operator: operator, left: left, right: right}
 		}
 
 		return compareOrdered(operator, leftStr, rightStr), nil
@@ -517,7 +517,7 @@ func compareBools(operator string, left, right any) (any, error) {
 
 	rightBool, rightOK := right.(bool)
 	if !leftOK || !rightOK {
-		return nil, typeMismatch(operator, left, right)
+		return nil, &typeMismatchError{operator: operator, left: left, right: right}
 	}
 
 	switch operator {
@@ -560,6 +560,19 @@ func toFloat(value any) (float64, bool) {
 	}
 }
 
-func typeMismatch(operator string, left, right any) error {
-	return fmt.Errorf("%w: cannot %s %T and %T", ErrEvalType, operator, left, right)
+// typeMismatchError reports an operator applied to operands it cannot combine,
+// naming their Go types so a condition author sees which side is wrong.
+type typeMismatchError struct {
+	left     any
+	right    any
+	operator string
+}
+
+func (e *typeMismatchError) Error() string {
+	return fmt.Sprintf("%v: cannot %s %T and %T", ErrEvalType, e.operator, e.left, e.right)
+}
+
+// Unwrap keeps errors.Is(err, ErrEvalType) true for every mismatch.
+func (*typeMismatchError) Unwrap() error {
+	return ErrEvalType
 }

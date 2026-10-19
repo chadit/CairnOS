@@ -461,8 +461,8 @@ func (s *SandboxExec) Validate(task *runner.Task) error {
 	}
 
 	if s.image == "" {
-		return runner.NewError(runner.ClassPermanent, codeSandboxNotConfigured,
-			"runner config must set image to run "+task.ActionName)
+		return taskError(runner.ClassPermanent, codeSandboxNotConfigured,
+			"runner config must set image to run %s", task.ActionName)
 	}
 
 	if err := requireStringParam(task, paramCommand, SandboxExecName); err != nil {
@@ -492,8 +492,8 @@ func (s *SandboxExec) ExecuteStream(ctx context.Context, task *runner.Task, stre
 
 	name, err := containerName(task.RunID)
 	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart,
-			"generate container name: "+err.Error())
+		return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, codeSandboxStart,
+			"generate container name: %v", err)
 	}
 
 	command, _ := task.Params[paramCommand].(string)
@@ -582,8 +582,8 @@ func (s *SandboxExec) gate(task *runner.Task) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeSandboxDenied,
-		"action "+task.ActionName+" is not in sandbox_exec allow_actions")
+	return taskError(runner.ClassPermanent, codeSandboxDenied,
+		"action %s is not in sandbox_exec allow_actions", task.ActionName)
 }
 
 // runContext derives the effective deadline: Task.Deadline when set, else
@@ -617,7 +617,7 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 	})
 	if err != nil {
 		if errors.Is(err, errStdoutPipe) {
-			return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxStart, err.Error())
+			return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, codeSandboxStart, "%v", err)
 		}
 
 		return runner.Result{}, s.classifyStart(runCtx, err)
@@ -639,8 +639,8 @@ func (s *SandboxExec) launch(parent, runCtx context.Context,
 	}
 
 	if scanErr != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeSandboxOutput,
-			"read stdout: "+scanErr.Error())
+		return runner.Result{}, runner.Wrapf(scanErr, runner.ClassPermanent, codeSandboxOutput,
+			"read stdout: %v", scanErr)
 	}
 
 	return runner.Result{
@@ -687,17 +687,17 @@ type launchArgs struct {
 // permanent would deny a retry a fresh deadline could clear.
 func (*SandboxExec) classifyStart(runCtx context.Context, err error) error {
 	if runCtx.Err() != nil {
-		return runner.NewError(runner.ClassTransient, codeSandboxTimeout,
+		return runner.Wrapf(runCtx.Err(), runner.ClassTransient, codeSandboxTimeout,
 			"container run canceled or timed out")
 	}
 
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-		return runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
-			"container runtime not found: "+err.Error())
+		return runner.Wrapf(err, runner.ClassPermanent, codeSandboxNoRuntime,
+			"container runtime not found: %v", err)
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeSandboxStart,
-		"start container runtime: "+err.Error())
+	return runner.Wrapf(err, runner.ClassPermanent, codeSandboxStart,
+		"start container runtime: %v", err)
 }
 
 // classifyWait maps a finished-but-failed run. A dead run context wins as a
@@ -707,7 +707,7 @@ func (*SandboxExec) classifyStart(runCtx context.Context, err error) error {
 // a permanent exit (accepted for v1; the docs advise pre-pulling images).
 func (*SandboxExec) classifyWait(runCtx context.Context, waitErr error, stderrTail string) error {
 	if runCtx.Err() != nil {
-		return runner.NewError(runner.ClassTransient, codeSandboxTimeout,
+		return runner.Wrapf(runCtx.Err(), runner.ClassTransient, codeSandboxTimeout,
 			"container run canceled or timed out")
 	}
 
@@ -717,11 +717,11 @@ func (*SandboxExec) classifyWait(runCtx context.Context, waitErr error, stderrTa
 			message += ": " + stderrTail
 		}
 
-		return runner.NewError(runner.ClassPermanent, codeSandboxExit, message)
+		return runner.Wrapf(exitErr, runner.ClassPermanent, codeSandboxExit, "%s", message)
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeSandboxStart,
-		"wait for container runtime: "+waitErr.Error())
+	return runner.Wrapf(waitErr, runner.ClassPermanent, codeSandboxStart,
+		"wait for container runtime: %v", waitErr)
 }
 
 // detectRuntime resolves which container CLI to shell out to, memoized per
@@ -746,8 +746,8 @@ func (s *SandboxExec) resolveRuntime() (string, string, error) {
 	if s.runtimeCfg != "" {
 		path, err := s.lookPath(s.runtimeCfg)
 		if err != nil {
-			return "", "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
-				"configured runtime "+s.runtimeCfg+" not found on PATH")
+			return "", "", runner.Wrapf(err, runner.ClassPermanent, codeSandboxNoRuntime,
+				"configured runtime %s not found on PATH", s.runtimeCfg)
 		}
 
 		return s.runtimeCfg, path, nil
@@ -771,7 +771,7 @@ func (s *SandboxExec) resolveRuntime() (string, string, error) {
 		return runtimeDocker, dockerPath, nil
 	}
 
-	return "", "", runner.NewError(runner.ClassPermanent, codeSandboxNoRuntime,
+	return "", "", taskError(runner.ClassPermanent, codeSandboxNoRuntime,
 		"no container runtime found: install podman or docker")
 }
 

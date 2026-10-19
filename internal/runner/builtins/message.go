@@ -98,8 +98,8 @@ func (*Message) Validate(task *runner.Task) error {
 
 	_, hasThread := task.Params[paramThread]
 	if _, hasKey := task.Params[paramThreadKey]; hasThread && hasKey {
-		return runner.NewError(runner.ClassPermanent, codeMessageThreadBoth,
-			paramThread+" and "+paramThreadKey+" are mutually exclusive: pick a fixed root or a remembered one")
+		return taskError(runner.ClassPermanent, codeMessageThreadBoth,
+			"%s and %s are mutually exclusive: pick a fixed root or a remembered one", paramThread, paramThreadKey)
 	}
 
 	return nil
@@ -113,7 +113,7 @@ func (m *Message) Execute(ctx context.Context, task *runner.Task) (runner.Result
 	}
 
 	if m.sender == nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeMessageUnavailable,
+		return runner.Result{}, taskError(runner.ClassPermanent, codeMessageUnavailable,
 			"no messaging identity is reachable; the message runner sends only from cairnos serve")
 	}
 
@@ -156,13 +156,13 @@ func (m *Message) dispatch(ctx context.Context, identity, target, text, thread, 
 // server lost is replaced rather than failing every later run of the workflow.
 func (m *Message) sendKeyed(ctx context.Context, identity, target, text, key string) (string, error) {
 	if m.threads == nil {
-		return "", runner.NewError(runner.ClassPermanent, codeMessageThreadStore,
-			paramThreadKey+" needs the run store, which this host did not hand the message runner")
+		return "", taskError(runner.ClassPermanent, codeMessageThreadStore,
+			"%s needs the run store, which this host did not hand the message runner", paramThreadKey)
 	}
 
 	rootID, err := m.threads.LookupMessageThread(ctx, identity, target, key)
 	if err != nil && !errors.Is(err, store.ErrMessageThreadNotFound) {
-		return "", runner.NewError(runner.ClassTransient, codeMessageThreadStore, "look up thread: "+err.Error())
+		return "", runner.Wrapf(err, runner.ClassTransient, codeMessageThreadStore, "look up thread: %v", err)
 	}
 
 	if rootID != "" {
@@ -188,8 +188,8 @@ func (m *Message) openThread(ctx context.Context, identity, target, text, key st
 	}
 
 	if err := m.threads.BindMessageThread(ctx, identity, target, key, rootID); err != nil {
-		return "", runner.NewError(runner.ClassPermanent, codeMessageThreadStore,
-			"posted "+rootID+" but could not remember it for "+paramThreadKey+" "+key+": "+err.Error())
+		return "", runner.Wrapf(err, runner.ClassPermanent, codeMessageThreadStore,
+			"posted %s but could not remember it for %s %s: %v", rootID, paramThreadKey, key, err)
 	}
 
 	return rootID, nil

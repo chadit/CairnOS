@@ -33,6 +33,28 @@ const (
 	argonSaltLen = 16
 )
 
+// HashCost is the argon2id work one derivation pays. The zero value is the
+// production default above. A key stores the cost it was minted under, so
+// verifying never needs it; minting and the unknown-key decoy do.
+type HashCost struct {
+	MemoryKiB uint32
+	Time      uint32
+	Threads   uint8
+}
+
+// withDefault resolves the zero value to the production cost and lifts a
+// zero pass or lane count to one, since argon2 panics on either.
+func (c HashCost) withDefault() HashCost {
+	if c == (HashCost{}) {
+		return HashCost{MemoryKiB: argonMemory, Time: argonTime, Threads: argonThreads}
+	}
+
+	c.Time = max(c.Time, 1)
+	c.Threads = max(c.Threads, 1)
+
+	return c
+}
+
 // phcPrefix opens every stored hash; the version and parameters follow.
 const phcPrefix = "$argon2id$"
 
@@ -79,9 +101,9 @@ func keyWorkspace(key *Key) string {
 
 // NewKey mints an access key in the given workspace: a ULID id, a 32-byte
 // random secret, and the argon2id hash that is all the store ever sees. An
-// empty workspace becomes the default. It returns the key record and the
-// plaintext to print exactly once.
-func NewKey(label string, scopes []string, workspace string, now time.Time) (*Key, string, error) {
+// empty workspace becomes the default, and a zero cost the production one. It
+// returns the key record and the plaintext to print exactly once.
+func NewKey(label string, scopes []string, workspace string, now time.Time, cost HashCost) (*Key, string, error) {
 	secretRaw := make([]byte, keySecretBytes)
 	if _, err := rand.Read(secretRaw); err != nil {
 		return nil, "", fmt.Errorf("generate key secret: %w", err)
@@ -90,7 +112,7 @@ func NewKey(label string, scopes []string, workspace string, now time.Time) (*Ke
 	id := ulid.Make().String()
 	secret := base64.RawURLEncoding.EncodeToString(secretRaw)
 
-	hash, err := hashSecret(secret)
+	hash, err := hashSecret(secret, cost.withDefault())
 	if err != nil {
 		return nil, "", err
 	}
@@ -133,7 +155,7 @@ func VerifyKey(secret, encoded string) error {
 		return err
 	}
 
-	got := argon2.IDKey([]byte(secret), salt, params.time, params.memory, params.threads, uint32(len(want))) // #nosec G115 -- hash length is the fixed argonKeyLen
+	got := argon2.IDKey([]byte(secret), salt, params.Time, params.MemoryKiB, params.Threads, uint32(len(want))) // #nosec G115 -- hash length is the fixed argonKeyLen
 
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return ErrKeyMismatch
@@ -144,52 +166,45 @@ func VerifyKey(secret, encoded string) error {
 
 // hashSecret derives the argon2id digest of one key secret and renders it
 // as a PHC string: $argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>.
-func hashSecret(secret string) (string, error) {
+func hashSecret(secret string, cost HashCost) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
 
-	digest := argon2.IDKey([]byte(secret), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	digest := argon2.IDKey([]byte(secret), salt, cost.Time, cost.MemoryKiB, cost.Threads, argonKeyLen)
 
 	return fmt.Sprintf("%sv=%d$m=%d,t=%d,p=%d$%s$%s",
-		phcPrefix, argon2.Version, argonMemory, argonTime, argonThreads,
+		phcPrefix, argon2.Version, cost.MemoryKiB, cost.Time, cost.Threads,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(digest)), nil
 }
 
-// argonParams carries the derivation parameters parsed from a PHC string.
-type argonParams struct {
-	memory  uint32
-	time    uint32
-	threads uint8
-}
-
 // parsePHC splits a stored hash back into salt, digest, and parameters.
-func parsePHC(encoded string) ([]byte, []byte, argonParams, error) {
+func parsePHC(encoded string) ([]byte, []byte, HashCost, error) {
 	fields := strings.Split(encoded, "$")
 	if len(fields) != phcFieldCount || fields[1] != "argon2id" {
-		return nil, nil, argonParams{}, fmt.Errorf("%w: %q", ErrHashMalformed, redactHash(encoded))
+		return nil, nil, HashCost{}, fmt.Errorf("%w: %q", ErrHashMalformed, redactHash(encoded))
 	}
 
 	var version int
 	if _, err := fmt.Sscanf(fields[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return nil, nil, argonParams{}, fmt.Errorf("%w: unsupported version", ErrHashMalformed)
+		return nil, nil, HashCost{}, fmt.Errorf("%w: unsupported version", ErrHashMalformed)
 	}
 
-	var params argonParams
-	if _, err := fmt.Sscanf(fields[3], "m=%d,t=%d,p=%d", &params.memory, &params.time, &params.threads); err != nil {
-		return nil, nil, argonParams{}, fmt.Errorf("%w: parameters: %w", ErrHashMalformed, err)
+	var params HashCost
+	if _, err := fmt.Sscanf(fields[3], "m=%d,t=%d,p=%d", &params.MemoryKiB, &params.Time, &params.Threads); err != nil {
+		return nil, nil, HashCost{}, fmt.Errorf("%w: parameters: %w", ErrHashMalformed, err)
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(fields[4])
 	if err != nil {
-		return nil, nil, argonParams{}, fmt.Errorf("%w: salt: %w", ErrHashMalformed, err)
+		return nil, nil, HashCost{}, fmt.Errorf("%w: salt: %w", ErrHashMalformed, err)
 	}
 
 	digest, err := base64.RawStdEncoding.DecodeString(fields[5])
 	if err != nil {
-		return nil, nil, argonParams{}, fmt.Errorf("%w: digest: %w", ErrHashMalformed, err)
+		return nil, nil, HashCost{}, fmt.Errorf("%w: digest: %w", ErrHashMalformed, err)
 	}
 
 	return salt, digest, params, nil
@@ -208,17 +223,15 @@ func redactHash(encoded string) string {
 }
 
 // verifyDecoy burns an argon2id derivation against a fixed salt so the
-// unknown-key login path costs the same as a real comparison. It reuses the
-// parameters hashSecret bakes into a new key, so raising the defaults raises
-// both costs and keeps the timing oracle closed (spec L6).
-// TestDecoyParamsMatchStoredHash pins that equality so a param bump on one
-// path fails the build.
-func verifyDecoy(secret string) {
+// unknown-key login path costs the same as a real comparison. Login passes the
+// cost its Authenticator mints under, so raising the defaults raises both
+// costs and keeps the timing oracle closed (spec L6).
+func verifyDecoy(secret string, cost HashCost) {
 	salt := make([]byte, argonSaltLen)
 
 	if secret == "" {
 		secret = decoySecret
 	}
 
-	_ = argon2.IDKey([]byte(secret), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	_ = argon2.IDKey([]byte(secret), salt, cost.Time, cost.MemoryKiB, cost.Threads, argonKeyLen)
 }

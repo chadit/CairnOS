@@ -33,11 +33,11 @@ type restartHooks struct {
 	Restart func(ctx context.Context) error
 }
 
-// driveRestart picks how the service turns over and reports whether the drain
-// was accepted. The drain is preferred because a service that exits on its own
-// finishes its runs first, where a supervisor restart cancels them inside the
-// ten-second shutdown window.
-func (a *App) driveRestart(ctx context.Context, hooks restartHooks, restartNow bool) (bool, error) {
+// UpdateDriveRestart picks how the service turns over and reports whether the
+// drain was accepted. The drain is preferred because a service that exits on
+// its own finishes its runs first, where a supervisor restart cancels them
+// inside the ten-second shutdown window.
+func (a *App) UpdateDriveRestart(ctx context.Context, hooks UpdateRestartHooks, restartNow bool) (bool, error) {
 	if restartNow {
 		a.logger.Info("update: --restart-now, restarting without a drain")
 
@@ -87,7 +87,7 @@ func (a *App) requestDrain(ctx context.Context, home string) (int, error) {
 		return 0, err
 	}
 
-	conn, err := dialServe(cfg.API.GRPC)
+	conn, err := a.dialServe(cfg.API.GRPC)
 	if err != nil {
 		return 0, err
 	}
@@ -118,7 +118,7 @@ func (a *App) drainToken(ctx context.Context, home string, cfg *config.Config) (
 	}
 	defer a.closeStore(keyStore)
 
-	authn, err := buildAuthenticator(cfg, keyStore, a.envLookup())
+	authn, err := buildAuthenticator(cfg, keyStore, a.envLookup(), a.keyHashCost)
 	if err != nil {
 		return "", err
 	}

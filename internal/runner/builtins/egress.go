@@ -165,8 +165,8 @@ func validateScheme(name string, target *url.URL) error {
 	case schemeHTTP, schemeHTTPS:
 		return nil
 	default:
-		return runner.NewError(runner.ClassPermanent, name+codeSuffixBlockedTarget,
-			fmt.Sprintf("scheme %q is not allowed; only http and https targets are permitted", target.Scheme))
+		return taskError(runner.ClassPermanent, name+codeSuffixBlockedTarget,
+			"scheme %q is not allowed; only http and https targets are permitted", target.Scheme)
 	}
 }
 
@@ -178,8 +178,8 @@ func validateScheme(name string, target *url.URL) error {
 func guardTarget(name, target string) error {
 	parsed, err := url.Parse(target)
 	if err != nil {
-		return runner.NewError(runner.ClassPermanent, name+codeSuffixBlockedTarget,
-			fmt.Sprintf("parse target %q: %v", target, err))
+		return runner.Wrapf(err, runner.ClassPermanent, name+codeSuffixBlockedTarget,
+			"parse target %q: %v", target, err)
 	}
 
 	return validateScheme(name, parsed)
@@ -195,7 +195,6 @@ func classifyBlockedDial(name string, err error) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, name+codeSuffixBlockedTarget,
-		"target resolves to a blocked address (loopback, link-local, or private); "+
-			"set allow_private_targets = true on the runner to reach internal endpoints")
+	return taskError(runner.ClassPermanent, name+codeSuffixBlockedTarget,
+		"target resolves to a blocked address (loopback, link-local, or private); set allow_private_targets = true on the runner to reach internal endpoints")
 }

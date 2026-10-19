@@ -175,8 +175,7 @@ func validateOutputFormat(name, value string) error {
 	case outputFormatText, outputFormatJSON:
 		return nil
 	default:
-		return runner.NewError(runner.ClassPermanent, name+".bad_output_format",
-			"output_format must be empty or \"json\", got "+value)
+		return paramError(name, "output_format", "must be empty or \"json\", got "+value)
 	}
 }
 
@@ -238,7 +237,7 @@ func (c *llmConfig) validateTask(task *runner.Task, name string, keyEnvs []strin
 	}
 
 	if c.resolveModel(task) == "" {
-		return runner.NewError(runner.ClassPermanent, name+".missing_model",
+		return taskError(runner.ClassPermanent, name+".missing_model",
 			"set model in params or in the runner config")
 	}
 
@@ -265,7 +264,7 @@ func (c *llmConfig) requireAPIKey(name string, keyEnvs []string) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, name+".missing_api_key", missingKeyMessage(keyEnvs))
+	return taskError(runner.ClassPermanent, name+".missing_api_key", "%s", missingKeyMessage(keyEnvs))
 }
 
 // missingKeyMessage tells the operator what to set. A block named after its

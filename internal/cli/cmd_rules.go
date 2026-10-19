@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -203,7 +202,7 @@ func (a *App) cmdRulesImport(ctx context.Context, args []string) int {
 func importRulesDir(ctx context.Context, svc rules.Service, srcDir string) (int, error) {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return 0, wrapImportErr("read rules dir", err)
+		return 0, &importError{op: "read rules dir", err: err}
 	}
 
 	var total int
@@ -240,7 +239,7 @@ func importRuleFile(ctx context.Context, svc rules.Service, path, language, proj
 		rule := &rules.Rule{Language: language, Project: project, Key: key, Value: value}
 
 		if putErr := svc.PutRule(ctx, rule); putErr != nil {
-			return count, wrapImportErr("put rule", putErr)
+			return count, &importError{op: "put rule", err: putErr}
 		}
 
 		count++
@@ -272,7 +271,7 @@ func readFlatRuleFile(path string) (map[string]string, error) {
 	// directory entry name; reading local files is the command's whole job.
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, wrapImportErr("read rules file", err)
+		return nil, &importError{op: "read rules file", err: err}
 	}
 
 	lines := strings.Split(string(raw), "\n")
@@ -295,11 +294,20 @@ func readFlatRuleFile(path string) (map[string]string, error) {
 	return pairs, nil
 }
 
-// wrapImportErr tags an import failure with the operation that hit it, so the
+// importError tags an import failure with the operation that hit it, so the
 // command surfaces a wrapped error (wrapcheck) rather than a bare os/store
-// error.
-func wrapImportErr(op string, err error) error {
-	return fmt.Errorf("%s: %w", op, err)
+// error, and errors.Is still reaches the cause.
+type importError struct {
+	err error
+	op  string
+}
+
+func (e *importError) Error() string {
+	return e.op + ": " + e.err.Error()
+}
+
+func (e *importError) Unwrap() error {
+	return e.err
 }
 
 // unquoteRuleValue strips TOML basic-string quoting, tolerating bare values so

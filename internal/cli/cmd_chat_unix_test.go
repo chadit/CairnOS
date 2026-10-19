@@ -8,13 +8,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+
+	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
@@ -51,7 +56,9 @@ func TestChatStopSignalEndsSession(t *testing.T) {
 		t.Run(stop.String(), func(t *testing.T) {
 			t.Parallel()
 
-			addr := startScriptedChat(t, newScriptedChat())
+			addr := serveOverUnixSocket(t, func(server *grpc.Server) {
+				cairnosv1.RegisterChatServiceServer(server, newScriptedChat())
+			})
 
 			child, lines := startChild(t, "TestChatStopSignalChild", chatChildAddrEnv+"="+addr)
 			waitForLine(t, child, lines, chatBanner)
@@ -248,4 +255,25 @@ func resendUntilExit(t *testing.T, child *exec.Cmd, stop os.Signal) error {
 			return nil
 		}
 	}
+}
+
+// serveOverUnixSocket runs a gRPC server for register on a unix socket and
+// returns the unix: address to pass as --addr. It is for a fixture a child
+// process dials, which an in-memory pipe cannot reach, and a unix socket keeps
+// that dial out of connection tracking too.
+func serveOverUnixSocket(t *testing.T, register func(*grpc.Server)) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "serve.sock")
+
+	listenConfig := net.ListenConfig{}
+
+	listener, err := listenConfig.Listen(t.Context(), "unix", path)
+	if err != nil {
+		t.Fatalf("listen on %s: %v", path, err)
+	}
+
+	serveGRPC(t, listener, register)
+
+	return "unix:" + path
 }

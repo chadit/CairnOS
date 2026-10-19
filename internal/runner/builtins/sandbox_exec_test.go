@@ -688,13 +688,14 @@ exit 3`
 	}
 }
 
-func TestSandboxExecuteTimeoutKillsContainer(t *testing.T) {
+func TestSandboxExecuteCancelKillsContainer(t *testing.T) {
 	dir := t.TempDir()
 	killFile := filepath.Join(dir, "kills.txt")
 	body := `if [ "$1" = "kill" ]; then
   printf '%s\n' "$2" >> "` + killFile + `"
   exit 0
 fi
+echo started
 exec sleep 30`
 	writeShim(t, dir, rtPodman, body)
 
@@ -705,19 +706,14 @@ exec sleep 30`
 		t.Fatalf("new sandbox: %v", err)
 	}
 
-	task := sandboxTask()
-	task.Deadline = time.Now().Add(100 * time.Millisecond)
-
-	start := time.Now()
-
-	_, err = sandbox.Execute(t.Context(), task)
+	elapsed, err := executeCanceledOnFirstLine(t, sandbox, sandboxTask())
 
 	sbxErr := sandboxError(t, err)
 	if sbxErr.Class != runner.ClassTransient || sbxErr.Code != codeTimeout {
 		t.Fatalf("class/code = %v/%q, want transient %q", sbxErr.Class, sbxErr.Code, codeTimeout)
 	}
 
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
+	if elapsed > 5*time.Second {
 		t.Fatalf("kill path took %v, want prompt return", elapsed)
 	}
 

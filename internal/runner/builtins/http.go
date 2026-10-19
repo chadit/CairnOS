@@ -188,8 +188,7 @@ func validateMethod(task *runner.Task) error {
 	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodHead:
 		return nil
 	default:
-		return runner.NewError(runner.ClassPermanent, HTTPName+".bad_method",
-			"method must be a standard HTTP verb, got "+method)
+		return paramError(HTTPName, "method", "must be a standard HTTP verb, got "+method)
 	}
 }
 
@@ -251,7 +250,7 @@ func (h *HTTP) validateTarget(task *runner.Task) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, HTTPName+".missing_url",
+	return taskError(runner.ClassPermanent, HTTPName+".missing_url",
 		"set url in params, or path with base_url in config")
 }
 
@@ -440,15 +439,14 @@ func applyHeaders(request *http.Request, value any) error {
 
 	headers, isMap := value.(map[string]any)
 	if !isMap {
-		return runner.NewError(runner.ClassPermanent, HTTPName+".bad_headers",
-			"headers must be a map of string to string")
+		return paramError(HTTPName, "headers", "must be a map of string to string")
 	}
 
 	for key, raw := range headers {
 		text, isString := raw.(string)
 		if !isString {
-			return runner.NewError(runner.ClassPermanent, HTTPName+".bad_headers",
-				"header "+key+" must be a string")
+			return taskError(runner.ClassPermanent, HTTPName+".bad_headers",
+				"header %s must be a string", key)
 		}
 
 		request.Header.Set(key, text)
@@ -467,8 +465,7 @@ func queryValues(value any) (url.Values, error) {
 
 	query, isMap := value.(map[string]any)
 	if !isMap {
-		return nil, runner.NewError(runner.ClassPermanent, HTTPName+".bad_query",
-			"query must be a map of string to string")
+		return nil, paramError(HTTPName, "query", "must be a map of string to string")
 	}
 
 	values := make(url.Values, len(query))
@@ -476,8 +473,8 @@ func queryValues(value any) (url.Values, error) {
 	for key, raw := range query {
 		text, isString := raw.(string)
 		if !isString {
-			return nil, runner.NewError(runner.ClassPermanent, HTTPName+".bad_query",
-				"query "+key+" must be a string")
+			return nil, taskError(runner.ClassPermanent, HTTPName+".bad_query",
+				"query %s must be a string", key)
 		}
 
 		values.Set(key, text)

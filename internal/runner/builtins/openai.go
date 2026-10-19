@@ -281,7 +281,7 @@ func decodeOpenAIBody(body io.Reader) (*openaiResponse, error) {
 	}
 
 	if len(decoded.Choices) == 0 {
-		return nil, runner.NewError(runner.ClassPermanent,
+		return nil, taskError(runner.ClassPermanent,
 			OpenAIName+codeSuffixBadResponse, "response carried no choices")
 	}
 

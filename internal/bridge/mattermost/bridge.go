@@ -196,7 +196,7 @@ func newIdentity(declared *Identity, cfg *Config) *identity {
 
 	return &identity{
 		client: declared.Client,
-		out:    &outbound{client: declared.Client, confirmTTL: cfg.Server.ConfirmTTL},
+		out:    &outbound{Conn: declared.Client, confirmTTL: cfg.Server.ConfirmTTL},
 		limiter: NewLoopLimiter(LoopLimitConfig{
 			Window:    cfg.Server.BotLoop.Window,
 			Cooldown:  cfg.Server.BotLoop.Cooldown,

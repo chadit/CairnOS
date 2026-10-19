@@ -5,7 +5,10 @@ package api_test
 // (.agents/spec/parity/workflow-language.md, "Human approval").
 
 import (
+	"context"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
+	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
@@ -385,6 +389,74 @@ func TestApproveRunAmbiguousRequiresName(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("approve sign_b: %v", err)
 	}
+
+	waitForRunStatus(t, fix, runID, statusSucceeded)
+}
+
+// parkHold stands in for a resume loop that has written held but not yet let
+// go of the run: once armed, the next held write returns only after the test
+// closes release. Every other write passes straight through.
+type parkHold struct {
+	store.Store
+
+	parked  chan struct{}
+	release chan struct{}
+	armed   atomic.Bool
+}
+
+func (h *parkHold) UpdateRunStatus(ctx context.Context, id string, runStatus store.RunStatus, runErr *cairnerr.Error) error {
+	err := h.Store.UpdateRunStatus(ctx, id, runStatus, runErr)
+
+	if runStatus == store.RunHeld && h.armed.CompareAndSwap(true, false) {
+		close(h.parked)
+		<-h.release
+	}
+
+	return err
+}
+
+// TestApproveRunDecisionDuringReparkStillResumes decides the second gate while
+// the resume that settled the first has parked but still holds the run. The
+// manager refuses a second loop then, and the parked loop already read the gate
+// as pending, so the run must still resume once that loop lets go.
+func TestApproveRunDecisionDuringReparkStillResumes(t *testing.T) {
+	t.Parallel()
+
+	hold := &parkHold{parked: make(chan struct{}), release: make(chan struct{})}
+
+	var releaseOnce sync.Once
+
+	releaseHold := func() { releaseOnce.Do(func() { close(hold.release) }) }
+
+	// A failure before the release would leave the engine blocked through shutdown.
+	t.Cleanup(releaseHold)
+
+	fix := startServerOver(t, func(db store.Store) store.Store {
+		hold.Store = db
+
+		return hold
+	})
+	writeWorkflow(t, fix.workflowsDir, "twogate.toml", twoGateTOML)
+
+	runID := parkHeldRun(t, fix, "twogate")
+
+	hold.armed.Store(true)
+
+	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId: runID, ActionName: actionSignA, Approve: true,
+	}); err != nil {
+		t.Fatalf("approve sign_a: %v", err)
+	}
+
+	<-hold.parked
+
+	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId: runID, ActionName: actionSignB, Approve: true,
+	}); err != nil {
+		t.Fatalf("approve sign_b while the sign_a resume still holds the run: %v", err)
+	}
+
+	releaseHold()
 
 	waitForRunStatus(t, fix, runID, statusSucceeded)
 }

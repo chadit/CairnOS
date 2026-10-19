@@ -226,12 +226,12 @@ func (m *MCPClient) Name() string {
 // runner's own config is checkable.
 func (m *MCPClient) Validate(_ *runner.Task) error {
 	if m.tool == "" {
-		return runner.NewError(runner.ClassPermanent, codeMCPNotConfigured,
+		return taskError(runner.ClassPermanent, codeMCPNotConfigured,
 			"runner config must set tool")
 	}
 
 	if m.serverURL == "" && len(m.command) == 0 {
-		return runner.NewError(runner.ClassPermanent, codeMCPNotConfigured,
+		return taskError(runner.ClassPermanent, codeMCPNotConfigured,
 			"runner config must set server_url or command")
 	}
 
@@ -358,8 +358,8 @@ func (m *MCPClient) fetchSpec() (runner.ToolSpec, error) {
 		}
 	}
 
-	return runner.ToolSpec{}, runner.NewError(runner.ClassPermanent, MCPClientName+".unknown_tool",
-		fmt.Sprintf("server does not list tool %q", m.tool))
+	return runner.ToolSpec{}, taskError(runner.ClassPermanent, MCPClientName+".unknown_tool",
+		"server does not list tool %q", m.tool)
 }
 
 // schemaMap normalizes a tool's input schema. The SDK documents the
@@ -459,10 +459,10 @@ func classifyMCPError(ctx context.Context, err error) error {
 // message signals throttling.
 func classifyMCPToolError(message string) error {
 	if looksRateLimited(message) {
-		return runner.NewError(runner.ClassRateLimited, MCPClientName+codeSuffixRateLimited, message)
+		return taskError(runner.ClassRateLimited, MCPClientName+codeSuffixRateLimited, "%s", message)
 	}
 
-	return runner.NewError(runner.ClassPermanent, MCPClientName+".tool_error", message)
+	return taskError(runner.ClassPermanent, MCPClientName+".tool_error", "%s", message)
 }
 
 // looksRateLimited spots throttling language in a remote error message. MCP

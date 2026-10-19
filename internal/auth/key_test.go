@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
@@ -27,7 +28,7 @@ var baseTime = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) //nolint:gochecknogl
 func TestNewKeyRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	key, plaintext, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime)
+	key, plaintext, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime, authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestNewKeyRoundTrip(t *testing.T) {
 func TestVerifyKeyRejectsWrongSecret(t *testing.T) {
 	t.Parallel()
 
-	key, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime)
+	key, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime, authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
@@ -74,7 +75,7 @@ func TestVerifyKeyRejectsWrongSecret(t *testing.T) {
 func TestNewKeyWorkspace(t *testing.T) {
 	t.Parallel()
 
-	scoped, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "acme", baseTime)
+	scoped, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "acme", baseTime, authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey scoped: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestNewKeyWorkspace(t *testing.T) {
 		t.Fatalf("named workspace = %q, want %q", scoped.Workspace, "acme")
 	}
 
-	defaulted, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime)
+	defaulted, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime, authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey default: %v", err)
 	}

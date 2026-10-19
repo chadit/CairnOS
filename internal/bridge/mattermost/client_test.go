@@ -205,8 +205,8 @@ func TestConnectLearnsTheIdentityAndPostSize(t *testing.T) {
 		t.Fatalf("Me() = %+v, want the bot the server described", me)
 	}
 
-	if got := client.MaxPostSize(); got != 16383 {
-		t.Fatalf("MaxPostSize() = %d, want the 16383 the server reported", got)
+	if got := client.MaxChars(); got != 16383 {
+		t.Fatalf("MaxChars() = %d, want the 16383 the server reported", got)
 	}
 
 	if auth, _ := gotAuth.Load().(string); auth != "Bearer "+testToken {
@@ -255,8 +255,8 @@ func TestConnectFallsBackWhenThePostSizeIsUnreadable(t *testing.T) {
 				t.Fatalf("Connect: %v, want an unreadable post size to be survivable", err)
 			}
 
-			if got := client.MaxPostSize(); got != 4000 {
-				t.Fatalf("MaxPostSize() = %d, want the 4000 fallback", got)
+			if got := client.MaxChars(); got != 4000 {
+				t.Fatalf("MaxChars() = %d, want the 4000 fallback", got)
 			}
 
 			if client.Me().ID != testBotID {

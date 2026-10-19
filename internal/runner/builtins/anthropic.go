@@ -287,7 +287,7 @@ func decodeAnthropicBody(body io.Reader) (*anthropicResponse, error) {
 	}
 
 	if len(decoded.Content) == 0 {
-		return nil, runner.NewError(runner.ClassPermanent,
+		return nil, taskError(runner.ClassPermanent,
 			AnthropicName+codeSuffixBadResponse, "response carried no content")
 	}
 

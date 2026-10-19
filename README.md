@@ -801,9 +801,67 @@ runner = "exec"
 params = { command = "/path/to/receiver.sh", stdin = "${{ inputs.payload }}" }
 ```
 
+A long prompt reads better as its own file. `stdin_file` names one, and the
+loader swaps it for `stdin` holding the file's text, so `${{ }}` references
+inside the file resolve the same way they do in an inline string:
+
+```toml
+[action.summarize]
+runner     = "exec"
+depends_on = ["fetch"]
+params     = { command = "/path/to/llm.sh", stdin_file = "prompt.md" }
+```
+
+```markdown
+Summarize the report below in five bullet points.
+
+## INPUT
+
+${{ fetch.output }}
+```
+
+The path is relative to the workflow file's directory and has to stay inside
+it: absolute paths, `..`, and symlinks that lead out are refused. A symlink
+with an absolute target is refused even when it points inside the directory,
+so link with a relative target. The file must be UTF-8 text of at most 256 KiB,
+and it is read whenever the workflow loads, so a missing file fails
+`cairnos validate` with the workflow and action named. Set `stdin` or
+`stdin_file`, not both. Only the `exec` runner reads stdin, so `stdin_file` on
+any other runner, `sandbox_exec` included, is refused rather than dropped.
+
+The file carries the same trust as the workflow file, so keep it under the
+same review. Editing it changes the workflow's hash, which `cairnos runs replay`
+checks, the same as editing the workflow does. `cairnos suggestions revert`
+restores only the workflow's TOML, not an included file, so after a prompt edit
+it warns that the restored workflow hashes differently from the saved version.
+
+A definition sent through the API resolves the path against the workflows
+directory. Validating one needs only `read:workflow`, and its errors say
+whether a file there exists, its kind and size, and whether it is UTF-8, and
+can quote `${{ }}` fragments from it. Keep only workflows and their prompts in
+the workflows directory for that reason.
+
 `allow_actions` denies by default. An action name absent from the list is
 refused at validate time, and a block that is missing or lists nothing refuses
 every action.
+
+Add a name with `cairnos config allow-action add`, and see the list with
+`cairnos config allow-action list`:
+
+```sh
+cairnos config allow-action add summarize   # --dir D for a home other than ~/.cairnos
+cairnos config allow-action list
+```
+
+The command edits only the array's text, so comments and layout in
+`config.toml` stay as they were, and it checks the edit by decoding the file
+before and after. A name already listed is reported and nothing changes. It
+refuses, leaving the file alone, when the file does not parse, the name is not
+a valid action name, the array is written in a shape it does not edit (such as a
+closing bracket on the same line as a value), or there is no `[runner.exec]`
+block. That last case is left to you because a new block also needs a
+`timeout`. serve reads `config.toml` only at startup, so restart it after an
+add.
 
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -217,34 +216,14 @@ func (s *scriptedChatServer) unblockSend() {
 	s.blockSend = false
 }
 
-// startScriptedChat serves the scripted ChatService on an ephemeral loopback
-// port and returns the address for --addr.
-func startScriptedChat(t *testing.T, script *scriptedChatServer) string {
+// startScriptedChat serves the scripted ChatService in memory for an App to
+// reach through its dial.
+func startScriptedChat(t *testing.T, script *scriptedChatServer) *serveFixture {
 	t.Helper()
 
-	listenConfig := net.ListenConfig{}
-
-	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	server := grpc.NewServer()
-	cairnosv1.RegisterChatServiceServer(server, script)
-
-	served := make(chan error, 1)
-
-	go func() { served <- server.Serve(listener) }()
-
-	t.Cleanup(func() {
-		server.Stop()
-
-		if err := <-served; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			t.Errorf("serve: %v", err)
-		}
+	return serveInMemory(t, func(server *grpc.Server) {
+		cairnosv1.RegisterChatServiceServer(server, script)
 	})
-
-	return listener.Addr().String()
 }
 
 // syncBuffer is a mutex-guarded buffer: the REPL's interrupt watcher prints
@@ -288,13 +267,13 @@ func chatArgs(addr string) []string {
 // runChatCLI drives one scripted conversation through the full chat command,
 // continuing the seeded starting session. The injected interrupt channel
 // never fires; it only keeps the command off the real signal machinery.
-func runChatCLI(t *testing.T, addr string, stdin io.Reader) (int, string, string) {
+func runChatCLI(t *testing.T, chatServer *serveFixture, stdin io.Reader) (int, string, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 
-	app := cli.New(&stdout, &stderr).WithStdin(stdin).WithInterrupts(make(chan os.Signal))
-	code := app.Run(t.Context(), chatArgs(addr))
+	app := cli.New(&stdout, &stderr).WithStdin(stdin).WithInterrupts(make(chan os.Signal)).WithServeDialer(chatServer.dial)
+	code := app.Run(t.Context(), chatArgs(chatServer.addr))
 
 	return code, stdout.String(), stderr.String()
 }
@@ -390,9 +369,9 @@ func TestChatSlashCommands(t *testing.T) {
 				tt.configure(script)
 			}
 
-			addr := startScriptedChat(t, script)
+			chatServer := startScriptedChat(t, script)
 
-			code, stdout, stderr := runChatCLI(t, addr, strings.NewReader(tt.stdin))
+			code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader(tt.stdin))
 			if code != cli.ExitOK {
 				t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 			}
@@ -416,9 +395,9 @@ func TestChatNewSessionRoutesFollowingMessages(t *testing.T) {
 	t.Parallel()
 
 	script := newScriptedChat()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatCLI(t, addr, strings.NewReader("/new poet\nhello there\n/quit\n"))
+	code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader("/new poet\nhello there\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -446,9 +425,9 @@ func TestChatPersonalityStartsNewSession(t *testing.T) {
 	t.Parallel()
 
 	script := newScriptedChat()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatCLI(t, addr, strings.NewReader("/personality pirate\n/quit\n"))
+	code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader("/personality pirate\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -468,11 +447,11 @@ func TestChatSessionSwitchRoutesFollowingMessages(t *testing.T) {
 
 	script := newScriptedChat()
 	script.sessions[switchedSessionID] = &cairnosv1.ChatSession{Id: switchedSessionID, Personality: zenPersonality}
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
 	stdin := "first message\n/session " + switchedSessionID + "\nsecond message\n/quit\n"
 
-	code, _, stderr := runChatCLI(t, addr, strings.NewReader(stdin))
+	code, _, stderr := runChatCLI(t, chatServer, strings.NewReader(stdin))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -495,9 +474,9 @@ func TestChatMultilineJoinsIntoOneMessage(t *testing.T) {
 	t.Parallel()
 
 	script := newScriptedChat()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatCLI(t, addr, strings.NewReader("first line \\\nsecond line \\\nthird line\n/quit\n"))
+	code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader("first line \\\nsecond line \\\nthird line\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -521,9 +500,9 @@ func TestChatEOFMidBlockSendsNothing(t *testing.T) {
 	t.Parallel()
 
 	script := newScriptedChat()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, _, stderr := runChatCLI(t, addr, strings.NewReader("dangling \\\n"))
+	code, _, stderr := runChatCLI(t, chatServer, strings.NewReader("dangling \\\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -536,9 +515,9 @@ func TestChatEOFMidBlockSendsNothing(t *testing.T) {
 func TestChatCleanEOFExitsZero(t *testing.T) {
 	t.Parallel()
 
-	addr := startScriptedChat(t, newScriptedChat())
+	chatServer := startScriptedChat(t, newScriptedChat())
 
-	code, _, stderr := runChatCLI(t, addr, strings.NewReader(""))
+	code, _, stderr := runChatCLI(t, chatServer, strings.NewReader(""))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -547,9 +526,9 @@ func TestChatCleanEOFExitsZero(t *testing.T) {
 func TestChatScannerErrorExitsNonZero(t *testing.T) {
 	t.Parallel()
 
-	addr := startScriptedChat(t, newScriptedChat())
+	chatServer := startScriptedChat(t, newScriptedChat())
 
-	code, _, stderr := runChatCLI(t, addr, failingReader{})
+	code, _, stderr := runChatCLI(t, chatServer, failingReader{})
 	if code != cli.ExitFailure {
 		t.Fatalf("exit = %d, want %d", code, cli.ExitFailure)
 	}
@@ -567,9 +546,9 @@ func TestChatTurnErrorKeepsREPLAlive(t *testing.T) {
 
 	script := newScriptedChat()
 	script.sendErr = status.Error(codes.Unavailable, "serve restarting")
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, _, stderr := runChatCLI(t, addr, strings.NewReader("first try\nsecond try\n/quit\n"))
+	code, _, stderr := runChatCLI(t, chatServer, strings.NewReader("first try\nsecond try\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -600,9 +579,9 @@ func TestChatApprovalReadsThroughSharedScanner(t *testing.T) {
 		Type:     cairnosv1.ChatEventType_CHAT_EVENT_TYPE_CONFIRMATION_REQUIRED,
 		Proposal: &cairnosv1.WorkflowProposal{WorkflowName: "deploy", EstimatedBudgetUsd: 0.25},
 	}}
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatCLI(t, addr, strings.NewReader("run the deploy\ny\n/quit\n"))
+	code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader("run the deploy\ny\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -624,19 +603,19 @@ func TestChatInterruptMidTurnCancelsOnlyThatTurn(t *testing.T) {
 	script := newScriptedChat()
 	script.blockSend = true
 	script.sendStarted = started
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdout := &syncBuffer{}
 	stderr := &syncBuffer{}
 	interrupts := make(chan os.Signal, 1)
 
-	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts)
+	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts).WithServeDialer(chatServer.dial)
 
 	exit := make(chan int, 1)
 
 	go func() {
-		exit <- app.Run(t.Context(), chatArgs(addr))
+		exit <- app.Run(t.Context(), chatArgs(chatServer.addr))
 	}()
 
 	writeLine(t, stdinWriter, "hang forever")
@@ -676,7 +655,7 @@ func TestChatInterruptMidTurnCancelsOnlyThatTurn(t *testing.T) {
 func TestChatInterruptAtPromptPrintsQuitHint(t *testing.T) {
 	t.Parallel()
 
-	addr := startScriptedChat(t, newScriptedChat())
+	chatServer := startScriptedChat(t, newScriptedChat())
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdout := &syncBuffer{}
@@ -686,12 +665,12 @@ func TestChatInterruptAtPromptPrintsQuitHint(t *testing.T) {
 	// taken the signal, so the hint is committed before /quit goes in.
 	interrupts := make(chan os.Signal)
 
-	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts)
+	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts).WithServeDialer(chatServer.dial)
 
 	exit := make(chan int, 1)
 
 	go func() {
-		exit <- app.Run(t.Context(), chatArgs(addr))
+		exit <- app.Run(t.Context(), chatArgs(chatServer.addr))
 	}()
 
 	interrupts <- os.Interrupt
@@ -709,12 +688,12 @@ func TestChatInterruptAtPromptPrintsQuitHint(t *testing.T) {
 
 // runChatArgs drives one invocation with explicit args over empty stdin, for
 // the one-shot --search paths that never read a line.
-func runChatArgs(t *testing.T, args []string) (int, string, string) {
+func runChatArgs(t *testing.T, chatServer *serveFixture, args []string) (int, string, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 
-	app := cli.New(&stdout, &stderr).WithStdin(strings.NewReader("")).WithInterrupts(make(chan os.Signal))
+	app := cli.New(&stdout, &stderr).WithStdin(strings.NewReader("")).WithInterrupts(make(chan os.Signal)).WithServeDialer(chatServer.dial)
 	code := app.Run(t.Context(), args)
 
 	return code, stdout.String(), stderr.String()
@@ -743,9 +722,9 @@ func TestChatSearchCommandQueriesWholeWorkspace(t *testing.T) {
 
 	script := newScriptedChat()
 	script.searchHits = searchHitFixtures()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatCLI(t, addr, strings.NewReader("/search hive time\n/quit\n"))
+	code, stdout, stderr := runChatCLI(t, chatServer, strings.NewReader("/search hive time\n/quit\n"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -769,9 +748,9 @@ func TestChatSearchFlagPrintsHitsWithoutREPL(t *testing.T) {
 
 	script := newScriptedChat()
 	script.searchHits = searchHitFixtures()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, stdout, stderr := runChatArgs(t, searchArgs(addr, searchQueryText))
+	code, stdout, stderr := runChatArgs(t, chatServer, searchArgs(chatServer.addr, searchQueryText))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -802,9 +781,9 @@ func TestChatSearchFlagPassesSessionAndLimit(t *testing.T) {
 	t.Parallel()
 
 	script := newScriptedChat()
-	addr := startScriptedChat(t, script)
+	chatServer := startScriptedChat(t, script)
 
-	code, _, stderr := runChatArgs(t, searchArgs(addr, searchQueryText, "--session", startSessionID, "--limit", "5"))
+	code, _, stderr := runChatArgs(t, chatServer, searchArgs(chatServer.addr, searchQueryText, "--session", startSessionID, "--limit", "5"))
 	if code != cli.ExitOK {
 		t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitOK, stderr)
 	}
@@ -831,9 +810,9 @@ func TestChatSearchFlagEmptyFailsWithUsage(t *testing.T) {
 			t.Parallel()
 
 			script := newScriptedChat()
-			addr := startScriptedChat(t, script)
+			chatServer := startScriptedChat(t, script)
 
-			code, _, stderr := runChatArgs(t, searchArgs(addr, tt.query))
+			code, _, stderr := runChatArgs(t, chatServer, searchArgs(chatServer.addr, tt.query))
 			if code != cli.ExitUsage {
 				t.Fatalf("exit = %d, want %d; stderr: %s", code, cli.ExitUsage, stderr)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
 // Canonical chat.* error codes the agent owns (.agents/spec/13-roadmap.md,
@@ -52,4 +53,13 @@ var (
 // wrapcheck stays satisfied where the handlers map them onto the wire.
 func errf(code, format string, args ...any) *cairnerr.Error {
 	return &cairnerr.Error{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// refusal builds the permanent runner error a tool returns when a call cannot
+// proceed as made, the one class every such refusal here carries. It returns
+// the concrete type on purpose: a constructor never returns nil, so the
+// typed-nil interface trap cannot apply, and a caller holding the result keeps
+// Code and Class without a type assertion.
+func refusal(code, message string) *runner.Error {
+	return runner.NewError(runner.ClassPermanent, code, message)
 }

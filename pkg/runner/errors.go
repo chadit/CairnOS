@@ -2,6 +2,7 @@ package runner
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -51,6 +52,15 @@ type Error struct {
 // NewError builds a classified runner error.
 func NewError(class ErrorClass, code, message string) *Error {
 	return &Error{Class: class, Code: code, Message: message}
+}
+
+// Wrapf builds a classified runner error that keeps cause reachable through
+// errors.Is and errors.As. Use it whenever the failure came from another error,
+// such as a context deadline or a missing file, so the chain does not end at
+// the runner boundary. Error() never appends the cause, so the wire message is
+// exactly what format says.
+func Wrapf(cause error, class ErrorClass, code, format string, args ...any) *Error {
+	return &Error{Class: class, Code: code, Message: fmt.Sprintf(format, args...), Cause: cause}
 }
 
 // NewReauthError builds a NeedsReauth runner error for a credential a human must

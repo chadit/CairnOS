@@ -15,6 +15,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/mcp"
 	"github.com/chadit/CairnOS/internal/memory"
@@ -206,6 +207,7 @@ func wireFixtureAuth(t *testing.T, opts fixtureOptions, dbPath string, cfg *mcp.
 	}
 
 	authn := auth.New(authStore, material, auth.Config{
+		HashCost:   authtest.FloorHashCost(),
 		Issuer:     "cairnos-fixture",
 		Audience:   "cairnos",
 		TTL:        time.Hour,
@@ -232,7 +234,7 @@ func (f *fixture) token(t *testing.T, scopes ...string) string {
 func (f *fixture) workspaceToken(t *testing.T, workspace string, scopes ...string) string {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, time.Now())
+	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, time.Now(), authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}

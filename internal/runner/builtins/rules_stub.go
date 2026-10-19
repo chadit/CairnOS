@@ -100,7 +100,7 @@ func (*LanguageRules) Name() string {
 // fall back to the files.
 func (l *LanguageRules) Validate(task *runner.Task) error {
 	if l.service == nil && l.dir == "" {
-		return runner.NewError(runner.ClassPermanent, codePrefixRules+".not_configured",
+		return taskError(runner.ClassPermanent, codePrefixRules+".not_configured",
 			"runner needs a rules service or a configured dir")
 	}
 
@@ -181,8 +181,8 @@ func (l *LanguageRules) resolveRules(ctx context.Context, language, project stri
 		return l.loadRules(language, project)
 	}
 
-	return nil, runner.NewError(runner.ClassPermanent, codePrefixRules+".unknown_language",
-		fmt.Sprintf("no rules for language %q", language))
+	return nil, taskError(runner.ClassPermanent, codePrefixRules+".unknown_language",
+		"no rules for language %q", language)
 }
 
 // loadRules reads the base language file and overlays the optional project
@@ -190,8 +190,8 @@ func (l *LanguageRules) resolveRules(ctx context.Context, language, project stri
 func (l *LanguageRules) loadRules(language, project string) (map[string]string, error) {
 	rules, err := readFlatRules(filepath.Join(l.dir, language+rulesExt))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, runner.NewError(runner.ClassPermanent, codePrefixRules+".unknown_language",
-			fmt.Sprintf("no rules file for language %q", language))
+		return nil, taskError(runner.ClassPermanent, codePrefixRules+".unknown_language",
+			"no rules file for language %q", language)
 	}
 
 	if err != nil {
@@ -234,8 +234,7 @@ func validateRuleNames(task *runner.Task) error {
 		}
 
 		if !safeFileStem(name) {
-			return runner.NewError(runner.ClassPermanent, codePrefixRules+".bad_"+key,
-				key+" may only contain letters, digits, dash, and underscore")
+			return paramError(codePrefixRules, key, "may only contain letters, digits, dash, and underscore")
 		}
 	}
 

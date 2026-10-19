@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -92,6 +93,10 @@ type Workflow struct {
 	Budget *BudgetSpec
 
 	Actions map[string]*Action
+
+	// includes are the stdin_file texts read at load, which DefinitionHash
+	// folds into the identity alongside the file bytes.
+	includes []includedFile
 
 	// Hash is the hex SHA-256 of the file bytes, stamped by Load so run
 	// records can prove which definition they executed. Parse leaves it
@@ -271,22 +276,22 @@ func (decl InputDecl) MustBeSupplied() bool {
 	return decl.Required && !decl.HasDefault
 }
 
-// Load reads and parses a workflow file, stamping Hash with the file's
-// SHA-256 so run records can identify the exact definition. The returned
-// error is a cairnerr.Errors carrying every problem found, not just the
-// first.
+// Load reads and parses a workflow file, resolving stdin_file params against
+// the file's directory, and stamps Hash with DefinitionHash so run records can
+// identify the exact definition. The returned error is a cairnerr.Errors
+// carrying every problem found, not just the first.
 func Load(path string) (*Workflow, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- the path is the operator's own CLI argument; reading it is the command's purpose
 	if err != nil {
 		return nil, fmt.Errorf("read workflow: %w", err)
 	}
 
-	flow, err := Parse(data)
+	flow, err := ParseInDir(data, filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
 
-	flow.Hash = HashBytes(data)
+	flow.Hash = flow.DefinitionHash(data)
 
 	return flow, nil
 }
@@ -301,10 +306,11 @@ func HashBytes(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// isValidName checks the identifier pattern shared by workflow and action
+// ValidName checks the identifier pattern shared by workflow and action
 // names: a lowercase letter followed by lowercase letters, digits, or the '_'
-// character.
-func isValidName(name string) bool {
+// character. It is exported so a command that edits an exec allow list refuses
+// a name no workflow could declare.
+func ValidName(name string) bool {
 	if name == "" || !isLowerAlpha(name[0]) {
 		return false
 	}

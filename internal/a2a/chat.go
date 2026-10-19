@@ -109,12 +109,6 @@ func (c *capture) SendProposal(
 	return "", nil
 }
 
-// Expired does nothing: the response body carrying the proposal was sent long
-// before the TTL lapsed, and there is no posted message left to mark.
-func (*capture) Expired(_ context.Context, _ *bridge.Address, _ string) error { //nolint:discardedcontext // nothing was posted, so nothing is cancelable
-	return nil
-}
-
 // MaxChars reports the cap that keeps the core's splitter out of the way.
 func (*capture) MaxChars() int {
 	return captureMaxChars

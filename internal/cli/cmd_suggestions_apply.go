@@ -99,7 +99,12 @@ func (a *App) cmdSuggestionsRevert(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	a.printOutf("reverted workflow %q to version %s\n", workflowName, restored)
+	a.printOutf("reverted workflow %q to version %s\n", workflowName, restored.Hash)
+
+	if restored.HashChanged() {
+		a.printErrf("warning: version %s was captured with different stdin_file text; revert restores only the TOML, so the workflow now hashes to %s\n",
+			restored.StoredHash, restored.Hash)
+	}
 
 	return ExitOK
 }

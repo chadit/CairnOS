@@ -18,7 +18,6 @@ import (
 // the mechanism under test rather than by that child exiting. strayChildHold
 // is long enough that the CLI runner's 2-second WaitDelay fits under its half.
 const (
-	wrapperDeadline = 200 * time.Millisecond
 	forkedChildHold = 3 * time.Second
 	strayChildHold  = 10 * time.Second
 )
@@ -36,9 +35,10 @@ func forkingWrapper() string {
 	return "echo started\n" + sleepFor(forkedChildHold) + "\necho done"
 }
 
-// executePastDeadline runs wrapper as the qwen CLI under wrapperDeadline and
-// returns how long Execute took along with its error.
-func executePastDeadline(t *testing.T, wrapper string) (time.Duration, error) {
+// executeUntilCanceled runs wrapper as the qwen CLI and cancels the run once
+// the wrapper prints its first line, returning how long the run took to end
+// after the cancel along with its error.
+func executeUntilCanceled(t *testing.T, wrapper string) (time.Duration, error) {
 	t.Helper()
 
 	cli, err := builtins.NewCLI(builtins.QwenName, builtins.CLITool{Binary: wrapper}, nil)
@@ -46,21 +46,13 @@ func executePastDeadline(t *testing.T, wrapper string) (time.Duration, error) {
 		t.Fatalf("new cli: %v", err)
 	}
 
-	task := cliTask()
-	task.Deadline = time.Now().Add(wrapperDeadline)
-
-	start := time.Now()
-
-	_, err = cli.Execute(t.Context(), task)
-
-	return time.Since(start), err
+	return executeCanceledOnFirstLine(t, cli, cliTask())
 }
 
-// requireKilledAtDeadline fails unless err is the transient timeout of a
-// wrapper the deadline killed. The exit error in the chain tells that apart
-// from a deadline that expired before the wrapper started, which classifies
-// the same way.
-func requireKilledAtDeadline(t *testing.T, err error) {
+// requireKilledByCancel fails unless err is the transient timeout of a wrapper
+// the cancellation killed. The exit error in the chain tells that apart from a
+// run canceled before the wrapper started, which classifies the same way.
+func requireKilledByCancel(t *testing.T, err error) {
 	t.Helper()
 
 	classified, isClassified := errors.AsType[*runner.Error](err)
@@ -80,29 +72,29 @@ func requireKilledAtDeadline(t *testing.T, err error) {
 	}
 }
 
-// TestCLIDeadlineKillsWrapperForkedChild covers a wrapper script that runs the
+// TestCLICancelKillsWrapperForkedChild covers a wrapper script that runs the
 // real CLI as a child instead of exec-ing it. The child inherits stdout, so a
 // kill that reached only the wrapper would leave run reading until the child
 // exited on its own. Windows kills only the wrapper, hence the build tag.
-func TestCLIDeadlineKillsWrapperForkedChild(t *testing.T) {
+func TestCLICancelKillsWrapperForkedChild(t *testing.T) {
 	wrapper := writeShim(t, t.TempDir(), "forking-wrapper", forkingWrapper())
 
 	t.Parallel()
 
-	elapsed, err := executePastDeadline(t, wrapper)
+	elapsed, err := executeUntilCanceled(t, wrapper)
 
-	requireKilledAtDeadline(t, err)
+	requireKilledByCancel(t, err)
 
 	if bound := forkedChildHold / 2; elapsed > bound {
 		t.Fatalf("run returned after %v, want under %v: only a group kill ends the read this soon", elapsed, bound)
 	}
 }
 
-// TestCLIDeadlineEndsRunHeldByEscapedChild covers a wrapper helper that left
+// TestCLICancelEndsRunHeldByEscapedChild covers a wrapper helper that left
 // the process group through setsid and keeps stdout open. The group kill
 // misses it, so only WaitDelay closing the pipes ends the read before the
 // helper exits.
-func TestCLIDeadlineEndsRunHeldByEscapedChild(t *testing.T) {
+func TestCLICancelEndsRunHeldByEscapedChild(t *testing.T) {
 	if _, err := exec.LookPath("setsid"); err != nil {
 		t.Skip("setsid is not installed")
 	}
@@ -112,9 +104,9 @@ func TestCLIDeadlineEndsRunHeldByEscapedChild(t *testing.T) {
 
 	t.Parallel()
 
-	elapsed, err := executePastDeadline(t, wrapper)
+	elapsed, err := executeUntilCanceled(t, wrapper)
 
-	requireKilledAtDeadline(t, err)
+	requireKilledByCancel(t, err)
 
 	if bound := strayChildHold / 2; elapsed > bound {
 		t.Fatalf("run returned after %v, want under %v: the escaped child held stdout", elapsed, bound)

@@ -414,3 +414,110 @@ func detailErrorCodes(t *testing.T, err error) []string {
 
 	return nil
 }
+
+// promptedName names the stdin_file fixture workflow.
+const promptedName = "prompted"
+
+// stdinFileTOML is a saved workflow whose action reads stdin from a prompt
+// file in the workflows directory.
+const stdinFileTOML = `
+[workflow]
+name = "prompted"
+
+[action.ask]
+runner = "exec"
+params = { command = "cat", stdin_file = "prompted.md" }
+`
+
+// A definition sent over the API names its prompt file relative to the
+// workflows directory, the place a save writes it, so validation and save both
+// resolve there and fail the same way when the file is absent.
+func TestWorkflowAPIResolvesStdinFileInWorkflowsDir(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+
+	request := &cairnosv1.ValidateWorkflowRequest{Toml: []byte(stdinFileTOML)}
+
+	missing, err := fix.workflow.ValidateWorkflow(t.Context(), request)
+	if err != nil {
+		t.Fatalf("ValidateWorkflow without the prompt: %v", err)
+	}
+
+	if missing.GetValid() || len(missing.GetErrors()) != 1 || missing.GetErrors()[0].GetCode() != workflow.CodeBadInclude {
+		t.Fatalf("response = %v, want one %s error", missing, workflow.CodeBadInclude)
+	}
+
+	if writeErr := os.WriteFile(filepath.Join(fix.workflowsDir, "prompted.md"), []byte("hello"), 0o600); writeErr != nil {
+		t.Fatalf("write prompt: %v", writeErr)
+	}
+
+	present, err := fix.workflow.ValidateWorkflow(t.Context(), request)
+	if err != nil {
+		t.Fatalf("ValidateWorkflow with the prompt: %v", err)
+	}
+
+	if !present.GetValid() {
+		t.Fatalf("response = %v, want valid once the prompt exists", present)
+	}
+
+	saved, err := fix.workflow.SaveWorkflow(t.Context(), &cairnosv1.SaveWorkflowRequest{
+		WorkflowName: promptedName,
+		Toml:         []byte(stdinFileTOML),
+	})
+	if err != nil {
+		t.Fatalf("SaveWorkflow: %v", err)
+	}
+
+	if saved.GetHash() == workflow.HashBytes([]byte(stdinFileTOML)) {
+		t.Fatal("saved hash ignores the prompt file")
+	}
+}
+
+// An inline run resolves stdin_file in the workflows directory as well, and the
+// run record's hash covers the prompt text, the identity a replay checks.
+func TestInlineRunResolvesStdinFileInWorkflowsDir(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+
+	request := &cairnosv1.RunWorkflowRequest{WorkflowName: promptedName, Toml: []byte(stdinFileTOML)}
+
+	refused, err := fix.workflow.RunWorkflow(t.Context(), request)
+	if err != nil {
+		t.Fatalf("open inline RunWorkflow stream without the prompt: %v", err)
+	}
+
+	_, err = refused.Recv()
+	if status.Code(err) != codes.InvalidArgument || !slices.Contains(detailErrorCodes(t, err), workflow.CodeBadInclude) {
+		t.Fatalf("first recv without the prompt = %v, want InvalidArgument carrying %s", err, workflow.CodeBadInclude)
+	}
+
+	if writeErr := os.WriteFile(filepath.Join(fix.workflowsDir, "prompted.md"), []byte("hello"), 0o600); writeErr != nil {
+		t.Fatalf("write prompt: %v", writeErr)
+	}
+
+	stream, err := fix.workflow.RunWorkflow(t.Context(), request)
+	if err != nil {
+		t.Fatalf("open inline RunWorkflow stream with the prompt: %v", err)
+	}
+
+	events := collectEvents(t, stream)
+	if len(events) == 0 || events[0].GetType() != cairnosv1.RunEventType_RUN_EVENT_TYPE_RUN_STARTED {
+		t.Fatalf("events = %v, want the run to start once the prompt exists", events)
+	}
+
+	run, err := fix.db.GetRun(t.Context(), events[0].GetRunId())
+	if err != nil {
+		t.Fatalf("GetRun for the inline run: %v", err)
+	}
+
+	flow, err := workflow.ParseInDir([]byte(stdinFileTOML), fix.workflowsDir)
+	if err != nil {
+		t.Fatalf("parse the definition for its expected hash: %v", err)
+	}
+
+	if want := flow.DefinitionHash([]byte(stdinFileTOML)); run.WorkflowHash != want {
+		t.Fatalf("inline run hash = %q, want %q, the hash that covers the prompt file", run.WorkflowHash, want)
+	}
+}

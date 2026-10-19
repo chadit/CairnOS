@@ -315,7 +315,7 @@ func (c *releaseClient) annotatedTagCommit(ctx context.Context, owner, repo, sha
 // failing, since a missing release and an unauthenticated read of a private
 // repository look the same from here.
 func (c *releaseClient) getJSON(ctx context.Context, path string, out any) (bool, error) {
-	body, status, err := c.get(ctx, c.base+path, releaseJSONLimit)
+	body, status, err := c.get(ctx, c.base+path)
 	if err != nil {
 		return false, err
 	}
@@ -335,8 +335,9 @@ func (c *releaseClient) getJSON(ctx context.Context, path string, out any) (bool
 	return true, nil
 }
 
-// get performs one request and reads at most limit bytes of the body.
-func (c *releaseClient) get(ctx context.Context, url string, limit int64) ([]byte, int, error) {
+// get performs one request and reads at most releaseJSONLimit bytes of the
+// body, since every caller fetches JSON or a checksum list.
+func (c *releaseClient) get(ctx context.Context, url string) ([]byte, int, error) {
 	response, err := c.do(ctx, url)
 	if err != nil {
 		return nil, 0, err
@@ -344,7 +345,7 @@ func (c *releaseClient) get(ctx context.Context, url string, limit int64) ([]byt
 
 	defer func() { _ = response.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, limit))
+	body, err := io.ReadAll(io.LimitReader(response.Body, releaseJSONLimit))
 	if err != nil {
 		return nil, 0, fmt.Errorf("read %s: %w", url, err)
 	}
@@ -379,7 +380,7 @@ func (c *releaseClient) do(ctx context.Context, url string) (*http.Response, err
 // once the sha256 matches the one the release publishes. Nothing else touches
 // the file before that comparison.
 func (c *releaseClient) stageAsset(ctx context.Context, build *releaseBuild, dir string) (string, error) {
-	manifest, status, err := c.get(ctx, build.sumsURL, releaseJSONLimit)
+	manifest, status, err := c.get(ctx, build.sumsURL)
 	if err != nil {
 		return "", err
 	}

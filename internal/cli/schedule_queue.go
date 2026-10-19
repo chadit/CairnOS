@@ -146,6 +146,15 @@ type QueueRunnerAdapter struct {
 	reach *reach.Monitor
 }
 
+// holdForOutage builds the error that tells the worker to hold an item while a
+// required host is down; cause is the run failure when the outage was found
+// after one, nil when the gate stopped the run first. It returns the concrete
+// type on purpose: a constructor never returns nil, so the typed-nil interface
+// trap cannot apply.
+func holdForOutage(workflowName, reason string, cause error) *reach.UnreachableError {
+	return reach.NewUnreachable(workflowName, reason, cause)
+}
+
 // Run decodes the work item and delegates to the inner runner. A failure goes
 // back to the worker for backoff or dead-letter, unless the required host is
 // down: that is an UnreachableError, which the worker holds. The host is
@@ -165,7 +174,7 @@ func (a *QueueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) 
 	}
 
 	if reason, blocked := a.reach.Blocked(ctx, payload.WorkflowName); blocked {
-		return reach.NewUnreachable(payload.WorkflowName, reason, nil)
+		return holdForOutage(payload.WorkflowName, reason, nil)
 	}
 
 	trigger := payload.Trigger
@@ -190,7 +199,7 @@ func (a *QueueRunnerAdapter) Run(ctx context.Context, item *scheduler.WorkItem) 
 	}
 
 	if reason, blocked := a.reach.Check(ctx, payload.WorkflowName); blocked {
-		return reach.NewUnreachable(payload.WorkflowName, reason, err)
+		return holdForOutage(payload.WorkflowName, reason, err)
 	}
 
 	return fmt.Errorf("run queued workflow %q: %w", payload.WorkflowName, err)

@@ -112,7 +112,7 @@ func (*Memory) Validate(task *runner.Task) error {
 	case memOpLoad:
 		return nil
 	default:
-		return runner.NewError(runner.ClassPermanent, MemoryName+".bad_op", badOpMessage)
+		return taskError(runner.ClassPermanent, MemoryName+".bad_op", "%s", badOpMessage)
 	}
 }
 
@@ -176,7 +176,7 @@ func (m *Memory) perform(ctx context.Context, operation, scope string, task *run
 	case memOpLoad:
 		return m.load(ctx, scope, task)
 	default:
-		return nil, runner.NewError(runner.ClassPermanent, MemoryName+".bad_op", badOpMessage)
+		return nil, taskError(runner.ClassPermanent, MemoryName+".bad_op", "%s", badOpMessage)
 	}
 }
 

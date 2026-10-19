@@ -24,6 +24,10 @@ var (
 	// no echo to turn off and nothing on screen to hide.
 	errNotATerminal = errors.New("stdin is not a terminal")
 
+	// errForeignOwner reports an atomic replace that would hand another user's
+	// file to the caller, which only root can avoid with a chown.
+	errForeignOwner = errors.New("the file belongs to another user")
+
 	// errNoPinnedBitwarden reports a platform this build has no pinned release
 	// for, which is every platform but the two CairnOS runs on.
 	errNoPinnedBitwarden = errors.New("no Bitwarden CLI release is pinned for")

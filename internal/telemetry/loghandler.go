@@ -17,19 +17,15 @@ const (
 // LogHandler keeps slog as the logging API while joining logs to traces:
 // records logged from a span context gain trace_id and span_id attributes,
 // everything else passes through untouched. Wrap whatever handler the
-// process already uses.
+// process already uses. Embedding the wrapped handler lets Enabled pass
+// through unchanged, since correlation never decides whether a record is kept.
 type LogHandler struct {
-	inner slog.Handler
+	slog.Handler
 }
 
 // NewLogHandler wraps inner with trace correlation.
 func NewLogHandler(inner slog.Handler) *LogHandler {
-	return &LogHandler{inner: inner}
-}
-
-// Enabled implements slog.Handler.
-func (h *LogHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.inner.Enabled(ctx, level)
+	return &LogHandler{Handler: inner}
 }
 
 // Handle implements slog.Handler, stamping the span identity from ctx onto
@@ -44,7 +40,7 @@ func (h *LogHandler) Handle(ctx context.Context, record slog.Record) error {
 		)
 	}
 
-	if err := h.inner.Handle(ctx, record); err != nil {
+	if err := h.Handler.Handle(ctx, record); err != nil {
 		return fmt.Errorf("inner log handler: %w", err)
 	}
 
@@ -53,10 +49,10 @@ func (h *LogHandler) Handle(ctx context.Context, record slog.Record) error {
 
 // WithAttrs implements slog.Handler.
 func (h *LogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &LogHandler{inner: h.inner.WithAttrs(attrs)}
+	return &LogHandler{Handler: h.Handler.WithAttrs(attrs)}
 }
 
 // WithGroup implements slog.Handler.
 func (h *LogHandler) WithGroup(name string) slog.Handler {
-	return &LogHandler{inner: h.inner.WithGroup(name)}
+	return &LogHandler{Handler: h.Handler.WithGroup(name)}
 }

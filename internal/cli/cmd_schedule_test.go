@@ -13,7 +13,6 @@ const (
 	scheduleCmd      = "schedule"
 	scheduledName    = "ticker"
 	scheduledCron    = "@hourly"
-	scheduleArgList  = "list"
 	scheduleArgAdd   = "add"
 	scheduleArgEvict = "remove"
 )
@@ -52,7 +51,7 @@ func TestScheduleLifecycle(t *testing.T) {
 	path := writeWorkflow(t, dir, scheduledWorkflow)
 	id := addSchedule(t, dir, path)
 
-	code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+	code, stdout, _ := runCLI(t, scheduleCmd, listArg, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("schedule list exited %d", code)
 	}
@@ -68,7 +67,7 @@ func TestScheduleLifecycle(t *testing.T) {
 		t.Fatalf("schedule remove (exit %d) output:\n%s", code, stdout)
 	}
 
-	code, stdout, _ = runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+	code, stdout, _ = runCLI(t, scheduleCmd, listArg, flagDirArg, dir)
 	if code != cli.ExitOK || strings.Contains(stdout, id) {
 		t.Fatalf("removed schedule still listed (exit %d):\n%s", code, stdout)
 	}
@@ -86,7 +85,7 @@ func TestScheduleRemoveByWorkflowName(t *testing.T) {
 		t.Fatalf("schedule remove by name exited %d", code)
 	}
 
-	code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+	code, stdout, _ := runCLI(t, scheduleCmd, listArg, flagDirArg, dir)
 	if code != cli.ExitOK || strings.Contains(stdout, id) {
 		t.Fatalf("schedule survived remove-by-name (exit %d):\n%s", code, stdout)
 	}
@@ -285,7 +284,7 @@ func TestScheduleAddRejectsInputsNoFireSupplies(t *testing.T) {
 				t.Fatalf("stderr does not name exactly %q and the default fix:\n%s", testCase.missing, stderr)
 			}
 
-			code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+			code, stdout, _ := runCLI(t, scheduleCmd, listArg, flagDirArg, dir)
 			if code != cli.ExitOK || strings.Contains(stdout, requiredInputFlowName) {
 				t.Fatalf("rejected workflow was stored (exit %d):\n%s", code, stdout)
 			}
@@ -330,7 +329,7 @@ func TestScheduleAddAcceptsInputsAFireFills(t *testing.T) {
 
 			addSchedule(t, dir, path)
 
-			code, stdout, _ := runCLI(t, scheduleCmd, scheduleArgList, flagDirArg, dir)
+			code, stdout, _ := runCLI(t, scheduleCmd, listArg, flagDirArg, dir)
 			if code != cli.ExitOK || !strings.Contains(stdout, requiredInputFlowName) {
 				t.Fatalf("schedule list (exit %d) missing the workflow:\n%s", code, stdout)
 			}

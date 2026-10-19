@@ -3,7 +3,6 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -105,44 +104,29 @@ func (s *fakeMessagingServer) sendCount() int {
 	return len(s.sends)
 }
 
-// startMessagingServer serves the fake on an ephemeral loopback port and returns
-// the address for --addr.
-func startMessagingServer(t *testing.T, fake *fakeMessagingServer) string {
+// startMessagingServer serves the fake in memory for an App to reach through
+// its dial.
+func startMessagingServer(t *testing.T, fake *fakeMessagingServer) *serveFixture {
 	t.Helper()
 
-	listenConfig := net.ListenConfig{}
-
-	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-
-	server := grpc.NewServer()
-	cairnosv1.RegisterMessagingServiceServer(server, fake)
-
-	served := make(chan error, 1)
-
-	go func() { served <- server.Serve(listener) }()
-
-	t.Cleanup(func() {
-		server.Stop()
-
-		if err := <-served; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			t.Errorf("serve: %v", err)
-		}
+	return serveInMemory(t, func(server *grpc.Server) {
+		cairnosv1.RegisterMessagingServiceServer(server, fake)
 	})
-
-	return listener.Addr().String()
 }
 
 // runMsgCLI drives one msg invocation with the given stdin and returns the exit
 // code and both streams.
-func runMsgCLI(t *testing.T, stdin io.Reader, args ...string) (int, string, string) {
+func runMsgCLI(t *testing.T, msgServer *serveFixture, stdin io.Reader, args ...string) (int, string, string) {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).WithStdin(stdin).Run(t.Context(), args)
+	app := cli.New(&stdout, &stderr).WithStdin(stdin)
+	if msgServer != nil {
+		app = app.WithServeDialer(msgServer.dial)
+	}
+
+	code := app.Run(t.Context(), args)
 
 	return code, stdout.String(), stderr.String()
 }
@@ -151,10 +135,10 @@ func TestMsgSendJoinsPositionalTextAndPrintsThePostID(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeMessagingServer{}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
-		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
+	code, stdout, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, msgServer.addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
 		"deploy", "finished", "clean")
 
 	if code != cli.ExitOK {
@@ -185,12 +169,12 @@ func TestMsgSendReadsTextFromStdinOnDash(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeMessagingServer{}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
 	body := "line one\nline two\n"
 
-	code, _, stderr := runMsgCLI(t, strings.NewReader(body),
-		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget, "-")
+	code, _, stderr := runMsgCLI(t, msgServer, strings.NewReader(body),
+		msgCmd, msgSendCmd, flagAddrArg, msgServer.addr, flagAsArg, msgIdentity, flagToArg, msgTarget, "-")
 
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
@@ -207,10 +191,10 @@ func TestMsgSendPassesThreadThrough(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeMessagingServer{}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
-		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
+	code, _, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, msgServer.addr, flagAsArg, msgIdentity, flagToArg, msgTarget,
 		flagThreadArg, msgThreadID, "replying")
 
 	if code != cli.ExitOK {
@@ -228,10 +212,10 @@ func TestMsgSendReportsAServerRefusal(t *testing.T) {
 	fake := &fakeMessagingServer{
 		sendErr: status.Error(codes.NotFound, fmt.Sprintf("no messaging identity named %q is configured", msgIdentity)),
 	}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
-		msgCmd, msgSendCmd, flagAddrArg, addr, flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
+	code, stdout, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, msgServer.addr, flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
 
 	if code != cli.ExitFailure {
 		t.Fatalf("exit %d, want %d", code, cli.ExitFailure)
@@ -278,11 +262,11 @@ func TestMsgSendRejectsBadInvocations(t *testing.T) {
 			t.Parallel()
 
 			fake := &fakeMessagingServer{}
-			addr := startMessagingServer(t, fake)
+			msgServer := startMessagingServer(t, fake)
 
-			args := append([]string{msgCmd, msgSendCmd, flagAddrArg, addr}, tt.args...)
+			args := append([]string{msgCmd, msgSendCmd, flagAddrArg, msgServer.addr}, tt.args...)
 
-			code, _, stderr := runMsgCLI(t, strings.NewReader(tt.stdin), args...)
+			code, _, stderr := runMsgCLI(t, msgServer, strings.NewReader(tt.stdin), args...)
 
 			if code != cli.ExitUsage {
 				t.Fatalf("exit %d, want %d", code, cli.ExitUsage)
@@ -314,10 +298,10 @@ func TestMsgListPrintsTheConfiguredIdentities(t *testing.T) {
 		DisplayName: "CairnOS",
 		Url:         listedURL,
 	}}}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""),
-		msgCmd, "list", flagAddrArg, addr)
+	code, stdout, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
+		msgCmd, "list", flagAddrArg, msgServer.addr)
 
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
@@ -333,9 +317,9 @@ func TestMsgListPrintsTheConfiguredIdentities(t *testing.T) {
 func TestMsgListSaysSoWhenNoIdentitiesAreConfigured(t *testing.T) {
 	t.Parallel()
 
-	addr := startMessagingServer(t, &fakeMessagingServer{})
+	msgServer := startMessagingServer(t, &fakeMessagingServer{})
 
-	code, stdout, stderr := runMsgCLI(t, strings.NewReader(""), msgCmd, "list", flagAddrArg, addr)
+	code, stdout, stderr := runMsgCLI(t, msgServer, strings.NewReader(""), msgCmd, "list", flagAddrArg, msgServer.addr)
 
 	if code != cli.ExitOK {
 		t.Fatalf("exit %d, want %d (stderr: %s)", code, cli.ExitOK, stderr)
@@ -349,7 +333,7 @@ func TestMsgListSaysSoWhenNoIdentitiesAreConfigured(t *testing.T) {
 func TestMsgRejectsAnUnknownSubcommand(t *testing.T) {
 	t.Parallel()
 
-	code, _, stderr := runMsgCLI(t, strings.NewReader(""), msgCmd, "broadcast")
+	code, _, stderr := runMsgCLI(t, nil, strings.NewReader(""), msgCmd, "broadcast")
 
 	if code != cli.ExitUsage {
 		t.Fatalf("exit %d, want %d", code, cli.ExitUsage)
@@ -368,17 +352,17 @@ func TestMsgSendWarnsAboutAPlaintextTokenOffLoopback(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeMessagingServer{}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	// The server listens on loopback; addressing it through the unspecified
-	// address reaches the same socket while reading as a network address, so the
-	// case exercises the warning without waiting on an unroutable host.
-	_, port, err := net.SplitHostPort(addr)
+	// The fixture dialer answers whatever address it is given, so the
+	// unspecified address reaches the same fixture while reading as a network
+	// address, and the case exercises the warning without an unroutable host.
+	_, port, err := net.SplitHostPort(msgServer.addr)
 	if err != nil {
-		t.Fatalf("split %q: %v", addr, err)
+		t.Fatalf("split %q: %v", msgServer.addr, err)
 	}
 
-	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
+	code, _, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
 		msgCmd, msgSendCmd, flagAddrArg, net.JoinHostPort("0.0.0.0", port),
 		flagTokenArg, msgTestToken, flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
 
@@ -397,10 +381,10 @@ func TestMsgSendStaysQuietWithATokenOnLoopback(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeMessagingServer{}
-	addr := startMessagingServer(t, fake)
+	msgServer := startMessagingServer(t, fake)
 
-	code, _, stderr := runMsgCLI(t, strings.NewReader(""),
-		msgCmd, msgSendCmd, flagAddrArg, addr, flagTokenArg, msgTestToken,
+	code, _, stderr := runMsgCLI(t, msgServer, strings.NewReader(""),
+		msgCmd, msgSendCmd, flagAddrArg, msgServer.addr, flagTokenArg, msgTestToken,
 		flagAsArg, msgIdentity, flagToArg, msgTarget, msgBody)
 
 	if code != cli.ExitOK {

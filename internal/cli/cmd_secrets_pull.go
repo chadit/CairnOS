@@ -282,9 +282,15 @@ func resolveHomePath(dir, path string) string {
 
 // writeFileAtomic writes through a temp file in the same directory and renames,
 // so a failure part way leaves the previous file intact rather than a truncated
-// one the service would start against. The temp file is removed on every failure
-// path, so a failed pull leaves nothing behind.
+// one the service would start against. The replaced file keeps its owner, as an
+// in-place write would. The temp file is removed on every failure path, so a
+// failed pull leaves nothing behind.
 func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) error {
+	uid, gid, chown, err := ownerToKeep(path)
+	if err != nil {
+		return err
+	}
+
 	dir := filepath.Dir(path)
 
 	temp, err := os.CreateTemp(dir, filepath.Base(path)+".*")
@@ -298,6 +304,12 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 		return errors.Join(err, removeLeftover(tempPath))
 	}
 
+	if chown {
+		if err := os.Chown(tempPath, uid, gid); err != nil {
+			return errors.Join(fmt.Errorf("keep the owner of %s: %w", path, err), removeLeftover(tempPath))
+		}
+	}
+
 	if err := os.Rename(tempPath, path); err != nil {
 		return errors.Join(fmt.Errorf("replace %s: %w", path, err), removeLeftover(tempPath))
 	}
@@ -308,6 +320,19 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 	}
 
 	return nil
+}
+
+// ownerToKeep returns the owner a replace of path must restore, and whether a
+// chown is needed for it, refusing a caller that could not restore it.
+func ownerToKeep(path string) (int, int, bool, error) {
+	uid, gid, present, err := fileOwner(path)
+	if err != nil || !present {
+		return 0, 0, false, err
+	}
+
+	chown, err := KeepOwnerPlan(path, uid, os.Geteuid())
+
+	return uid, gid, chown, err
 }
 
 // reportNoVault prints the no-op line and exits clean. A host with no

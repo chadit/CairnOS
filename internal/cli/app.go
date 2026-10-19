@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 
+	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/environ"
@@ -67,6 +69,7 @@ Commands:
   usage     Report what each model CLI login has spent of its rate-limit windows
   service   Run serve under the host supervisor: setup, status, uninstall
   model     Managed local LLM: setup, status, check, upgrade, uninstall
+  config    Edit config.toml: allow-action add <name>, allow-action list
   update    Update this host: install the latest release or rebuild the
             checkout, pull secrets, restart on change; --check reports and
             exits 3 when behind
@@ -123,6 +126,14 @@ type App struct {
 	// Telegram API, or leaves a dial running after serve returns.
 	bridgeTransport http.RoundTripper
 
+	// serveDialer opens the connection under every client this CLI points at a
+	// serve. Nil is the default and dials the address over the network.
+	serveDialer func(context.Context, string) (net.Conn, error)
+
+	// keyHashCost is the argon2id cost keys add mints under and the decoy the
+	// serve authenticator pays. The zero value is the production default.
+	keyHashCost auth.HashCost
+
 	// echoNoticed keeps the visible-input warning to one line per run. The
 	// prompts ask three times and the answer is the same every time.
 	echoNoticed bool
@@ -166,6 +177,25 @@ func (a *App) WithBitwardenClock(clock bitwarden.Clock) *App {
 // their requests actually go.
 func (a *App) WithBridgeTransport(transport http.RoundTripper) *App {
 	a.bridgeTransport = transport
+
+	return a
+}
+
+// WithServeDialer sets how the chat, msg, and update commands reach a serve,
+// and returns the App for chaining. Only a test build calls it: the address is
+// still the one the command was given, and the dialer decides what answers it.
+func (a *App) WithServeDialer(dial func(ctx context.Context, addr string) (net.Conn, error)) *App {
+	a.serveDialer = dial
+
+	return a
+}
+
+// WithKeyHashCost sets the argon2id cost of the keys this App mints and of the
+// unknown-key decoy its serve authenticator pays, and returns the App for
+// chaining. Only a test build calls it, to keep race-instrumented key tests
+// from holding 64 MiB per derivation.
+func (a *App) WithKeyHashCost(cost auth.HashCost) *App {
+	a.keyHashCost = cost
 
 	return a
 }
@@ -258,9 +288,9 @@ func (a *App) dispatchServeClients(ctx context.Context, name string, rest []stri
 	}
 }
 
-// dispatchGovernance handles the governance and host-service commands and
-// the help and unknown fallbacks, keeping Run's primary switch under the
-// complexity ceiling.
+// dispatchGovernance handles the governance, host-service, and config-editing
+// commands and the help and unknown fallbacks, keeping Run's primary switch
+// under the complexity ceiling.
 func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string) int {
 	switch name {
 	case "service":
@@ -269,6 +299,8 @@ func (a *App) dispatchGovernance(ctx context.Context, name string, rest []string
 		return a.cmdModel(ctx, rest)
 	case "update":
 		return a.cmdUpdate(ctx, rest)
+	case "config":
+		return a.cmdConfig(rest)
 	case "webhook":
 		return a.cmdWebhook(ctx, rest)
 	case "vault":

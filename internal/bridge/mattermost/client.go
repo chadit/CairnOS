@@ -111,11 +111,15 @@ type ClientConfig struct {
 // concurrent use: the send path, the gate's user lookups, and a reconnect that
 // re-reads the identity all run on different goroutines.
 type Client struct {
+	// The embedded cache supplies CachedUser, which the event path calls
+	// because its socket has a single consumer: a blocking lookup there stalls
+	// the read that would have delivered the next post.
+	*userCache
+
 	http    *http.Client
 	wsHTTP  *http.Client
 	limiter *Bucket
 	log     *slog.Logger
-	users   *userCache
 	base    *url.URL
 
 	token string
@@ -185,7 +189,7 @@ func NewClientOver(cfg ClientConfig, transport http.RoundTripper) (*Client, erro
 		wsHTTP:    &http.Client{Timeout: timeout, Transport: transport},
 		limiter:   cfg.Limiter,
 		log:       log,
-		users:     newUserCache(userCacheSize),
+		userCache: newUserCache(userCacheSize),
 		base:      base,
 		token:     cfg.Token,
 		timeout:   timeout,
@@ -250,8 +254,9 @@ func (c *Client) Me() User {
 	return c.me
 }
 
-// MaxPostSize returns the server's post-length ceiling in runes.
-func (c *Client) MaxPostSize() int {
+// MaxChars returns the server's post-length ceiling in runes. The name matches
+// bridge.Outbound, so the outbound adapter promotes it rather than wrapping it.
+func (c *Client) MaxChars() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -350,18 +355,11 @@ func (c *Client) UserByUsername(ctx context.Context, name string) (User, error) 
 	return user, nil
 }
 
-// CachedUser reads one author out of the is_bot cache without a round trip. The
-// event path needs that: the socket has a single consumer, so a blocking lookup
-// there stalls the read that would have delivered the next post.
-func (c *Client) CachedUser(id string) (User, bool) {
-	return c.users.get(id)
-}
-
 // User resolves a user id, caching the answer. The gate calls this for the
 // author of every post carrying no from_bot prop, so the same webhook id
 // repeats all day; is_bot does not change over a process lifetime.
 func (c *Client) User(ctx context.Context, id string) (User, error) {
-	if cached, ok := c.users.get(id); ok {
+	if cached, ok := c.CachedUser(id); ok {
 		return cached, nil
 	}
 
@@ -372,7 +370,7 @@ func (c *Client) User(ctx context.Context, id string) (User, error) {
 		return User{}, err
 	}
 
-	c.users.put(id, user)
+	c.put(id, user)
 
 	return user, nil
 }

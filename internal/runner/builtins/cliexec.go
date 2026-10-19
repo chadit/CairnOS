@@ -255,9 +255,8 @@ func (c *CLI) guardDashedPrompt(task *runner.Task) error {
 	}
 
 	if strings.HasPrefix(prompt, "-") {
-		return runner.NewError(runner.ClassPermanent, c.code("unsafe_prompt"),
-			"prompt begins with a dash and would be read as a flag by "+c.binary+
-				"; place {prompt} after a -- terminator in the args template, or set allow_dashed_prompt = true")
+		return taskError(runner.ClassPermanent, c.code("unsafe_prompt"),
+			"prompt begins with a dash and would be read as a flag by %s; place {prompt} after a -- terminator in the args template, or set allow_dashed_prompt = true", c.binary)
 	}
 
 	return nil

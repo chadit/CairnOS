@@ -32,8 +32,8 @@ type Session interface {
 	// Me is who the token belongs to, as the last Connect read it.
 	Me() User
 
-	// MaxPostSize is the server's post-length ceiling in runes.
-	MaxPostSize() int
+	// MaxChars is the server's post-length ceiling in runes.
+	MaxChars() int
 }
 
 // Listener is the event socket.
@@ -100,19 +100,25 @@ type Conn interface {
 // per-conversation state, so one value serves every conversation an identity
 // handles.
 type outbound struct {
-	client Conn
+	// Embedding promotes the server's own post ceiling, read at connect, as
+	// bridge.Outbound's MaxChars, so a reply splits at the width this server
+	// enforces rather than a compiled-in guess (FR18).
+	Conn
 
 	// confirmTTL is named in the proposal's instruction line, so a reader sees
 	// the deadline the core's timer is already counting down.
 	confirmTTL time.Duration
 }
 
+// The core finds Expired by type assertion, so this keeps a signature drift
+// from silently dropping the lapsed-proposal notice.
+var _ bridge.Expirer = (*outbound)(nil)
+
 // Send posts one message and returns the created post id as the core's opaque
 // reference.
 func (o *outbound) Send(ctx context.Context, addr *bridge.Address, text string) (string, error) {
-	post, err := o.client.CreatePost(ctx, addr.Channel, addr.Thread, text)
+	post, err := o.CreatePost(ctx, addr.Channel, addr.Thread, text)
 	if err != nil {
-		//nolint:wrapcheck // the client returns a classified *APIError that already names CreatePost and its status
 		return "", err
 	}
 
@@ -131,9 +137,8 @@ func (o *outbound) SendProposal(
 ) (string, error) {
 	text := bridge.ProposalText(proposal) + "\n" + approveInstruction + shortDuration(o.confirmTTL)
 
-	post, err := o.client.CreatePost(ctx, addr.Channel, addr.Thread, text)
+	post, err := o.CreatePost(ctx, addr.Channel, addr.Thread, text)
 	if err != nil {
-		//nolint:wrapcheck // the client returns a classified *APIError that already names CreatePost and its status
 		return "", err
 	}
 
@@ -145,16 +150,9 @@ func (o *outbound) SendProposal(
 // Mattermost threads hang off a root, and addr.Thread already names it, so the
 // notice lands where the proposal is being read.
 func (o *outbound) Expired(ctx context.Context, addr *bridge.Address, _ string) error {
-	_, err := o.client.CreatePost(ctx, addr.Channel, addr.Thread, msgExpired)
+	_, err := o.CreatePost(ctx, addr.Channel, addr.Thread, msgExpired)
 
-	//nolint:wrapcheck // the client returns a classified *APIError that already names CreatePost and its status
 	return err
-}
-
-// MaxChars is the server's own post ceiling, read at connect, so a reply splits
-// at the width this server enforces rather than a compiled-in guess (FR18).
-func (o *outbound) MaxChars() int {
-	return o.client.MaxPostSize()
 }
 
 // shortDuration renders a whole-hour or whole-minute span without the zero tail

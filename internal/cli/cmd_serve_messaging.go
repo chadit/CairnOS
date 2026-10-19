@@ -35,6 +35,14 @@ type MessageSenderAdapter struct {
 	logger   *slog.Logger
 }
 
+// sendRefusal builds the permanent error Send returns for a message that
+// cannot go out as addressed. It returns the concrete type on purpose: a
+// constructor never returns nil, so the typed-nil interface trap cannot apply,
+// and a caller holding the result keeps Code and Class without a type assertion.
+func sendRefusal(code, format string, args ...any) *runner.Error {
+	return runner.NewError(runner.ClassPermanent, code, fmt.Sprintf(format, args...))
+}
+
 // NewMessageSender builds serve's send adapter. It is exported so a test drives
 // the message runner through the same error translation serve applies.
 func NewMessageSender(registry *messaging.Registry, logger *slog.Logger) *MessageSenderAdapter {
@@ -48,13 +56,12 @@ func NewMessageSender(registry *messaging.Registry, logger *slog.Logger) *Messag
 func (s *MessageSenderAdapter) Send(ctx context.Context, identity, recipient, text, thread string) (string, error) {
 	sender, known := s.registry.Get(identity)
 	if !known {
-		return "", runner.NewError(runner.ClassPermanent, "message.identity_not_found",
-			fmt.Sprintf("no messaging identity named %q is configured", identity))
+		return "", sendRefusal("message.identity_not_found", "no messaging identity named %q is configured", identity)
 	}
 
 	target, err := messaging.ParseTarget(recipient)
 	if err != nil {
-		return "", runner.NewError(runner.ClassPermanent, "message.bad_target", err.Error())
+		return "", runner.Wrapf(err, runner.ClassPermanent, "message.bad_target", "%v", err)
 	}
 
 	ref, err := sender.Send(ctx, target, text, thread)

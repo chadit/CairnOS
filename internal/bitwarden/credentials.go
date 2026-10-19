@@ -109,7 +109,7 @@ func checkComplete(creds Credentials, path string) error {
 		return nil
 	}
 
-	return cairnerr.Newf(CodeCredentials, "%s is missing from %s and the environment",
+	return vaultError(CodeCredentials, "%s is missing from %s and the environment",
 		strings.Join(missing, ", "), path)
 }
 
@@ -137,7 +137,7 @@ func readCredentialsFile(path string) (map[string]string, error) {
 	}
 
 	if perm := info.Mode().Perm(); perm&^credentialsPerm != 0 {
-		return nil, cairnerr.Newf(CodeCredentials,
+		return nil, vaultError(CodeCredentials,
 			"%s is mode %04o; it opens a vault and must be %04o or stricter",
 			path, perm, credentialsPerm)
 	}

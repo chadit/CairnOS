@@ -30,6 +30,7 @@ const (
 	flagDirArg    = "--dir"
 	flagInputArg  = "--input"
 	flagDryRunArg = "--dry-run"
+	listArg       = "list"
 
 	dataDirName     = "data"
 	examplesDirName = "examples"

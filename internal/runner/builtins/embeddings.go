@@ -101,7 +101,7 @@ func decodeEmbedding(body io.Reader) ([]float64, error) {
 	}
 
 	if len(decoded.Data) == 0 || len(decoded.Data[0].Embedding) == 0 {
-		return nil, runner.NewError(runner.ClassPermanent,
+		return nil, taskError(runner.ClassPermanent,
 			embeddingsCodePrefix+codeSuffixBadResponse, "embeddings response carried no vector")
 	}
 

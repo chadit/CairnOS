@@ -54,7 +54,7 @@ func (a *App) cmdPause(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	a.recordAudit(ctx, db, actorCLI, store.AuditActionPause, name, *reasonFlag)
+	a.recordAudit(ctx, db, store.AuditActionPause, name, *reasonFlag)
 	a.printOutf("paused %s\n", name)
 
 	return ExitOK
@@ -92,7 +92,7 @@ func (a *App) cmdResume(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	a.recordAudit(ctx, db, actorCLI, store.AuditActionResume, name, "")
+	a.recordAudit(ctx, db, store.AuditActionResume, name, "")
 
 	if resumed {
 		a.printOutf("resumed %s\n", name)
@@ -226,8 +226,8 @@ func (a *App) printBudget(ctx context.Context, db store.Store, dir, name string)
 // recordAudit appends a governance audit row from the CLI, logging a write
 // failure rather than failing the command: the control action already
 // happened.
-func (a *App) recordAudit(ctx context.Context, db store.GovernanceStore, actor, action, target, detail string) {
-	entry := &store.AuditEntry{Actor: actor, Action: action, Target: target, Detail: detail}
+func (a *App) recordAudit(ctx context.Context, db store.GovernanceStore, action, target, detail string) {
+	entry := &store.AuditEntry{Actor: actorCLI, Action: action, Target: target, Detail: detail}
 	if err := db.AppendAudit(ctx, entry); err != nil {
 		a.logger.Warn("append governance audit", "action", action, "target", target, "error", err)
 	}

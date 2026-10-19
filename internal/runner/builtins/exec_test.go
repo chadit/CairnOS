@@ -1,8 +1,11 @@
 package builtins_test
 
 import (
+	"context"
 	"errors"
+	"io/fs"
 	"maps"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -348,6 +351,10 @@ exit 3`)
 	if !strings.Contains(classified.Message, "reconcile refused") {
 		t.Fatalf("message %q does not carry the stderr tail", classified.Message)
 	}
+
+	if exitErr, isExit := errors.AsType[*exec.ExitError](err); !isExit || exitErr.ExitCode() != 3 {
+		t.Fatalf("errors.As found no *exec.ExitError with code 3 behind %v", err)
+	}
 }
 
 func TestExecMissingCommandIsPermanent(t *testing.T) {
@@ -360,6 +367,10 @@ func TestExecMissingCommandIsPermanent(t *testing.T) {
 	classified := classifiedError(t, err)
 	if classified.Class != runner.ClassPermanent || classified.Code != codeExecNotFound {
 		t.Fatalf("class/code = %v/%q, want permanent/%q", classified.Class, classified.Code, codeExecNotFound)
+	}
+
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("errors.Is(%v, fs.ErrNotExist) = false; the launch failure is not in the chain", err)
 	}
 }
 
@@ -381,6 +392,10 @@ func TestExecTimeoutKillsTheProcess(t *testing.T) {
 	classified := classifiedError(t, err)
 	if classified.Class != runner.ClassTransient || classified.Code != codeExecTimeout {
 		t.Fatalf("class/code = %v/%q, want transient/%q", classified.Class, classified.Code, codeExecTimeout)
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is(%v, context.DeadlineExceeded) = false", err)
 	}
 
 	if elapsed := time.Since(start); elapsed > 10*time.Second {

@@ -93,7 +93,7 @@ func (*fakeConn) Connect(_ context.Context) error { return nil }
 
 func (c *fakeConn) Me() mattermost.User { return c.me }
 
-func (*fakeConn) MaxPostSize() int { return 4000 }
+func (*fakeConn) MaxChars() int { return 4000 }
 
 // Listen forwards pushed events until ctx ends, the way the real socket reader
 // does, so the bridge's pump loop is exercised rather than bypassed.

@@ -1,6 +1,7 @@
 // Integration tests for the Phase 1a API server: a real sqlite store, the
-// mock runner, real listeners on ephemeral loopback ports, and both faces
-// (gRPC and the generated HTTP gateway) of the one proto source.
+// mock runner and a narrow exec runner, real listeners on ephemeral loopback
+// ports, and both faces (gRPC and the generated HTTP gateway) of the one proto
+// source.
 package api_test
 
 import (
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -165,6 +167,15 @@ func startServer(t *testing.T) *fixture {
 func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 	t.Helper()
 
+	return startServerOver(t, nil, extensions...)
+}
+
+// startServerOver is startServerWith with the engine's store wrapped by
+// engineStore when it is non-nil, so a case can hold the engine at one write
+// while the API still reads the real database.
+func startServerOver(t *testing.T, engineStore func(store.Store) store.Store, extensions ...*api.Extension) *fixture {
+	t.Helper()
+
 	dir := t.TempDir()
 	workflowsDir := filepath.Join(dir, "workflows")
 
@@ -211,7 +222,12 @@ func startServerWith(t *testing.T, extensions ...*api.Extension) *fixture {
 	drain := api.NewDrain()
 	transport := newMemTransport()
 
-	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
+	var engineDB store.Store = db
+	if engineStore != nil {
+		engineDB = engineStore(db)
+	}
+
+	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), engineDB))
 
 	// The breaker set trips on a single failure so the reset test can open
 	// a breaker without arranging failing traffic through the engine.
@@ -296,7 +312,9 @@ func testEngineConfig(manager *api.Manager) engine.Config {
 	}
 }
 
-// testRegistry builds a registry holding just the mock runner.
+// testRegistry builds a registry holding the mock runner, plus an exec runner
+// that may run only the stdin_file fixture's ask action, since stdin_file is
+// refused on any other runner.
 func testRegistry(t *testing.T) *runner.Registry {
 	t.Helper()
 
@@ -304,6 +322,14 @@ func testRegistry(t *testing.T) *runner.Registry {
 
 	if err := registry.Register(builtins.MockName, builtins.MockFactory()); err != nil {
 		t.Fatalf("register mock: %v", err)
+	}
+
+	execRunner := func(map[string]any) (runner.Runner, error) {
+		return builtins.NewExec(map[string]any{"allow_actions": []any{"ask"}, "timeout": int64(30)})
+	}
+
+	if err := registry.Register(builtins.ExecName, execRunner); err != nil {
+		t.Fatalf("register exec: %v", err)
 	}
 
 	if err := registry.BuildAll(nil); err != nil {
@@ -769,8 +795,13 @@ func TestAdminHealthAndRunners(t *testing.T) {
 		t.Fatalf("ListRunners: %v", err)
 	}
 
-	if len(runners.GetRunners()) != 1 || runners.GetRunners()[0].GetName() != builtins.MockName {
-		t.Fatalf("runners = %v, want just %q", runners.GetRunners(), builtins.MockName)
+	names := make([]string, 0, len(runners.GetRunners()))
+	for _, listed := range runners.GetRunners() {
+		names = append(names, listed.GetName())
+	}
+
+	if want := []string{builtins.ExecName, builtins.MockName}; !slices.Equal(names, want) {
+		t.Fatalf("runners = %v, want the fixture's %q", names, want)
 	}
 
 	// The mock has taken no traffic in this fixture, so it has no breaker

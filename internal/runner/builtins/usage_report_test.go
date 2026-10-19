@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -268,6 +269,10 @@ func TestUsageReportsAMissingFile(t *testing.T) {
 
 	if message := assertRunnerError(t, err, runner.ClassTransient, codeUsageNoReport); !strings.Contains(message, output) {
 		t.Fatalf("message = %q, want it to name %s", message, output)
+	}
+
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("errors.Is(%v, fs.ErrNotExist) = false; the missing file is not in the chain", err)
 	}
 }
 

@@ -13,3 +13,20 @@ var (
 	ErrHostPathTrailingSlash = errors.New("must not end with a slash")
 	ErrHostPathPattern       = errors.New("must match")
 )
+
+// Sentinels for the allow_actions editor. Each caller wraps one with the detail
+// the operator needs; tests match the rule with errors.Is.
+var (
+	// ErrNoExecTable reports a config with no [runner.exec] table. The editor
+	// refuses rather than creating one, because a written exec block must carry
+	// a timeout and serve would then refuse to start without it.
+	ErrNoExecTable = errors.New("no [runner.exec] table")
+
+	// ErrAllowActionsShape reports an allow_actions array, or a [runner.exec]
+	// table, written in a form the text editor does not rewrite.
+	ErrAllowActionsShape = errors.New("allow_actions is in a shape this command does not edit")
+
+	// ErrAllowActionsVerify reports an edit whose re-parse disagrees with the
+	// expected result. Nothing is written when it fires.
+	ErrAllowActionsVerify = errors.New("the edited config did not decode to the expected allow_actions")
+)

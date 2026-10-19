@@ -118,15 +118,6 @@ type Clock interface {
 	After(d time.Duration) <-chan time.Time
 }
 
-// realClock reads the machine's clock, which is what a deploy waits on.
-type realClock struct{}
-
-// Now answers with the current instant.
-func (realClock) Now() time.Time { return time.Now() }
-
-// After answers with a channel that fires once d has passed.
-func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
-
 // item is the part of a vault item this package reads. Everything else the
 // search returns is ignored rather than modeled.
 type item struct {
@@ -267,7 +258,7 @@ func (c *Client) status(ctx context.Context) (string, error) {
 	}
 
 	if jsonErr := json.Unmarshal([]byte(out), &parsed); jsonErr != nil {
-		return "", cairnerr.New(CodeStatus, "bw status did not answer with JSON")
+		return "", cairnerr.Wrapf(jsonErr, CodeStatus, "bw status did not answer with JSON")
 	}
 
 	return parsed.Status, nil
@@ -362,7 +353,7 @@ func Select(found Item, names []string) (map[string]string, error) {
 	if len(missing) > 0 {
 		slices.Sort(missing)
 
-		return nil, cairnerr.Newf(CodeFields, "item %q has no value for %s",
+		return nil, vaultError(CodeFields, "item %q has no value for %s",
 			found.Name, strings.Join(missing, ", "))
 	}
 
@@ -385,7 +376,7 @@ func freePort(ctx context.Context) (int, error) {
 
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
-		return 0, cairnerr.New(CodeServe, "loopback listener reported no TCP port")
+		return 0, vaultError(CodeServe, "loopback listener reported no TCP port")
 	}
 
 	return addr.Port, nil
@@ -482,9 +473,10 @@ func (c *Client) startServe(ctx context.Context) (*daemon, error) {
 
 	logStep(c.Logger, "bitwarden serve started", "port", port)
 
-	clock := c.Clock
-	if clock == nil {
-		clock = realClock{}
+	// The machine's clock is what a deploy waits on, so it backs a nil Clock.
+	now, after := time.Now, time.After
+	if c.Clock != nil {
+		now, after = c.Clock.Now, c.Clock.After
 	}
 
 	started := &daemon{
@@ -492,7 +484,8 @@ func (c *Client) startServe(ctx context.Context) (*daemon, error) {
 		cmd:     cmd,
 		cancel:  cancel,
 		exited:  make(chan struct{}),
-		clock:   clock,
+		now:     now,
+		after:   after,
 		client:  newDaemonClient(c.timeout()),
 		stderr:  &stderr,
 		port:    port,
@@ -528,7 +521,8 @@ type daemon struct {
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
 	exited chan struct{}
-	clock  Clock
+	now    func() time.Time
+	after  func(time.Duration) <-chan time.Time
 	client *http.Client
 
 	// stderr collects what the child wrote, so a start that failed says why.
@@ -589,9 +583,9 @@ func (d *daemon) stderrTail() string {
 // budget rescues a daemon that is already gone. Its two failures carry sentinels
 // because serveReady answers both by starting over on another port.
 func (d *daemon) waitReady(ctx context.Context) error {
-	deadline := d.clock.Now().Add(readyTimeout)
+	deadline := d.now().Add(readyTimeout)
 
-	for d.clock.Now().Before(deadline) {
+	for d.now().Before(deadline) {
 		// Each probe gets its own short bound, so a dial the host drops costs one
 		// attempt rather than the whole budget: the next one leaves from a fresh
 		// source port and gets through.
@@ -604,7 +598,7 @@ func (d *daemon) waitReady(ctx context.Context) error {
 			return cairnerr.Wrapf(ctx.Err(), CodeReady, "canceled while waiting for bw serve: %v", ctx.Err())
 		case <-d.exited:
 			return d.exitError()
-		case <-d.clock.After(readyInterval):
+		case <-d.after(readyInterval):
 		}
 	}
 
@@ -664,7 +658,7 @@ func (d *daemon) find(ctx context.Context, name string, timeout time.Duration) (
 
 	var parsed listResponse
 	if jsonErr := json.Unmarshal(raw, &parsed); jsonErr != nil {
-		return nil, cairnerr.New(CodeList, "the item list did not answer with JSON")
+		return nil, cairnerr.Wrapf(jsonErr, CodeList, "the item list did not answer with JSON")
 	}
 
 	return exactMatch(parsed.Data.Data, name)
@@ -681,11 +675,11 @@ func exactMatch(items []item, name string) (*item, error) {
 	}
 
 	if len(matches) == 0 {
-		return nil, cairnerr.Newf(CodeItem, "no vault item is named %q", name)
+		return nil, vaultError(CodeItem, "no vault item is named %q", name)
 	}
 
 	if len(matches) > 1 {
-		return nil, cairnerr.Newf(CodeItem, "%d vault items are named %q; rename all but one",
+		return nil, vaultError(CodeItem, "%d vault items are named %q; rename all but one",
 			len(matches), name)
 	}
 
@@ -750,7 +744,7 @@ func (d *daemon) do(ctx context.Context, method, path string, body map[string]st
 // failure, because a bw error body can quote the request it was given.
 func readResponse(resp *http.Response, path string) ([]byte, error) {
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("%s answered %w", path, statusError(resp.StatusCode))
+		return nil, fmt.Errorf("%s answered %w", path, &statusError{code: resp.StatusCode})
 	}
 
 	raw, err := io.ReadAll(resp.Body)
@@ -761,14 +755,17 @@ func readResponse(resp *http.Response, path string) ([]byte, error) {
 	return raw, nil
 }
 
-// statusError carries an HTTP status as an error with no body attached.
-type statusError int
+// statusError carries an HTTP status as an error with no body attached. Only
+// the pointer implements error, so the type has one unambiguous error form.
+type statusError struct {
+	code int
+}
 
-func (s statusError) Error() string {
-	return "HTTP " + strconv.Itoa(int(s))
+func (s *statusError) Error() string {
+	return "HTTP " + strconv.Itoa(s.code)
 }
 
 // Is reports a statusError as errAnswered: any status at all is a reply.
-func (statusError) Is(target error) bool {
+func (*statusError) Is(target error) bool {
 	return target == errAnswered
 }

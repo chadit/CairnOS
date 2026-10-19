@@ -59,8 +59,7 @@ func (*runWorkflowTool) Validate(task *runner.Task) error {
 
 	name, _ := task.Params[argWorkflow].(string)
 	if name == "" {
-		return runner.NewError(runner.ClassPermanent, RunWorkflowToolName+".missing_workflow",
-			"run_workflow requires a workflow name")
+		return refusal(RunWorkflowToolName+".missing_workflow", "run_workflow requires a workflow name")
 	}
 
 	return nil
@@ -72,10 +71,10 @@ func (*runWorkflowTool) Validate(task *runner.Task) error {
 // refuses rather than silently firing an unconfirmed workflow.
 func (*runWorkflowTool) Execute(ctx context.Context, _ *runner.Task) (runner.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassTransient, RunWorkflowToolName+".canceled", err.Error())
+		return runner.Result{}, runner.Wrapf(err, runner.ClassTransient, RunWorkflowToolName+".canceled", "%v", err)
 	}
 
-	return runner.Result{}, runner.NewError(runner.ClassPermanent, RunWorkflowToolName+".gate_bypassed",
+	return runner.Result{}, refusal(RunWorkflowToolName+".gate_bypassed",
 		"run_workflow must go through the chat confirmation gate; direct execution is refused")
 }
 

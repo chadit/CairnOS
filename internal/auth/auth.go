@@ -125,6 +125,11 @@ type Config struct {
 	// default on and are overridden only deliberately.
 	RequireExp bool
 	RequireJTI bool
+
+	// HashCost is the argon2id cost the unknown-key decoy pays. It should match
+	// the cost this deployment mints keys under, which for every real
+	// deployment is the zero value, the production default.
+	HashCost HashCost
 }
 
 // Authenticator owns the login exchange, token verification, and
@@ -141,6 +146,8 @@ func New(store Store, material *Material, cfg Config) *Authenticator {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+
+	cfg.HashCost = cfg.HashCost.withDefault()
 
 	return &Authenticator{store: store, material: material, cfg: cfg}
 }
@@ -160,7 +167,7 @@ func (a *Authenticator) Login(ctx context.Context, plaintext string) (string, ti
 	if err != nil {
 		// Burn the same argon2id work a real comparison would, so a miss
 		// and a mismatch take comparable time.
-		verifyDecoy(secret)
+		verifyDecoy(secret, a.cfg.HashCost)
 
 		return "", time.Time{}, fmt.Errorf("login: %w", err)
 	}

@@ -82,9 +82,9 @@ func applyCredentialKey(cred *Credential, name, key string, value any) error {
 	case credKeyAllowPrivate:
 		cred.AllowPrivateTargets, err = credBool(name, key, value)
 	case credKeyClientSecret:
-		err = plaintextSecretErr(name, credKeyClientSecret, credKeyClientSecretRef)
+		err = &credentialKeyError{name: name, key: key, ref: credKeyClientSecretRef}
 	case credKeyRefreshToken:
-		err = plaintextSecretErr(name, credKeyRefreshToken, credKeyRefreshTokenRef)
+		err = &credentialKeyError{name: name, key: key, ref: credKeyRefreshTokenRef}
 	default:
 		err = fmt.Errorf("%w: credential.%s has unknown key %q", ErrInvalidConfig, name, key)
 	}
@@ -96,7 +96,7 @@ func applyCredentialKey(cred *Credential, name, key string, value any) error {
 func credString(name, key string, value any) (string, error) {
 	str, ok := value.(string)
 	if !ok {
-		return "", credTypeErr(name, key, "a string")
+		return "", &credentialKeyError{name: name, key: key, want: "a string"}
 	}
 
 	return str, nil
@@ -106,7 +106,7 @@ func credString(name, key string, value any) (string, error) {
 func credBool(name, key string, value any) (bool, error) {
 	flag, ok := value.(bool)
 	if !ok {
-		return false, credTypeErr(name, key, "a boolean")
+		return false, &credentialKeyError{name: name, key: key, want: "a boolean"}
 	}
 
 	return flag, nil
@@ -114,9 +114,12 @@ func credBool(name, key string, value any) (bool, error) {
 
 // credStringSlice asserts an array of strings or returns a key-named type error.
 func credStringSlice(name, key string, value any) ([]string, error) {
+	// Both a non-array and an array holding a non-string fail the same way.
+	notStrings := &credentialKeyError{name: name, key: key, want: "a string array"}
+
 	raw, ok := value.([]any)
 	if !ok {
-		return nil, credTypeErr(name, key, "a string array")
+		return nil, notStrings
 	}
 
 	items := make([]string, len(raw))
@@ -124,7 +127,7 @@ func credStringSlice(name, key string, value any) ([]string, error) {
 	for idx, elem := range raw {
 		str, isStr := elem.(string)
 		if !isStr {
-			return nil, credTypeErr(name, key, "a string array")
+			return nil, notStrings
 		}
 
 		items[idx] = str
@@ -133,17 +136,29 @@ func credStringSlice(name, key string, value any) ([]string, error) {
 	return items, nil
 }
 
-// credTypeErr builds a type mismatch error that names the credential and key,
-// never the value.
-func credTypeErr(name, key, want string) error {
-	return fmt.Errorf("%w: credential.%s.%s must be %s", ErrInvalidConfig, name, key, want)
+// credentialKeyError rejects one credential key by naming the block and key,
+// never the value, so a secret written in the wrong place stays out of logs. A
+// set ref marks a plaintext secret and names the _ref key that replaces it;
+// otherwise want names the type the key must hold.
+type credentialKeyError struct {
+	name string
+	key  string
+	want string
+	ref  string
 }
 
-// plaintextSecretErr builds the trap error for a plaintext secret key, pointing
-// at its _ref alternative and never echoing the value.
-func plaintextSecretErr(name, key, refKey string) error {
-	return fmt.Errorf("%w: credential.%s.%s is a plaintext secret; store the value and reference it with %s",
-		ErrInvalidConfig, name, key, refKey)
+func (e *credentialKeyError) Error() string {
+	if e.ref != "" {
+		return fmt.Sprintf("%v: credential.%s.%s is a plaintext secret; store the value and reference it with %s",
+			ErrInvalidConfig, e.name, e.key, e.ref)
+	}
+
+	return fmt.Sprintf("%v: credential.%s.%s must be %s", ErrInvalidConfig, e.name, e.key, e.want)
+}
+
+// Unwrap keeps errors.Is(err, ErrInvalidConfig) true for every rejected key.
+func (*credentialKeyError) Unwrap() error {
+	return ErrInvalidConfig
 }
 
 // validateCredentials checks every parsed credential's grant, token_url, and

@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
@@ -43,9 +42,9 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 		return code
 	}
 
-	conn, err := grpc.NewClient(opts.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := a.dialServe(opts.addr)
 	if err != nil {
-		a.printErrf("chat: dial %s: %v\n", opts.addr, err)
+		a.printErrf("chat: %v\n", err)
 
 		return ExitFailure
 	}

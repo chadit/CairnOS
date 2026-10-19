@@ -37,7 +37,7 @@ func (b *builder) checkWorkflowName(flow *Workflow) {
 		return
 	}
 
-	if !isValidName(flow.Name) {
+	if !ValidName(flow.Name) {
 		b.addf(CodeBadName, "workflow.name %q must match a lowercase identifier", flow.Name)
 	}
 }
@@ -53,7 +53,7 @@ func (b *builder) checkErrorWorkflow(flow *Workflow) {
 		return
 	}
 
-	if !isValidName(flow.ErrorWorkflow) {
+	if !ValidName(flow.ErrorWorkflow) {
 		b.addf(CodeBadName, "workflow.error_workflow %q must match a lowercase identifier", flow.ErrorWorkflow)
 
 		return
@@ -233,7 +233,7 @@ func matchesStringSlice(value any) bool {
 }
 
 func (b *builder) checkAction(flow *Workflow, action *Action) {
-	if !isValidName(action.Name) {
+	if !ValidName(action.Name) {
 		b.addf(CodeBadName, "action name %q must match a lowercase identifier", action.Name)
 	}
 
@@ -311,7 +311,7 @@ func (b *builder) checkWorkflowAction(flow *Workflow, action *Action) {
 	switch {
 	case action.Workflow == "":
 		b.addf(CodeInvalid, "workflow-call action %q is missing its workflow", action.Name)
-	case !isValidName(action.Workflow):
+	case !ValidName(action.Workflow):
 		b.addf(CodeBadName, "workflow-call action %q workflow %q must match a lowercase identifier", action.Name, action.Workflow)
 	}
 

@@ -25,6 +25,7 @@ import (
 	"github.com/chadit/CairnOS/internal/api"
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/chat"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
@@ -167,6 +168,7 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 	clock := &authClock{now: time.Now()}
 
 	authn := auth.New(authStore, material, auth.Config{
+		HashCost:   authtest.FloorHashCost(),
 		Issuer:     testIssuer,
 		Audience:   testAudience,
 		TTL:        authTTL,
@@ -252,7 +254,7 @@ func (f *authFixture) seedKey(t *testing.T, scopes []string) (*auth.Key, string)
 func (f *authFixture) seedKeyInWorkspace(t *testing.T, workspace string, scopes []string) (*auth.Key, string) {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, f.clock.Now())
+	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, f.clock.Now(), authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}

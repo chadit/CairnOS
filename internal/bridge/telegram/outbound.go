@@ -47,6 +47,10 @@ type outbound struct {
 	api BotAPI
 }
 
+// The core finds Expired by type assertion, so this keeps a signature drift
+// from silently dropping the lapsed-proposal notice.
+var _ bridge.Expirer = (*outbound)(nil)
+
 // Send posts one plain-text message and returns the sent message id as the
 // core's opaque reference.
 func (o outbound) Send(ctx context.Context, addr *bridge.Address, text string) (string, error) {

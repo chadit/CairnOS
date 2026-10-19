@@ -109,11 +109,11 @@ func configStringMap(cfg map[string]any, key string) (map[string]string, error) 
 func requireStringParam(task *runner.Task, key, codePrefix string) error {
 	raw, exists := task.Params[key]
 	if !exists {
-		return runner.NewError(runner.ClassPermanent, codePrefix+".missing_"+key, "params must include "+key)
+		return taskError(runner.ClassPermanent, codePrefix+".missing_"+key, "params must include %s", key)
 	}
 
 	if _, isString := raw.(string); !isString {
-		return runner.NewError(runner.ClassPermanent, codePrefix+".bad_"+key, key+" must be a string")
+		return paramError(codePrefix, key, "must be a string")
 	}
 
 	return nil
@@ -128,7 +128,7 @@ func optionalStringParam(task *runner.Task, key, codePrefix string) error {
 	}
 
 	if _, isString := raw.(string); !isString {
-		return runner.NewError(runner.ClassPermanent, codePrefix+".bad_"+key, key+" must be a string")
+		return paramError(codePrefix, key, "must be a string")
 	}
 
 	return nil

@@ -1,9 +1,6 @@
 package hive
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 // Sentinel errors for the hive client and privacy filter.
 var (
@@ -55,8 +52,3 @@ var (
 	// tampered ciphertext. The tip is dropped, never queued from ciphertext.
 	ErrOpenSealed = errors.New("hive sealed tip did not open under the shared key")
 )
-
-// errInvalidCategory wraps ErrInvalidCategory with the offending tag.
-func errInvalidCategory(tag Category) error {
-	return fmt.Errorf("%w: %q", ErrInvalidCategory, tag)
-}

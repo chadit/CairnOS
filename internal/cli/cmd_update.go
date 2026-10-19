@@ -155,7 +155,7 @@ type UpdateSteps struct {
 // the service drains first.
 func (a *App) defaultSteps(opts *updateOptions) UpdateSteps {
 	return UpdateSteps{
-		Build:   a.buildBinary,
+		Build:   a.UpdateBuild,
 		Install: installBinary,
 		Pull:    a.pullSecrets,
 		Restart: func(ctx context.Context, rebuilt, secretsMoved bool, wanted string) error {
@@ -746,10 +746,11 @@ func unitMainPID(ctx context.Context, install service.Install) int {
 	return pid
 }
 
-// buildBinary rebuilds the checkout. make is preferred because the Makefile's
-// build target is the one a developer runs, so the two cannot drift; the go
-// commands below mirror that target for a host with no make.
-func (a *App) buildBinary(ctx context.Context, dir string) error {
+// UpdateBuild runs the update's build step on the checkout. make is preferred
+// because the Makefile's build target is the one a developer runs, so the two
+// cannot drift; the go commands below mirror that target for a host with no
+// make. It is exported so a test can stage stub make and go executables.
+func (a *App) UpdateBuild(ctx context.Context, dir string) error {
 	a.logger.Info("update: building", "dir", dir, "binary", updateBinaryRel)
 
 	goBin, err := lookGoToolchain(a.envLookup())
@@ -882,7 +883,7 @@ func (a *App) restartWhenStale(ctx context.Context, opts *updateOptions, rebuilt
 
 	previous := unitMainPID(ctx, install)
 
-	drained, err := a.driveRestart(ctx, a.restartHooksFor(install, opts.home), opts.restartNow)
+	drained, err := a.UpdateDriveRestart(ctx, a.restartHooksFor(install, opts.home), opts.restartNow)
 	if err != nil {
 		return err
 	}

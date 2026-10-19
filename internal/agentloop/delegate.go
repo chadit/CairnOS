@@ -75,8 +75,7 @@ func (*DelegateTool) Validate(task *runner.Task) error {
 
 	goal, _ := task.Params[argGoal].(string)
 	if goal == "" {
-		return runner.NewError(runner.ClassPermanent, DelegateToolName+".missing_goal",
-			"delegate requires a non-empty goal")
+		return refusal(DelegateToolName+".missing_goal", "delegate requires a non-empty goal")
 	}
 
 	return nil
@@ -88,10 +87,10 @@ func (*DelegateTool) Validate(task *runner.Task) error {
 // unwalled child.
 func (*DelegateTool) Execute(ctx context.Context, _ *runner.Task) (runner.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassTransient, DelegateToolName+".canceled", err.Error())
+		return runner.Result{}, runner.Wrapf(err, runner.ClassTransient, DelegateToolName+".canceled", "%v", err)
 	}
 
-	return runner.Result{}, runner.NewError(runner.ClassPermanent, CodeDelegateBypassed,
+	return runner.Result{}, refusal(CodeDelegateBypassed,
 		"delegate must go through the agent loop's interception; direct execution is refused")
 }
 

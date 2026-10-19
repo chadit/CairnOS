@@ -1,6 +1,7 @@
 package bitwarden_test
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"regexp"
@@ -261,6 +262,21 @@ func TestFieldsReportsAnItemThatIsNotThere(t *testing.T) {
 
 	_, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
 	wantCode(t, err, bitwarden.CodeItem)
+}
+
+// A list that is not JSON keeps the decode error in the chain, so a caller can
+// tell a garbled answer from a vault that has no such item.
+func TestFieldsKeepsTheDecodeErrorForAGarbledList(t *testing.T) {
+	t.Parallel()
+
+	fake := stageFakeBW(t, "not json", fakeSettings{})
+
+	_, err := newClient(fake).Fields(t.Context(), testCredentials(), vaultItem, []string{fieldToken})
+	wantCode(t, err, bitwarden.CodeList)
+
+	if _, isSyntax := errors.AsType[*json.SyntaxError](err); !isSyntax {
+		t.Fatalf("errors.As found no *json.SyntaxError behind %v", err)
+	}
 }
 
 // TestFieldsGivesUpWhenServeNeverAnswers bounds the one step with no natural

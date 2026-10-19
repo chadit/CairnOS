@@ -184,8 +184,8 @@ func (e *Exec) gate(task *runner.Task) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeExecDenied,
-		"action "+task.ActionName+" is not in "+ExecName+" allow_actions")
+	return taskError(runner.ClassPermanent, codeExecDenied,
+		"action %s is not in %s allow_actions", task.ActionName, ExecName)
 }
 
 // runContext derives the effective deadline: the config timeout as the
@@ -211,7 +211,7 @@ func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, 
 	piped, err := startPiped(runCtx, build)
 	if err != nil {
 		if errors.Is(err, errStdoutPipe) {
-			return runner.Result{}, runner.NewError(runner.ClassPermanent, codeExecStart, err.Error())
+			return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, codeExecStart, "%v", err)
 		}
 
 		return runner.Result{}, classifyExecStart(runCtx, piped.path, err)
@@ -229,8 +229,8 @@ func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, 
 	}
 
 	if scanErr != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeExecOutput,
-			"read stdout: "+scanErr.Error())
+		return runner.Result{}, runner.Wrapf(scanErr, runner.ClassPermanent, codeExecOutput,
+			"read stdout: %v", scanErr)
 	}
 
 	return runner.Result{
@@ -249,17 +249,17 @@ func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, 
 // permanent would deny the retry a fresh deadline could clear.
 func classifyExecStart(runCtx context.Context, command string, err error) error {
 	if runCtx.Err() != nil {
-		return runner.NewError(runner.ClassTransient, codeExecTimeout,
-			command+" canceled or timed out")
+		return runner.Wrapf(runCtx.Err(), runner.ClassTransient, codeExecTimeout,
+			"%s canceled or timed out", command)
 	}
 
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-		return runner.NewError(runner.ClassPermanent, codeExecNotFound,
-			fmt.Sprintf("command %q not found: %v", command, err))
+		return runner.Wrapf(err, runner.ClassPermanent, codeExecNotFound,
+			"command %q not found: %v", command, err)
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeExecStart,
-		"start "+command+": "+err.Error())
+	return runner.Wrapf(err, runner.ClassPermanent, codeExecStart,
+		"start %s: %v", command, err)
 }
 
 // classifyExecWait maps a finished-but-failed process. A dead run context wins
@@ -267,7 +267,7 @@ func classifyExecStart(runCtx context.Context, command string, err error) error 
 // so the non-zero exit is an effect of the timeout, not the command's verdict.
 func classifyExecWait(runCtx context.Context, waitErr error, stderrTail string) error {
 	if runCtx.Err() != nil {
-		return runner.NewError(runner.ClassTransient, codeExecTimeout,
+		return runner.Wrapf(runCtx.Err(), runner.ClassTransient, codeExecTimeout,
 			"command canceled or timed out")
 	}
 
@@ -277,11 +277,11 @@ func classifyExecWait(runCtx context.Context, waitErr error, stderrTail string) 
 			message += ": " + stderrTail
 		}
 
-		return runner.NewError(runner.ClassPermanent, codeExecExit, message)
+		return runner.Wrapf(exitErr, runner.ClassPermanent, codeExecExit, "%s", message)
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeExecStart,
-		"wait for command: "+waitErr.Error())
+	return runner.Wrapf(waitErr, runner.ClassPermanent, codeExecStart,
+		"wait for command: %v", waitErr)
 }
 
 // validateExecArgs checks the optional argv list. A whole-value reference is
@@ -299,8 +299,7 @@ func validateExecArgs(task *runner.Task) error {
 
 	items, isList := raw.([]any)
 	if !isList {
-		return runner.NewError(runner.ClassPermanent, codeExecBadArgs,
-			paramArgs+" must be a list of strings")
+		return paramError(ExecName, paramArgs, "must be a list of strings")
 	}
 
 	return checkArgvStrings(items)
@@ -311,8 +310,8 @@ func validateExecArgs(task *runner.Task) error {
 func checkArgvStrings(items []any) error {
 	for index, item := range items {
 		if _, isString := item.(string); !isString {
-			return runner.NewError(runner.ClassPermanent, codeExecBadArgs,
-				fmt.Sprintf("%s[%d] must be a string, got %T", paramArgs, index, item))
+			return taskError(runner.ClassPermanent, codeExecBadArgs,
+				"%s[%d] must be a string, got %T", paramArgs, index, item)
 		}
 	}
 

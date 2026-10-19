@@ -115,7 +115,7 @@ func (*Email) Name() string {
 // params must carry string to and body values (subject optional).
 func (e *Email) Validate(task *runner.Task) error {
 	if e.host == "" || e.from == "" {
-		return runner.NewError(runner.ClassPermanent, EmailName+".not_configured",
+		return taskError(runner.ClassPermanent, EmailName+".not_configured",
 			"runner config must set host and from")
 	}
 
@@ -143,7 +143,7 @@ func (e *Email) Execute(ctx context.Context, task *runner.Task) (runner.Result, 
 	// Line breaks in header values would let a workflow param smuggle extra
 	// headers (Bcc, a second To) into the message.
 	if strings.ContainsAny(recipient+subject, crlf) {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, EmailName+".bad_params",
+		return runner.Result{}, taskError(runner.ClassPermanent, EmailName+".bad_params",
 			"to and subject must not contain line breaks")
 	}
 

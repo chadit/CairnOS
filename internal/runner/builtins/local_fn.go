@@ -46,12 +46,12 @@ func (*LocalFn) Name() string {
 func (l *LocalFn) Validate(task *runner.Task) error {
 	name, exists := task.Params["fn"]
 	if !exists {
-		return runner.NewError(runner.ClassPermanent, "local_fn.missing_fn", "params must include fn")
+		return taskError(runner.ClassPermanent, "local_fn.missing_fn", "params must include fn")
 	}
 
 	text, isString := name.(string)
 	if !isString {
-		return runner.NewError(runner.ClassPermanent, "local_fn.bad_fn", "fn must be a string")
+		return paramError(LocalFnName, "fn", "must be a string")
 	}
 
 	if !task.Resolved && containsRefDelimiter(text) {
@@ -59,8 +59,8 @@ func (l *LocalFn) Validate(task *runner.Task) error {
 	}
 
 	if _, known := l.funcs[text]; !known {
-		return runner.NewError(runner.ClassPermanent, "local_fn.unknown",
-			fmt.Sprintf("no registered function %q", text))
+		return taskError(runner.ClassPermanent, "local_fn.unknown",
+			"no registered function %q", text)
 	}
 
 	return nil
@@ -74,7 +74,7 @@ func (l *LocalFn) Execute(ctx context.Context, task *runner.Task) (runner.Result
 
 	name, isString := task.Params["fn"].(string)
 	if !isString {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, "local_fn.bad_fn", "fn must be a string")
+		return runner.Result{}, paramError(LocalFnName, "fn", "must be a string")
 	}
 
 	fn := l.funcs[name]

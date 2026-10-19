@@ -11,6 +11,7 @@ import (
 	"github.com/chadit/CairnOS/internal/autonomic"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
+	"github.com/chadit/CairnOS/internal/workflow"
 )
 
 // Shared fixtures; goconst applies to tests in this repo's lint policy.
@@ -261,8 +262,8 @@ func TestRevertRestoresPriorVersion(t *testing.T) {
 		t.Errorf("revert did not restore the prior content\ngot:  %q\nwant: %q", afterRevert, minimalWorkflow)
 	}
 
-	if restored == "" {
-		t.Error("revert reported no restored hash")
+	if restored.Hash == "" || restored.HashChanged() {
+		t.Errorf("revert result = %+v, want the stored hash back for a workflow with no includes", restored)
 	}
 
 	audits, err := fix.db.ListAudit(t.Context(), store.AuditFilter{})
@@ -277,6 +278,66 @@ func TestRevertRestoresPriorVersion(t *testing.T) {
 
 	if audits[0].Action != autonomic.AuditActionRevert {
 		t.Errorf("newest audit action = %q, want auto_revert", audits[0].Action)
+	}
+}
+
+// includeWorkflow is the cache_me workflow with its prompt in a stdin_file, so
+// the version hash covers a file the version row does not hold.
+const includeWorkflow = `[workflow]
+name = "cache_me"
+
+[action.fetch]
+runner = "exec"
+params = { command = "cat", stdin_file = "cache_me.md" }
+`
+
+// TestRevertReportsTheHashTheRestoredWorkflowHas proves that after a prompt
+// edit, revert reports the hash the restored workflow loads with, since that
+// is what a later replay checks, and flags that it moved off the stored one.
+func TestRevertReportsTheHashTheRestoredWorkflowHas(t *testing.T) {
+	t.Parallel()
+
+	fix := newFixture(t, true)
+	promptPath := filepath.Join(filepath.Dir(fix.workflowPath), "cache_me.md")
+
+	for path, body := range map[string]string{fix.workflowPath: includeWorkflow, promptPath: "first prompt"} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	seedApproved(t, fix.db, suggestionIDOne, store.SuggestionCaching)
+
+	applied, err := fix.applier.Apply(t.Context(), suggestionIDOne)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if writeErr := os.WriteFile(promptPath, []byte("edited prompt"), 0o600); writeErr != nil {
+		t.Fatalf("edit prompt: %v", writeErr)
+	}
+
+	restored, err := fix.applier.Revert(t.Context(), workflowName)
+	if err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+
+	reloaded, err := workflow.Load(fix.workflowPath)
+	if err != nil {
+		t.Fatalf("load the restored workflow: %v", err)
+	}
+
+	if restored.StoredHash != applied.PriorHash || restored.Hash != reloaded.Hash || !restored.HashChanged() {
+		t.Fatalf("revert result = %+v, want stored %s and current %s", restored, applied.PriorHash, reloaded.Hash)
+	}
+
+	audits, err := fix.db.ListAudit(t.Context(), store.AuditFilter{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+
+	if len(audits) == 0 || !strings.Contains(audits[0].Detail, reloaded.Hash) {
+		t.Fatalf("audit rows = %+v, want the newest revert row to name the current hash %s", audits, reloaded.Hash)
 	}
 }
 

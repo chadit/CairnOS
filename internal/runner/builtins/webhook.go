@@ -74,7 +74,7 @@ func (*Webhook) Name() string {
 // URL must come from either params or config.
 func (w *Webhook) Validate(task *runner.Task) error {
 	if _, exists := task.Params[paramBody]; !exists {
-		return runner.NewError(runner.ClassPermanent, WebhookName+".missing_body", "params must include body")
+		return taskError(runner.ClassPermanent, WebhookName+".missing_body", "params must include body")
 	}
 
 	if err := optionalStringParam(task, paramURL, WebhookName); err != nil {
@@ -83,7 +83,7 @@ func (w *Webhook) Validate(task *runner.Task) error {
 
 	target, _ := task.Params[paramURL].(string)
 	if target == "" && w.url == "" {
-		return runner.NewError(runner.ClassPermanent, WebhookName+".missing_url",
+		return taskError(runner.ClassPermanent, WebhookName+".missing_url",
 			"set url in params or in the runner config")
 	}
 

@@ -85,7 +85,7 @@ func (a *App) cmdKeysAdd(ctx context.Context, args []string) int {
 	}
 	defer a.closeStore(authStore)
 
-	key, plaintext, err := auth.NewKey(*labelFlag, scopes, *workspaceFlag, time.Now())
+	key, plaintext, err := auth.NewKey(*labelFlag, scopes, *workspaceFlag, time.Now(), a.keyHashCost)
 	if err != nil {
 		a.printErrf("keys add: %v\n", err)
 

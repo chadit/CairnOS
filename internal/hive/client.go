@@ -216,7 +216,7 @@ func (c *HTTPHiveClient) Publish(ctx context.Context, tip Tip, observations int)
 	}
 
 	if !ValidCategory(tip.Category) {
-		return errInvalidCategory(tip.Category)
+		return fmt.Errorf("%w: %q", ErrInvalidCategory, tip.Category)
 	}
 
 	encoded, err := c.encodePublishBody(tip, observations)

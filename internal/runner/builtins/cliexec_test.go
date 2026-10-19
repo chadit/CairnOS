@@ -1,6 +1,7 @@
 package builtins_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,6 +59,40 @@ func writeShim(t *testing.T, dir, name, script string) string {
 	}
 
 	return path
+}
+
+// executeCanceledOnFirstLine cancels task once the tool prints a line, so the
+// kill path always meets a running process: on a loaded machine a short
+// deadline can expire before Start, which then launches nothing. The duration
+// it returns starts at the cancel, so a slow start cannot eat the caller's
+// bound.
+func executeCanceledOnFirstLine(t *testing.T, streamer runner.Streamer, task *runner.Task) (time.Duration, error) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	stream := make(chan runner.Chunk)
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := streamer.ExecuteStream(ctx, task, stream)
+		done <- err
+	}()
+
+	select {
+	case <-stream:
+	case err := <-done:
+		t.Fatalf("run ended before printing a line: %v", err)
+	}
+
+	canceled := time.Now()
+
+	cancel()
+
+	err := <-done
+
+	return time.Since(canceled), err
 }
 
 func cliTask() *runner.Task {

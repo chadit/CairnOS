@@ -106,8 +106,8 @@ func (s *Source) Validate(task *runner.Task) error {
 
 // unknownSource is the refusal for a name no [source.<name>] block declares.
 func unknownSource(name string) error {
-	return runner.NewError(runner.ClassPermanent, codeSourceUnknown,
-		"no [source."+name+"] block is configured")
+	return taskError(runner.ClassPermanent, codeSourceUnknown,
+		"no [source.%s] block is configured", name)
 }
 
 // Execute implements runner.Runner. Output is empty when the sync moved nothing,

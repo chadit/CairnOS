@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/chadit/CairnOS/internal/tenancy"
 )
@@ -37,33 +36,6 @@ var (
 	// allowlist (spec H1).
 	ErrSubjectNotAllowed = errors.New("oauth subject is not allowed to auto-provision")
 )
-
-// errUnknownStoredRole wraps ErrRoleUnknown with the offending role name.
-func errUnknownStoredRole(role string) error {
-	return fmt.Errorf("%w: %q", ErrRoleUnknown, role)
-}
-
-// errResolveMember wraps a tenancy GetMemberRole failure that is not the
-// expected not-a-member case.
-func errResolveMember(err error) error {
-	return fmt.Errorf("resolve member role: %w", err)
-}
-
-// errProvisionMember wraps a tenancy AddMember failure during first login.
-func errProvisionMember(err error) error {
-	return fmt.Errorf("provision member: %w", err)
-}
-
-// errAutoProvisionDisabled wraps ErrAutoProvisionDisabled with the subject that
-// was refused, for the server-side log.
-func errAutoProvisionDisabled(subject string) error {
-	return fmt.Errorf("%w: subject %q has no membership and auto-provisioning is off", ErrAutoProvisionDisabled, subject)
-}
-
-// errSubjectNotAllowed wraps ErrSubjectNotAllowed with the refused subject.
-func errSubjectNotAllowed(subject string) error {
-	return fmt.Errorf("%w: subject %q", ErrSubjectNotAllowed, subject)
-}
 
 // isMemberNotFound reports whether err is tenancy's not-a-member signal, the
 // case the handler treats as a first login to auto-provision.

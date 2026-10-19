@@ -110,7 +110,7 @@ func TestSuggestionsScanListApproveFlow(t *testing.T) {
 
 	id := openIDs[0]
 
-	code, stdout, stderr = runCLI(t, suggestionsCmd, "list", flagDirArg, home)
+	code, stdout, stderr = runCLI(t, suggestionsCmd, listArg, flagDirArg, home)
 	if code != cli.ExitOK {
 		t.Fatalf("list exited %d: %s", code, stderr)
 	}
@@ -119,7 +119,7 @@ func TestSuggestionsScanListApproveFlow(t *testing.T) {
 		t.Fatalf("list output missing suggestion %s:\n%s", id, stdout)
 	}
 
-	code, stdout, _ = runCLI(t, suggestionsCmd, "list", "--status", "approved", flagDirArg, home)
+	code, stdout, _ = runCLI(t, suggestionsCmd, listArg, "--status", "approved", flagDirArg, home)
 	if code != cli.ExitOK || !strings.Contains(stdout, "no suggestions") {
 		t.Fatalf("approved filter should be empty before review, got exit %d:\n%s", code, stdout)
 	}
@@ -226,7 +226,7 @@ func TestSuggestionsUsageErrors(t *testing.T) {
 		{name: "no subcommand", args: []string{suggestionsCmd}},
 		{name: "unknown subcommand", args: []string{suggestionsCmd, "bogus"}},
 		{name: "approve without id", args: []string{suggestionsCmd, "approve", flagDirArg, home}},
-		{name: "list with invalid status", args: []string{suggestionsCmd, "list", "--status", "maybe", flagDirArg, home}},
+		{name: "list with invalid status", args: []string{suggestionsCmd, listArg, "--status", "maybe", flagDirArg, home}},
 	}
 
 	for _, tt := range tests {

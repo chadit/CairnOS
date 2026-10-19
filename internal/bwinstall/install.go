@@ -194,6 +194,15 @@ func Install(ctx context.Context, opts *Options) (Result, error) {
 	return Result{Path: opts.Dest, Version: version, Previous: previous, Installed: true}, nil
 }
 
+// installError builds a refusal or failure this package reaches while it
+// fetches, checks, or places the bw binary. It returns the concrete type on
+// purpose: a constructor never returns nil, so the typed-nil interface trap
+// cannot apply, and a caller holding the result keeps Code and Details without
+// a type assertion.
+func installError(code, format string, args ...any) *cairnerr.Error {
+	return cairnerr.Newf(code, format, args...)
+}
+
 // checkSource refuses anything but https. Both callers pass a compiled-in
 // constant today, and this keeps the package's promise true for the next one:
 // a plain http source has nothing authenticating where the bytes came from.
@@ -204,7 +213,7 @@ func checkSource(source string) error {
 	}
 
 	if parsed.Scheme != httpsScheme {
-		return cairnerr.Newf(CodeSource, "the download URL must be https, not %q", parsed.Scheme)
+		return installError(CodeSource, "the download URL must be https, not %q", parsed.Scheme)
 	}
 
 	return nil
@@ -247,7 +256,7 @@ func existingBinary(opts *Options) (bool, string, error) {
 		return false, sum, nil
 	}
 
-	return false, "", cairnerr.Newf(CodeExisting,
+	return false, "", installError(CodeExisting,
 		"%s has sha256 %s; the pinned version %s has sha256 %s; re-run with --force to replace it",
 		opts.Dest, sum, opts.Version, opts.BinarySHA256)
 }
@@ -417,7 +426,7 @@ func download(ctx context.Context, opts *Options, dir string) (string, error) {
 	if !strings.EqualFold(sum, opts.ArchiveSHA256) {
 		removeTemp(temp.Name(), opts.log())
 
-		return "", cairnerr.Newf(CodeChecksum,
+		return "", installError(CodeChecksum,
 			"%s has sha256 %s, want the pinned %s", opts.URL, sum, opts.ArchiveSHA256)
 	}
 
@@ -440,7 +449,7 @@ func open(ctx context.Context, opts *Options) (io.ReadCloser, error) {
 	if response.StatusCode != http.StatusOK {
 		_ = response.Body.Close()
 
-		return nil, cairnerr.Newf(CodeDownload, "%s answered HTTP %d", opts.URL, response.StatusCode)
+		return nil, installError(CodeDownload, "%s answered HTTP %d", opts.URL, response.StatusCode)
 	}
 
 	return response.Body, nil
@@ -463,7 +472,7 @@ func copyChecked(file *os.File, source io.Reader, limit int64) (string, error) {
 	}
 
 	if written > limit {
-		return "", cairnerr.Newf(CodeDownload, "the download is larger than the %d byte limit", limit)
+		return "", installError(CodeDownload, "the download is larger than the %d byte limit", limit)
 	}
 
 	return hex.EncodeToString(digest.Sum(nil)), nil
@@ -506,14 +515,14 @@ func findEntry(reader *zip.ReadCloser) (*zip.File, error) {
 		}
 
 		if !file.Mode().IsRegular() {
-			return nil, cairnerr.Newf(CodeArchive,
+			return nil, installError(CodeArchive,
 				"the %q entry is mode %s, not a regular file", entryName, file.Mode())
 		}
 
 		return file, nil
 	}
 
-	return nil, cairnerr.Newf(CodeArchive,
+	return nil, installError(CodeArchive,
 		"the archive holds no entry named %q; it holds %s", entryName, entryNames(reader))
 }
 
@@ -576,11 +585,11 @@ func fill(temp *os.File, source io.Reader, opts *Options) (err error) {
 	}
 
 	if written > limit {
-		return cairnerr.Newf(CodeInstall, "the binary is larger than the %d byte limit", limit)
+		return installError(CodeInstall, "the binary is larger than the %d byte limit", limit)
 	}
 
 	if sum := hex.EncodeToString(digest.Sum(nil)); !strings.EqualFold(sum, opts.BinarySHA256) {
-		return cairnerr.Newf(CodeChecksum,
+		return installError(CodeChecksum,
 			"the binary inside the archive has sha256 %s, want the pinned %s", sum, opts.BinarySHA256)
 	}
 
@@ -613,12 +622,12 @@ func client(opts *Options) *http.Client {
 // standard library's own hop limit.
 func refuseDowngrade(request *http.Request, via []*http.Request) error {
 	if request.URL.Scheme != httpsScheme {
-		return cairnerr.Newf(CodeSource, "the download was redirected to %q, which is not https",
+		return installError(CodeSource, "the download was redirected to %q, which is not https",
 			request.URL.Scheme)
 	}
 
 	if len(via) >= maxRedirects {
-		return cairnerr.Newf(CodeDownload, "the download was redirected %d times", len(via))
+		return installError(CodeDownload, "the download was redirected %d times", len(via))
 	}
 
 	return nil

@@ -99,6 +99,24 @@ func TestRulesImportSeedsFromStaticFiles(t *testing.T) {
 	}
 }
 
+// TestRulesImportNamesTheFailingStep pins the message an import failure prints:
+// the step that failed, then the underlying error with the path it hit.
+func TestRulesImportNamesTheFailingStep(t *testing.T) {
+	t.Parallel()
+
+	dir := initDir(t)
+	missing := filepath.Join(t.TempDir(), "absent")
+
+	code, _, stderr := runCLI(t, rulesCmd, "import", missing, flagDirArg, dir)
+	if code != cli.ExitFailure {
+		t.Fatalf("rules import of a missing dir exited %d, want %d: %s", code, cli.ExitFailure, stderr)
+	}
+
+	if want := "rules import: read rules dir: open " + missing; !strings.Contains(stderr, want) {
+		t.Errorf("rules import stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
 // writeRuleFile drops a static rules file into srcDir.
 func writeRuleFile(t *testing.T, srcDir, name, content string) {
 	t.Helper()

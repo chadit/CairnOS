@@ -17,6 +17,7 @@ import (
 	"github.com/chadit/CairnOS/internal/api"
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
@@ -97,6 +98,7 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 	clock := &authClock{now: time.Now()}
 
 	authn := auth.New(authStore, material, auth.Config{
+		HashCost:   authtest.FloorHashCost(),
 		Issuer:     testIssuer,
 		Audience:   testAudience,
 		TTL:        authTTL,
@@ -155,7 +157,7 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 func (f *hardeningFixture) seedKey(t *testing.T, scopes []string) string {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey("hardening", scopes, "", f.clock.Now())
+	key, plaintext, err := auth.NewKey("hardening", scopes, "", f.clock.Now(), authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}

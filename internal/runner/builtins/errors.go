@@ -1,6 +1,11 @@
 package builtins
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/chadit/CairnOS/pkg/runner"
+)
 
 // Construction-time sentinels for runner factories. Classified runner.Error
 // values cover execution failures; these cover config decoding, which happens
@@ -93,3 +98,20 @@ var (
 	// keeps output types stable across runs instead of letting them drift.
 	errBadOutput = errors.New("output is not a json-shaped value")
 )
+
+// taskError builds the classified failure a runner reports for a task it
+// refuses or cannot finish, formatting the message so no call site assembles
+// one by hand. It returns the concrete type on purpose: a constructor never
+// returns nil, so the typed-nil trap cannot apply, and a caller keeps Code and
+// Class without a type assertion.
+func taskError(class runner.ErrorClass, code, format string, args ...any) *runner.Error {
+	return runner.NewError(class, code, fmt.Sprintf(format, args...))
+}
+
+// paramError reports a task param with the wrong shape. Its code is
+// "<runner>.bad_<param>" and its message "<param> <reason>", the one shape every
+// built-in uses for this, kept here so the two cannot drift apart per runner.
+// It returns the concrete type for the reason taskError does.
+func paramError(runnerName, param, reason string) *runner.Error {
+	return taskError(runner.ClassPermanent, runnerName+".bad_"+param, "%s %s", param, reason)
+}

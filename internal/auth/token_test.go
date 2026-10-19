@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 )
 
 // Environment variable names mirrored from the package under test.
@@ -99,6 +99,7 @@ func testConfig(clock *fakeClock) auth.Config {
 		RequireExp: true,
 		RequireJTI: true,
 		Now:        clock.Now,
+		HashCost:   authtest.FloorHashCost(),
 	}
 }
 
@@ -122,7 +123,7 @@ func newHS256Authenticator(t *testing.T, clock *fakeClock) (*auth.Authenticator,
 func seedKey(t *testing.T, store *auth.SQLite, scopes []string) (*auth.Key, string) {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey(testLabel, scopes, "", baseTime)
+	key, plaintext, err := auth.NewKey(testLabel, scopes, "", baseTime, authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
@@ -786,37 +787,48 @@ func TestLoadMaterialRejectsWorldReadablePrivateKey(t *testing.T) {
 	}
 }
 
-// argon2id PHC parameters every stored hash carries: RFC 9106's defaults
-// (64 MiB, one pass, four lanes). verifyDecoy derives with these same numbers,
-// so the decoy login cost tracks a real key's (spec L6).
-const (
-	wantArgonMemoryKiB = 64 * 1024
-	wantArgonTime      = 1
-	wantArgonThreads   = 4
-)
+// floorCostParams is the PHC parameter field of a key minted at the floor cost.
+const floorCostParams = "m=8,t=1,p=1"
 
-// TestDecoyParamsMatchStoredHash pins the L6 invariant: a freshly minted key's
-// stored hash carries exactly the parameters verifyDecoy uses, so a future
-// bump to one path without the other fails here rather than silently reopening
-// the unknown-key timing oracle. The decoy and hashSecret read the same
-// unexported constants, so this asserts those constants against the documented
-// defaults the decoy is pinned to.
-func TestDecoyParamsMatchStoredHash(t *testing.T) {
+// TestNewKeyStoresTheCostItWasGiven pins the zero cost to RFC 9106's defaults
+// (64 MiB, one pass, four lanes), the cost every real key and the decoy pay,
+// and proves a chosen cost reaches the stored hash. Both are read back from
+// the PHC parameter field, the only place a key keeps its cost.
+func TestNewKeyStoresTheCostItWasGiven(t *testing.T) {
 	t.Parallel()
 
-	key, _, err := auth.NewKey("decoy-params", []string{auth.ScopeReadRun}, "", baseTime)
-	if err != nil {
-		t.Fatalf("NewKey: %v", err)
+	cases := []struct {
+		name string
+		want string
+		cost auth.HashCost
+	}{
+		{name: "zero cost is the production default", cost: auth.HashCost{}, want: "m=65536,t=1,p=4"},
+		{name: "floor cost is stored as given", cost: authtest.FloorHashCost(), want: floorCostParams},
+		{name: "zero passes and lanes lift to one", cost: auth.HashCost{MemoryKiB: 8}, want: floorCostParams},
 	}
 
-	var memory, timeCost, threads int
-	if _, err := fmt.Sscanf(phcParamField(t, key.Hash), "m=%d,t=%d,p=%d", &memory, &timeCost, &threads); err != nil {
-		t.Fatalf("parse PHC params %q: %v", key.Hash, err)
-	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if memory != wantArgonMemoryKiB || timeCost != wantArgonTime || threads != wantArgonThreads {
-		t.Fatalf("stored hash params m=%d,t=%d,p=%d, want m=%d,t=%d,p=%d (decoy must match)",
-			memory, timeCost, threads, wantArgonMemoryKiB, wantArgonTime, wantArgonThreads)
+			key, plaintext, err := auth.NewKey("cost", []string{auth.ScopeReadRun}, "", baseTime, tt.cost)
+			if err != nil {
+				t.Fatalf("NewKey: %v", err)
+			}
+
+			if got := phcParamField(t, key.Hash); got != tt.want {
+				t.Fatalf("stored hash params %s, want %s", got, tt.want)
+			}
+
+			_, secret, err := auth.SplitKey(plaintext)
+			if err != nil {
+				t.Fatalf("SplitKey: %v", err)
+			}
+
+			if err := auth.VerifyKey(secret, key.Hash); err != nil {
+				t.Fatalf("VerifyKey on the key's own secret: %v", err)
+			}
+		})
 	}
 }
 

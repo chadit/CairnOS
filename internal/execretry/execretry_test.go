@@ -1,6 +1,7 @@
 package execretry_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
@@ -30,7 +31,7 @@ const busyBudget = 30 * time.Millisecond
 // holdOpen keeps a write handle on path, which is what makes execve report
 // ETXTBSY. It stands in for the racing fork of Go issue 22315, whose inherited
 // descriptor a test cannot arrange on purpose.
-func holdOpen(t *testing.T, path string) *os.File {
+func holdOpen(t *testing.T, path string) {
 	t.Helper()
 
 	busy, err := os.OpenFile(path, os.O_WRONLY, shimPerm) // #nosec G304 -- the path is built by the test
@@ -39,8 +40,6 @@ func holdOpen(t *testing.T, path string) *os.File {
 	}
 
 	t.Cleanup(func() { _ = busy.Close() })
-
-	return busy
 }
 
 // stageShim writes a runnable shim into a fresh directory. Call it before
@@ -68,22 +67,58 @@ func builder(ctx context.Context, path string) (execretry.Build, *atomic.Int64) 
 	}, &calls
 }
 
-// TestOutputSucceedsOnceTheWriteHandleCloses is the case the whole package
-// exists for: the exec is refused while a write descriptor is open and goes
-// through as soon as it closes, without the caller seeing a failure. Releasing
-// the handle from the second build ties success to the retry rather than to a
-// timer.
+// holdOpenInChild has a helper shell hold a write handle on path and returns
+// the function that releases it. The handle lives only in that child, so no
+// fork this test binary makes can inherit it and keep the file busy after the
+// release returns.
+func holdOpenInChild(t *testing.T, path string) func() {
+	t.Helper()
+
+	holder := exec.CommandContext(t.Context(), "sh", "-c", `exec 3>>"$1"; echo held; read -r _; exit 0`, "sh", path)
+
+	stdin, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatalf("holder stdin: %v", err)
+	}
+
+	stdout, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatalf("holder stdout: %v", err)
+	}
+
+	if err := holder.Start(); err != nil {
+		t.Fatalf("start the holder: %v", err)
+	}
+
+	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "held\n" {
+		t.Fatalf("holder reported %q (%v), want held", line, err)
+	}
+
+	return func() {
+		_ = stdin.Close()
+
+		if err := holder.Wait(); err != nil {
+			t.Errorf("holder exit: %v", err)
+		}
+	}
+}
+
+// TestOutputSucceedsOnceTheWriteHandleCloses is the case the package exists
+// for: the exec is refused while a write descriptor is open and goes through
+// once it closes. Releasing the handle from the second build ties success to
+// the retry, not a timer.
 func TestOutputSucceedsOnceTheWriteHandleCloses(t *testing.T) {
 	path := stageShim(t)
-	busy := holdOpen(t, path)
 
 	t.Parallel()
+
+	release := holdOpenInChild(t, path)
 
 	var calls atomic.Int64
 
 	out, err := execretry.Output(t.Context(), func() (*exec.Cmd, error) {
 		if calls.Add(1) == 2 {
-			_ = busy.Close()
+			release()
 		}
 
 		return exec.CommandContext(t.Context(), path), nil // #nosec G204 -- the test names the binary

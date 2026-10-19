@@ -97,16 +97,13 @@ func (t *updateTarget) origin() string {
 // updateStepError tags a failure with the stage it came from. Error is the
 // wrapped text alone, so the message reads as the step's own did.
 type updateStepError struct {
-	err  error
+	error
+
 	step string
 }
 
-func (e *updateStepError) Error() string {
-	return e.err.Error()
-}
-
 func (e *updateStepError) Unwrap() error {
-	return e.err
+	return e.error
 }
 
 // withStep tags err with the stage it came from, keeping a tag a step further
@@ -120,7 +117,7 @@ func withStep(step string, err error) error {
 		return err
 	}
 
-	return &updateStepError{step: step, err: err}
+	return &updateStepError{error: err, step: step}
 }
 
 // stepOf reads back the stage withStep tagged, empty for an error it never saw.

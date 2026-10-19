@@ -187,12 +187,12 @@ func (s *workflowService) ReplayRun(req *cairnosv1.ReplayRunRequest, stream cair
 // Validation problems are the successful answer here (valid=false plus the
 // canonical codes), not an RPC error: the caller asked whether the file is
 // good, and "no, here is why" answers that question.
-func (*workflowService) ValidateWorkflow(ctx context.Context, req *cairnosv1.ValidateWorkflowRequest) (*cairnosv1.ValidateWorkflowResponse, error) {
+func (s *workflowService) ValidateWorkflow(ctx context.Context, req *cairnosv1.ValidateWorkflowRequest) (*cairnosv1.ValidateWorkflowResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, canonicalStatus(err)
 	}
 
-	_, err := workflow.Parse(req.GetToml())
+	_, err := workflow.ParseInDir(req.GetToml(), s.workflowsDir)
 	if err == nil {
 		return &cairnosv1.ValidateWorkflowResponse{Valid: true}, nil
 	}
@@ -220,7 +220,7 @@ func (*workflowService) ValidateWorkflow(ctx context.Context, req *cairnosv1.Val
 func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveWorkflowRequest) (*cairnosv1.SaveWorkflowResponse, error) {
 	name := req.GetWorkflowName()
 
-	if _, err := parseNamedDefinition(req.GetToml(), name); err != nil {
+	if _, err := s.parseNamedDefinition(req.GetToml(), name); err != nil {
 		return nil, err
 	}
 
@@ -294,7 +294,7 @@ func (s *workflowService) ApproveRun(ctx context.Context, req *cairnosv1.Approve
 		return nil, approvalDecisionStatus(held.ID, actionName, err)
 	}
 
-	if err := s.startResume(ctx, held, results, flow); err != nil {
+	if err := s.startResume(ctx, held, results, flow, actionName); err != nil {
 		return nil, err
 	}
 
@@ -336,14 +336,19 @@ func (s *workflowService) resolveApprovalAction(ctx context.Context, runID, acti
 // startResume hands the decided run to the manager and drains its outcome in
 // the background so an unattended resume failure still lands in the log. A
 // run the manager is already driving is a success here, not an error: the
-// decision is recorded and the active loop settles it.
-func (s *workflowService) startResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) error {
+// decision is recorded, and resumeAfterRelease settles it if the active loop
+// parked without reading it.
+func (s *workflowService) startResume(ctx context.Context, held *store.Run, results []*store.ActionResult,
+	flow *workflow.Workflow, actionName string,
+) error {
 	handle, err := s.manager.StartResume(ctx, held, results, flow)
-	if err != nil {
-		if errors.Is(err, ErrRunActive) {
-			return nil
-		}
+	if errors.Is(err, ErrRunActive) {
+		go s.resumeAfterRelease(context.WithoutCancel(ctx), held.ID, actionName, flow)
 
+		return nil
+	}
+
+	if err != nil {
 		return canonicalStatus(err)
 	}
 
@@ -356,6 +361,49 @@ func (s *workflowService) startResume(ctx context.Context, held *store.Run, resu
 	}()
 
 	return nil
+}
+
+// resumeAfterRelease waits out the loop that refused a resume, then resumes the
+// run if it is still parked on the decided gate. That loop can read the gate
+// before the decision lands and park after it, and nothing else wakes the run.
+// The wait needs no deadline: the loop always releases, at the latest when
+// shutdown cancels it.
+func (s *workflowService) resumeAfterRelease(ctx context.Context, runID, actionName string, flow *workflow.Workflow) {
+	<-s.manager.Released(runID)
+
+	held, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		s.logger.Error("reread run after its active loop released it", "run_id", runID, "error", err)
+
+		return
+	}
+
+	results, err := s.store.ListActionResults(ctx, runID)
+	if err != nil {
+		s.logger.Error("reread action results after the active loop released the run", "run_id", runID, "error", err)
+
+		return
+	}
+
+	if held.Status != store.RunHeld || !actionWaiting(results, actionName) {
+		return
+	}
+
+	if err := s.startResume(ctx, held, results, flow, actionName); err != nil {
+		s.logger.Error("resume a decision the active loop parked past", "run_id", runID, "error", err)
+	}
+}
+
+// actionWaiting reports whether the named action is still parked on its gate,
+// which is how a decision no loop has read yet looks.
+func actionWaiting(results []*store.ActionResult, actionName string) bool {
+	for _, result := range results {
+		if result.ActionName == actionName {
+			return result.Status == store.ActionWaiting
+		}
+	}
+
+	return false
 }
 
 // approvalActionNames lists the pending gates' action names for the
@@ -380,12 +428,12 @@ func (s *workflowService) resolveRunFlow(req *cairnosv1.RunWorkflowRequest) (*wo
 		return NewWorkflowResolver(s.workflowsDir, s.logger).Resolve(req.GetWorkflowName())
 	}
 
-	flow, err := parseNamedDefinition(req.GetToml(), req.GetWorkflowName())
+	flow, err := s.parseNamedDefinition(req.GetToml(), req.GetWorkflowName())
 	if err != nil {
 		return nil, err
 	}
 
-	flow.Hash = workflow.HashBytes(req.GetToml())
+	flow.Hash = flow.DefinitionHash(req.GetToml())
 
 	return flow, nil
 }
@@ -429,12 +477,12 @@ func (s *workflowService) captureRollbackPoint(ctx context.Context, name string)
 
 // parseNamedDefinition parses definition bytes and requires its name to match
 // the path param. A parse failure returns the INVALID_ARGUMENT list
-// ValidateWorkflow reports, so the client sees every workflow.* problem. A
-// mismatch answers api.workflow_name_mismatch: without it a save could strand a
-// file under a name the client never used, and an inline run could execute under
-// the wrong identity (.agents/spec/parity/builder-ops.md).
-func parseNamedDefinition(toml []byte, name string) (*workflow.Workflow, error) {
-	flow, err := workflow.Parse(toml)
+// ValidateWorkflow reports. A mismatch answers api.workflow_name_mismatch, or a
+// save could strand a file under a name the client never used and an inline run
+// execute under the wrong identity (.agents/spec/parity/builder-ops.md).
+// stdin_file resolves in the workflows dir.
+func (s *workflowService) parseNamedDefinition(toml []byte, name string) (*workflow.Workflow, error) {
+	flow, err := workflow.ParseInDir(toml, s.workflowsDir)
 	if err != nil {
 		return nil, canonicalStatus(err)
 	}

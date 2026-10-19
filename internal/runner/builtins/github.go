@@ -151,8 +151,8 @@ func (*GitHub) Validate(task *runner.Task) error {
 
 		return validateIssueParams(task)
 	default:
-		return runner.NewError(runner.ClassPermanent, GitHubName+".bad_op",
-			fmt.Sprintf("op must be %s, %s, or %s, got %q", opReleases, opListIssues, opCreateIssue, opText))
+		return paramError(GitHubName, "op",
+			fmt.Sprintf("must be %s, %s, or %s, got %q", opReleases, opListIssues, opCreateIssue, opText))
 	}
 }
 
@@ -466,8 +466,7 @@ func validateGitHubRepo(task *runner.Task) error {
 	}
 
 	if !strings.Contains(repo, "/") {
-		return runner.NewError(runner.ClassPermanent, GitHubName+".bad_repo",
-			fmt.Sprintf("repo must be owner/name, got %q", repo))
+		return paramError(GitHubName, "repo", fmt.Sprintf("must be owner/name, got %q", repo))
 	}
 
 	return nil
@@ -486,7 +485,7 @@ func validateReleaseLimit(task *runner.Task) error {
 	}
 
 	if _, isInt := raw.(int64); !isInt {
-		return runner.NewError(runner.ClassPermanent, GitHubName+".bad_limit", "limit must be an integer")
+		return paramError(GitHubName, "limit", "must be an integer")
 	}
 
 	return nil
@@ -514,12 +513,12 @@ func validateIssueParams(task *runner.Task) error {
 
 	items, isList := raw.([]any)
 	if !isList {
-		return runner.NewError(runner.ClassPermanent, GitHubName+".bad_labels", "labels must be a list of strings")
+		return paramError(GitHubName, "labels", "must be a list of strings")
 	}
 
 	for _, item := range items {
 		if _, isString := item.(string); !isString {
-			return runner.NewError(runner.ClassPermanent, GitHubName+".bad_labels", "labels must be a list of strings")
+			return paramError(GitHubName, "labels", "must be a list of strings")
 		}
 	}
 

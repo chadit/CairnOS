@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
@@ -23,7 +24,7 @@ func runKeysCLI(ctx context.Context, t *testing.T, args ...string) (int, string,
 
 	var stdout, stderr bytes.Buffer
 
-	code := cli.New(&stdout, &stderr).Run(ctx, args)
+	code := cli.New(&stdout, &stderr).WithKeyHashCost(authtest.FloorHashCost()).Run(ctx, args)
 
 	return code, stdout.String(), stderr.String()
 }

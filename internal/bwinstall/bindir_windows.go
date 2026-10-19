@@ -4,10 +4,8 @@ package bwinstall
 
 import "os"
 
-// dirTakeoverRisk accepts every install directory on Windows. Mode().Perm()
-// reports 0777 for a directory there no matter what its ACLs say, so the POSIX
-// bits carry no signal at all, and the directory this tool creates sits under
-// the caller's own profile with the ACLs Windows gives it.
-func dirTakeoverRisk(string, os.FileInfo) error {
-	return nil
+func ownedByPrivateGroup(os.FileInfo) bool {
+	// dirTakeoverRisk returns before asking on Windows, where the POSIX bits it
+	// would excuse carry no signal. The build still needs the symbol.
+	return false
 }

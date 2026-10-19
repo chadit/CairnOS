@@ -314,7 +314,12 @@ func (c *Core) expireProposal(ctx context.Context, sessionID string, entry *rout
 
 	c.metrics.Confirm(entry.addr.Transport, entry.addr.Identity, ConfirmExpired)
 
-	if markErr := entry.out.Expired(ctx, &entry.addr, entry.ref); markErr != nil {
+	expirer, marks := entry.out.(Expirer)
+	if !marks {
+		return
+	}
+
+	if markErr := expirer.Expired(ctx, &entry.addr, entry.ref); markErr != nil {
 		c.log.WarnContext(ctx, "bridge mark expired proposal failed", "error", markErr)
 	}
 }

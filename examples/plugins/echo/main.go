@@ -61,7 +61,7 @@ func (echoRunner) Name() string {
 // can exercise the Validate translation path end to end.
 func (echoRunner) Validate(task *runner.Task) error {
 	if _, present := task.Params["bad_param"]; present {
-		return runner.NewError(runner.ClassPermanent, runnerName+".bad_param", "params must not include bad_param")
+		return failure(runner.ClassPermanent, "bad_param", "params must not include bad_param")
 	}
 
 	return nil
@@ -83,7 +83,7 @@ func (echoRunner) ExecuteStream(ctx context.Context, task *runner.Task, out chan
 		// mid-task; the host turns it into a transient plugin_down. A kill
 		// that cannot be sent fails the task instead of passing as a result.
 		if err := killSelf(); err != nil {
-			return runner.Result{}, runner.NewError(runner.ClassPermanent, runnerName+".crash_failed", err.Error())
+			return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, runnerName+".crash_failed", "%v", err)
 		}
 	}
 
@@ -92,7 +92,7 @@ func (echoRunner) ExecuteStream(ctx context.Context, task *runner.Task, out chan
 	}
 
 	if !emitChunks(ctx, task, out) {
-		return runner.Result{}, runner.NewError(runner.ClassTransient, runnerName+".canceled", "canceled while streaming")
+		return runner.Result{}, runner.Wrapf(ctx.Err(), runner.ClassTransient, runnerName+".canceled", "canceled while streaming")
 	}
 
 	return runner.Result{
@@ -156,6 +156,15 @@ func killSelf() error {
 	return nil
 }
 
+// failure builds this plugin's classified error, prefixing the code with the
+// runner name so every code stays in the plugin's own namespace. It returns
+// the concrete type on purpose: a constructor never returns nil, so the
+// typed-nil interface trap cannot apply, and the rate-limit case can set
+// RetryAfter without a type assertion.
+func failure(class runner.ErrorClass, suffix, format string, args ...any) *runner.Error {
+	return runner.NewError(class, runnerName+"."+suffix, fmt.Sprintf(format, args...))
+}
+
 // configuredFailure maps the fail_class param onto a classified error, the
 // same vocabulary the built-in mock runner uses.
 func configuredFailure(task *runner.Task) error {
@@ -166,14 +175,14 @@ func configuredFailure(task *runner.Task) error {
 
 	switch class {
 	case "transient":
-		return runner.NewError(runner.ClassTransient, runnerName+".transient", "configured transient failure")
+		return failure(runner.ClassTransient, "transient", "configured transient failure")
 	case "rate_limited":
-		failure := runner.NewError(runner.ClassRateLimited, runnerName+".rate_limited", "configured rate limit")
+		failure := failure(runner.ClassRateLimited, "rate_limited", "configured rate limit")
 		failure.RetryAfter = retryAfter(task)
 
 		return failure
 	default:
-		return runner.NewError(runner.ClassPermanent, runnerName+".permanent", fmt.Sprintf("configured failure %v", class))
+		return failure(runner.ClassPermanent, "permanent", "configured failure %v", class)
 	}
 }
 

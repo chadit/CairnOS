@@ -349,7 +349,7 @@ func (u *Usage) readReport(ctx context.Context, task *runner.Task) (UsageReport,
 
 	report, err := parseUsageReport(data, now)
 	if err != nil {
-		return UsageReport{}, runner.NewError(runner.ClassPermanent, codeUsageBadReport, err.Error())
+		return UsageReport{}, runner.Wrapf(err, runner.ClassPermanent, codeUsageBadReport, "%v", err)
 	}
 
 	if report.Logins, err = narrowReportLogins(report.Logins, task); err != nil {
@@ -373,7 +373,7 @@ func (u *Usage) readReportFile(ctx context.Context) ([]byte, error) {
 
 	path, err := u.expandHome(u.script.output)
 	if err != nil {
-		return nil, runner.NewError(runner.ClassPermanent, codeUsageUnavailable, err.Error())
+		return nil, runner.Wrapf(err, runner.ClassPermanent, codeUsageUnavailable, "%v", err)
 	}
 
 	// #nosec G304 -- the path is the operator's own [runner.usage] output key.
@@ -383,11 +383,11 @@ func (u *Usage) readReportFile(ctx context.Context) ([]byte, error) {
 			"every %s, so serve is not running with this block or the script has not succeeded",
 			path, UsageName, u.script.interval)
 
-		return nil, runner.NewError(runner.ClassTransient, codeUsageUnavailable, message)
+		return nil, runner.Wrapf(err, runner.ClassTransient, codeUsageUnavailable, "%s", message)
 	}
 
 	if err != nil {
-		return nil, runner.NewError(runner.ClassTransient, codeUsageUnavailable, "read usage report: "+err.Error())
+		return nil, runner.Wrapf(err, runner.ClassTransient, codeUsageUnavailable, "read usage report: %v", err)
 	}
 
 	return data, nil
@@ -401,13 +401,13 @@ func (u *Usage) readRemoteReport(ctx context.Context) ([]byte, error) {
 
 	path, argv, err := u.sshCommand(u.script.host, "exec cat -- "+remoteWord(u.script.output))
 	if err != nil {
-		return nil, runner.NewError(runner.ClassPermanent, codeUsageUnavailable, err.Error())
+		return nil, runner.Wrapf(err, runner.ClassPermanent, codeUsageUnavailable, "%v", err)
 	}
 
 	text, err := runUsageCommand(runCtx, path, argv)
 	if err != nil {
-		return nil, runner.NewError(runner.ClassTransient, codeUsageUnavailable,
-			"read usage report on "+u.script.where()+": "+err.Error())
+		return nil, runner.Wrapf(err, runner.ClassTransient, codeUsageUnavailable,
+			"read usage report on %s: %v", u.script.where(), err)
 	}
 
 	return []byte(text), nil
@@ -546,8 +546,8 @@ func narrowReportLogins(logins []UsageLogin, task *runner.Task) ([]UsageLogin, e
 	for _, item := range items {
 		name, _ := item.(string)
 		if !slices.ContainsFunc(logins, func(login UsageLogin) bool { return login.Launcher == name }) {
-			return nil, runner.NewError(runner.ClassPermanent, codeUsageUnknownLauncher,
-				"launcher "+name+" is not in the usage report")
+			return nil, taskError(runner.ClassPermanent, codeUsageUnknownLauncher,
+				"launcher %s is not in the usage report", name)
 		}
 	}
 
@@ -560,7 +560,7 @@ func narrowReportLogins(logins []UsageLogin, task *runner.Task) ([]UsageLogin, e
 // matching a probe where nothing answered. The script may fix it next run.
 func reportOutcome(logins []UsageLogin) error {
 	if len(logins) == 0 {
-		return runner.NewError(runner.ClassTransient, codeUsageUnavailable, "the usage report lists no accounts")
+		return taskError(runner.ClassTransient, codeUsageUnavailable, "the usage report lists no accounts")
 	}
 
 	reasons := make([]string, 0, len(logins))
@@ -574,6 +574,6 @@ func reportOutcome(logins []UsageLogin) error {
 		reasons = append(reasons, login.Launcher+": "+login.Error)
 	}
 
-	return runner.NewError(runner.ClassTransient, codeUsageUnavailable,
-		"no account in the usage report has numbers: "+strings.Join(reasons, "; "))
+	return taskError(runner.ClassTransient, codeUsageUnavailable,
+		"no account in the usage report has numbers: %s", strings.Join(reasons, "; "))
 }

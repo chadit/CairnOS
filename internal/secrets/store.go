@@ -89,25 +89,42 @@ func nowStamp() time.Time {
 	return time.Now().UTC().Truncate(time.Microsecond)
 }
 
-// notFound reports a referenced secret with no row in the store. It names the
-// secret, never a value.
-func notFound(name string) error {
-	return fmt.Errorf("%w: %s", ErrNotFound, name)
+// notFoundError reports a referenced secret with no row in the store. It names
+// the secret, never a value.
+type notFoundError struct {
+	name string
 }
 
-// sealFailed wraps a Seal failure with the secret name for context. Seal only
-// fails on a nonce-source read error, so this path is rare, but it must still
-// carry no plaintext.
-func sealFailed(name string, err error) error {
-	return fmt.Errorf("seal secret %q: %w", name, err)
+func (e *notFoundError) Error() string {
+	return fmt.Sprintf("%v: %s", ErrNotFound, e.name)
 }
 
-// openFailed wraps an Open failure (ErrOpenSealed) with the secret name. The
-// wrapped error already collapses every decrypt and auth failure to one
-// sentinel carrying no plaintext; adding the name keeps the diagnostic useful
-// without leaking material.
-func openFailed(name string, err error) error {
-	return fmt.Errorf("open secret %q: %w", name, err)
+// Unwrap keeps errors.Is(err, ErrNotFound) true for a missing secret.
+func (*notFoundError) Unwrap() error {
+	return ErrNotFound
+}
+
+// The two crypto steps an envelopeError names. Seal only fails on a nonce-source
+// read error; Open collapses every decrypt and auth failure to ErrOpenSealed.
+const (
+	stepSeal = "seal"
+	stepOpen = "open"
+)
+
+// envelopeError wraps a Seal or Open failure with the secret name, which keeps the
+// diagnostic useful while the wrapped error carries no plaintext.
+type envelopeError struct {
+	err  error
+	step string
+	name string
+}
+
+func (e *envelopeError) Error() string {
+	return fmt.Sprintf("%s secret %q: %v", e.step, e.name, e.err)
+}
+
+func (e *envelopeError) Unwrap() error {
+	return e.err
 }
 
 // sealedRow is one envelope the rotate pass re-seals: identity, recency stamp,
@@ -130,12 +147,12 @@ type sealedRow struct {
 func resealRow(sealer *Sealer, row *sealedRow) (string, []byte, []byte, error) {
 	value, err := sealer.Open(row.workspace, row.name, row.version, row.keyID, row.nonce, row.ciphertext)
 	if err != nil {
-		return "", nil, nil, openFailed(row.name, err)
+		return "", nil, nil, &envelopeError{step: stepOpen, name: row.name, err: err}
 	}
 
 	keyID, nonce, ciphertext, err := sealer.Seal(row.workspace, row.name, row.version, value)
 	if err != nil {
-		return "", nil, nil, sealFailed(row.name, err)
+		return "", nil, nil, &envelopeError{step: stepSeal, name: row.name, err: err}
 	}
 
 	return keyID, nonce, ciphertext, nil

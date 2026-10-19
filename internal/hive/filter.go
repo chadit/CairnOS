@@ -1,6 +1,7 @@
 package hive
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/chadit/CairnOS/internal/store"
@@ -39,7 +40,7 @@ type Transformer struct {
 // node fails before it ever shapes a tip.
 func NewTransformer(category Category) (*Transformer, error) {
 	if !ValidCategory(category) {
-		return nil, errInvalidCategory(category)
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCategory, category)
 	}
 
 	return &Transformer{

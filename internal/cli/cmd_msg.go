@@ -84,7 +84,7 @@ func (a *App) cmdMsgSend(ctx context.Context, args []string) int {
 
 	a.warnPlaintextToken(opts.addr, opts.token)
 
-	conn, err := dialServe(opts.addr)
+	conn, err := a.dialServe(opts.addr)
 	if err != nil {
 		a.printErrf("msg send: %v\n", err)
 
@@ -216,7 +216,7 @@ func (a *App) cmdMsgList(ctx context.Context, args []string) int {
 
 	a.warnPlaintextToken(*addr, *token)
 
-	conn, err := dialServe(*addr)
+	conn, err := a.dialServe(*addr)
 	if err != nil {
 		a.printErrf("msg list: %v\n", err)
 
@@ -295,8 +295,13 @@ func localAddr(addr string) bool {
 // dialServe opens the CLI's connection to a running serve. The credentials are
 // insecure because every cairnos client dials loopback by default and serve
 // terminates TLS ahead of the gRPC port when it is configured for it.
-func dialServe(addr string) (*grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func (a *App) dialServe(addr string) (*grpc.ClientConn, error) {
+	options := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if a.serveDialer != nil {
+		options = append(options, grpc.WithContextDialer(a.serveDialer))
+	}
+
+	conn, err := grpc.NewClient(addr, options...)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}

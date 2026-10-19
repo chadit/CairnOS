@@ -5,7 +5,6 @@ package builtins
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -112,7 +111,7 @@ func mockSleep(ctx context.Context, task *runner.Task) error {
 
 	select {
 	case <-ctx.Done():
-		return runner.NewError(runner.ClassTransient, "mock.canceled", "canceled during delay")
+		return runner.Wrapf(ctx.Err(), runner.ClassTransient, "mock.canceled", "canceled during delay")
 	case <-timer.C:
 		return nil
 	}
@@ -130,11 +129,11 @@ func (m *Mock) maybeFail(task *runner.Task) error {
 
 	switch classText {
 	case "transient":
-		return runner.NewError(runner.ClassTransient, "mock.transient", "configured transient failure")
+		return taskError(runner.ClassTransient, "mock.transient", "configured transient failure")
 	case "rate_limited":
-		return runner.NewError(runner.ClassRateLimited, "mock.rate_limited", "configured rate limit")
+		return taskError(runner.ClassRateLimited, "mock.rate_limited", "configured rate limit")
 	default:
-		return runner.NewError(runner.ClassPermanent, "mock.permanent", fmt.Sprintf("configured failure %v", classText))
+		return taskError(runner.ClassPermanent, "mock.permanent", "configured failure %v", classText)
 	}
 }
 

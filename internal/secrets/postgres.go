@@ -79,7 +79,7 @@ func (s *Postgres) Set(ctx context.Context, name, value string) error {
 
 	keyID, nonce, ciphertext, err := s.sealer.Seal(workspace, canonical, storeVersion(updatedAt), value)
 	if err != nil {
-		return sealFailed(canonical, err)
+		return &envelopeError{step: stepSeal, name: canonical, err: err}
 	}
 
 	createdAt, err := s.createdAt(ctx, workspace, canonical, updatedAt)
@@ -121,14 +121,14 @@ func (s *Postgres) Get(ctx context.Context, name string) (string, error) {
 
 	switch err := row.Scan(&keyID, &nonce, &ciphertext, &updatedAt); {
 	case errors.Is(err, pgx.ErrNoRows):
-		return "", notFound(name)
+		return "", &notFoundError{name: name}
 	case err != nil:
 		return "", fmt.Errorf("read secret %q: %w", canonical, err)
 	}
 
 	value, err := s.sealer.Open(workspace, canonical, storeVersion(updatedAt), keyID, nonce, ciphertext)
 	if err != nil {
-		return "", openFailed(canonical, err)
+		return "", &envelopeError{step: stepOpen, name: canonical, err: err}
 	}
 
 	return value, nil
@@ -147,7 +147,7 @@ func (s *Postgres) Delete(ctx context.Context, name string) error {
 	}
 
 	if tag.RowsAffected() == 0 {
-		return notFound(name)
+		return &notFoundError{name: name}
 	}
 
 	return nil

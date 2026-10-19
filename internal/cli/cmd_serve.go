@@ -163,7 +163,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	a.serveFail = newServeFailNotifier(cfg, dir, a.envLookup(), a.logger)
 
-	authn, err := buildAuthenticator(cfg, stores.keyStore, a.envLookup())
+	authn, err := buildAuthenticator(cfg, stores.keyStore, a.envLookup(), a.keyHashCost)
 	if err != nil {
 		a.printErrf("serve: auth: %v\n", err)
 
@@ -713,10 +713,10 @@ func startSweep(ctx context.Context, cfg *config.Config, db store.Store, keyStor
 }
 
 // buildAuthenticator wires the Phase 4a authenticator from the config and
-// the signing material in the environment. A nil store (auth disabled)
-// yields a nil authenticator, which keeps the API serving without token
-// checks.
-func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.Lookup) (*auth.Authenticator, error) {
+// the signing material in the environment, with cost as the decoy's. A nil store
+// (auth disabled) yields a nil authenticator, which keeps the API serving
+// without token checks.
+func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.Lookup, cost auth.HashCost) (*auth.Authenticator, error) {
 	if keyStore == nil {
 		return nil, nil //nolint:nilnil // nil authenticator is the documented "auth disabled" state, not an error
 	}
@@ -733,6 +733,7 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.L
 		ClockSkew:  cfg.Auth.ClockSkew,
 		RequireExp: cfg.Auth.RequireExp,
 		RequireJTI: cfg.Auth.RequireJTI,
+		HashCost:   cost,
 	}), nil
 }
 

@@ -55,8 +55,7 @@ func (*SkillTool) Validate(task *runner.Task) error {
 	}
 
 	if name, _ := task.Params[argName].(string); name == "" {
-		return runner.NewError(runner.ClassPermanent, SkillToolName+".missing_name",
-			"skill requires a name")
+		return refusal(SkillToolName+".missing_name", "skill requires a name")
 	}
 
 	return nil
@@ -68,19 +67,18 @@ func (*SkillTool) Validate(task *runner.Task) error {
 // transcript value the driver reads.
 func (s *SkillTool) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassTransient, SkillToolName+".canceled", err.Error())
+		return runner.Result{}, runner.Wrapf(err, runner.ClassTransient, SkillToolName+".canceled", "%v", err)
 	}
 
 	name, _ := task.Params[argName].(string)
 	if name == "" {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, SkillToolName+".missing_name",
-			"skill requires a name")
+		return runner.Result{}, refusal(SkillToolName+".missing_name", "skill requires a name")
 	}
 
 	body, err := s.source.Load(name)
 	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, SkillToolName+".not_found",
-			fmt.Sprintf("no skill named %q is available", name))
+		return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, SkillToolName+".not_found",
+			"no skill named %q is available", name)
 	}
 
 	return runner.Result{Output: map[string]any{argName: name, keyBody: body}}, nil

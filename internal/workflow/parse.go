@@ -8,20 +8,30 @@ import (
 	"github.com/chadit/CairnOS/internal/cairnerr"
 )
 
-// Parse decodes one workflow file and validates it against every rule in
-// .agents/spec/02-workflow-schema.md. The returned error is a cairnerr.Errors
-// listing all problems found, so authors fix a file in one pass.
+// Parse is ParseInDir with no directory, for workflow bytes that stand alone,
+// as test fixtures do. Load and ParseInDir are the entry points for workflows
+// read from disk or the API, because a stdin_file param fails here: bytes with
+// no file have no directory to resolve it against.
 func Parse(data []byte) (*Workflow, error) {
+	return ParseInDir(data, "")
+}
+
+// ParseInDir decodes one workflow and validates it against every rule in
+// .agents/spec/02-workflow-schema.md, resolving each stdin_file param against
+// dir, the directory the workflow file lives in. The returned error is a
+// cairnerr.Errors listing all problems found, so authors fix a file in one pass.
+func ParseInDir(data []byte, dir string) (*Workflow, error) {
 	var raw map[string]any
 
 	if err := toml.Unmarshal(data, &raw); err != nil {
 		return nil, cairnerr.Errors{cairnerr.Newf(CodeInvalid, "not valid TOML: %v", err)}
 	}
 
-	bld := &builder{}
+	bld := &builder{dir: dir}
 
 	flow := bld.build(raw)
 	if flow != nil {
+		bld.resolveIncludes(flow)
 		bld.validate(flow)
 	}
 
@@ -34,6 +44,8 @@ func Parse(data []byte) (*Workflow, error) {
 
 // builder accumulates mapping and validation errors across the whole file.
 type builder struct {
+	// dir is where stdin_file paths resolve; empty refuses them.
+	dir  string
 	errs cairnerr.Errors
 }
 

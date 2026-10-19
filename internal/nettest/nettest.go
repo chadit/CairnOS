@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"time"
 )
 
@@ -100,7 +101,9 @@ type failingTransport struct {
 	cause error
 }
 
-// RoundTrip implements http.RoundTripper by failing.
+// RoundTrip implements http.RoundTripper by failing with the *url.Error a real
+// dial failure carries, so a caller matching that type sees what production
+// sends it.
 func (t failingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	return nil, fmt.Errorf("%s %s: %w", request.Method, request.URL, t.cause)
+	return nil, &url.Error{Op: request.Method, URL: request.URL.String(), Err: t.cause}
 }

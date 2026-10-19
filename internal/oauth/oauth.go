@@ -14,6 +14,7 @@ package oauth
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -79,7 +80,7 @@ type ProvisionPolicy struct {
 	AllowedSubjects []string
 
 	// Enabled turns auto-provisioning on. With it off, a first-time subject with
-	// no membership is refused (errAutoProvisionDisabled) so an admin must
+	// no membership is refused (ErrAutoProvisionDisabled) so an admin must
 	// pre-create the membership.
 	Enabled bool
 }
@@ -103,14 +104,14 @@ func resolveRole(ctx context.Context, members Tenancy, policy ProvisionPolicy, w
 	if err == nil {
 		scopes, ok := tenancy.ScopesForRole(role)
 		if !ok {
-			return "", nil, errUnknownStoredRole(role)
+			return "", nil, fmt.Errorf("%w: %q", ErrRoleUnknown, role)
 		}
 
 		return role, scopes, nil
 	}
 
 	if !isMemberNotFound(err) {
-		return "", nil, errResolveMember(err)
+		return "", nil, fmt.Errorf("resolve member role: %w", err)
 	}
 
 	if err := checkAutoProvision(policy, who); err != nil {
@@ -120,12 +121,12 @@ func resolveRole(ctx context.Context, members Tenancy, policy ProvisionPolicy, w
 	// First login passed the gate: provision the subject into the default
 	// workspace with the default role, then grant that role's scopes.
 	if addErr := members.AddMember(ctx, workspace, who.subject, defaultRole); addErr != nil {
-		return "", nil, errProvisionMember(addErr)
+		return "", nil, fmt.Errorf("provision member: %w", addErr)
 	}
 
 	scopes, ok := tenancy.ScopesForRole(defaultRole)
 	if !ok {
-		return "", nil, errUnknownStoredRole(defaultRole)
+		return "", nil, fmt.Errorf("%w: %q", ErrRoleUnknown, defaultRole)
 	}
 
 	return defaultRole, scopes, nil
@@ -139,15 +140,15 @@ func resolveRole(ctx context.Context, members Tenancy, policy ProvisionPolicy, w
 // operator's explicit choice.
 func checkAutoProvision(policy ProvisionPolicy, who identity) error {
 	if !policy.Enabled {
-		return errAutoProvisionDisabled(who.subject)
+		return fmt.Errorf("%w: subject %q has no membership and auto-provisioning is off", ErrAutoProvisionDisabled, who.subject)
 	}
 
 	if len(policy.AllowedEmailDomains) > 0 && !emailDomainAllowed(who.email, policy.AllowedEmailDomains) {
-		return errSubjectNotAllowed(who.subject)
+		return fmt.Errorf("%w: subject %q", ErrSubjectNotAllowed, who.subject)
 	}
 
 	if len(policy.AllowedSubjects) > 0 && !slices.Contains(policy.AllowedSubjects, who.subject) {
-		return errSubjectNotAllowed(who.subject)
+		return fmt.Errorf("%w: subject %q", ErrSubjectNotAllowed, who.subject)
 	}
 
 	return nil

@@ -27,8 +27,8 @@ func newUserCache(limit int) *userCache {
 	return &userCache{entries: make(map[string]*list.Element, limit), order: list.New(), limit: limit}
 }
 
-// get returns the cached user and marks it most recently used.
-func (c *userCache) get(id string) (User, bool) {
+// CachedUser returns the cached user and marks it most recently used.
+func (c *userCache) CachedUser(id string) (User, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

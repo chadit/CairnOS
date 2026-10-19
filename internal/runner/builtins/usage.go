@@ -255,7 +255,7 @@ func (u *Usage) Execute(ctx context.Context, task *runner.Task) (runner.Result, 
 
 	output, err := report.Map()
 	if err != nil {
-		return runner.Result{}, runner.NewError(runner.ClassPermanent, codeUsageUnavailable, err.Error())
+		return runner.Result{}, runner.Wrapf(err, runner.ClassPermanent, codeUsageUnavailable, "%v", err)
 	}
 
 	meta := make(map[string]string, len(report.Logins))
@@ -569,19 +569,19 @@ func (u *Usage) validateHost(task *runner.Task) error {
 	}
 
 	if u.script != nil && name != u.script.host {
-		return runner.NewError(runner.ClassPermanent, codeUsageUnknownHost,
-			"["+"runner."+UsageName+"] reads its report from "+u.script.where()+", so it has none for host "+name)
+		return taskError(runner.ClassPermanent, codeUsageUnknownHost,
+			"[runner.%s] reads its report from %s, so it has none for host %s", UsageName, u.script.where(), name)
 	}
 
 	host, known := u.hosts[name]
 	if !known {
-		return runner.NewError(runner.ClassPermanent, codeUsageUnknownHost,
-			"no [host."+name+"] block is configured")
+		return taskError(runner.ClassPermanent, codeUsageUnknownHost,
+			"no [host.%s] block is configured", name)
 	}
 
 	if host.SSH == "" {
-		return runner.NewError(runner.ClassPermanent, codeUsageHostNoSSH,
-			"host "+name+" has no ssh alias, so "+UsageName+" cannot reach it")
+		return taskError(runner.ClassPermanent, codeUsageHostNoSSH,
+			"host %s has no ssh alias, so %s cannot reach it", name, UsageName)
 	}
 
 	return nil
@@ -602,22 +602,20 @@ func (u *Usage) validateLaunchers(task *runner.Task) error {
 
 	items, isList := raw.([]any)
 	if !isList {
-		return runner.NewError(runner.ClassPermanent, codeUsageBadLaunchers,
-			paramUsageLaunchers+" must be a list of strings")
+		return paramError(UsageName, paramUsageLaunchers, "must be a list of strings")
 	}
 
 	// An empty list narrows the run to nothing, which reads at a glance like
 	// "probe them all". Refusing it at load beats a run that quietly did none.
 	if len(items) == 0 {
-		return runner.NewError(runner.ClassPermanent, codeUsageBadLaunchers,
-			paramUsageLaunchers+" must name at least one configured launcher")
+		return paramError(UsageName, paramUsageLaunchers, "must name at least one configured launcher")
 	}
 
 	for index, item := range items {
 		name, isString := item.(string)
 		if !isString {
-			return runner.NewError(runner.ClassPermanent, codeUsageBadLaunchers,
-				fmt.Sprintf("%s[%d] must be a string, got %T", paramUsageLaunchers, index, item))
+			return taskError(runner.ClassPermanent, codeUsageBadLaunchers,
+				"%s[%d] must be a string, got %T", paramUsageLaunchers, index, item)
 		}
 
 		if err := u.checkKnownLauncher(task, name); err != nil {
@@ -640,8 +638,8 @@ func (u *Usage) checkKnownLauncher(task *runner.Task, name string) error {
 		return nil
 	}
 
-	return runner.NewError(runner.ClassPermanent, codeUsageUnknownLauncher,
-		"launcher "+name+" is not listed in ["+"runner."+UsageName+"]")
+	return taskError(runner.ClassPermanent, codeUsageUnknownLauncher,
+		"launcher %s is not listed in [runner.%s]", name, UsageName)
 }
 
 // selected narrows the configured launchers to the ones the task asked for,
@@ -789,8 +787,8 @@ func (u *Usage) runContext(ctx context.Context, task *runner.Task) (context.Cont
 // when no retry could ever find the binaries.
 func usageOutcome(probes []usageProbe) error {
 	if len(probes) == 0 {
-		return runner.NewError(runner.ClassPermanent, codeUsageUnavailable,
-			"no launchers are configured for "+UsageName)
+		return taskError(runner.ClassPermanent, codeUsageUnavailable,
+			"no launchers are configured for %s", UsageName)
 	}
 
 	reasons := make([]string, 0, len(probes))
@@ -815,8 +813,8 @@ func usageOutcome(probes []usageProbe) error {
 		class = runner.ClassPermanent
 	}
 
-	return runner.NewError(class, codeUsageUnavailable,
-		"no login reported usage: "+strings.Join(reasons, "; "))
+	return taskError(class, codeUsageUnavailable,
+		"no login reported usage: %s", strings.Join(reasons, "; "))
 }
 
 // isRefusal reports whether a probe failed on something the login or the config

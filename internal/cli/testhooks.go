@@ -75,17 +75,15 @@ var ErrNoSourceCheckout = errNoSourceCheckout
 // exported so a case names the sentinel rather than matching the message text.
 var ErrUpdateBusy = errUpdateBusy
 
+// ErrForeignOwner is the refusal KeepOwnerPlan gives a caller replacing
+// another user's file, exported so a case names the sentinel.
+var ErrForeignOwner = errForeignOwner
+
 // UpdateSourceDir resolves the checkout `cairnos update` builds from, given a
 // --source override and the path of the running binary. A test passes a staged
 // layout where the real command passes its own executable.
 func UpdateSourceDir(override, executable string) (string, error) {
 	return discoverSource(override, executable)
-}
-
-// UpdateBuild runs the update's build step, so a test can stage stub make and
-// go executables through WithEnv and see the environment make is started with.
-func (a *App) UpdateBuild(ctx context.Context, dir string) error {
-	return a.buildBinary(ctx, dir)
 }
 
 // UpdateLink runs the update's link step against a given directory, so a test
@@ -181,13 +179,6 @@ func RunDrainWatcher(ctx context.Context, drain *api.Drain, inFlight func() int,
 // UpdateRestartHooks is the pair `cairnos update` turns a service over through:
 // the drain request to the running build, and the supervisor restart behind it.
 type UpdateRestartHooks = restartHooks
-
-// UpdateDriveRestart runs the restart choice against substituted hooks and
-// reports whether the drain was accepted, so a case pins the preference, the
-// fallback, and --restart-now without a supervisor or a running service.
-func (a *App) UpdateDriveRestart(ctx context.Context, hooks UpdateRestartHooks, restartNow bool) (bool, error) {
-	return a.driveRestart(ctx, hooks, restartNow)
-}
 
 // UpdateInstallBinary runs the in-place replacement on its own, so a case that
 // substitutes the install step can still record the order and then perform the

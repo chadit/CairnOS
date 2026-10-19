@@ -116,6 +116,24 @@ type ApplyResult struct {
 	NewHash      string
 }
 
+// RevertResult reports what a Revert restored. A version row holds only the
+// TOML, while its hash also covers any stdin_file the workflow included, so
+// after a prompt edit the restored workflow hashes to Hash, not StoredHash.
+type RevertResult struct {
+	// StoredHash is the hash the version row was captured under.
+	StoredHash string
+
+	// Hash is the restored workflow's hash as it loads now, the one later
+	// runs record and a replay checks.
+	Hash string
+}
+
+// HashChanged reports whether the restored workflow no longer has the hash
+// its version was captured under.
+func (r RevertResult) HashChanged() bool {
+	return r.Hash != r.StoredHash
+}
+
 // Apply applies one approved, output-neutral suggestion to its workflow file,
 // after every gate. The order is deliberate: gates first, then capture the
 // prior version as the rollback point, then edit the file, then audit. A
@@ -145,35 +163,46 @@ func (a *Applier) Apply(ctx context.Context, suggestionID string) (ApplyResult, 
 
 // Revert restores a workflow file to its most recent captured version, the
 // rollback the version store exists for (.agents/spec/13-roadmap.md, Phase 6).
-// It writes the prior definition back, writes an audit row, and reports the
-// hash it restored. A workflow with no captured version cannot be reverted.
-func (a *Applier) Revert(ctx context.Context, workflowName string) (string, error) {
+// It writes the prior TOML back, reloads it for the hash it now has, and writes
+// an audit row. A workflow with no captured version cannot be reverted.
+func (a *Applier) Revert(ctx context.Context, workflowName string) (RevertResult, error) {
 	versions, err := a.store.ListWorkflowVersions(ctx, workflowName)
 	if err != nil {
-		return "", fmt.Errorf("auto-revert: list versions for %s: %w", workflowName, err)
+		return RevertResult{}, fmt.Errorf("auto-revert: list versions for %s: %w", workflowName, err)
 	}
 
 	if len(versions) == 0 {
-		return "", fmt.Errorf("%w: %s", ErrNoVersionToRevert, workflowName)
+		return RevertResult{}, fmt.Errorf("%w: %s", ErrNoVersionToRevert, workflowName)
 	}
 
 	latest := versions[0]
 
 	path, err := a.findWorkflowPath(workflowName)
 	if err != nil {
-		return "", err
+		return RevertResult{}, err
 	}
 
-	if err := os.WriteFile(path, []byte(latest.DefinitionTOML), applyFilePerm); err != nil {
-		return "", fmt.Errorf("auto-revert: write workflow %s: %w", workflowName, err)
+	if writeErr := os.WriteFile(path, []byte(latest.DefinitionTOML), applyFilePerm); writeErr != nil {
+		return RevertResult{}, fmt.Errorf("auto-revert: write workflow %s: %w", workflowName, writeErr)
 	}
+
+	restored, err := workflow.Load(path)
+	if err != nil {
+		return RevertResult{}, fmt.Errorf("auto-revert: reload workflow %s after restore: %w", workflowName, err)
+	}
+
+	result := RevertResult{StoredHash: latest.Hash, Hash: restored.Hash}
 
 	detail := "reverted to version " + latest.Hash
-	if err := a.audit(ctx, AuditActionRevert, workflowName, detail); err != nil {
-		return "", err
+	if result.HashChanged() {
+		detail += "; an included file changed since, so it now hashes to " + result.Hash
 	}
 
-	return latest.Hash, nil
+	if err := a.audit(ctx, AuditActionRevert, workflowName, detail); err != nil {
+		return RevertResult{}, err
+	}
+
+	return result, nil
 }
 
 // applyToFile loads the workflow file, captures its current bytes as the

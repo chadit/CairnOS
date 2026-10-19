@@ -55,6 +55,7 @@ type reservation struct {
 // id before the store's own workspace filter would catch it.
 type runState struct {
 	cancel    context.CancelFunc
+	released  chan struct{}
 	workspace string
 }
 
@@ -281,7 +282,7 @@ func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*s
 		return nil, ErrRunActive
 	}
 
-	m.cancels[held.ID] = &runState{cancel: cancel, workspace: workspace}
+	m.cancels[held.ID] = &runState{cancel: cancel, released: make(chan struct{}), workspace: workspace}
 	m.mu.Unlock()
 
 	outcome := make(chan RunOutcome, 1)
@@ -291,6 +292,23 @@ func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*s
 	}, outcome)
 
 	return &RunHandle{ID: held.ID, Outcome: outcome, workspace: workspace}, nil
+}
+
+// Released returns a channel that closes once the loop driving id lets go of
+// the run, already closed when no loop holds it. A caller refused with
+// ErrRunActive waits on it to act on a decision that loop may have missed.
+func (m *Manager) Released(id string) <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if state, active := m.cancels[id]; active {
+		return state.released
+	}
+
+	released := make(chan struct{})
+	close(released)
+
+	return released
 }
 
 // launchRun runs the reservation handshake shared by StartRun and StartReplay:
@@ -366,7 +384,7 @@ func (m *Manager) register(res *reservation, cancel context.CancelFunc, workspac
 	defer m.mu.Unlock()
 
 	m.pending = res
-	m.cancels[res.id] = &runState{cancel: cancel, workspace: workspace}
+	m.cancels[res.id] = &runState{cancel: cancel, released: make(chan struct{}), workspace: workspace}
 
 	var events chan engine.Event
 	if watch {
@@ -396,6 +414,7 @@ func (m *Manager) release(id string) {
 
 	if state, exists := m.cancels[id]; exists {
 		state.cancel()
+		close(state.released)
 		delete(m.cancels, id)
 	}
 

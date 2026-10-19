@@ -31,7 +31,18 @@ const (
 	twoHours    = 2
 	threeHours  = 3
 	fourHours   = 4
+
+	// floorMemoryKiB is the smallest argon2id memory cost x/crypto accepts for
+	// one lane.
+	floorMemoryKiB = 8
 )
+
+// FloorHashCost is the cheapest argon2id cost x/crypto accepts. A suite that
+// mints or logs in with many keys under the race detector passes it, because
+// every production-cost derivation holds 64 MiB.
+func FloorHashCost() auth.HashCost {
+	return auth.HashCost{MemoryKiB: floorMemoryKiB, Time: 1, Threads: 1}
+}
 
 // baseTime anchors the denylist windows so expiry math needs no real clock.
 //
@@ -81,7 +92,7 @@ func RunConformance[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 func seedKey(t *testing.T, store auth.Store, scopes []string) (*auth.Key, string) {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey(testLabel, scopes, "", baseTime)
+	key, plaintext, err := auth.NewKey(testLabel, scopes, "", baseTime, FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
@@ -135,7 +146,7 @@ func testKeyWorkspaceRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 
 	store := openFn(t)
 
-	scoped, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, workspaceAcme, baseTime)
+	scoped, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, workspaceAcme, baseTime, FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey scoped: %v", err)
 	}
@@ -153,7 +164,7 @@ func testKeyWorkspaceRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 		t.Fatalf("workspace = %q, want %q", got.Workspace, workspaceAcme)
 	}
 
-	defaulted, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime)
+	defaulted, _, err := auth.NewKey(testLabel, []string{auth.ScopeReadRun}, "", baseTime, FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey default: %v", err)
 	}

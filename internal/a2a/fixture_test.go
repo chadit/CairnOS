@@ -20,6 +20,7 @@ import (
 	a2av1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1"
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/bridge"
 	"github.com/chadit/CairnOS/internal/bridge/bridgetest"
 	"github.com/chadit/CairnOS/internal/engine"
@@ -337,6 +338,7 @@ func wireFixtureAuth(t *testing.T, opts fixtureOptions, dbPath string, apiCfg *a
 	}
 
 	apiCfg.Auth = auth.New(authStore, material, auth.Config{
+		HashCost:   authtest.FloorHashCost(),
 		Issuer:     fixtureNode,
 		Audience:   "cairnos",
 		TTL:        time.Hour,
@@ -361,7 +363,7 @@ func (f *fixture) token(t *testing.T, scopes ...string) string {
 func (f *fixture) tokenInWorkspace(t *testing.T, workspace string, scopes ...string) string {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, time.Now())
+	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, time.Now(), authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}

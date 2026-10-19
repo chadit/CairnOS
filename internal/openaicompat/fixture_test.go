@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/auth"
+	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/chat"
 	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/openaicompat"
@@ -369,6 +370,7 @@ func wireAuth(t *testing.T, opts fixtureOptions, cfg *openaicompat.Config) (*aut
 	clock := &fakeClock{now: time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)}
 
 	authn := auth.New(authStore, material, auth.Config{
+		HashCost:   authtest.FloorHashCost(),
 		Issuer:     "cairnos-fixture",
 		Audience:   "cairnos",
 		TTL:        time.Hour,
@@ -394,7 +396,7 @@ func (f *fixture) token(t *testing.T, scopes ...string) string {
 func (f *fixture) workspaceToken(t *testing.T, workspace string, scopes ...string) string {
 	t.Helper()
 
-	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, f.clock.Now())
+	key, plaintext, err := auth.NewKey("fixture", scopes, workspace, f.clock.Now(), authtest.FloorHashCost())
 	if err != nil {
 		t.Fatalf("NewKey: %v", err)
 	}
