@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// defaultRequestTimeout bounds one hive HTTP call when the caller's context
+// DefaultRequestTimeout bounds one hive HTTP call when the caller's context
 // carries no deadline, so a stalled hive never blocks a subscribe loop forever.
-const defaultRequestTimeout = 30 * time.Second
+const DefaultRequestTimeout = 30 * time.Second
 
 // defaultMinObservations is the local floor a node insists on before it will
 // publish a pattern, independent of the server's k-anonymity floor. The client
@@ -159,7 +159,7 @@ func NewHTTPClient(cfg Config, doer HTTPClient, opts ...Option) (*HTTPHiveClient
 	}
 
 	if doer == nil {
-		doer = &http.Client{Timeout: defaultRequestTimeout}
+		doer = &http.Client{Timeout: DefaultRequestTimeout}
 	}
 
 	client := &HTTPHiveClient{cfg: cfg, doer: doer, encode: json.Marshal}

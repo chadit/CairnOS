@@ -72,17 +72,17 @@ type Exec struct {
 func NewExec(cfg map[string]any) (*Exec, error) {
 	allowList, err := configStrings(cfg, cfgKeyAllowActions)
 	if err != nil {
-		return nil, wrapConfigErr(ExecName, err)
+		return nil, &configError{runner: ExecName, err: err}
 	}
 
 	timeout, err := decodeExecTimeout(cfg)
 	if err != nil {
-		return nil, wrapConfigErr(ExecName, err)
+		return nil, &configError{runner: ExecName, err: err}
 	}
 
 	env, err := decodeExecEnv(cfg)
 	if err != nil {
-		return nil, wrapConfigErr(ExecName, err)
+		return nil, &configError{runner: ExecName, err: err}
 	}
 
 	return &Exec{allowActions: toSet(allowList), timeout: timeout, env: env}, nil

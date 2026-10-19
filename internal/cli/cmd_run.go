@@ -128,7 +128,7 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 // pauses too: governance is an engine feature, not a serve-only one
 // (.agents/spec/12-ui-and-governance.md).
 func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *config.Config, db store.Store, mem memory.Store) (*engine.Engine, func(), int, bool) {
-	tel, err := telemetry.Setup(ctx, oneShotTelemetry(cfg.Telemetry), appVersion())
+	tel, err := telemetry.Setup(ctx, oneShotTelemetry(cfg.Telemetry), appVersion(), nil)
 	if err != nil {
 		a.printErrf("%s: telemetry: %v\n", label, err)
 
@@ -153,7 +153,7 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 	}
 
 	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
-		nil, a.logger, nil)
+		nil, a.logger, nil, a.runnerTransport)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
 		a.runCloser("secret source", closeSource)

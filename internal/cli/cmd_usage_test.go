@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 )
 
@@ -113,6 +114,19 @@ func TestUsageJSONRoundTripsToTheReport(t *testing.T) {
 	if report.HasErrors || !strings.Contains(report.Summary, "| codex-agent ") {
 		t.Fatalf("report = %+v, want a clean report whose summary names both logins", report)
 	}
+
+	var fields map[string]any
+
+	if err := json.Unmarshal([]byte(stdout), &fields); err != nil {
+		t.Fatalf("decode %s: %v", stdout, err)
+	}
+
+	// A workflow reads these by key, so each must be there even when empty.
+	for key, want := range map[string]any{"failures": "", "reset_due": "", "has_reset_due": false} {
+		if value, present := fields[key]; !present || value != want {
+			t.Fatalf("%s = %v (present %v), want %v on a clean report", key, value, present, want)
+		}
+	}
 }
 
 func TestUsageNarrowsToTheNamedLaunchers(t *testing.T) {
@@ -211,8 +225,12 @@ func TestUsageReadsAStaleScriptReportWithoutRunningTheScript(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	// Three hours is well past two 900-second intervals plus the script's timeout.
-	report := fmt.Appendf(nil, usageReportFile, time.Now().Add(-3*time.Hour).Unix())
+	// Three hours is well past two 900-second intervals plus the script's
+	// timeout. The command reads the age on a fixed clock, because the notice
+	// rounds it to the minute and a slow runner would otherwise print 3h1m0s.
+	now := time.Now()
+
+	report := fmt.Appendf(nil, usageReportFile, now.Add(-3*time.Hour).Unix())
 	if err := os.WriteFile(output, report, 0o600); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
@@ -222,7 +240,9 @@ func TestUsageReadsAStaleScriptReportWithoutRunningTheScript(t *testing.T) {
 
 	t.Parallel()
 
-	code, stdout, stderr := runEnvCLI(t, pathEnv(shims), usageCmd, flagDirArg, dir)
+	code, stdout, stderr := runConfiguredCLI(t, func(app *cli.App) *cli.App {
+		return app.WithEnv(environ.Map(pathEnv(shims))).WithUsageClock(func() time.Time { return now })
+	}, usageCmd, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("usage exited %d: %s", code, stderr)
 	}

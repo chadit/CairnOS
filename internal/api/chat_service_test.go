@@ -23,6 +23,7 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/chat"
 	"github.com/chadit/CairnOS/internal/engine"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -82,7 +83,7 @@ var errScriptedExecute = errors.New("scripted chat driver only runs through Exec
 // driver, plus the gRPC client and HTTP base for the gateway.
 type chatFixture struct {
 	chat      cairnosv1.ChatServiceClient
-	transport *memTransport
+	transport *nettest.Network
 	httpBase  string
 }
 
@@ -104,7 +105,7 @@ func startChatServer(t *testing.T, driver *scriptedChatDriver) *chatFixture {
 	}
 
 	db := openChatStore(t, dir)
-	transport := newMemTransport()
+	transport := nettest.NewNetwork()
 	manager := api.NewManager(slog.New(slog.DiscardHandler))
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -133,7 +134,7 @@ func startChatServer(t *testing.T, driver *scriptedChatDriver) *chatFixture {
 
 	startAndCleanup(t, server)
 
-	conn := transport.dialGRPC(t, server.GRPCAddr())
+	conn := transport.DialGRPC(t, server.GRPCAddr())
 
 	return &chatFixture{
 		chat:      cairnosv1.NewChatServiceClient(conn),
@@ -299,7 +300,7 @@ func TestChatSendMessageStreamsOverGateway(t *testing.T) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := fix.transport.httpClient().Do(req)
+	resp, err := fix.transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("post message: %v", err)
 	}

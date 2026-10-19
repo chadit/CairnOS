@@ -27,6 +27,9 @@ const (
 	cfgKeyUsageClaude    = "claude"
 	cfgKeyUsageCodex     = "codex"
 	cfgKeyUsageClaudeGap = "claude_gap"
+
+	cfgKeyUsageResetDuePercent = "reset_due_percent"
+	cfgKeyUsageResetDueLead    = "reset_due_lead"
 )
 
 // Action params.
@@ -56,7 +59,18 @@ const (
 
 	defaultClaudeCommand = "claude"
 	defaultCodexCommand  = "codex"
+
+	// A login under a fifth of its week with two days or more to go is one a
+	// banked reset can rescue before the week runs dry, the case the alert is for.
+	defaultUsageResetDuePercent = 20.0
+	defaultUsageResetDueLead    = "48h"
 )
+
+// usageFullPercent is the top of the 0-100 scale both CLIs report usage on.
+const usageFullPercent = 100.0
+
+// hoursPerDay turns a span into the days a reset-due line reports.
+const hoursPerDay = 24
 
 // Classified error codes this runner returns.
 const (
@@ -94,15 +108,16 @@ type UsageHost struct {
 // probeAll without spending a real minute on it.
 type UsageSleeper func(ctx context.Context, gap time.Duration) bool
 
-// UsageOptions carries the seams the factory fills. Every one of them is a
-// value the runner cannot discover for itself: the host table a task resolves
-// its host param against, the environment PATH and HOME come from, the ssh
-// program name, the version string the Codex handshake reports, and the wait
-// between two Claude probes.
+// UsageOptions carries the seams the factory fills, each a value the runner
+// cannot discover for itself: the host table, the environment PATH and HOME
+// come from, the ssh program, the Codex handshake version, the wait between
+// two Claude probes, and the clock a script report's age is read on (nil is
+// time.Now).
 type UsageOptions struct {
 	Hosts   map[string]UsageHost
 	Lookup  environ.Lookup
 	Sleep   UsageSleeper
+	Now     func() time.Time
 	SSH     string
 	Version string
 }
@@ -124,41 +139,59 @@ type Usage struct {
 	hosts     map[string]UsageHost
 	lookup    environ.Lookup
 	sleep     UsageSleeper
+	now       func() time.Time
 	script    *usageScript
 	ssh       string
 	version   string
 	launchers []usageLauncher
 	timeout   time.Duration
 	claudeGap time.Duration
+	resetDue  usageResetRule
+}
+
+// usageResetRule is when a login counts as reset-due: under percent of its
+// week left with more than lead to go before the week resets on its own.
+type usageResetRule struct {
+	lead    time.Duration
+	percent float64
 }
 
 // UsageReport is one entry per login, naming the host only across an ssh hop.
-// Summary and HasErrors let a workflow post the table or branch on a failure without walking the list.
+// Summary, HasErrors and Failures let a workflow post the table, branch on a
+// failure, and name failed logins without walking the list.
 // WrittenAt and Notice come only from a script's file: when it was written,
 // and a warning once that is too long ago to trust.
 type UsageReport struct {
-	WrittenAt time.Time    `json:"written_at,omitzero"`
-	Host      string       `json:"host,omitempty"`
-	Summary   string       `json:"summary"`
-	Notice    string       `json:"notice"`
-	Logins    []UsageLogin `json:"logins"`
-	HasErrors bool         `json:"has_errors"`
+	WrittenAt time.Time `json:"written_at,omitzero"`
+	Host      string    `json:"host,omitempty"`
+	Summary   string    `json:"summary"`
+	Notice    string    `json:"notice"`
+	Failures  string    `json:"failures"`
+
+	// ResetDue names the logins worth spending a banked reset on, one line
+	// each the way Failures names failed ones, and HasResetDue flags it.
+	ResetDue    string       `json:"reset_due"`
+	Logins      []UsageLogin `json:"logins"`
+	HasErrors   bool         `json:"has_errors"`
+	HasResetDue bool         `json:"has_reset_due"`
 }
 
 // UsageLogin is one launcher's answer. A failed probe fills Error and leaves
 // the rest zero, because one dead login must not cost the report the others.
-// ReadAt, Score and ResetCredits come only from a report file: when the account
-// was read, the script's ranking score, and the expiry of each banked reset
-// still unexpired.
+// ReadAt and Score come only from a report file: when the account was read and
+// the script's ranking score.
 type UsageLogin struct {
-	ReadAt       time.Time     `json:"read_at,omitzero"`
-	Score        *float64      `json:"score,omitempty"`
-	Launcher     string        `json:"launcher"`
-	Protocol     string        `json:"protocol"`
-	Plan         string        `json:"plan"`
-	Error        string        `json:"error,omitempty"`
-	Windows      []UsageWindow `json:"windows"`
-	ResetCredits []time.Time   `json:"reset_credits,omitempty"`
+	ReadAt   time.Time     `json:"read_at,omitzero"`
+	Score    *float64      `json:"score,omitempty"`
+	Launcher string        `json:"launcher"`
+	Protocol string        `json:"protocol"`
+	Plan     string        `json:"plan"`
+	Error    string        `json:"error,omitempty"`
+	Windows  []UsageWindow `json:"windows"`
+
+	// ResetCredits is the expiry of each banked reset still unexpired, from a
+	// report file or a Codex reply. Claude banks none.
+	ResetCredits []time.Time `json:"reset_credits,omitempty"`
 }
 
 // UsageWindow is one rate-limit window. UsedPercent is the share of the window
@@ -176,7 +209,7 @@ type UsageWindow struct {
 func NewUsage(cfg map[string]any, opts UsageOptions) (*Usage, error) {
 	script, err := decodeUsageScript(cfg, opts.Hosts)
 	if err != nil {
-		return nil, wrapConfigErr(UsageName, err)
+		return nil, &configError{runner: UsageName, err: err}
 	}
 
 	fallback := defaultUsageTimeout
@@ -186,17 +219,29 @@ func NewUsage(cfg map[string]any, opts UsageOptions) (*Usage, error) {
 
 	timeout, err := decodeUsageTimeout(cfg, fallback)
 	if err != nil {
-		return nil, wrapConfigErr(UsageName, err)
+		return nil, &configError{runner: UsageName, err: err}
+	}
+
+	resetDue, err := decodeUsageResetRule(cfg)
+	if err != nil {
+		return nil, &configError{runner: UsageName, err: err}
+	}
+
+	now := opts.Now
+	if now == nil {
+		now = time.Now
 	}
 
 	usage := &Usage{
-		script:  script,
-		ssh:     usageSSHCommand(opts.SSH),
-		version: usageVersion(opts.Version),
-		hosts:   opts.Hosts,
-		lookup:  opts.Lookup,
-		sleep:   usageSleeper(opts.Sleep),
-		timeout: timeout,
+		script:   script,
+		ssh:      usageSSHCommand(opts.SSH),
+		version:  usageVersion(opts.Version),
+		hosts:    opts.Hosts,
+		lookup:   opts.Lookup,
+		sleep:    usageSleeper(opts.Sleep),
+		now:      now,
+		timeout:  timeout,
+		resetDue: resetDue,
 	}
 
 	if script != nil {
@@ -205,12 +250,12 @@ func NewUsage(cfg map[string]any, opts UsageOptions) (*Usage, error) {
 
 	usage.claudeGap, err = decodeUsageClaudeGap(cfg)
 	if err != nil {
-		return nil, wrapConfigErr(UsageName, err)
+		return nil, &configError{runner: UsageName, err: err}
 	}
 
 	usage.launchers, err = decodeUsageLaunchers(cfg)
 	if err != nil {
-		return nil, wrapConfigErr(UsageName, err)
+		return nil, &configError{runner: UsageName, err: err}
 	}
 
 	return usage, nil
@@ -294,7 +339,7 @@ func (u *Usage) Report(ctx context.Context, task *runner.Task) (UsageReport, err
 		report.Logins = append(report.Logins, probes[index].login)
 	}
 
-	report.finish()
+	report.finish(u.resetDue, u.now())
 
 	return report, usageOutcome(probes)
 }
@@ -375,7 +420,7 @@ func (r *UsageReport) Rows() [][]string {
 
 // finish fills the fields derived from the logins, so a probe and a report file
 // render the same summary. A notice leads it, where a reader meets it first.
-func (r *UsageReport) finish() {
+func (r *UsageReport) finish(rule usageResetRule, now time.Time) {
 	r.Summary = markdownTable(r.Rows())
 
 	if r.Notice != "" {
@@ -383,6 +428,86 @@ func (r *UsageReport) finish() {
 	}
 
 	r.HasErrors = slices.ContainsFunc(r.Logins, func(login UsageLogin) bool { return login.Error != "" })
+	r.Failures = r.failureLines()
+	r.ResetDue = r.resetDueLines(rule, now)
+	r.HasResetDue = r.ResetDue != ""
+}
+
+// resetDueLines is one line per login that rule calls reset-due, in the shape
+// failureLines uses, so one alert template can carry either.
+func (r *UsageReport) resetDueLines(rule usageResetRule, now time.Time) string {
+	lines := make([]string, 0, len(r.Logins))
+
+	for index := range r.Logins {
+		if line, due := r.Logins[index].resetDueLine(rule, now); due {
+			lines = append(lines, line)
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// resetDueLine describes a login running low on its week with the reset still
+// far off while it holds a banked reset. Only a window named 7d counts, since a
+// shorter one refills on its own before a banked reset would matter.
+func (l *UsageLogin) resetDueLine(rule usageResetRule, now time.Time) (string, bool) {
+	if l.Error != "" || len(l.ResetCredits) == 0 {
+		return "", false
+	}
+
+	index := slices.IndexFunc(l.Windows, func(window UsageWindow) bool { return window.Name == windowSevenDay })
+	if index < 0 {
+		return "", false
+	}
+
+	week := l.Windows[index]
+	remaining := usageFullPercent - week.UsedPercent
+	untilReset := week.ResetsAt.Sub(now)
+
+	if remaining >= rule.percent || untilReset <= rule.lead {
+		return "", false
+	}
+
+	firstExpiry := slices.MinFunc(l.ResetCredits, time.Time.Compare)
+
+	return fmt.Sprintf("%s login %s: %s%% of the week left, %s days to the reset, %s, the first expires in %s days",
+		l.Protocol, l.Launcher, oneDecimal(remaining), usageDays(untilReset),
+		bankedResets(len(l.ResetCredits)), usageDays(firstExpiry.Sub(now))), true
+}
+
+// usageDays renders a span in days to one decimal, the grain an operator
+// deciding whether to spend a reset reads at.
+func usageDays(span time.Duration) string {
+	return oneDecimal(span.Hours() / hoursPerDay)
+}
+
+// oneDecimal renders a value with exactly one decimal place.
+func oneDecimal(value float64) string {
+	return strconv.FormatFloat(value, 'f', 1, 64)
+}
+
+// bankedResets counts the credits with the noun agreeing.
+func bankedResets(count int) string {
+	if count == 1 {
+		return "1 banked reset"
+	}
+
+	return strconv.Itoa(count) + " banked resets"
+}
+
+// failureLines is one line per failed login. A CLI's error can span lines, so
+// its whitespace collapses to keep each failure on the line that names it.
+func (r *UsageReport) failureLines() string {
+	lines := make([]string, 0, len(r.Logins))
+
+	for index := range r.Logins {
+		if login := &r.Logins[index]; login.Error != "" {
+			reason := strings.Join(strings.Fields(login.Error), " ")
+			lines = append(lines, login.Protocol+" login "+login.Launcher+": "+reason)
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // prefix names the host on every line rather than on a header of its own, so a
@@ -452,7 +577,7 @@ func (l *UsageLogin) rows(ranked bool) [][]string {
 func (l *UsageLogin) rankCells() []string {
 	score := "-"
 	if l.Score != nil {
-		score = strconv.FormatFloat(*l.Score, 'f', 1, 64)
+		score = oneDecimal(*l.Score)
 	}
 
 	return []string{score, strconv.Itoa(len(l.ResetCredits))}
@@ -766,6 +891,7 @@ func (u *Usage) probe(ctx context.Context, task *runner.Task, host string, launc
 
 	login.Plan = detail.plan
 	login.Windows = detail.windows
+	login.ResetCredits = unexpiredCredits(detail.resetCredits, u.now())
 
 	return usageProbe{login: login}
 }
@@ -815,6 +941,12 @@ func usageOutcome(probes []usageProbe) error {
 
 	return taskError(class, codeUsageUnavailable,
 		"no login reported usage: %s", strings.Join(reasons, "; "))
+}
+
+// unexpiredCredits keeps the credits that expire after now, the same cut the
+// report file's credits get, so both modes count a banked reset alike.
+func unexpiredCredits(expiries []time.Time, now time.Time) []time.Time {
+	return slices.DeleteFunc(expiries, func(expiry time.Time) bool { return !expiry.After(now) })
 }
 
 // isRefusal reports whether a probe failed on something the login or the config
@@ -870,6 +1002,51 @@ func decodeUsageClaudeGap(cfg map[string]any) (time.Duration, error) {
 	}
 
 	return time.Duration(seconds) * time.Second, nil
+}
+
+// decodeUsageResetRule reads the two reset-due thresholds. Both modes take
+// them, since a report file and a probe both carry the windows and credits the
+// rule reads.
+func decodeUsageResetRule(cfg map[string]any) (usageResetRule, error) {
+	percent, present, err := configFloat(cfg, cfgKeyUsageResetDuePercent)
+	if err != nil {
+		return usageResetRule{}, err
+	}
+
+	if !present {
+		percent = defaultUsageResetDuePercent
+	}
+
+	// The negated range test also refuses NaN, which TOML can spell and which
+	// would otherwise make every comparison false and the rule never fire.
+	if !(percent >= 0 && percent <= usageFullPercent) {
+		return usageResetRule{}, fmt.Errorf("%w: %s must be within 0 to 100", ErrConfigValue, cfgKeyUsageResetDuePercent)
+	}
+
+	lead, err := decodeUsageResetDueLead(cfg)
+	if err != nil {
+		return usageResetRule{}, err
+	}
+
+	return usageResetRule{lead: lead, percent: percent}, nil
+}
+
+// decodeUsageResetDueLead reads how long before the weekly reset a login stops
+// counting as reset-due. It is a duration string rather than seconds because
+// the useful values run to days.
+func decodeUsageResetDueLead(cfg map[string]any) (time.Duration, error) {
+	text, err := configValue(cfg, cfgKeyUsageResetDueLead, defaultUsageResetDueLead)
+	if err != nil {
+		return 0, err
+	}
+
+	lead, err := time.ParseDuration(text)
+	if err != nil || lead <= 0 {
+		return 0, fmt.Errorf("%w: %s must be a positive duration such as %q", ErrConfigValue,
+			cfgKeyUsageResetDueLead, defaultUsageResetDueLead)
+	}
+
+	return lead, nil
 }
 
 // decodeUsageLaunchers reads both launcher lists into one ordered set. A name

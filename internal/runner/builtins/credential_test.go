@@ -118,13 +118,13 @@ func TestCredentialBuildRejectsUnknownAndUnwired(t *testing.T) {
 		{
 			name:    "mcp_client unknown credential",
 			runner:  builtins.MCPClientName,
-			factory: builtins.MCPClientFactoryWithCredentials(known),
+			factory: builtins.MCPClientFactoryWithCredentials(known, nil),
 			cfg:     map[string]any{serverURLKey: exampleMCP, toolKey: echoTool, credentialKey: unknownCred, allowPrivateKey: true},
 		},
 		{
 			name:    "mcp_client credential with no lookup wired",
 			runner:  builtins.MCPClientName,
-			factory: builtins.MCPClientFactoryWithCredentials(nil),
+			factory: builtins.MCPClientFactoryWithCredentials(nil, nil),
 			cfg:     map[string]any{serverURLKey: exampleMCP, toolKey: echoTool, credentialKey: credName, allowPrivateKey: true},
 		},
 	}

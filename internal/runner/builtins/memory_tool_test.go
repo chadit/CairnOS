@@ -153,7 +153,7 @@ func TestMemoryToolAddBuildsEntry(t *testing.T) {
 		"content":    noteContent,
 		scopeKey:     scopeProject,
 		"importance": float64(70),
-		"tags":       []any{tagOps, 42, queryDeploy},
+		tagsKey:      []any{tagOps, 42, queryDeploy},
 	}))
 	if err != nil {
 		t.Fatalf("execute add: %v", err)

@@ -57,10 +57,13 @@ const (
 	sevenDayMinutes = 10080
 )
 
-// usageDetail is what one successful exchange yields.
+// usageDetail is what one successful exchange yields. resetCredits holds every
+// banked reset the reply lists as available, expired or not, because the
+// decoder has no clock and the caller filters on its own.
 type usageDetail struct {
-	plan    string
-	windows []UsageWindow
+	plan         string
+	windows      []UsageWindow
+	resetCredits []time.Time
 }
 
 // decodeLine parses one stdout line into target, answering false when the line
@@ -333,6 +336,12 @@ const (
 	codexUsedPercentKey = "usedPercent"
 	codexResetsAtKey    = "resetsAt"
 	codexWindowMinsKey  = "windowDurationMins"
+
+	codexBankedResetsKey = "rateLimitResetCredits"
+	codexBankedListKey   = "credits"
+	codexStatusKey       = "status"
+	codexExpiresAtKey    = "expiresAt"
+	codexAvailableStatus = "available"
 )
 
 // codexError is the JSON-RPC failure member, whose keys need no translation.
@@ -368,7 +377,56 @@ func decodeCodexUsage(line []byte) (usageDetail, bool, error) {
 		return usageDetail{}, true, errUsageNoLimits
 	}
 
-	return usageDetail{plan: codexText(limits, codexPlanTypeKey), windows: windows}, true, nil
+	return usageDetail{
+		plan:         codexText(limits, codexPlanTypeKey),
+		windows:      windows,
+		resetCredits: codexResetCredits(envelope.Result),
+	}, true, nil
+}
+
+// codexResetCredits reads the banked resets, a member of the result beside
+// rateLimits. Credits only add to a report, so a member that is missing or out
+// of shape counts as none and an unreadable entry is skipped, never failing the
+// probe over the windows it did read.
+func codexResetCredits(result json.RawMessage) []time.Time {
+	summary, ok := codexMember(result, codexBankedResetsKey)
+	if !ok {
+		return nil
+	}
+
+	var entries []json.RawMessage
+
+	if !decodeLine(summary[codexBankedListKey], &entries) {
+		return nil
+	}
+
+	expiries := make([]time.Time, 0, len(entries))
+
+	for _, entry := range entries {
+		if expiry, available := codexCreditExpiry(entry); available {
+			expiries = append(expiries, expiry)
+		}
+	}
+
+	return expiries
+}
+
+// codexCreditExpiry answers when one available credit expires. A redeeming or
+// redeemed credit can no longer be spent, so it is skipped. The protocol sends
+// a null expiry for a credit that never expires, which decodes as zero and is
+// skipped too, since the report records a credit by its expiry.
+func codexCreditExpiry(raw json.RawMessage) (time.Time, bool) {
+	fields, isObject := codexFields(raw)
+	if !isObject || codexText(fields, codexStatusKey) != codexAvailableStatus {
+		return time.Time{}, false
+	}
+
+	seconds, hasExpiry := codexNumber(fields, codexExpiresAtKey)
+	if !hasExpiry || seconds <= 0 {
+		return time.Time{}, false
+	}
+
+	return time.Unix(int64(seconds), 0).UTC(), true
 }
 
 // codexFields decodes one JSON object into its raw members, answering false for

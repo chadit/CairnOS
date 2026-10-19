@@ -58,7 +58,7 @@ type LanguageRules struct {
 func NewLanguageRules(cfg map[string]any) (*LanguageRules, error) {
 	dir, err := configValue(cfg, cfgKeyDir, "")
 	if err != nil {
-		return nil, fmt.Errorf("configure %s: %w", LanguageRulesName, err)
+		return nil, &configError{runner: LanguageRulesName, err: err}
 	}
 
 	return &LanguageRules{dir: dir}, nil

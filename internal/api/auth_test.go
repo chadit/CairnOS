@@ -29,6 +29,7 @@ import (
 	"github.com/chadit/CairnOS/internal/chat"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 	"github.com/chadit/CairnOS/pkg/runner"
 )
@@ -100,7 +101,7 @@ type authFixture struct {
 	chat       cairnosv1.ChatServiceClient
 	governance cairnosv1.GovernanceServiceClient
 	conn       *grpc.ClientConn
-	transport  *memTransport
+	transport  *nettest.Network
 	authStore  *auth.SQLite
 	clock      *authClock
 	httpBase   string
@@ -179,7 +180,7 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
-	transport := newMemTransport()
+	transport := nettest.NewNetwork()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -223,7 +224,7 @@ func startAuthServerWith(t *testing.T, extensions ...*api.Extension) *authFixtur
 		}
 	})
 
-	conn := transport.dialGRPC(t, server.GRPCAddr())
+	conn := transport.DialGRPC(t, server.GRPCAddr())
 
 	return &authFixture{
 		transport:  transport,
@@ -756,7 +757,7 @@ func TestRevokeValidatesItsTarget(t *testing.T) {
 
 // httpDo sends one gateway request with an optional bearer token and
 // returns status code plus body.
-func httpDo(t *testing.T, transport *memTransport, method, url, body, token string) (int, []byte) {
+func httpDo(t *testing.T, transport *nettest.Network, method, url, body, token string) (int, []byte) {
 	t.Helper()
 
 	var reader io.Reader = http.NoBody
@@ -776,7 +777,7 @@ func httpDo(t *testing.T, transport *memTransport, method, url, body, token stri
 		req.Header.Set("Authorization", bearerPrefix+token)
 	}
 
-	resp, err := transport.httpClient().Do(req)
+	resp, err := transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

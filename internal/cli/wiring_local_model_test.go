@@ -3,12 +3,14 @@ package cli_test
 import (
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // localModelWorkflow names the runner only the [runner.local] block defines,
@@ -41,18 +43,18 @@ func noKeyEnv() map[string]string {
 
 // TestRunExecutesLocalModelRunnerWithoutAnAPIKey proves the whole local-model
 // path: the [runner.local] block registers under its own name, the openai
-// runner reaches the loopback server through base_url, and no hosted API key
-// is needed for a server that wants none.
+// runner sends to the loopback base_url, and no hosted API key is needed for a
+// server that wants none.
 func TestRunExecutesLocalModelRunnerWithoutAnAPIKey(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	appendLocalModelBlock(t, dir, localModelServer(t))
+	appendLocalModelBlock(t, dir)
 	path := writeWorkflow(t, dir, localModelWorkflow)
 
-	code, stdout, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runLocalModelCLI(t, localModelHandler(t), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
-		t.Fatalf("run exited %d: %s", code, stderr)
+		t.Fatalf("run exited %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
 	if !strings.Contains(stdout, "succeeded") {
@@ -69,61 +71,83 @@ func TestRunExecutesLocalModelRunnerWithoutAnAPIKey(t *testing.T) {
 func TestLocalModelBlockSendsTheConfiguredModel(t *testing.T) {
 	t.Parallel()
 
-	var seen string
+	// The handler runs on the engine's goroutine, so the body it saw crosses
+	// back to this one under a lock.
+	var (
+		seenMu sync.Mutex
+		seen   string
+	)
 
-	// Real socket on purpose: the workflow run builds its runner clients from
-	// config, so base_url has to be one something can dial.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read the model request: %v", err)
 		}
 
+		seenMu.Lock()
 		seen = string(body)
+		seenMu.Unlock()
 
 		if _, err := w.Write([]byte(localModelReply)); err != nil {
 			t.Errorf("write the model reply: %v", err)
 		}
-	}))
-	defer server.Close()
+	})
 
 	dir := initDir(t)
-	appendLocalModelBlock(t, dir, server.URL)
+	appendLocalModelBlock(t, dir)
 	path := writeWorkflow(t, dir, localModelWorkflow)
 
-	if code, _, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir); code != cli.ExitOK {
-		t.Fatalf("run exited %d: %s", code, stderr)
+	if code, stdout, stderr := runLocalModelCLI(t, handler, runCmd, path, flagDirArg, dir); code != cli.ExitOK {
+		t.Fatalf("run exited %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
+
+	seenMu.Lock()
+	defer seenMu.Unlock()
 
 	if !strings.Contains(seen, `"model":"gemma-4-e4b"`) {
 		t.Errorf("request did not carry the configured model:\n%s", seen)
 	}
 }
 
-// localModelServer stands in for llama-server on loopback. Real socket on
-// purpose, for the same reason the case above opens one.
-func localModelServer(t *testing.T) string {
+// localModelURL is the base_url the cases configure. It has to be a loopback
+// address because that is what waives the API key, but nothing dials it: the
+// runner transport answers in the process, since a loopback socket can hit
+// stale connection tracking and the run does not retry a failed model call.
+const localModelURL = "http://127.0.0.1:8080"
+
+// localModelHandler stands in for llama-server, answering every request with
+// the canned reply.
+func localModelHandler(t *testing.T) http.Handler {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if _, err := w.Write([]byte(localModelReply)); err != nil {
 			t.Errorf("write the model reply: %v", err)
 		}
-	}))
-	t.Cleanup(server.Close)
+	})
+}
 
-	return server.URL
+// runLocalModelCLI drives one invocation with no API key staged and the model
+// runners answered by handler, so a developer's own key or a local server can
+// never answer for one of these cases.
+func runLocalModelCLI(t *testing.T, handler http.Handler, args ...string) (int, string, string) {
+	t.Helper()
+
+	return runConfiguredCLI(t, func(app *cli.App) *cli.App {
+		return app.WithEnv(environ.Map(noKeyEnv())).WithRunnerTransport(nettest.Transport(handler))
+	}, args...)
 }
 
 // appendLocalModelBlock adds the [runner.local] block `cairnos model setup`
-// writes, with base_url pointed at a test server instead of the sidecar.
-func appendLocalModelBlock(t *testing.T, dir, baseURL string) {
+// writes, with base_url pointed at the in-process stand-in instead of the
+// sidecar.
+func appendLocalModelBlock(t *testing.T, dir string) {
 	t.Helper()
 
 	block := "\n[runner.local]\n" +
 		"type     = \"openai\"\n" +
 		"model    = \"gemma-4-e4b\"\n" +
-		"base_url = " + strconv.Quote(baseURL) + "\n"
+		"base_url = " + strconv.Quote(localModelURL) + "\n"
 
 	appendConfig(t, dir, block)
 }
@@ -147,12 +171,12 @@ func TestRunOpenAINamedBlockConfiguresBuiltin(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	appendOpenAIBlock(t, dir, localModelServer(t))
+	appendOpenAIBlock(t, dir)
 	path := writeWorkflow(t, dir, openaiBuiltinWorkflow)
 
-	code, stdout, stderr := runEnvCLI(t, noKeyEnv(), runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runLocalModelCLI(t, localModelHandler(t), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
-		t.Fatalf("run exited %d: %s", code, stderr)
+		t.Fatalf("run exited %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
 	if strings.Contains(stderr, "already registered") {
@@ -166,13 +190,13 @@ func TestRunOpenAINamedBlockConfiguresBuiltin(t *testing.T) {
 
 // appendOpenAIBlock adds a [runner.openai] block that names its own type, the
 // shape someone writes when pointing the built-in at a local server.
-func appendOpenAIBlock(t *testing.T, dir, baseURL string) {
+func appendOpenAIBlock(t *testing.T, dir string) {
 	t.Helper()
 
 	block := "\n[runner.openai]\n" +
 		"type     = \"openai\"\n" +
 		"model    = \"gemma-4-e4b\"\n" +
-		"base_url = " + strconv.Quote(baseURL) + "\n"
+		"base_url = " + strconv.Quote(localModelURL) + "\n"
 
 	appendConfig(t, dir, block)
 }

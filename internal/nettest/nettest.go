@@ -8,9 +8,9 @@ package nettest
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"time"
 )
 
@@ -101,9 +101,9 @@ type failingTransport struct {
 	cause error
 }
 
-// RoundTrip implements http.RoundTripper by failing with the *url.Error a real
-// dial failure carries, so a caller matching that type sees what production
-// sends it.
-func (t failingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	return nil, &url.Error{Op: request.Method, URL: request.URL.String(), Err: t.cause}
+// RoundTrip implements http.RoundTripper by failing with the *net.OpError a
+// real transport returns from a failed dial. http.Client adds the *url.Error
+// itself, so wrapping one here would nest a second URL in every message.
+func (t failingTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: t.cause}
 }

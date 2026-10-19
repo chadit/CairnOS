@@ -42,7 +42,7 @@ type Webhook struct {
 func NewWebhook(cfg map[string]any, client *http.Client) (*Webhook, error) {
 	url, err := configValue(cfg, paramURL, "")
 	if err != nil {
-		return nil, wrapConfigErr(WebhookName, err)
+		return nil, &configError{runner: WebhookName, err: err}
 	}
 
 	return &Webhook{url: url, client: client}, nil
@@ -59,7 +59,7 @@ func WebhookFactory() runner.Factory {
 func guardedWebhook(cfg map[string]any) (*Webhook, error) {
 	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
 	if err != nil {
-		return nil, wrapConfigErr(WebhookName, err)
+		return nil, &configError{runner: WebhookName, err: err}
 	}
 
 	return NewWebhook(cfg, safeHTTPClient(WebhookName, defaultWebhookTimeout, allowPrivate))

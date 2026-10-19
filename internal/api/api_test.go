@@ -24,6 +24,7 @@ import (
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
@@ -120,7 +121,7 @@ params = { delay_ms = 60000 }
 // without a host socket.
 type fixture struct {
 	server       *api.Server
-	transport    *memTransport
+	transport    *nettest.Network
 	conn         *grpc.ClientConn
 	db           *sqlite.Store
 	workflowsDir string
@@ -135,23 +136,6 @@ type fixture struct {
 	manager      *api.Manager
 	drain        *api.Drain
 	httpBase     string
-}
-
-// breakerAdmin adapts a reliability.BreakerSet to the api.BreakerAdmin
-// surface, standing in for the engine so tests can trip a breaker open
-// directly instead of arranging failing traffic.
-type breakerAdmin struct {
-	set *reliability.BreakerSet
-}
-
-// BreakerStates implements api.BreakerAdmin.
-func (b *breakerAdmin) BreakerStates() map[string]reliability.State {
-	return b.set.States()
-}
-
-// ResetBreaker implements api.BreakerAdmin.
-func (b *breakerAdmin) ResetBreaker(name string) bool {
-	return b.set.Reset(name)
 }
 
 // startServer boots a complete server on ephemeral loopback ports.
@@ -220,7 +204,7 @@ func startServerOver(t *testing.T, engineStore func(store.Store) store.Store, ex
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
 	drain := api.NewDrain()
-	transport := newMemTransport()
+	transport := nettest.NewNetwork()
 
 	var engineDB store.Store = db
 	if engineStore != nil {
@@ -248,7 +232,7 @@ func startServerOver(t *testing.T, engineStore func(store.Store) store.Store, ex
 		Vault:        vaultStore,
 		Rules:        rulesStore,
 		Registry:     testRegistry(t),
-		Breakers:     &breakerAdmin{set: breakers},
+		Breakers:     breakers,
 		Manager:      manager,
 		Drain:        drain,
 		Extensions:   extensions,
@@ -273,7 +257,7 @@ func startServerOver(t *testing.T, engineStore func(store.Store) store.Store, ex
 		}
 	})
 
-	conn := transport.dialGRPC(t, server.GRPCAddr())
+	conn := transport.DialGRPC(t, server.GRPCAddr())
 
 	return &fixture{
 		transport:    transport,

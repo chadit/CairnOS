@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +28,12 @@ func buildEchoBinary(t *testing.T) string {
 	t.Helper()
 
 	binary := filepath.Join(t.TempDir(), "echo")
+
+	// Windows runs only a file whose name ends in .exe, and go build -o writes
+	// the exact name it is given, so exec would report the plugin not found.
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary,
 		"github.com/chadit/CairnOS/examples/plugins/echo")

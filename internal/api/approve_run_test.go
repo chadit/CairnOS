@@ -6,6 +6,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/chadit/CairnOS/internal/api"
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/store"
@@ -448,7 +450,7 @@ func TestApproveRunDecisionDuringReparkStillResumes(t *testing.T) {
 		t.Fatalf("approve sign_a: %v", err)
 	}
 
-	<-hold.parked
+	waitClosed(t, "the sign_a resume parks", hold.parked)
 
 	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
 		RunId: runID, ActionName: actionSignB, Approve: true,
@@ -459,4 +461,106 @@ func TestApproveRunDecisionDuringReparkStillResumes(t *testing.T) {
 	releaseHold()
 
 	waitForRunStatus(t, fix, runID, statusSucceeded)
+}
+
+// waitClosed fails the test unless done closes within waitApproveFor's
+// deadline, so a regression fails with a message instead of hanging until the
+// go test timeout.
+func waitClosed(t *testing.T, describe string, done <-chan struct{}) {
+	t.Helper()
+
+	waitApproveFor(t, describe, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+// TestManagerRefusesStartsAfterShutdown proves Shutdown closes the manager to
+// new loops: Shutdown cancels only the runs it saw, so a later start would run
+// unowned while the server stops. The flow is never read on refusal.
+func TestManagerRefusesStartsAfterShutdown(t *testing.T) {
+	t.Parallel()
+
+	fix := startServer(t)
+	fix.manager.Shutdown()
+
+	if _, err := fix.manager.StartResume(t.Context(), &store.Run{ID: "held-run"}, nil, nil); !errors.Is(err, api.ErrManagerShutdown) {
+		t.Fatalf("StartResume after Shutdown: %v, want %v", err, api.ErrManagerShutdown)
+	}
+
+	if _, err := fix.manager.StartRun(t.Context(), nil, nil, false, "test"); !errors.Is(err, api.ErrManagerShutdown) {
+		t.Fatalf("StartRun after Shutdown: %v, want %v", err, api.ErrManagerShutdown)
+	}
+}
+
+// TestReleasedWaiterAfterShutdownStartsNoRun decides sign_b while the sign_a
+// resume still holds the run, which leaves a waiter on Released, then shuts the
+// manager down before the loop lets go. The woken waiter must not drive a new
+// loop past shutdown.
+func TestReleasedWaiterAfterShutdownStartsNoRun(t *testing.T) {
+	t.Parallel()
+
+	hold := &parkHold{parked: make(chan struct{}), release: make(chan struct{})}
+
+	var releaseOnce sync.Once
+
+	releaseHold := func() { releaseOnce.Do(func() { close(hold.release) }) }
+
+	t.Cleanup(releaseHold)
+
+	fix := startServerOver(t, func(db store.Store) store.Store {
+		hold.Store = db
+
+		return hold
+	})
+	writeWorkflow(t, fix.workflowsDir, "twogate.toml", twoGateTOML)
+
+	runID := parkHeldRun(t, fix, "twogate")
+
+	hold.armed.Store(true)
+
+	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId: runID, ActionName: actionSignA, Approve: true,
+	}); err != nil {
+		t.Fatalf("approve sign_a: %v", err)
+	}
+
+	waitClosed(t, "the sign_a resume parks", hold.parked)
+
+	if _, err := fix.workflow.ApproveRun(t.Context(), &cairnosv1.ApproveRunRequest{
+		RunId: runID, ActionName: actionSignB, Approve: true,
+	}); err != nil {
+		t.Fatalf("approve sign_b while the sign_a resume still holds the run: %v", err)
+	}
+
+	released := fix.manager.Released(runID)
+
+	fix.manager.Shutdown()
+	releaseHold()
+
+	waitClosed(t, "the sign_a resume lets go of the run", released)
+
+	held, err := fix.db.GetRun(t.Context(), runID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+
+	results, err := fix.db.ListActionResults(t.Context(), runID)
+	if err != nil {
+		t.Fatalf("ListActionResults: %v", err)
+	}
+
+	// The waiter's only way to drive the run is StartResume, so a refusal here
+	// is a refusal for it too, whichever goroutine reaches the manager first.
+	if _, err := fix.manager.StartResume(t.Context(), held, results, nil); !errors.Is(err, api.ErrManagerShutdown) {
+		t.Fatalf("StartResume after the waiter woke: %v, want %v", err, api.ErrManagerShutdown)
+	}
+
+	if inFlight := fix.manager.InFlight(); inFlight != 0 {
+		t.Fatalf("InFlight after shutdown = %d, want 0", inFlight)
+	}
 }

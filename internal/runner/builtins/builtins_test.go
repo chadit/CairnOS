@@ -19,6 +19,11 @@ const (
 	actionCalc     = "calc"
 	paramFn        = "fn"
 	paramFailClass = "fail_class"
+	paramFailTimes = "fail_times"
+	paramDelayMs   = "delay_ms"
+	paramCostUSD   = "cost_usd"
+
+	classRateLimited = "rate_limited"
 
 	// fnDouble and fnBroken are the local functions the local_fn cases register.
 	fnDouble = "double"
@@ -32,7 +37,7 @@ func TestMockReturnsConfiguredOutputAndCost(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: "a",
-		Params:     map[string]any{"output": map[string]any{"count": int64(3)}, "cost_usd": 0.25},
+		Params:     map[string]any{"output": map[string]any{"count": int64(3)}, paramCostUSD: 0.25},
 		Resolved:   true,
 	}
 
@@ -51,6 +56,18 @@ func TestMockReturnsConfiguredOutputAndCost(t *testing.T) {
 	}
 }
 
+// TestMockNullFailClassSucceeds proves a null fail_class, which Validate reads
+// as absent, does not fail the action as an unnamed permanent class.
+func TestMockNullFailClassSucceeds(t *testing.T) {
+	t.Parallel()
+
+	task := &runner.Task{RunID: testRunID, ActionName: "a", Params: map[string]any{paramFailClass: nil}, Resolved: true}
+
+	if _, err := builtins.NewMock().Execute(t.Context(), task); err != nil {
+		t.Fatalf("execute: %v, want success", err)
+	}
+}
+
 func TestMockFailsWithConfiguredClass(t *testing.T) {
 	t.Parallel()
 
@@ -61,7 +78,7 @@ func TestMockFailsWithConfiguredClass(t *testing.T) {
 	}{
 		{name: "transient failure", failClass: classTransient, wantClass: runner.ClassTransient},
 		{name: "permanent failure", failClass: classPermanent, wantClass: runner.ClassPermanent},
-		{name: "rate limited", failClass: "rate_limited", wantClass: runner.ClassRateLimited},
+		{name: "rate limited", failClass: classRateLimited, wantClass: runner.ClassRateLimited},
 	}
 
 	for _, tt := range cases {
@@ -96,7 +113,7 @@ func TestMockFailTimesRecoversAfterN(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: actionFlaky,
-		Params:     map[string]any{paramFailClass: classTransient, "fail_times": int64(2)},
+		Params:     map[string]any{paramFailClass: classTransient, paramFailTimes: int64(2)},
 	}
 
 	for attempt := range 2 {
@@ -117,7 +134,7 @@ func TestMockDelayHonorsCancellation(t *testing.T) {
 	task := &runner.Task{
 		RunID:      testRunID,
 		ActionName: "slow",
-		Params:     map[string]any{"delay_ms": int64(10_000)},
+		Params:     map[string]any{paramDelayMs: int64(10_000)},
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -270,5 +287,82 @@ func TestRegistryLifecycle(t *testing.T) {
 
 	if err := registry.Close(); err != nil {
 		t.Fatalf("close: %v", err)
+	}
+}
+
+// TestMockValidateChecksKnownParamShapes covers both validation passes: a
+// load-time reference string must pass, and a resolved param of the wrong
+// shape must fail with the param named in the code.
+func TestMockValidateChecksKnownParamShapes(t *testing.T) {
+	t.Parallel()
+
+	codeBadFailClass := builtins.MockName + ".bad_fail_class"
+
+	cases := []struct {
+		params   map[string]any
+		name     string
+		wantCode string
+		resolved bool
+	}{
+		{name: "no params", params: map[string]any{}, resolved: true},
+		{name: "unknown param is ignored", params: map[string]any{"volume": 1}, resolved: true},
+		{
+			name:     "every known param well formed",
+			params:   map[string]any{paramFailClass: classRateLimited, paramFailTimes: int64(2), paramDelayMs: 5.0, paramCostUSD: 0.25},
+			resolved: true,
+		},
+		{
+			name:     "null params read as absent",
+			params:   map[string]any{paramFailClass: nil, paramFailTimes: nil, paramDelayMs: nil, paramCostUSD: nil},
+			resolved: true,
+		},
+		{name: "load-time reference in a number param", params: map[string]any{paramDelayMs: "${inputs.delay}"}},
+		{name: "load-time reference in fail_class", params: map[string]any{paramFailClass: "${inputs.class}"}},
+		{
+			name:     "resolved delay is not a number",
+			params:   map[string]any{paramDelayMs: "shortly"},
+			resolved: true,
+			wantCode: builtins.MockName + ".bad_delay_ms",
+		},
+		{
+			name:     "resolved fail_times is not a number",
+			params:   map[string]any{paramFailClass: classTransient, paramFailTimes: "twice"},
+			resolved: true,
+			wantCode: builtins.MockName + ".bad_fail_times",
+		},
+		{
+			name:     "resolved cost is not a number",
+			params:   map[string]any{paramCostUSD: true},
+			resolved: true,
+			wantCode: builtins.MockName + ".bad_cost_usd",
+		},
+		{
+			name:     "fail_class is not a string",
+			params:   map[string]any{paramFailClass: 3},
+			wantCode: codeBadFailClass,
+		},
+		{
+			name:     "resolved fail_class names no class",
+			params:   map[string]any{paramFailClass: "fatal"},
+			resolved: true,
+			wantCode: codeBadFailClass,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := builtins.NewMock().Validate(&runner.Task{Params: tt.params, Resolved: tt.resolved})
+			if tt.wantCode == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v, want nil", err)
+				}
+
+				return
+			}
+
+			assertCodeError(t, err, tt.wantCode)
+		})
 	}
 }

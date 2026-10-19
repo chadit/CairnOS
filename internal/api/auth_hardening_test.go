@@ -20,6 +20,7 @@ import (
 	"github.com/chadit/CairnOS/internal/auth/authtest"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 )
 
@@ -109,7 +110,7 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 
 	logger := slog.New(slog.DiscardHandler)
 	manager := api.NewManager(logger)
-	transport := newMemTransport()
+	transport := nettest.NewNetwork()
 
 	manager.Bind(engine.New(testEngineConfig(manager), testRegistry(t), db))
 
@@ -142,7 +143,7 @@ func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture
 		}
 	})
 
-	conn := transport.dialGRPC(t, server.GRPCAddr())
+	conn := transport.DialGRPC(t, server.GRPCAddr())
 
 	return &hardeningFixture{
 		login:     cairnosv1.NewLoginServiceClient(conn),

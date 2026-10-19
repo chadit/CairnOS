@@ -93,16 +93,17 @@ func NewAnthropicFor(
 }
 
 // AnthropicFactory adapts NewAnthropic to the registry contract with a
-// backstopped HTTP client.
-func AnthropicFactory(lookup environ.Lookup) runner.Factory {
-	return AnthropicFactoryFor(AnthropicName, lookup)
+// backstopped HTTP client. A nil transport keeps http.DefaultTransport; a test
+// passes one that answers in the process instead of over a socket.
+func AnthropicFactory(lookup environ.Lookup, transport http.RoundTripper) runner.Factory {
+	return AnthropicFactoryFor(AnthropicName, lookup, transport)
 }
 
 // AnthropicFactoryFor is the registration for a `[runner.<name>]` block of this
 // type under another name.
-func AnthropicFactoryFor(block string, lookup environ.Lookup) runner.Factory {
+func AnthropicFactoryFor(block string, lookup environ.Lookup, transport http.RoundTripper) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return NewAnthropicFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout}, lookup)
+		return NewAnthropicFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout, Transport: transport}, lookup)
 	}
 }
 

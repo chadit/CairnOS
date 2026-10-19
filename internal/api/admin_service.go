@@ -17,18 +17,6 @@ import (
 // healthOK is the Health answer when the store responds.
 const healthOK = "ok"
 
-// BreakerAdmin is the slice of the engine AdminService needs to inspect
-// and reset circuit breakers; *engine.Engine satisfies it.
-type BreakerAdmin interface {
-	// BreakerStates snapshots every created breaker's position by runner
-	// name.
-	BreakerStates() map[string]reliability.State
-
-	// ResetBreaker forces one runner's breaker CLOSED, reporting whether
-	// that runner had a breaker.
-	ResetBreaker(name string) bool
-}
-
 // DefaultDrainTimeout bounds a drain a caller gave no ceiling for. It is long
 // enough for an agent run that talks to a slow model and short enough that a
 // stuck run cannot hold an update open all afternoon.
@@ -40,7 +28,7 @@ type adminService struct {
 
 	store    store.Store
 	registry *runner.Registry
-	breakers BreakerAdmin
+	breakers *reliability.BreakerSet
 	manager  *Manager
 	drain    *Drain
 	logger   *slog.Logger
@@ -90,7 +78,7 @@ func (s *adminService) ResetBreaker(ctx context.Context, req *cairnosv1.ResetBre
 	}
 
 	name := req.GetRunner()
-	if !s.breakers.ResetBreaker(name) {
+	if !s.breakers.Reset(name) {
 		return nil, errorStatus(codes.NotFound,
 			cairnerr.Newf(codeBreakerNotFound,
 				"runner %q has no circuit breaker: breakers are created on a runner's first call", name))

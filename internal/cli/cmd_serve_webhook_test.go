@@ -1,7 +1,6 @@
 package cli_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -13,12 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
-	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store"
 )
 
@@ -101,29 +101,14 @@ const (
 	fakeHS256Secret = "0123456789abcdef0123456789abcdef" // #nosec G101 -- fixture, not a credential
 )
 
-// addresses plus a cancel that stops it. The test drives shutdown through cancel
-// and asserts the clean exit in a cleanup.
-func bootServe(t *testing.T, dir string, env map[string]string) (string, string) {
+// bootServe starts serve on an in-memory network and returns that network with
+// the HTTP and gRPC addresses serve reported. A cleanup stops serve and asserts
+// the clean exit.
+func bootServe(t *testing.T, dir string, env map[string]string) (*nettest.Network, string, string) {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(t.Context())
-
-	stdout := newSignalWriter()
-
-	var stderr bytes.Buffer
-
-	exit := make(chan int, 1)
-
-	go func() {
-		exit <- cli.New(stdout, &stderr).WithEnv(environ.Map(env)).Run(ctx, []string{serveCmd, flagDirArg, dir})
-	}()
-
-	select {
-	case <-stdout.ready:
-	case code := <-exit:
-		cancel()
-		t.Fatalf("serve exited early with %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
-	}
+	network := nettest.NewNetwork()
+	stdout, stderr, exit, cancel := serveUntilReadyOn(t, network, dir, env)
 
 	t.Cleanup(func() {
 		cancel()
@@ -133,12 +118,12 @@ func bootServe(t *testing.T, dir string, env map[string]string) (string, string)
 		}
 	})
 
-	return outputAddr(t, stdout, httpAddrPattern, "HTTP"), outputAddr(t, stdout, grpcAddrPattern, "gRPC")
+	return network, outputAddr(t, stdout, httpAddrPattern, "HTTP"), outputAddr(t, stdout, grpcAddrPattern, "gRPC")
 }
 
 // postWebhook POSTs body to the ingress path and returns the status and the
 // decoded body.
-func postWebhook(t *testing.T, httpAddr, token, body string) (int, []byte) {
+func postWebhook(t *testing.T, client *http.Client, httpAddr, token, body string) (int, []byte) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -151,7 +136,7 @@ func postWebhook(t *testing.T, httpAddr, token, body string) (int, []byte) {
 		t.Fatalf("build webhook request: %v", err)
 	}
 
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post webhook: %v", err)
 	}
@@ -207,9 +192,9 @@ func TestServeWebhookRunsUnderDefaultWorkspace(t *testing.T) {
 	// later answers.
 	prod, _ := addWebhook(t, dir, wfPath)
 
-	httpAddr, grpcAddr := bootServe(t, dir, tokenEnv(hs256SecretEnv, fakeHS256Secret))
+	network, httpAddr, grpcAddr := bootServe(t, dir, tokenEnv(hs256SecretEnv, fakeHS256Secret))
 
-	statusCode, body := postWebhook(t, httpAddr, prod, "{}")
+	statusCode, body := postWebhook(t, network.Client(), httpAddr, prod, "{}")
 	if statusCode != http.StatusAccepted {
 		t.Fatalf("webhook POST = %d, want 202\nbody: %s", statusCode, body)
 	}
@@ -228,7 +213,7 @@ func TestServeWebhookRunsUnderDefaultWorkspace(t *testing.T) {
 
 	// A gateway RPC without a bearer is still rejected, so the unauthenticated
 	// ingress route did not open the scoped surface.
-	if code := unauthedRunCode(t, grpcAddr); code != codes.Unauthenticated {
+	if code := unauthedRunCode(t, network.DialGRPC(t, grpcAddr)); code != codes.Unauthenticated {
 		t.Fatalf("unauthenticated RunWorkflow = %s, want Unauthenticated", code)
 	}
 
@@ -243,12 +228,10 @@ func TestServeWebhookRunsUnderDefaultWorkspace(t *testing.T) {
 	}
 }
 
-// unauthedRunCode opens a RunWorkflow stream with no bearer token and returns the
-// gRPC status code of the first receive.
-func unauthedRunCode(t *testing.T, grpcAddr string) codes.Code {
+// unauthedRunCode opens a RunWorkflow stream over conn with no bearer token and
+// returns the gRPC status code of the first receive.
+func unauthedRunCode(t *testing.T, conn *grpc.ClientConn) codes.Code {
 	t.Helper()
-
-	conn := dialServe(t, grpcAddr)
 
 	stream, err := cairnosv1.NewWorkflowServiceClient(conn).RunWorkflow(t.Context(),
 		&cairnosv1.RunWorkflowRequest{WorkflowName: "webhooked"})
@@ -269,13 +252,13 @@ func TestServeWebhookDisabledRoutes404(t *testing.T) {
 
 	dir, _ := writeServeHome(t, serveWebhookDisabledConfig)
 
-	httpAddr, _ := bootServe(t, dir, nil)
+	network, httpAddr, _ := bootServe(t, dir, nil)
 
 	// A well-formed 64-hex token still 404s, because no /v1/hooks route exists to
 	// match it at the mux.
 	token := strings.Repeat("ab", 32)
 
-	statusCode, _ := postWebhook(t, httpAddr, token, "{}")
+	statusCode, _ := postWebhook(t, network.Client(), httpAddr, token, "{}")
 	if statusCode != http.StatusNotFound {
 		t.Fatalf("disabled webhook POST = %d, want 404", statusCode)
 	}

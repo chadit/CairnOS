@@ -31,8 +31,8 @@ func (l *transitionLog) snapshot() []string {
 }
 
 // TestBreakerExposure proves the admin surface end to end: a failing run
-// trips the mock runner's breaker open, BreakerStates reports it,
-// ResetBreaker forces it closed, an unknown runner reports false, and the
+// trips the mock runner's breaker open, the engine's breaker set reports it,
+// Reset forces it closed, an unknown runner reports false, and the
 // transition hook saw both moves.
 func TestBreakerExposure(t *testing.T) {
 	t.Parallel()
@@ -48,26 +48,26 @@ func TestBreakerExposure(t *testing.T) {
 	eng, _ := newTestEngine(t, cfg, nil)
 
 	log := &transitionLog{}
-	eng.OnBreakerTransition(log.add)
+	eng.Breakers().OnTransition(log.add)
 
 	run := mustRun(t, eng, parseFlow(t, breakerTripTOML), nil)
 	wantRunStatus(t, run, store.RunFailed)
 
-	states := eng.BreakerStates()
+	states := eng.Breakers().States()
 	if states["mock"] != reliability.StateOpen {
 		t.Fatalf("breaker state = %v, want OPEN (states: %v)", states["mock"], states)
 	}
 
-	if !eng.ResetBreaker("mock") {
-		t.Fatal("ResetBreaker(mock) = false, want true for an existing breaker")
+	if !eng.Breakers().Reset("mock") {
+		t.Fatal("Reset(mock) = false, want true for an existing breaker")
 	}
 
-	if state := eng.BreakerStates()["mock"]; state != reliability.StateClosed {
+	if state := eng.Breakers().States()["mock"]; state != reliability.StateClosed {
 		t.Fatalf("breaker state after reset = %v, want CLOSED", state)
 	}
 
-	if eng.ResetBreaker("ghost") {
-		t.Fatal("ResetBreaker(ghost) = true, want false for a runner with no breaker")
+	if eng.Breakers().Reset("ghost") {
+		t.Fatal("Reset(ghost) = true, want false for a runner with no breaker")
 	}
 
 	want := []string{"mock->OPEN", "mock->CLOSED"}

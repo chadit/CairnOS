@@ -25,7 +25,7 @@ func TestGatewaySetsSecurityHeaders(t *testing.T) {
 		t.Fatalf("build request: %v", err)
 	}
 
-	resp, err := fix.transport.httpClient().Do(req)
+	resp, err := fix.transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /routes: %v", err)
 	}
@@ -76,7 +76,7 @@ func corsHeaderForOrigin(t *testing.T, fix *fixture, origin string) string {
 
 	req.Header.Set("Origin", origin)
 
-	resp, err := fix.transport.httpClient().Do(req)
+	resp, err := fix.transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET /routes: %v", err)
 	}

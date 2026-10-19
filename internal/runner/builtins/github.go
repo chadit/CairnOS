@@ -93,7 +93,7 @@ type GitHub struct {
 func NewGitHub(cfg map[string]any, client *http.Client, lookup environ.Lookup) (*GitHub, error) {
 	baseURL, err := configValue(cfg, cfgKeyBaseURL, defaultGitHubBaseURL)
 	if err != nil {
-		return nil, wrapConfigErr(GitHubName, err)
+		return nil, &configError{runner: GitHubName, err: err}
 	}
 
 	return &GitHub{baseURL: strings.TrimSuffix(baseURL, "/"), client: client, env: lookup}, nil
@@ -106,7 +106,7 @@ func GitHubFactory(lookup environ.Lookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
 		if err != nil {
-			return nil, wrapConfigErr(GitHubName, err)
+			return nil, &configError{runner: GitHubName, err: err}
 		}
 
 		return NewGitHub(cfg, safeHTTPClient(GitHubName, defaultGitHubTimeout, allowPrivate), lookup)

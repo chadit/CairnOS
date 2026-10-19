@@ -122,6 +122,26 @@ func TestMessageOmitsThreadWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestMessageValidateNullThreadIsAbsent proves a null thread beside a
+// thread_key names one root, so the pair is not refused as a conflict.
+func TestMessageValidateNullThreadIsAbsent(t *testing.T) {
+	t.Parallel()
+
+	built, err := builtins.MessageFactory(&recordingSender{}, nil)(nil)
+	if err != nil {
+		t.Fatalf("build message runner: %v", err)
+	}
+
+	task := messageTask(map[string]any{
+		identityKey: testIdentity, toKey: testChannel, textKey: testBody,
+		threadKey: nil, threadKeyParam: testThreadKey,
+	})
+
+	if err := built.Validate(task); err != nil {
+		t.Fatalf("Validate: %v, want nil", err)
+	}
+}
+
 // TestMessageValidateRejectsBadParams proves each required param is checked and
 // that a non-string value is refused, so a workflow fails at load rather than at
 // the first fire.

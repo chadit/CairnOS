@@ -3,7 +3,6 @@ package cli_test
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // mcpEchoWorkflow references the runner name only the [runner.remote_echo]
@@ -47,11 +47,12 @@ type mcpEchoArgs struct {
 	Text string `json:"text" jsonschema:"the text to echo back"`
 }
 
-// newMCPEchoServerURL hosts an in-process MCP server with one echo tool
-// behind an httptest streamable HTTP endpoint and returns its URL. It
-// mirrors the helper in builtins/mcp_client_test.go, duplicated because
-// Go's per-package test binaries can't share helpers.
-func newMCPEchoServerURL(t *testing.T) string {
+// newMCPEchoServer hosts an in-process MCP server with one echo tool behind a
+// streamable HTTP endpoint on an in-memory listener. It mirrors the helper in
+// builtins/mcp_client_test.go, duplicated because Go's per-package test
+// binaries can't share helpers. The listener is in memory because a loopback
+// one can sit on a port with stale connection tracking.
+func newMCPEchoServer(t *testing.T) *nettest.Server {
 	t.Helper()
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "cairnos-test", Version: "0.0.1"}, nil)
@@ -65,27 +66,28 @@ func newMCPEchoServerURL(t *testing.T) string {
 
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 
-	// Real socket on purpose: the workflow run builds its runner clients from
-	// config, so the server_url has to be one something can dial.
-	httpServer := httptest.NewServer(handler)
-	t.Cleanup(httpServer.Close)
+	return nettest.NewServer(t, handler)
+}
 
-	return httpServer.URL
+// runOverMCPServer drives one invocation whose mcp_client runners reach server.
+func runOverMCPServer(t *testing.T, server *nettest.Server, args ...string) (int, string, string) {
+	t.Helper()
+
+	return runConfiguredCLI(t, func(app *cli.App) *cli.App {
+		return app.WithRunnerTransport(server.Transport())
+	}, args...)
 }
 
 // appendMCPBlock adds a [runner.<name>] mcp_client block to the scaffolded
-// config, the exact shape `cairnos mcp import` emits. It always sets
-// allow_private_targets = true: inert until the egress guard lands (unknown
-// keys pass through the config maps) and load-bearing after it, since the
-// echo server sits on a loopback address, so these tests never churn.
-func appendMCPBlock(t *testing.T, dir, name, serverURL string) {
+// config, the exact shape `cairnos mcp import` emits, pointed at the fixture
+// origin the in-memory server answers.
+func appendMCPBlock(t *testing.T, dir, name string) {
 	t.Helper()
 
 	block := "\n[runner." + name + "]\n" +
-		"type                  = \"mcp_client\"\n" +
-		"server_url            = " + strconv.Quote(serverURL) + "\n" +
-		"tool                  = " + strconv.Quote(mcpEchoTool) + "\n" +
-		"allow_private_targets = true\n"
+		"type       = \"mcp_client\"\n" +
+		"server_url = " + strconv.Quote(nettest.BaseURL) + "\n" +
+		"tool       = " + strconv.Quote(mcpEchoTool) + "\n"
 
 	appendConfig(t, dir, block)
 }
@@ -94,10 +96,10 @@ func TestRunExecutesImportedMCPRunnerFromConfig(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	appendMCPBlock(t, dir, "remote_echo", newMCPEchoServerURL(t))
+	appendMCPBlock(t, dir, "remote_echo")
 	path := writeWorkflow(t, dir, mcpEchoWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runOverMCPServer(t, newMCPEchoServer(t), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}
@@ -115,7 +117,7 @@ func TestRunMCPBlockCollidingWithBuiltinFailsAtWiring(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	appendMCPBlock(t, dir, "github", newMCPEchoServerURL(t))
+	appendMCPBlock(t, dir, "github")
 	path := writeWorkflow(t, dir, mcpEchoWorkflow)
 
 	code, _, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
@@ -136,10 +138,10 @@ func TestRunMCPClientNamedBlockConfiguresBuiltin(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	appendMCPBlock(t, dir, "mcp_client", newMCPEchoServerURL(t))
+	appendMCPBlock(t, dir, "mcp_client")
 	path := writeWorkflow(t, dir, mcpBuiltinWorkflow)
 
-	code, stdout, stderr := runCLI(t, runCmd, path, flagDirArg, dir)
+	code, stdout, stderr := runOverMCPServer(t, newMCPEchoServer(t), runCmd, path, flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("run exited %d: %s", code, stderr)
 	}

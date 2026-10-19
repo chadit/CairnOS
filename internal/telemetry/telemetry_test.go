@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/chadit/CairnOS/internal/config"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/telemetry"
 )
@@ -48,7 +49,7 @@ func TestSetupPaths(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			tel, err := telemetry.Setup(t.Context(), tt.cfg, testVersion)
+			tel, err := telemetry.Setup(t.Context(), tt.cfg, testVersion, nil)
 			if err != nil {
 				t.Fatalf("Setup: %v", err)
 			}
@@ -74,8 +75,12 @@ func TestSetupPaths(t *testing.T) {
 func TestMetricsEndpointServesCatalogNames(t *testing.T) {
 	t.Parallel()
 
+	// The scrape runs on an in-memory network because a loopback dial can
+	// land on a port with stale connection tracking (see internal/nettest).
+	network := nettest.NewNetwork()
+
 	tel, err := telemetry.Setup(t.Context(),
-		config.Telemetry{Enabled: true, Prometheus: loopbackEphemeral}, testVersion)
+		config.Telemetry{Enabled: true, Prometheus: loopbackEphemeral}, testVersion, network.Listen)
 	if err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -88,7 +93,7 @@ func TestMetricsEndpointServesCatalogNames(t *testing.T) {
 
 	tel.Recorder().BreakerTransition(t.Context(), "mock", reliability.StateOpen)
 
-	body := scrapeMetrics(t, tel.PrometheusAddr())
+	body := scrapeMetrics(t, network.Client(), tel.PrometheusAddr())
 
 	if !strings.Contains(body, "cairnos_circuit_transitions_total") {
 		t.Fatalf("/metrics is missing cairnos_circuit_transitions_total:\n%s", body)
@@ -134,7 +139,7 @@ func TestLogHandlerStampsTraceIDs(t *testing.T) {
 }
 
 // scrapeMetrics fetches the Prometheus text exposition from addr.
-func scrapeMetrics(t *testing.T, addr string) string {
+func scrapeMetrics(t *testing.T, client *http.Client, addr string) string {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), scrapeTimeout)
@@ -144,8 +149,6 @@ func scrapeMetrics(t *testing.T, addr string) string {
 	if err != nil {
 		t.Fatalf("build scrape request: %v", err)
 	}
-
-	client := &http.Client{Timeout: scrapeTimeout}
 
 	resp, err := client.Do(req)
 	if err != nil {

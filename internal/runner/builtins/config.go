@@ -6,10 +6,20 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// wrapConfigErr tags a config decode failure with the runner it belongs to,
-// so every factory reports the same "configure <name>" shape.
-func wrapConfigErr(name string, err error) error {
-	return fmt.Errorf("configure %s: %w", name, err)
+// configError tags a config decode failure with the runner it belongs to, so
+// every factory reports the same "configure <name>" shape. Unwrap keeps
+// errors.Is matching the sentinel underneath, such as ErrConfigValue.
+type configError struct {
+	err    error
+	runner string
+}
+
+func (e *configError) Error() string {
+	return "configure " + e.runner + ": " + e.err.Error()
+}
+
+func (e *configError) Unwrap() error {
+	return e.err
 }
 
 // asFactory adapts a constructor for one concrete runner to the registry's
@@ -119,11 +129,29 @@ func requireStringParam(task *runner.Task, key, codePrefix string) error {
 	return nil
 }
 
+// optionalNumberParam checks one optional numeric param. It waits for the
+// launch-time pass because an unresolved reference reads as a string at load
+// time, so only a resolved non-number is a real mistake. A JSON null reads as
+// absent, since models send null for a field they mean to leave unset.
+func optionalNumberParam(task *runner.Task, key, codePrefix string) error {
+	raw := task.Params[key]
+	if raw == nil || !task.Resolved {
+		return nil
+	}
+
+	if _, isNum := toFloat(raw); !isNum {
+		return paramError(codePrefix, key, "must be a number")
+	}
+
+	return nil
+}
+
 // optionalStringParam checks one optional param, which must be a string when
-// present.
+// present. A JSON null reads as absent, matching how every runner reads the
+// value with a comma-ok string assertion.
 func optionalStringParam(task *runner.Task, key, codePrefix string) error {
-	raw, exists := task.Params[key]
-	if !exists {
+	raw := task.Params[key]
+	if raw == nil {
 		return nil
 	}
 

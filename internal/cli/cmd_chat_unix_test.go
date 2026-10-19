@@ -21,6 +21,7 @@ import (
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // The signal tests run their subject in a child copy of this test binary, so a
@@ -273,7 +274,7 @@ func serveOverUnixSocket(t *testing.T, register func(*grpc.Server)) string {
 		t.Fatalf("listen on %s: %v", path, err)
 	}
 
-	serveGRPC(t, listener, register)
+	nettest.ServeGRPC(t, listener, register)
 
 	return "unix:" + path
 }

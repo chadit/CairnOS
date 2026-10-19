@@ -10,22 +10,19 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store/sqlite"
 )
 
 // jsonContentType is the gateway's response content type.
 const jsonContentType = "application/json"
 
-// httpTimeout bounds every gateway request in these tests.
-const httpTimeout = 30 * time.Second
-
 // httpGet fetches one gateway route and returns status code and body.
-func httpGet(t *testing.T, transport *memTransport, url string) (int, []byte) {
+func httpGet(t *testing.T, transport *nettest.Network, url string) (int, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
@@ -33,7 +30,7 @@ func httpGet(t *testing.T, transport *memTransport, url string) (int, []byte) {
 		t.Fatalf("build request: %v", err)
 	}
 
-	resp, err := transport.httpClient().Do(req)
+	resp, err := transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -49,7 +46,7 @@ func httpGet(t *testing.T, transport *memTransport, url string) (int, []byte) {
 }
 
 // httpPost posts a JSON body to one gateway route.
-func httpPost(t *testing.T, transport *memTransport, url, body string) *http.Response {
+func httpPost(t *testing.T, transport *nettest.Network, url, body string) *http.Response {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
@@ -59,7 +56,7 @@ func httpPost(t *testing.T, transport *memTransport, url, body string) *http.Res
 
 	req.Header.Set("Content-Type", jsonContentType)
 
-	resp, err := transport.httpClient().Do(req)
+	resp, err := transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
@@ -318,7 +315,7 @@ func TestGatewayRejectsBadRequests(t *testing.T) {
 // httpRequest sends one gateway request with an optional body and returns the
 // status code and the whole body, which the routing failures answer in one
 // piece.
-func httpRequest(t *testing.T, transport *memTransport, method, url, body string) (int, []byte) {
+func httpRequest(t *testing.T, transport *nettest.Network, method, url, body string) (int, []byte) {
 	t.Helper()
 
 	var payload io.Reader = http.NoBody
@@ -333,7 +330,7 @@ func httpRequest(t *testing.T, transport *memTransport, method, url, body string
 
 	req.Header.Set("Content-Type", jsonContentType)
 
-	resp, err := transport.httpClient().Do(req)
+	resp, err := transport.Client().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

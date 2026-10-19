@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,20 +44,22 @@ type serveFailedState struct {
 // connect near the end of startup, so a failure before that point has no sender
 // in the messaging registry and this builds its own.
 type serveFailNotifier struct {
-	cfg    *config.Config
-	logger *slog.Logger
-	env    environ.Lookup
-	dir    string
-	host   string
+	cfg       *config.Config
+	logger    *slog.Logger
+	env       environ.Lookup
+	transport http.RoundTripper
+	dir       string
+	host      string
 }
 
 // newServeFailNotifier wires the notifier runServe hands its failures to,
 // before the first stage that can fail, so a startup that never reaches the
-// bridges still reports.
+// bridges still reports. It sends over the bridges' transport, so a test that
+// fakes the bridge host fakes this notice too.
 func newServeFailNotifier(
-	cfg *config.Config, dir string, lookup environ.Lookup, logger *slog.Logger,
+	cfg *config.Config, dir string, lookup environ.Lookup, transport http.RoundTripper, logger *slog.Logger,
 ) *serveFailNotifier {
-	return &serveFailNotifier{cfg: cfg, dir: dir, env: lookup, logger: logger, host: hostname()}
+	return &serveFailNotifier{cfg: cfg, dir: dir, env: lookup, transport: transport, logger: logger, host: hostname()}
 }
 
 // announce posts one serve_failed line unless an earlier notice already covered
@@ -178,7 +181,7 @@ func (n *serveFailNotifier) oneShotBridge(name string) (*mattermost.Bridge, bool
 		return nil, false
 	}
 
-	client, err := mattermost.NewClient(mattermost.ClientConfig{
+	client, err := mattermost.NewClientOver(mattermost.ClientConfig{
 		Limiter: mattermost.NewBucket(mattermost.BucketConfig{
 			RatePerSecond: float64(settings.RatePerSec),
 			Burst:         float64(settings.RateBurst),
@@ -188,7 +191,7 @@ func (n *serveFailNotifier) oneShotBridge(name string) (*mattermost.Bridge, bool
 		Token:        token,
 		Timeout:      settings.SendTimeout,
 		InsecureHTTP: settings.InsecureHTTP,
-	})
+	}, n.transport)
 	if err != nil {
 		n.logger.Warn("serve failure notice has no mattermost client", "identity", name, "error", err)
 

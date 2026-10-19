@@ -42,6 +42,9 @@ const scopeName = "github.com/chadit/CairnOS/internal/telemetry"
 // listener, matching the API server's stance.
 const metricsReadHeaderTimeout = 10 * time.Second
 
+// ListenFunc binds a listener, in the shape of net.ListenConfig.Listen.
+type ListenFunc func(ctx context.Context, network, address string) (net.Listener, error)
+
 // Telemetry owns the configured providers and exporters. Shutdown flushes
 // and releases everything; a disabled instance shuts down as a no-op.
 type Telemetry struct {
@@ -53,12 +56,11 @@ type Telemetry struct {
 }
 
 // Setup builds the telemetry stack from config. Disabled config returns a
-// no-op-backed instance, so callers wire the Recorder unconditionally. An
-// OTLP endpoint adds gRPC push for traces and metrics; a Prometheus bind
-// adds the /metrics scrape endpoint. With neither, metrics stay in-process
-// and spans exist only to thread IDs into logs, which is exactly what the
-// one-shot run command wants.
-func Setup(ctx context.Context, cfg config.Telemetry, version string) (*Telemetry, error) {
+// no-op-backed instance, so callers wire the Recorder unconditionally. OTLP
+// adds gRPC push; a Prometheus bind adds /metrics, bound through listen (nil
+// for a host socket). With neither, spans only thread IDs into logs, which is
+// what the one-shot run command wants.
+func Setup(ctx context.Context, cfg config.Telemetry, version string, listen ListenFunc) (*Telemetry, error) {
 	if !cfg.Enabled {
 		recorder, err := NewRecorder(
 			nooptrace.NewTracerProvider().Tracer(scopeName),
@@ -83,7 +85,7 @@ func Setup(ctx context.Context, cfg config.Telemetry, version string) (*Telemetr
 
 	tel := &Telemetry{tracerProvider: tracerProvider}
 
-	if err := tel.startMeters(ctx, cfg, res); err != nil {
+	if err := tel.startMeters(ctx, cfg, res, listen); err != nil {
 		// Construction failed midway. The setup error is the one the caller
 		// acts on, so a cleanup failure is logged rather than returned over it.
 		if shutdownErr := tel.Shutdown(ctx); shutdownErr != nil {
@@ -141,11 +143,11 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 
 // startMeters assembles the meter provider from the configured exporters
 // and builds the Recorder over it.
-func (t *Telemetry) startMeters(ctx context.Context, cfg config.Telemetry, res *resource.Resource) error {
+func (t *Telemetry) startMeters(ctx context.Context, cfg config.Telemetry, res *resource.Resource, listen ListenFunc) error {
 	options := []sdkmetric.Option{sdkmetric.WithResource(res)}
 
 	if cfg.Prometheus != "" {
-		promExporter, err := t.startPrometheus(ctx, cfg.Prometheus)
+		promExporter, err := t.startPrometheus(ctx, cfg.Prometheus, listen)
 		if err != nil {
 			return err
 		}
@@ -181,7 +183,7 @@ func (t *Telemetry) startMeters(ctx context.Context, cfg config.Telemetry, res *
 // when the API is disabled (and in embedders without the gateway), and the
 // gateway's loopback-only guard never constrains where an operator points
 // Prometheus; the metrics bind is the operator's own choice.
-func (t *Telemetry) startPrometheus(ctx context.Context, bind string) (*otelprom.Exporter, error) {
+func (t *Telemetry) startPrometheus(ctx context.Context, bind string, listen ListenFunc) (*otelprom.Exporter, error) {
 	registry := prometheus.NewRegistry()
 
 	exporter, err := otelprom.New(
@@ -194,9 +196,11 @@ func (t *Telemetry) startPrometheus(ctx context.Context, bind string) (*otelprom
 		return nil, fmt.Errorf("build prometheus exporter: %w", err)
 	}
 
-	listenCfg := &net.ListenConfig{}
+	if listen == nil {
+		listen = (&net.ListenConfig{}).Listen
+	}
 
-	listener, err := listenCfg.Listen(ctx, "tcp", bind)
+	listener, err := listen(ctx, "tcp", bind)
 	if err != nil {
 		return nil, fmt.Errorf("listen %s for /metrics: %w", bind, err)
 	}

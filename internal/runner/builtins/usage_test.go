@@ -72,10 +72,10 @@ const claudeScript = `case "$*" in
 esac
 ` + claudeAnswerScript
 
-// codexScript mirrors the app-server: a notification first, then the reply once
-// all three handshake lines have arrived. It records stdin beside itself,
-// because the probe leaves the child's environment alone.
-const codexScript = `echo '{"jsonrpc":"2.0","method":"configWarning","params":{"message":"stale key"}}'
+// codexHandshakeScript mirrors the app-server up to its reply: a notification
+// first, then a wait for all three handshake lines. It records stdin beside
+// itself, because the probe leaves the child's environment alone.
+const codexHandshakeScript = `echo '{"jsonrpc":"2.0","method":"configWarning","params":{"message":"stale key"}}'
 n=0
 while IFS= read -r line; do
   n=$((n+1))
@@ -84,7 +84,10 @@ while IFS= read -r line; do
   if [ "$n" -eq 3 ]; then break; fi
 done
 echo '{"jsonrpc":"2.0","method":"remoteControl/status/changed","params":{}}'
-echo '` + codexUsageLine + `'`
+`
+
+// codexScript is the handshake followed by the stock reply.
+const codexScript = codexHandshakeScript + `echo '` + codexUsageLine + `'`
 
 // sshRecorderScript records the argv it was handed and then answers as the
 // remote CLI would, which is what lets a case read back the command ssh carried.
@@ -656,8 +659,8 @@ func TestUsageSummaryIsAFencedTableOfEveryWindow(t *testing.T) {
 		t.Fatalf("summary =\n%s\nwant\n%s", got.Summary, want)
 	}
 
-	if got.HasErrors {
-		t.Fatalf("has_errors = true for a report where every login answered")
+	if got.HasErrors || got.Failures != "" {
+		t.Fatalf("has_errors/failures = %v/%q for a report where every login answered", got.HasErrors, got.Failures)
 	}
 }
 
@@ -679,5 +682,9 @@ func TestUsageSummaryCarriesAFailedLoginAcrossTheWindowColumns(t *testing.T) {
 
 	if !strings.Contains(got.Summary, "| codex-agent  | prolite | 7d     | 24%  |") {
 		t.Fatalf("summary =\n%s\nwant the working login's window row", got.Summary)
+	}
+
+	if want := "claude login " + claudeLauncher + ": cli refused the usage request: error login expired"; got.Failures != want {
+		t.Fatalf("failures = %q, want %q", got.Failures, want)
 	}
 }

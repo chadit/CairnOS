@@ -19,6 +19,7 @@ import (
 	"github.com/chadit/CairnOS/internal/messaging"
 	"github.com/chadit/CairnOS/internal/notify"
 	"github.com/chadit/CairnOS/internal/poll"
+	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/runner/builtins"
 	"github.com/chadit/CairnOS/internal/scheduler"
@@ -161,7 +162,7 @@ type serveStores struct {
 func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stores *serveStores) int {
 	db, mem, scheds := stores.db, stores.mem, stores.scheds
 
-	a.serveFail = newServeFailNotifier(cfg, dir, a.envLookup(), a.logger)
+	a.serveFail = newServeFailNotifier(cfg, dir, a.envLookup(), a.bridgeTransport, a.logger)
 
 	authn, err := buildAuthenticator(cfg, stores.keyStore, a.envLookup(), a.keyHashCost)
 	if err != nil {
@@ -186,7 +187,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 		a.logger.Info("reconciled interrupted runs", "count", reconciled)
 	}
 
-	tel, err := telemetry.Setup(ctx, cfg.Telemetry, appVersion())
+	tel, err := telemetry.Setup(ctx, cfg.Telemetry, appVersion(), a.metricsListen())
 	if err != nil {
 		a.printErrf("serve: telemetry: %v\n", err)
 
@@ -209,7 +210,7 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 	msgRegistry := messaging.NewRegistry()
 
 	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, a.envLookup(), mem, stores.rules, credManager,
-		NewMessageSender(msgRegistry, logger), db, logger)
+		NewMessageSender(msgRegistry, logger), db, logger, a.runnerTransport)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
 	}
@@ -240,11 +241,12 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	apiCfg := newServeAPIConfig(cfg, stores, &serveAPIDeps{
 		registry:     registry,
-		breakers:     eng,
+		breakers:     eng.Breakers(),
 		manager:      manager,
 		drain:        drain,
 		workflowsDir: workflowsDir,
 		logger:       logger,
+		transport:    a.serveTransport,
 	})
 
 	chatAgent, personalities, code, mounted := a.attachChat(ctx, cfg, tel, apiCfg, &chatDeps{
@@ -394,7 +396,7 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 	a.printOutf("serving; interrupt to stop\n")
 
 	sweepDone := startSweep(ctx, cfg, stores.db, stores.keyStore, logger)
-	hiveDone := startHiveSubscribe(ctx, cfg, deps.secrets, stores.db, stores.scheds, logger)
+	hiveDone := a.startHiveSubscribe(ctx, cfg, deps.secrets, stores.db, stores.scheds, logger)
 	usageDone := a.startUsageRefresh(ctx, deps.registry, logger)
 	updateDone := a.startAutoUpdate(ctx, &cfg.Update, deps.dir, deps.drain, logger)
 
@@ -438,10 +440,11 @@ func (a *App) serveAndDrain(ctx context.Context, cfg *config.Config, stores *ser
 // the helper takes one argument instead of a long parameter list.
 type serveAPIDeps struct {
 	registry     *runner.Registry
-	breakers     api.BreakerAdmin
+	breakers     *reliability.BreakerSet
 	manager      *api.Manager
 	drain        *api.Drain
 	logger       *slog.Logger
+	transport    api.Transport
 	workflowsDir string
 }
 
@@ -463,6 +466,7 @@ func newServeAPIConfig(cfg *config.Config, stores *serveStores, deps *serveAPIDe
 		Manager:      deps.manager,
 		Drain:        deps.drain,
 		Logger:       deps.logger,
+		Transport:    deps.transport,
 		BindPolicy: api.BindPolicy{
 			AuthEnabled:               cfg.Auth.Enabled,
 			TLSTerminated:             cfg.Auth.TLSTerminated,
@@ -553,7 +557,7 @@ const hiveSubscribeInterval = time.Hour
 // It returns nil and starts nothing when the hive is disabled. Subscribing is
 // receive-only and never publishes, so the loop is safe regardless of the
 // publish gate.
-func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.Source, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
+func (a *App) startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.Source, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
 	if !cfg.Hive.Enabled {
 		return nil
 	}
@@ -572,7 +576,7 @@ func startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.
 		return nil
 	}
 
-	client, err := buildHiveClient(ctx, source, cfg)
+	client, err := a.buildHiveClient(ctx, source, cfg)
 	if err != nil {
 		logger.Warn("hive subscribe loop not started", "error", err)
 		closeCoordinator(ctx, coord, logger)

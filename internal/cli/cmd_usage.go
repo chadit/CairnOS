@@ -51,7 +51,7 @@ func (a *App) cmdUsage(ctx context.Context, args []string) int {
 		return code
 	}
 
-	probe, err := builtins.NewUsage(cfg.Runners[builtins.UsageName], usageOptions(cfg.Hosts, a.envLookup()))
+	probe, err := builtins.NewUsage(cfg.Runners[builtins.UsageName], usageOptions(cfg.Hosts, a.envLookup(), a.usageClock))
 	if err != nil {
 		a.printErrf("usage: %v\n", err)
 

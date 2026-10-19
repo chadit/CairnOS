@@ -5,13 +5,13 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	a2av1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/a2a/v1"
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // a2aCardPath is the public discovery path, mirrored from the a2a package so a
@@ -21,10 +21,6 @@ const a2aCardPath = "/.well-known/agent.json"
 // transportMattermost is the transport label a Mattermost identity carries on
 // the card and in a messaging listing.
 const transportMattermost = "mattermost"
-
-// cardFetchTimeout bounds the card fetch so a server that binds but never
-// answers fails the case instead of hanging the suite until the package timeout.
-const cardFetchTimeout = 5 * time.Second
 
 // a2aNoChatTOML enables A2A with chat off, so SendMessage has no core to run a
 // turn through.
@@ -87,11 +83,12 @@ func TestServeA2ASendMessageNeedsChat(t *testing.T) {
 
 	dir := bridgeServeDir(t, a2aNoChatTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir, nil)
+	network := nettest.NewNetwork()
+	stdout, _, exit, cancel := serveUntilReadyOn(t, network, dir, nil)
 
 	grpcAddr := outputAddr(t, stdout, grpcAddrPattern, "gRPC")
 
-	_, err := a2av1.NewA2AServiceClient(dialServe(t, grpcAddr)).SendMessage(t.Context(),
+	_, err := a2av1.NewA2AServiceClient(network.DialGRPC(t, grpcAddr)).SendMessage(t.Context(),
 		&a2av1.SendMessageRequest{Text: "are you there"})
 
 	if got := status.Code(err); got != codes.FailedPrecondition {
@@ -115,10 +112,11 @@ func TestServeA2ACardCarriesChannels(t *testing.T) {
 
 	dir := bridgeServeDir(t, a2aWithIdentityTOML)
 
-	stdout, _, exit, cancel := serveUntilReady(t, dir, tokenEnv(mattermostTokenEnv, fakeBridgeToken))
+	network := nettest.NewNetwork()
+	stdout, _, exit, cancel := serveUntilReadyOn(t, network, dir, tokenEnv(mattermostTokenEnv, fakeBridgeToken))
 
 	httpAddr := outputAddr(t, stdout, httpAddrPattern, "HTTP")
-	channels := fetchCardChannels(t, "http://"+httpAddr+a2aCardPath)
+	channels := fetchCardChannels(t, network.Client(), "http://"+httpAddr+a2aCardPath)
 
 	cancel()
 
@@ -143,15 +141,13 @@ func TestServeA2ACardCarriesChannels(t *testing.T) {
 }
 
 // fetchCardChannels reads the published card and returns its channel list.
-func fetchCardChannels(t *testing.T, cardURL string) []cardChannel {
+func fetchCardChannels(t *testing.T, client *http.Client, cardURL string) []cardChannel {
 	t.Helper()
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, cardURL, http.NoBody)
 	if err != nil {
 		t.Fatalf("build card request: %v", err)
 	}
-
-	client := &http.Client{Timeout: cardFetchTimeout}
 
 	response, err := client.Do(request)
 	if err != nil {

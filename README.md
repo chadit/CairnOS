@@ -911,17 +911,63 @@ launcher runs through that command.
 
 Output is a report per login, with the plan, every window's used percentage, and
 its reset time. A launcher that fails records its reason and the rest still
-report; only a run where nothing answered fails the action. Two more fields save
-a downstream action from walking the list. `summary` is the table below as
+report; only a run where nothing answered fails the action. Five more fields
+save a downstream action from walking the list. `summary` is the table below as
 Markdown, wrapped in a code fence so a chat client keeps the columns lined up.
 `has_errors` is `true` when any login failed, which is what a condition reads:
+
+```toml
+[action.post]
+runner     = "message"
+depends_on = ["windows"]
+params     = { identity = "ops", to = "#usage", text = "${{ windows.output.summary }}" }
+```
+
+`failures` names the logins that failed, one line each in the form
+`<protocol> login <launcher>: <error>`, where the protocol is `claude` or
+`codex`. It is empty when every login answered. An error that spans lines is
+joined onto one, so each line names its own login. That makes it the text for
+an alert in a channel of its own:
 
 ```toml
 [action.alert]
 runner     = "message"
 depends_on = ["windows"]
 condition  = "${{ windows.output.has_errors }} == true"
-params     = { identity = "ops", to = "#usage", text = "${{ windows.output.summary }}" }
+params     = { identity = "ops", to = "#alerts", text = "a login failed on build_box:\n${{ windows.output.failures }}" }
+```
+
+The runner can't tell an expired login from a launcher that timed out or
+crashed, so each lands in `failures` alike and only its error text differs.
+
+`reset_due` names the logins worth spending a banked reset on: a login with no
+error whose `7d` window has less than `reset_due_percent` of the week left,
+whose reset is more than `reset_due_lead` away, and that holds at least one
+unexpired banked reset. Each gets one line in the same shape as `failures`:
+
+```text
+codex login codex-agent: 12.0% of the week left, 3.5 days to the reset, 1 banked reset, the first expires in 9.2 days
+```
+
+`has_reset_due` is `true` when `reset_due` has any line. Banked resets come from
+the Codex reply or from a report file's `reset_credit_expiries`, so a Claude
+login probed directly never shows up there. `reset_due_percent` is a number from
+0 to 100 and defaults to 20. `reset_due_lead` is a duration such as `36h` and
+defaults to `48h`. Both work in either mode:
+
+```toml
+[runner.usage]
+codex             = ["codex-agent"]
+reset_due_percent = 30
+reset_due_lead    = "72h"
+```
+
+```toml
+[action.reset_alert]
+runner     = "message"
+depends_on = ["windows"]
+condition  = "${{ windows.output.has_reset_due }} == true"
+params     = { identity = "ops", to = "#alerts", text = "spend a banked reset on build_box:\n${{ windows.output.reset_due }}" }
 ```
 
 `cairnos usage` runs the same probe by hand and prints that table, with reset

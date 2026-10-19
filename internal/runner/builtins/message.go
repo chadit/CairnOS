@@ -96,8 +96,9 @@ func (*Message) Validate(task *runner.Task) error {
 		return err
 	}
 
-	_, hasThread := task.Params[paramThread]
-	if _, hasKey := task.Params[paramThreadKey]; hasThread && hasKey {
+	// Validate treats a null as absent, so a null thread beside a thread_key
+	// names one root, not two.
+	if task.Params[paramThread] != nil && task.Params[paramThreadKey] != nil {
 		return taskError(runner.ClassPermanent, codeMessageThreadBoth,
 			"%s and %s are mutually exclusive: pick a fixed root or a remembered one", paramThread, paramThreadKey)
 	}

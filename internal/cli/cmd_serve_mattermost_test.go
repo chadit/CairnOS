@@ -142,7 +142,8 @@ func TestServePrintsMessagingEndpoint(t *testing.T) {
 		t.Fatalf("serve exit = %d, want %d", code, cli.ExitOK)
 	}
 
-	if !strings.Contains(stdout.String(), "messaging endpoint at http://127.0.0.1:") {
+	banner := "messaging endpoint at http://" + outputAddr(t, stdout, httpAddrPattern, "HTTP") + "/v1/messages"
+	if !strings.Contains(stdout.String(), banner) {
 		t.Fatalf("stdout missing the messaging endpoint banner:\n%s", stdout.String())
 	}
 }

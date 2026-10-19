@@ -148,7 +148,7 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 // here at BuildAll, the same signal a missing credential gives elsewhere.
 func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.Registry, error) {
 	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), nil, nil, nil, nil,
-		nil, a.logger, nil)
+		nil, a.logger, nil, a.runnerTransport)
 }
 
 // replayComparator builds the output-equivalence comparator for replay. An

@@ -107,6 +107,19 @@ func pinnedApp(t *testing.T, stdout, stderr *bytes.Buffer, binarySum string) *cl
 		WithBitwardenClock(bitwarden.NewSteppingClock(bwReadyPolls))
 }
 
+// runConfiguredCLI drives one invocation on the pinned App after configure adds
+// the seams a case needs, such as an in-memory transport standing in for a
+// server the command calls.
+func runConfiguredCLI(t *testing.T, configure func(*cli.App) *cli.App, args ...string) (int, string, string) {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+
+	code := configure(pinnedApp(t, &stdout, &stderr, testBinaryDigest(t))).Run(t.Context(), args)
+
+	return code, stdout.String(), stderr.String()
+}
+
 // runEnvCLI drives one invocation over a staged environment instead of the
 // process one, so a case that needs PATH or a token set can still run beside
 // every other case rather than serializing the whole package.

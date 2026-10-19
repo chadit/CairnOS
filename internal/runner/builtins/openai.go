@@ -81,17 +81,18 @@ func NewOpenAIFor(block string, cfg map[string]any, client *http.Client, lookup 
 }
 
 // OpenAIFactory adapts NewOpenAI to the registry contract with a
-// backstopped HTTP client.
-func OpenAIFactory(lookup environ.Lookup) runner.Factory {
-	return OpenAIFactoryFor(OpenAIName, lookup)
+// backstopped HTTP client. A nil transport keeps http.DefaultTransport; a test
+// passes one that answers in the process instead of over a socket.
+func OpenAIFactory(lookup environ.Lookup, transport http.RoundTripper) runner.Factory {
+	return OpenAIFactoryFor(OpenAIName, lookup, transport)
 }
 
 // OpenAIFactoryFor is the registration for a `[runner.<name>]` block of this
 // type under another name, which is what makes CAIRNOS_RUNNER_<NAME>_API_KEY
 // reach the right runner.
-func OpenAIFactoryFor(block string, lookup environ.Lookup) runner.Factory {
+func OpenAIFactoryFor(block string, lookup environ.Lookup, transport http.RoundTripper) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return NewOpenAIFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout}, lookup)
+		return NewOpenAIFor(block, cfg, &http.Client{Timeout: defaultLLMTimeout, Transport: transport}, lookup)
 	}
 }
 

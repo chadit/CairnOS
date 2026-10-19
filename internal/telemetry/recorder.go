@@ -394,7 +394,7 @@ func (r *Recorder) DriverCall(ctx context.Context, actionName string, iteration 
 }
 
 // ObserveBreakers registers the cairnos_circuit_state gauge over a breaker
-// snapshot function, normally engine.BreakerStates. Call it once, after
+// snapshot function, normally the engine's Breakers().States. Call it once, after
 // the engine exists; every metric collection then reads a fresh snapshot,
 // so the gauge needs no transition bookkeeping.
 func (r *Recorder) ObserveBreakers(states func() map[string]reliability.State) error {

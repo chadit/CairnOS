@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -70,11 +71,14 @@ func builder(ctx context.Context, path string) (execretry.Build, *atomic.Int64) 
 // holdOpenInChild has a helper shell hold a write handle on path and returns
 // the function that releases it. The handle lives only in that child, so no
 // fork this test binary makes can inherit it and keep the file busy after the
-// release returns.
+// release returns. Cleanup releases it too, so a test that fails early still
+// reaps the shell.
 func holdOpenInChild(t *testing.T, path string) func() {
 	t.Helper()
 
-	holder := exec.CommandContext(t.Context(), "sh", "-c", `exec 3>>"$1"; echo held; read -r _; exit 0`, "sh", path)
+	// The shell exits when its stdin closes, so it needs no context kill, and a
+	// kill from t.Context, canceled before cleanup runs, would fail the reap.
+	holder := exec.CommandContext(context.WithoutCancel(t.Context()), "sh", "-c", `exec 3>>"$1"; echo held; read -r _; exit 0`, "sh", path)
 
 	stdin, err := holder.StdinPipe()
 	if err != nil {
@@ -90,17 +94,25 @@ func holdOpenInChild(t *testing.T, path string) func() {
 		t.Fatalf("start the holder: %v", err)
 	}
 
+	var once sync.Once
+
+	release := func() {
+		once.Do(func() {
+			_ = stdin.Close()
+
+			if err := holder.Wait(); err != nil {
+				t.Errorf("holder exit: %v", err)
+			}
+		})
+	}
+
+	t.Cleanup(release)
+
 	if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "held\n" {
 		t.Fatalf("holder reported %q (%v), want held", line, err)
 	}
 
-	return func() {
-		_ = stdin.Close()
-
-		if err := holder.Wait(); err != nil {
-			t.Errorf("holder exit: %v", err)
-		}
-	}
+	return release
 }
 
 // TestOutputSucceedsOnceTheWriteHandleCloses is the case the package exists

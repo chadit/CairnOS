@@ -278,7 +278,7 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 
 	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
-		nil, a.logger, nil)
+		nil, a.logger, nil, a.runnerTransport)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 

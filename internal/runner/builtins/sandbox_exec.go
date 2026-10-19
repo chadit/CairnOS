@@ -168,42 +168,42 @@ func NewSandboxExec(cfg map[string]any) (*SandboxExec, error) {
 func NewSandboxExecWithProbe(cfg map[string]any, probe SandboxProbe) (*SandboxExec, error) {
 	allowList, err := configStrings(cfg, cfgKeyAllowActions)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	image, err := configValue(cfg, cfgKeyImage, "")
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	workdir, err := configValue(cfg, keyWorkdir, defaultSandboxWorkdir)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	network, err := configValue(cfg, cfgKeyNetwork, false)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	harden, err := configValue(cfg, cfgKeyHarden, true)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	allowRW, err := configValue(cfg, cfgKeyAllowRWMounts, false)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	settings, err := decodeSandboxLimits(cfg)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	mounts, err := decodeMounts(cfg, allowRW)
 	if err != nil {
-		return nil, wrapConfigErr(SandboxExecName, err)
+		return nil, &configError{runner: SandboxExecName, err: err}
 	}
 
 	sandbox := &SandboxExec{

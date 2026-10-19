@@ -71,7 +71,9 @@ type Call struct {
 }
 
 // nopInstrumentation is the default when Config.Instrumentation is nil: the
-// engine pays one interface call per milestone and nothing else.
+// engine pays one interface call per milestone and nothing else. With no
+// telemetry wired there is no counter or gauge to move, so the settle and
+// budget hooks have empty bodies.
 type nopInstrumentation struct{}
 
 // RunStarted implements Instrumentation.
@@ -84,8 +86,6 @@ func (nopInstrumentation) ActionStarted(ctx context.Context, _ *workflow.Action)
 	return ctx, func(*store.ActionResult) {}
 }
 
-// ActionSettled does nothing: with no telemetry wired there is no counter to
-// move.
 func (nopInstrumentation) ActionSettled(context.Context, *store.ActionResult) {}
 
 // CallStarted implements Instrumentation.
@@ -93,9 +93,6 @@ func (nopInstrumentation) CallStarted(ctx context.Context, _ *Call) (context.Con
 	return ctx, func(runner.Usage, error) {}
 }
 
-// BudgetSpend does nothing: with no telemetry wired there is no gauge to set.
 func (nopInstrumentation) BudgetSpend(context.Context, string, float64, float64) {}
 
-// BudgetExceeded does nothing: with no telemetry wired there is no counter to
-// bump.
 func (nopInstrumentation) BudgetExceeded(context.Context, string, string) {}

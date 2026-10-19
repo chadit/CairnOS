@@ -124,7 +124,7 @@ func TestUsageReadsAReportFile(t *testing.T) {
 	codex := findLogin(t, got, codexLauncher)
 	wantWindows := []builtins.UsageWindow{
 		{Name: windowFiveHour, UsedPercent: 12.5, ResetsAt: time.Unix(1790010000, 0)},
-		{Name: "weekly", UsedPercent: 40, ResetsAt: time.Unix(1790400000, 0)},
+		{Name: weeklyWindow, UsedPercent: 40, ResetsAt: time.Unix(1790400000, 0)},
 	}
 
 	if codex.Protocol != codexConfigKey || codex.Plan != planProlite || !windowsEqual(codex.Windows, wantWindows) {
@@ -551,5 +551,61 @@ printf '%s' `+shellquote.Word(fmt.Sprintf(usageReportJSON, time.Now().Unix())))
 
 	if argv[5] != buildBoxAlias || argv[7] != wantRead || argv[15] != wantRefresh {
 		t.Fatalf("ssh calls = %#v, want the read %q then the refresh %q on %s", argv, wantRead, wantRefresh, buildBoxAlias)
+	}
+}
+
+// failingReportJSON has two failed accounts around a working one, and one
+// error spans lines the way a CLI's stderr can.
+const failingReportJSON = `{"schema": "cairnos.usage.v1", "written_at": 1790000000, "accounts": [
+ {"tool": "codex", "wrapper": "codex-agent", "error": "launcher timed out", "windows": []},
+ {"tool": "claude", "wrapper": "claude-agent", "plan": "max", "windows": []},
+ {"tool": "claude", "wrapper": "claude-alt", "error": "HTTP 401:\n  token expired", "windows": []}]}`
+
+func TestUsageReportNamesEachFailedLogin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "no failed login",
+			body: fmt.Sprintf(mergedReportJSON, int64(1790000000), int64(1790000000)),
+			want: "",
+		},
+		{
+			name: "one failed login",
+			body: fmt.Sprintf(usageReportJSON, int64(1790000000)),
+			want: "claude login claude-alt: HTTP 401: token expired",
+		},
+		{
+			name: "several failed logins in file order",
+			body: failingReportJSON,
+			want: "codex login codex-agent: launcher timed out\nclaude login claude-alt: HTTP 401: token expired",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			output := filepath.Join(t.TempDir(), reportFileName)
+
+			if err := os.WriteFile(output, []byte(tt.body), 0o600); err != nil {
+				t.Fatalf("write report: %v", err)
+			}
+
+			usage := newUsage(t, reportConfig(binTrue, output), builtins.UsageOptions{Lookup: pathEnv(filepath.Dir(output))})
+
+			got, err := usage.Report(t.Context(), usageTask(nil))
+			if err != nil {
+				t.Fatalf("report: %v", err)
+			}
+
+			if got.Failures != tt.want || got.HasErrors != (tt.want != "") {
+				t.Fatalf("failures/has_errors = %q/%v, want %q", got.Failures, got.HasErrors, tt.want)
+			}
+		})
 	}
 }

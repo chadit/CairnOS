@@ -249,26 +249,11 @@ func New(cfg Config, registry *runner.Registry, stateStore store.Store) *Engine 
 	}
 }
 
-// BreakerStates snapshots every created circuit breaker's position by
-// runner name, the read half of the admin breaker surface
-// (.agents/spec/06-observability-and-tuning.md). Breakers are created on a
-// runner's first call, so a runner with no traffic yet is absent.
-func (e *Engine) BreakerStates() map[string]reliability.State {
-	return e.breakers.States()
-}
-
-// OnBreakerTransition registers a callback fired on every breaker state
-// change, feeding the circuit metrics. Register it before the engine sees
-// traffic; it applies to breakers created from then on.
-func (e *Engine) OnBreakerTransition(callback func(name string, to reliability.State)) {
-	e.breakers.OnTransition(callback)
-}
-
-// ResetBreaker forces one runner's breaker CLOSED, reporting whether that
-// runner had a breaker to reset. The admin API wires this to its
-// ResetBreaker RPC.
-func (e *Engine) ResetBreaker(name string) bool {
-	return e.breakers.Reset(name)
+// Breakers returns the per-runner circuit breakers the engine calls through,
+// keyed by runner name. The admin API resets them and telemetry reads and
+// watches them (.agents/spec/06-observability-and-tuning.md).
+func (e *Engine) Breakers() *reliability.BreakerSet {
+	return e.breakers
 }
 
 // RunWorkflow executes one run of a parsed workflow: it validates inputs,

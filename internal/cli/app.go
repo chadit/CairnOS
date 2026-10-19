@@ -13,11 +13,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/chadit/CairnOS/internal/api"
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cairnerr"
 	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/telemetry"
 )
 
 // Process exit codes: success, a failed or canceled run (or an unhealthy
@@ -120,11 +123,35 @@ type App struct {
 	// App still reads the process environment, which envLookup supplies.
 	env environ.Lookup
 
-	// bridgeTransport carries the chat bridges' HTTP calls. Nil is the default
+	// bridgeTransport carries the chat bridges' HTTP calls and the serve-failure
+	// notice, which builds its own Mattermost bridge. Nil is the default
 	// transport every real serve uses. A serve test hands over one that answers
 	// in the process, so no case resolves a bridge host, reaches the public
 	// Telegram API, or leaves a dial running after serve returns.
 	bridgeTransport http.RoundTripper
+
+	// runnerTransport carries the openai, anthropic, and mcp_client runners'
+	// HTTP calls and the model status probe. Nil keeps each one's default,
+	// which for mcp_client is the egress-guarded client. A test hands over one
+	// that answers in the process, because a loopback server can hit stale
+	// connection tracking and a non-idempotent action fails on its first dial
+	// error.
+	runnerTransport http.RoundTripper
+
+	// usageClock is the clock `cairnos usage` reads a script report's age on.
+	// Nil is time.Now. A test fixes it, because the stale notice rounds the
+	// age to the minute and a slow host would otherwise change the line.
+	usageClock func() time.Time
+
+	// hiveTransport carries the hive client's calls. Nil keeps the hive
+	// package's default client. A test hands over one that answers in the
+	// process instead of a loopback hive.
+	hiveTransport http.RoundTripper
+
+	// serveTransport supplies serve's API and /metrics listeners. Nil binds
+	// host sockets. A test hands over an in-memory network, because a loopback
+	// dial into a serve it started can hit stale connection tracking.
+	serveTransport api.Transport
 
 	// serveDialer opens the connection under every client this CLI points at a
 	// serve. Nil is the default and dials the address over the network.
@@ -172,11 +199,48 @@ func (a *App) WithBitwardenClock(clock bitwarden.Clock) *App {
 }
 
 // WithBridgeTransport sets the round tripper the Telegram and Mattermost
-// bridges send through, and returns the App for chaining. Only a test build
-// calls it: the hosts stay the configured ones, and the tripper decides where
-// their requests actually go.
+// bridges and the serve-failure notice send through, and returns the App for
+// chaining. Only a test build calls it: the hosts stay the configured ones, and
+// the tripper decides where their requests actually go.
 func (a *App) WithBridgeTransport(transport http.RoundTripper) *App {
 	a.bridgeTransport = transport
+
+	return a
+}
+
+// WithRunnerTransport sets the round tripper the openai, anthropic, and
+// mcp_client runners and the model status probe send through, and returns the
+// App for chaining. Only a test build calls it:
+// base_url stays the configured one, and the tripper decides what answers it.
+func (a *App) WithRunnerTransport(transport http.RoundTripper) *App {
+	a.runnerTransport = transport
+
+	return a
+}
+
+// WithUsageClock sets the clock `cairnos usage` reads a script report's age
+// on, and returns the App for chaining. Only a test build calls it.
+func (a *App) WithUsageClock(now func() time.Time) *App {
+	a.usageClock = now
+
+	return a
+}
+
+// WithHiveTransport sets the round tripper the hive client sends through, and
+// returns the App for chaining. Only a test build calls it: the endpoint stays
+// the configured one, and the tripper decides what answers it.
+func (a *App) WithHiveTransport(transport http.RoundTripper) *App {
+	a.hiveTransport = transport
+
+	return a
+}
+
+// WithServeTransport sets the listeners serve binds its API and /metrics
+// endpoints on, and returns the App for chaining. Only a test build calls it:
+// the configured addresses still pass the bind guard, and the transport decides
+// what a client dialing the reported address reaches.
+func (a *App) WithServeTransport(transport api.Transport) *App {
+	a.serveTransport = transport
 
 	return a
 }
@@ -337,6 +401,16 @@ func (a *App) envLookup() environ.Lookup {
 	}
 
 	return a.env
+}
+
+// metricsListen is the bind serve hands telemetry: the serve transport's when
+// one is set, and nil, a host socket, otherwise.
+func (a *App) metricsListen() telemetry.ListenFunc {
+	if a.serveTransport == nil {
+		return nil
+	}
+
+	return a.serveTransport.Listen
 }
 
 // printOutf writes user-facing output, logging a broken stdout instead of

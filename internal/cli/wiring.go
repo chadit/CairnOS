@@ -779,11 +779,12 @@ func newServeRegistry(
 	msgSender builtins.MessageSender,
 	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
+	runnerTransport http.RoundTripper,
 ) (*runner.Registry, *SourceDirtyNotifier, error) {
 	notifier := NewSourceDirtyNotifier(nil)
 
 	registry, err := newRegistry(ctx, cfg.Runners, sources, cfg.Hosts, env, mem,
-		rulesSvc, credLookup, msgSender, msgThreads, logger, notifier)
+		rulesSvc, credLookup, msgSender, msgThreads, logger, notifier, runnerTransport)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -811,6 +812,7 @@ func newRegistry(
 	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
 	sourceObs builtins.SourceObserver,
+	runnerTransport http.RoundTripper,
 ) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
 	hostEnv := hostenv.Render(hosts)
@@ -822,7 +824,7 @@ func newRegistry(
 	}
 
 	fixed := fixedBuiltins(sources, hosts, hostEnv, env, rulesSvc, credLookup,
-		msgSender, msgThreads, logger, sourceObs)
+		msgSender, msgThreads, logger, sourceObs, runnerTransport)
 
 	for _, builtin := range fixed {
 		if err := registry.Register(builtin.name, builtin.factory); err != nil {
@@ -836,7 +838,7 @@ func newRegistry(
 		}
 	}
 
-	deps := configuredRunnerDeps{hostEnv: hostEnv, env: env, credLookup: credLookup}
+	deps := configuredRunnerDeps{hostEnv: hostEnv, env: env, credLookup: credLookup, runnerTransport: runnerTransport}
 	if err := registerConfiguredRunners(ctx, registry, runnerCfgs, deps); err != nil {
 		return nil, err
 	}
@@ -881,6 +883,7 @@ func fixedBuiltins(
 	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
 	sourceObs builtins.SourceObserver,
+	runnerTransport http.RoundTripper,
 ) []builtinRunner {
 	return []builtinRunner{
 		{name: builtins.MockName, factory: builtins.MockFactory()},
@@ -890,24 +893,26 @@ func fixedBuiltins(
 		{name: builtins.HTTPName, factory: builtins.HTTPFactoryWithCredentials(credLookup)},
 		{name: builtins.CodeName, factory: builtins.CodeFactory()},
 		{name: builtins.LanguageRulesName, factory: languageRulesFactory(rulesSvc)},
-		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory(env)},
-		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory(env)},
+		{name: builtins.OpenAIName, factory: builtins.OpenAIFactory(env, runnerTransport)},
+		{name: builtins.AnthropicName, factory: builtins.AnthropicFactory(env, runnerTransport)},
 		{name: builtins.GitHubName, factory: builtins.GitHubFactory(env)},
-		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup)},
+		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup, runnerTransport)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory()},
 		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ())},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender, msgThreads)},
 		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
-		{name: builtins.UsageName, factory: builtins.UsageFactory(usageOptions(hosts, env))},
+		{name: builtins.UsageName, factory: builtins.UsageFactory(usageOptions(hosts, env, nil))},
 	}
 }
 
 // usageOptions builds the usage runner's seams from config. The usage command and
-// the registry share it so both probe the same host table.
-func usageOptions(hosts map[string]config.Host, env environ.Lookup) builtins.UsageOptions {
+// the registry share it so both probe the same host table. now is the report
+// clock, nil for time.Now.
+func usageOptions(hosts map[string]config.Host, env environ.Lookup, now func() time.Time) builtins.UsageOptions {
 	return builtins.UsageOptions{
 		Hosts:   usageHosts(hosts),
 		Lookup:  env,
+		Now:     now,
 		Version: appVersion(),
 	}
 }
@@ -933,12 +938,13 @@ func alreadyRegisteredAsBuiltin(name, kind string) bool {
 }
 
 // configuredRunnerDeps carries what a config-declared runner shares with the
-// built-ins: the rendered host table, the environment, and the credential
-// lookup.
+// built-ins: the rendered host table, the environment, the credential lookup,
+// and the transport the openai, anthropic, and mcp_client runners send through.
 type configuredRunnerDeps struct {
-	env        environ.Lookup
-	credLookup builtins.TokenLookup
-	hostEnv    []string
+	env             environ.Lookup
+	credLookup      builtins.TokenLookup
+	runnerTransport http.RoundTripper
+	hostEnv         []string
 }
 
 // registerConfiguredRunners registers a runner for every [runner.<name>] block
@@ -1024,9 +1030,9 @@ func configuredRunnerFactory(ctx context.Context, kind, name string, deps config
 
 	switch kind {
 	case builtins.MCPClientName:
-		return builtins.MCPClientFactoryForWithCredentials(name, deps.credLookup)
+		return builtins.MCPClientFactoryForWithCredentials(name, deps.credLookup, deps.runnerTransport)
 	case builtins.OpenAIName, builtins.AnthropicName:
-		return namedLLMFactory(kind, name, deps.env)
+		return namedLLMFactory(kind, name, deps.env, deps.runnerTransport)
 	}
 
 	if tool, isCLI := builtins.CLIDefaults()[kind]; isCLI {
@@ -1040,12 +1046,12 @@ func configuredRunnerFactory(ctx context.Context, kind, name string, deps config
 // a name of its own. The name is threaded into the factory because it decides
 // which API key the runner reads. A local server reached this way is an openai
 // block with a base_url.
-func namedLLMFactory(kind, name string, env environ.Lookup) runner.Factory {
+func namedLLMFactory(kind, name string, env environ.Lookup, transport http.RoundTripper) runner.Factory {
 	if kind == builtins.AnthropicName {
-		return builtins.AnthropicFactoryFor(name, env)
+		return builtins.AnthropicFactoryFor(name, env, transport)
 	}
 
-	return builtins.OpenAIFactoryFor(name, env)
+	return builtins.OpenAIFactoryFor(name, env, transport)
 }
 
 // closeRegistry shuts every built runner down, logging instead of failing:
@@ -1101,11 +1107,12 @@ func appVersion() string {
 // gauge to the recorder. ctx rides into the transition callback because
 // reliability's hook carries none of its own.
 func wireBreakerTelemetry(ctx context.Context, eng *engine.Engine, rec *telemetry.Recorder) error {
-	eng.OnBreakerTransition(func(name string, to reliability.State) {
+	breakers := eng.Breakers()
+	breakers.OnTransition(func(name string, to reliability.State) {
 		rec.BreakerTransition(ctx, name, to)
 	})
 
-	if err := rec.ObserveBreakers(eng.BreakerStates); err != nil {
+	if err := rec.ObserveBreakers(breakers.States); err != nil {
 		return fmt.Errorf("wire breaker gauge: %w", err)
 	}
 

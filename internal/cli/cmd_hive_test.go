@@ -3,7 +3,6 @@ package cli_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/hive"
+	"github.com/chadit/CairnOS/internal/nettest"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/tuning"
 )
@@ -36,10 +36,8 @@ func writeHiveConfig(t *testing.T, dir, endpoint string, publish bool) {
 	}
 }
 
-// startTipServer starts an httptest hive returning one job-search tip on GET.
-func startTipServer(t *testing.T) string {
-	t.Helper()
-
+// tipHandler stands in for a hive returning one job-search tip on GET.
+func tipHandler() http.Handler {
 	tip := hive.Tip{
 		Kind:       store.SuggestionCaching,
 		Category:   hive.CategoryJobSearch,
@@ -47,9 +45,7 @@ func startTipServer(t *testing.T) string {
 		CostBucket: "20%",
 	}
 
-	// Real socket on purpose: the command runs the whole CLI, which builds its
-	// hive client from config with no seam a test can hand a transport to.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusAccepted)
 
@@ -65,10 +61,7 @@ func startTipServer(t *testing.T) string {
 		if err := json.NewEncoder(w).Encode(body); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
-	}))
-	t.Cleanup(server.Close)
-
-	return server.URL
+	})
 }
 
 // TestHiveStatusShowsGate proves status prints the publish gate state.
@@ -94,10 +87,13 @@ func TestHiveSubscribeLandsTipsInQueue(t *testing.T) {
 	t.Parallel()
 
 	dir := initDir(t)
-	endpoint := startTipServer(t)
-	writeHiveConfig(t, dir, endpoint, false)
+	writeHiveConfig(t, dir, nettest.BaseURL, false)
 
-	code, stdout, stderr := runCLI(t, hiveCmd, "subscribe", flagDirArg, dir)
+	// The hive answers in the process: a loopback hive can sit on a port with
+	// stale connection tracking, and the dial then fails with no route to host.
+	code, stdout, stderr := runConfiguredCLI(t, func(app *cli.App) *cli.App {
+		return app.WithHiveTransport(nettest.Transport(tipHandler()))
+	}, hiveCmd, "subscribe", flagDirArg, dir)
 	if code != cli.ExitOK {
 		t.Fatalf("hive subscribe exited %d: %s", code, stderr)
 	}

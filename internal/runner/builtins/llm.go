@@ -114,17 +114,17 @@ func decodeLLMConfig(
 
 	model, err := configValue(cfg, keyModel, "")
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	baseURL, err := configValue(cfg, cfgKeyBaseURL, defaultBaseURL)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	maxTokens, hasMax, err := configInt(cfg, cfgKeyMaxTokens)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	if !hasMax {
@@ -133,22 +133,22 @@ func decodeLLMConfig(
 
 	temperature, hasTemp, err := configFloat(cfg, cfgKeyTemperature)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	priceIn, _, err := configFloat(cfg, cfgKeyPriceIn)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	priceOut, _, err := configFloat(cfg, cfgKeyPriceOut)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	outputFormat, err := configValue(cfg, keyOutputFormat, outputFormatText)
 	if err != nil {
-		return decoded, wrapConfigErr(name, err)
+		return decoded, &configError{runner: name, err: err}
 	}
 
 	if err := validateOutputFormat(name, outputFormat); err != nil {

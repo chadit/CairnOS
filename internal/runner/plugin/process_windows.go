@@ -21,10 +21,10 @@ type processTree struct {
 	job windows.Handle
 }
 
-// configureProcessTree does nothing on Windows. A job object can only take a
-// process that is already running, so all of the setup happens in
-// adoptProcessTree after Start.
-func (*Plugin) configureProcessTree() {}
+func (*Plugin) configureProcessTree() {
+	// A job object can only take a process that is already running, so all of
+	// the setup happens in adoptProcessTree after Start.
+}
 
 // adoptProcessTree puts the started child in a new job object, so stopProcess
 // reaches every process the plugin spawned. The job has no kill-on-close limit,

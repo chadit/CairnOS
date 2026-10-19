@@ -19,6 +19,11 @@ var (
 	// ErrManagerUnbound reports a StartRun before Bind wired the engine.
 	ErrManagerUnbound = errors.New("run manager has no engine bound")
 
+	// ErrManagerShutdown reports a start after Shutdown. Shutdown cancels only
+	// the runs it saw, so a later start would drive a loop nothing cancels while
+	// the server stops and the store closes.
+	ErrManagerShutdown = errors.New("run manager is shut down")
+
 	// ErrRunActive reports a StartResume for a run this manager is already
 	// driving, so two loops can never execute one run.
 	ErrRunActive = errors.New("run is already active on this server")

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/cli"
@@ -128,9 +127,10 @@ func TestServeSmoke(t *testing.T) {
 	var stderr bytes.Buffer
 
 	exit := make(chan int, 1)
+	network := nettest.NewNetwork()
 
 	go func() {
-		exit <- cli.New(stdout, &stderr).Run(ctx, []string{serveCmd, flagDirArg, dir})
+		exit <- cli.New(stdout, &stderr).WithServeTransport(network).Run(ctx, []string{serveCmd, flagDirArg, dir})
 	}()
 
 	select {
@@ -142,9 +142,9 @@ func TestServeSmoke(t *testing.T) {
 	grpcAddr := outputAddr(t, stdout, grpcAddrPattern, "gRPC")
 	metricsAddr := outputAddr(t, stdout, metricsAddrPattern, "metrics")
 
-	checkHealth(t, grpcAddr)
-	fireRun(t, grpcAddr)
-	checkMetrics(t, metricsAddr)
+	checkHealth(t, network.DialGRPC(t, grpcAddr))
+	fireRun(t, network.DialGRPC(t, grpcAddr))
+	checkMetrics(t, network.Client(), metricsAddr)
 	cancel()
 
 	if code := <-exit; code != cli.ExitOK {
@@ -164,11 +164,9 @@ func outputAddr(t *testing.T, stdout *signalWriter, pattern *regexp.Regexp, labe
 	return match[1]
 }
 
-// checkHealth calls AdminService.Health over a fresh gRPC connection.
-func checkHealth(t *testing.T, addr string) {
+// checkHealth calls AdminService.Health over conn.
+func checkHealth(t *testing.T, conn *grpc.ClientConn) {
 	t.Helper()
-
-	conn := dialServe(t, addr)
 
 	health, err := cairnosv1.NewAdminServiceClient(conn).Health(t.Context(), &cairnosv1.HealthRequest{})
 	if err != nil {
@@ -182,10 +180,8 @@ func checkHealth(t *testing.T, addr string) {
 
 // fireRun starts the hello workflow over gRPC and drains its event stream
 // to completion, so the run is terminal before the metrics scrape.
-func fireRun(t *testing.T, addr string) {
+func fireRun(t *testing.T, conn *grpc.ClientConn) {
 	t.Helper()
-
-	conn := dialServe(t, addr)
 
 	stream, err := cairnosv1.NewWorkflowServiceClient(conn).RunWorkflow(t.Context(),
 		&cairnosv1.RunWorkflowRequest{WorkflowName: helloWorkflowName})
@@ -207,7 +203,7 @@ func fireRun(t *testing.T, addr string) {
 
 // checkMetrics scrapes /metrics and asserts the run that just finished
 // shows up under its catalog name.
-func checkMetrics(t *testing.T, addr string) {
+func checkMetrics(t *testing.T, client *http.Client, addr string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -217,8 +213,6 @@ func checkMetrics(t *testing.T, addr string) {
 	if err != nil {
 		t.Fatalf("build scrape request: %v", err)
 	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -235,20 +229,6 @@ func checkMetrics(t *testing.T, addr string) {
 	if !strings.Contains(string(body), "cairnos_runs_total") {
 		t.Fatalf("/metrics is missing cairnos_runs_total after a run:\n%s", body)
 	}
-}
-
-// dialServe opens a gRPC client connection cleaned up with the test.
-func dialServe(t *testing.T, addr string) *grpc.ClientConn {
-	t.Helper()
-
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial %s: %v", addr, err)
-	}
-
-	t.Cleanup(func() { _ = conn.Close() })
-
-	return conn
 }
 
 // bridgeTokenEnv is the env key the Telegram bot token rides, mirrored from the
@@ -328,12 +308,23 @@ func bridgeServeDir(t *testing.T, cfgTOML string) string {
 	return dir
 }
 
-// serveUntilReady boots serve in dir on a goroutine and blocks until the ready
-// marker prints or serve exits early. The returned buffers are safe to read once
-// exit is drained, since the exit send happens-after every serve write. Every
-// bridge it starts talks to silentBridgeHost.
+// serveUntilReady boots serve on a network of its own, for a case that never
+// dials it.
 func serveUntilReady(
 	t *testing.T, dir string, env map[string]string,
+) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
+	t.Helper()
+
+	return serveUntilReadyOn(t, nettest.NewNetwork(), dir, env)
+}
+
+// serveUntilReadyOn boots serve in dir on a goroutine and blocks until the
+// ready marker prints or serve exits early. The returned buffers are safe to
+// read once exit is drained, since the exit send happens-after every serve
+// write. Its listeners sit on network, and every bridge talks to
+// silentBridgeHost.
+func serveUntilReadyOn(
+	t *testing.T, network *nettest.Network, dir string, env map[string]string,
 ) (*signalWriter, *bytes.Buffer, chan int, context.CancelFunc) {
 	t.Helper()
 
@@ -344,7 +335,9 @@ func serveUntilReady(
 	exit := make(chan int, 1)
 
 	go func() {
-		app := cli.New(stdout, stderr).WithEnv(environ.Map(env)).WithBridgeTransport(silentBridgeHost())
+		app := cli.New(stdout, stderr).WithEnv(environ.Map(env)).
+			WithBridgeTransport(silentBridgeHost()).
+			WithServeTransport(network)
 		exit <- app.Run(ctx, []string{serveCmd, flagDirArg, dir})
 	}()
 

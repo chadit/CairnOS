@@ -130,7 +130,7 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 	}
 
 	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, rulesSvc, credManager, nil,
-		nil, a.logger, nil)
+		nil, a.logger, nil, a.runnerTransport)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
 

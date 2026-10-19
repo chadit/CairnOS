@@ -118,22 +118,22 @@ func buildMCPClient(
 ) (*MCPClient, error) {
 	serverURL, err := configValue(cfg, cfgKeyServerURL, "")
 	if err != nil {
-		return nil, wrapConfigErr(MCPClientName, err)
+		return nil, &configError{runner: MCPClientName, err: err}
 	}
 
 	command, err := configStrings(cfg, cfgKeyCommand)
 	if err != nil {
-		return nil, wrapConfigErr(MCPClientName, err)
+		return nil, &configError{runner: MCPClientName, err: err}
 	}
 
 	tool, err := configValue(cfg, cfgKeyTool, "")
 	if err != nil {
-		return nil, wrapConfigErr(MCPClientName, err)
+		return nil, &configError{runner: MCPClientName, err: err}
 	}
 
 	allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
 	if err != nil {
-		return nil, wrapConfigErr(MCPClientName, err)
+		return nil, &configError{runner: MCPClientName, err: err}
 	}
 
 	if serverURL != "" && len(command) > 0 {
@@ -142,7 +142,7 @@ func buildMCPClient(
 
 	credential, err := requireCredential(cfg, lookup)
 	if err != nil {
-		return nil, wrapConfigErr(MCPClientName, err)
+		return nil, &configError{runner: MCPClientName, err: err}
 	}
 
 	// A credential targets a request Authorization header, which only the
@@ -185,15 +185,16 @@ func buildMCPClient(
 // MCPClientFactory adapts buildMCPClient to the registry contract with no
 // credential lookup. It is MCPClientFactoryWithCredentials with a nil lookup.
 func MCPClientFactory() runner.Factory {
-	return MCPClientFactoryWithCredentials(nil)
+	return MCPClientFactoryWithCredentials(nil, nil)
 }
 
 // MCPClientFactoryWithCredentials returns a registry factory that wires lookup
 // into the built-in mcp_client instance, so a block with a credential key sends
-// Authorization: Bearer over the streamable HTTP transport.
-func MCPClientFactoryWithCredentials(lookup TokenLookup) runner.Factory {
+// Authorization: Bearer over the streamable HTTP transport. A nil transport
+// keeps the guarded default; a test passes one that answers in the process.
+func MCPClientFactoryWithCredentials(lookup TokenLookup, transport http.RoundTripper) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return buildMCPClient(MCPClientName, cfg, lookup, nil)
+		return buildMCPClient(MCPClientName, cfg, lookup, transport)
 	}
 }
 
@@ -203,14 +204,15 @@ func MCPClientFactoryWithCredentials(lookup TokenLookup) runner.Factory {
 // Name changes; error codes and Meta keep the mcp_client prefix, matching the
 // other builtins' type-level codes.
 func MCPClientFactoryFor(name string) runner.Factory {
-	return MCPClientFactoryForWithCredentials(name, nil)
+	return MCPClientFactoryForWithCredentials(name, nil, nil)
 }
 
 // MCPClientFactoryForWithCredentials is MCPClientFactoryFor with a credential
-// lookup, so an imported mcp_client block can bind a credential too.
-func MCPClientFactoryForWithCredentials(name string, lookup TokenLookup) runner.Factory {
+// lookup, so an imported mcp_client block can bind a credential too, and the
+// transport MCPClientFactoryWithCredentials takes.
+func MCPClientFactoryForWithCredentials(name string, lookup TokenLookup, transport http.RoundTripper) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
-		return buildMCPClient(name, cfg, lookup, nil)
+		return buildMCPClient(name, cfg, lookup, transport)
 	}
 }
 

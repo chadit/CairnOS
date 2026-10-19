@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -625,7 +626,7 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	status, err := collectStatus(ctx, target, &opts)
+	status, err := collectStatus(ctx, target, &opts, a.modelProbeClient())
 	if err != nil {
 		a.printCmdErr(prefix, err)
 
@@ -635,9 +636,16 @@ func (a *App) cmdModelStatus(ctx context.Context, args []string) int {
 	return a.printStatus(prefix, status, opts.jsonOut)
 }
 
+// modelProbeClient is the client status probes the model server with. It rides
+// the runner transport, which already stands in for the model server the
+// runners call; nil is http.DefaultTransport, the probe's own default.
+func (a *App) modelProbeClient() *http.Client {
+	return &http.Client{Timeout: localmodel.ProbeTimeout, Transport: a.runnerTransport}
+}
+
 // collectStatus reads the manifest, asks the supervisor for the service state,
-// and probes the endpoint.
-func collectStatus(ctx context.Context, target *ModelTarget, opts *ModelOptions) (*modelStatus, error) {
+// and probes the endpoint through client.
+func collectStatus(ctx context.Context, target *ModelTarget, opts *ModelOptions, client *http.Client) (*modelStatus, error) {
 	manifest, _, err := localmodel.LoadManifest(target.layout.ManifestPath())
 	if err != nil {
 		return nil, fmt.Errorf("read the install record: %w", err)
@@ -656,7 +664,7 @@ func collectStatus(ctx context.Context, target *ModelTarget, opts *ModelOptions)
 			Matches:   manifest.ModelMatches(&target.model),
 		},
 		Endpoint:      endpoint,
-		ServerAnswers: localmodel.Probe(ctx, nil, endpoint) == nil,
+		ServerAnswers: localmodel.Probe(ctx, client, endpoint) == nil,
 	}
 
 	status.ServiceLabel, status.Service = serviceState(ctx)

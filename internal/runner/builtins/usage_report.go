@@ -345,7 +345,7 @@ func (u *Usage) readReport(ctx context.Context, task *runner.Task) (UsageReport,
 		return UsageReport{}, err
 	}
 
-	now := time.Now()
+	now := u.now()
 
 	report, err := parseUsageReport(data, now)
 	if err != nil {
@@ -358,7 +358,7 @@ func (u *Usage) readReport(ctx context.Context, task *runner.Task) (UsageReport,
 
 	report.Host = u.script.host
 	report.Notice = u.staleNotice(report.Logins, now)
-	report.finish()
+	report.finish(u.resetDue, now)
 
 	return report, reportOutcome(report.Logins)
 }
@@ -519,11 +519,13 @@ func (a *usageReportAccount) login(writtenAt, now time.Time) UsageLogin {
 		})
 	}
 
+	expiries := make([]time.Time, 0, len(a.ResetCredits))
+
 	for _, expiry := range a.ResetCredits {
-		if at := epochTime(expiry); at.After(now) {
-			login.ResetCredits = append(login.ResetCredits, at)
-		}
+		expiries = append(expiries, epochTime(expiry))
 	}
+
+	login.ResetCredits = unexpiredCredits(expiries, now)
 
 	return login
 }

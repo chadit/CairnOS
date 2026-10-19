@@ -281,6 +281,22 @@ func TestExecFactoryRejectsBadConfig(t *testing.T) {
 	}
 }
 
+// TestExecConfigErrorNamesRunner pins the "configure <runner>" prefix every
+// factory puts on a config failure, so an operator with several runner blocks
+// can tell which one is broken.
+func TestExecConfigErrorNamesRunner(t *testing.T) {
+	t.Parallel()
+
+	_, err := builtins.ExecFactory()(execConfig(map[string]any{envKey: int64(1)}))
+	if err == nil {
+		t.Fatal("ExecFactory accepted a non-table env, want a config error")
+	}
+
+	if want := "configure " + builtins.ExecName + ": "; !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("error %q does not start with %q", err, want)
+	}
+}
+
 // TestExecBuildsWithoutAConfigBlock pins the startup contract: the registry
 // constructs every built-in whether or not the operator configured it, so an
 // absent block must build a runner that denies everything rather than failing

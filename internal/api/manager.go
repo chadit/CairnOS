@@ -79,6 +79,10 @@ type Manager struct {
 	// so a late Watch misses and falls back to the stored record.
 	handles map[string]*RunHandle
 
+	// closed is set by Shutdown under mu, so every start that registers under
+	// the same lock either lands before Shutdown cancels it or is refused.
+	closed bool
+
 	startMu sync.Mutex
 	mu      sync.Mutex
 }
@@ -219,6 +223,7 @@ func (m *Manager) InFlight() int {
 // finalizes each record as canceled before the process exits.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
+	m.closed = true
 	cancels := make([]context.CancelFunc, 0, len(m.cancels))
 
 	for _, state := range m.cancels {
@@ -261,10 +266,10 @@ func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResult
 
 // StartResume drives a held run forward after its approval was decided,
 // detached from ctx like every managed run. The run keeps its existing ID, so
-// the reservation handshake does not apply; routing registers under held.ID
-// before the engine goroutine starts. A run already active is refused with
-// ErrRunActive so two loops never drive one run
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// routing registers under held.ID with no reservation. A run already active is
+// refused with ErrRunActive so two loops never drive one run
+// (.agents/spec/parity/workflow-language.md, "Human approval"), and any resume
+// after Shutdown with ErrManagerShutdown.
 func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
 	eng := m.engine()
 	if eng == nil {
@@ -275,6 +280,13 @@ func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*s
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		cancel()
+
+		return nil, ErrManagerShutdown
+	}
+
 	if _, active := m.cancels[held.ID]; active {
 		m.mu.Unlock()
 		cancel()
@@ -331,7 +343,13 @@ func (m *Manager) launchRun(ctx context.Context, watch bool, launch launcher) (*
 
 	res := &reservation{id: ulid.Make().String(), taken: make(chan struct{})}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	events := m.register(res, cancel, workspace, watch)
+
+	events, err := m.register(res, cancel, workspace, watch)
+	if err != nil {
+		cancel()
+
+		return nil, err
+	}
 
 	outcome := make(chan RunOutcome, 1)
 
@@ -378,10 +396,15 @@ func (m *Manager) engine() *engine.Engine {
 
 // register installs the reservation, the cancel func with its workspace, and
 // (when watched) the event channel, all before the engine goroutine starts, so
-// no event can fire without a route.
-func (m *Manager) register(res *reservation, cancel context.CancelFunc, workspace string, watch bool) chan engine.Event {
+// no event can fire without a route. It refuses once Shutdown has run, checked
+// under the same lock so Shutdown cannot miss a run registered here.
+func (m *Manager) register(res *reservation, cancel context.CancelFunc, workspace string, watch bool) (chan engine.Event, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.closed {
+		return nil, ErrManagerShutdown
+	}
 
 	m.pending = res
 	m.cancels[res.id] = &runState{cancel: cancel, released: make(chan struct{}), workspace: workspace}
@@ -392,7 +415,15 @@ func (m *Manager) register(res *reservation, cancel context.CancelFunc, workspac
 		m.subs[res.id] = events
 	}
 
-	return events
+	return events, nil
+}
+
+// isClosed reports whether Shutdown has run.
+func (m *Manager) isClosed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.closed
 }
 
 // execute runs the launcher to completion and releases the run's routing

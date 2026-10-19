@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,8 @@ import (
 	"time"
 
 	"github.com/chadit/CairnOS/internal/cli"
+	"github.com/chadit/CairnOS/internal/environ"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // serveFailedStateName is the file the repeat window lives in, mirrored from the
@@ -58,7 +59,9 @@ ref  = "main"
 
 // fakeMattermost answers the two calls one notify post makes, resolving #alerts
 // and creating the post, and hands every posted message back on the channel.
-func fakeMattermost(t *testing.T) (string, chan string) {
+// It answers in the process through the bridge transport, because a loopback
+// stub can sit on a port with stale connection tracking.
+func fakeMattermost(t *testing.T) (http.Handler, chan string) {
 	t.Helper()
 
 	posts := make(chan string, 4)
@@ -82,12 +85,7 @@ func fakeMattermost(t *testing.T) (string, chan string) {
 		writeMattermostJSON(t, w, map[string]string{mattermostKeyID: "p1", "channel_id": notifyChannelID})
 	})
 
-	// Real socket on purpose: serve builds its Mattermost client from config,
-	// so the notify URL has to be one something can dial.
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-
-	return server.URL, posts
+	return mux, posts
 }
 
 // writeMattermostJSON answers one stub request. A failure here means the stub
@@ -104,10 +102,10 @@ func writeMattermostJSON(t *testing.T, w http.ResponseWriter, body any) {
 
 // serveFailedDir writes a home whose source block points at checkout, which is a
 // directory rather than a work tree, so startup fails at the sources stage.
-func serveFailedDir(t *testing.T, dir, serverURL, checkout string) {
+func serveFailedDir(t *testing.T, dir, checkout string) {
 	t.Helper()
 
-	cfg := fmt.Sprintf(serveFailedConfigTOML, serverURL, checkout)
+	cfg := fmt.Sprintf(serveFailedConfigTOML, nettest.BaseURL, checkout)
 
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(cfg), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -139,12 +137,18 @@ func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
 	t.Parallel()
 
 	env := withSourcePath(tokenEnv(mattermostTokenEnv, fakeBridgeToken))
-	serverURL, posts := fakeMattermost(t)
+	stub, posts := fakeMattermost(t)
 	dir := t.TempDir()
 
-	serveFailedDir(t, dir, serverURL, t.TempDir())
+	serve := func() (int, string, string) {
+		return runConfiguredCLI(t, func(app *cli.App) *cli.App {
+			return app.WithEnv(environ.Map(env)).WithBridgeTransport(nettest.Transport(stub))
+		}, serveCmd, flagDirArg, dir)
+	}
 
-	if code, _, stderr := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	serveFailedDir(t, dir, t.TempDir())
+
+	if code, _, stderr := serve(); code != cli.ExitFailure {
 		t.Fatalf("serve exit = %d, want failure\nstderr: %s", code, stderr)
 	}
 
@@ -155,7 +159,7 @@ func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
 		}
 	}
 
-	if code, _, _ := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, _ := serve(); code != cli.ExitFailure {
 		t.Fatalf("the second start exit = %d, want failure", code)
 	}
 
@@ -163,9 +167,9 @@ func TestServeFailureNotifiesOnceThenAgainOnANewFailure(t *testing.T) {
 
 	// A different checkout path is a different failure, so the window it was
 	// holding no longer applies.
-	serveFailedDir(t, dir, serverURL, t.TempDir())
+	serveFailedDir(t, dir, t.TempDir())
 
-	if code, _, _ := runEnvCLI(t, env, serveCmd, flagDirArg, dir); code != cli.ExitFailure {
+	if code, _, _ := serve(); code != cli.ExitFailure {
 		t.Fatalf("the third start exit = %d, want failure", code)
 	}
 

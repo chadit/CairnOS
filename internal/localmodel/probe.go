@@ -26,8 +26,8 @@ const ModelsPath = "/models"
 // mapping several gigabytes of weights, so polling faster buys nothing.
 const probeInterval = time.Second
 
-// probeTimeout bounds one probe request, separate from the overall wait.
-const probeTimeout = 5 * time.Second
+// ProbeTimeout bounds one probe request, separate from the overall wait.
+const ProbeTimeout = 5 * time.Second
 
 // BaseURL is the OpenAI-compatible endpoint of a managed server on port. It is
 // bound to loopback: the model runs for this machine's agents, and a server
@@ -39,7 +39,7 @@ func BaseURL(port int) string {
 // Probe reports whether a server at baseURL answers its models endpoint.
 func Probe(ctx context.Context, client *http.Client, baseURL string) error {
 	if client == nil {
-		client = &http.Client{Timeout: probeTimeout}
+		client = &http.Client{Timeout: ProbeTimeout}
 	}
 
 	// #nosec G107 -- baseURL is built from the configured loopback port

@@ -371,6 +371,14 @@ func (s *workflowService) startResume(ctx context.Context, held *store.Run, resu
 func (s *workflowService) resumeAfterRelease(ctx context.Context, runID, actionName string, flow *workflow.Workflow) {
 	<-s.manager.Released(runID)
 
+	// Shutdown releases every loop, and the store may close next, so a waiter
+	// it woke stops here instead of rereading the run and failing to resume it.
+	if s.manager.isClosed() {
+		s.logger.Info("skip resuming a decided run: the server is shutting down", "run_id", runID)
+
+		return
+	}
+
 	held, err := s.store.GetRun(ctx, runID)
 	if err != nil {
 		s.logger.Error("reread run after its active loop released it", "run_id", runID, "error", err)

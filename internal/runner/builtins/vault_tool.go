@@ -51,8 +51,38 @@ func (*VaultQuery) Name() string {
 }
 
 // Validate implements runner.Runner. Every field is optional and AND-combined,
-// so an empty query lists the vault; there is nothing required to validate.
-func (*VaultQuery) Validate(_ *runner.Task) error {
+// so an empty query lists the vault, but a present field must have the type
+// queryFrom reads. queryFrom drops a mistyped field, which would widen the
+// query without telling the agent.
+func (*VaultQuery) Validate(task *runner.Task) error {
+	for _, key := range []string{paramText, paramProject, paramLinkedFrom} {
+		if err := optionalStringParam(task, key, VaultQueryName); err != nil {
+			return err
+		}
+	}
+
+	for _, key := range []string{paramHops, paramLimit} {
+		if err := optionalNumberParam(task, key, VaultQueryName); err != nil {
+			return err
+		}
+	}
+
+	return validateVaultTags(task)
+}
+
+// validateVaultTags checks that tags, when present and resolved, is a list.
+// Its elements stay advisory, as stringList documents. A null reads as absent,
+// as it does for the other optional fields.
+func validateVaultTags(task *runner.Task) error {
+	raw := task.Params[paramTags]
+	if raw == nil || !task.Resolved {
+		return nil
+	}
+
+	if _, isList := raw.([]any); !isList {
+		return paramError(VaultQueryName, paramTags, "must be an array of strings")
+	}
+
 	return nil
 }
 

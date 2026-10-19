@@ -18,6 +18,7 @@ import (
 	cairnosv1 "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1"
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/memory"
+	"github.com/chadit/CairnOS/internal/reliability"
 	"github.com/chadit/CairnOS/internal/rules"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/vault"
@@ -34,9 +35,9 @@ const passthroughPrefix = "passthrough:///"
 // Config wires one Server.
 type Config struct {
 	// Breakers exposes the engine's circuit breakers to AdminService;
-	// the serve wiring passes the engine itself. Nil keeps ResetBreaker
+	// the serve wiring passes the engine's own set. Nil keeps ResetBreaker
 	// answering UNIMPLEMENTED for embedders without an in-process engine.
-	Breakers BreakerAdmin
+	Breakers *reliability.BreakerSet
 
 	// Transport supplies the listeners in place of host sockets. Nil, the
 	// production case, binds the configured addresses. The test suite passes

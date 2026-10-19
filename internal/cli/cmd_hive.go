@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"flag"
+	"net/http"
 
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/hive"
@@ -85,7 +86,7 @@ func (a *App) cmdHiveSubscribe(ctx context.Context, args []string) int {
 	}
 	defer a.runCloser("secret source", closeSource)
 
-	client, err := buildHiveClient(ctx, source, &cfg)
+	client, err := a.buildHiveClient(ctx, source, &cfg)
 	if err != nil {
 		a.printErrf("hive subscribe: %v\n", err)
 
@@ -196,7 +197,7 @@ func (a *App) publishSuggestion(ctx context.Context, dir string, db store.Store,
 	}
 	defer a.runCloser("secret source", closeSource)
 
-	client, err := buildHiveClient(ctx, source, cfg)
+	client, err := a.buildHiveClient(ctx, source, cfg)
 	if err != nil {
 		a.printErrf("hive publish: %v\n", err)
 
@@ -250,7 +251,7 @@ func (a *App) cmdHiveStatus(args []string) int {
 // stable id. When [hive] key_ref names a shared key, the client seals outbound
 // tips and opens received envelopes under it; a configured-but-missing key is a
 // hard error rather than a silent drop to plaintext.
-func buildHiveClient(ctx context.Context, source secrets.Source, cfg *config.Config) (*hive.HTTPHiveClient, error) {
+func (a *App) buildHiveClient(ctx context.Context, source secrets.Source, cfg *config.Config) (*hive.HTTPHiveClient, error) {
 	pseudonym := cfg.Hive.NodePseudonym
 	if pseudonym == "" {
 		minted, err := hive.NewPseudonym()
@@ -266,6 +267,10 @@ func buildHiveClient(ctx context.Context, source secrets.Source, cfg *config.Con
 		return nil, err
 	}
 
+	// A nil hiveTransport is http.DefaultTransport, so production gets the
+	// client the hive package would have built on its own.
+	doer := &http.Client{Timeout: hive.DefaultRequestTimeout, Transport: a.hiveTransport}
+
 	client, err := hive.NewHTTPClient(hive.Config{
 		Enabled:         cfg.Hive.Enabled,
 		Endpoint:        cfg.Hive.Endpoint,
@@ -274,7 +279,7 @@ func buildHiveClient(ctx context.Context, source secrets.Source, cfg *config.Con
 		Categories:      hiveCategories(cfg.Hive.Categories),
 		KAnonymityFloor: cfg.Hive.KAnonymityFloor,
 		MinObservations: cfg.Hive.MinObservations,
-	}, nil, opts...)
+	}, doer, opts...)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller prefixes the command label
 	}

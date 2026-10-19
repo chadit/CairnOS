@@ -297,8 +297,10 @@ func (s *BreakerSet) Get(key string) *Breaker {
 	return breaker
 }
 
-// OnTransition registers a callback applied to every breaker the set creates
-// from then on. Register it before handing the set to the engine.
+// OnTransition registers a callback fired on every state change of the
+// breakers the set creates from then on, which is what feeds the circuit
+// metrics. Register it before the set sees traffic, because breakers that
+// already exist keep the callback they were created with.
 func (s *BreakerSet) OnTransition(callback func(key string, to State)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

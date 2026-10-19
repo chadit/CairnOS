@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -33,8 +34,8 @@ const (
 	argonSaltLen = 16
 )
 
-// HashCost is the argon2id work one derivation pays. The zero value is the
-// production default above. A key stores the cost it was minted under, so
+// HashCost is the argon2id work one derivation pays. Each zero field takes its
+// production value above, so the zero value is the production cost. A key stores the cost it was minted under, so
 // verifying never needs it; minting and the unknown-key decoy do.
 type HashCost struct {
 	MemoryKiB uint32
@@ -42,15 +43,14 @@ type HashCost struct {
 	Threads   uint8
 }
 
-// withDefault resolves the zero value to the production cost and lifts a
-// zero pass or lane count to one, since argon2 panics on either.
+// withDefault fills each zero field with its production value. Defaulting
+// only the all-zero cost let {Time: 3} keep m=0, which argon2 silently raises
+// to its floor while the stored hash still records m=0. It also keeps a zero
+// pass or lane count, on which argon2 panics, from reaching it.
 func (c HashCost) withDefault() HashCost {
-	if c == (HashCost{}) {
-		return HashCost{MemoryKiB: argonMemory, Time: argonTime, Threads: argonThreads}
-	}
-
-	c.Time = max(c.Time, 1)
-	c.Threads = max(c.Threads, 1)
+	c.MemoryKiB = cmp.Or(c.MemoryKiB, argonMemory)
+	c.Time = cmp.Or(c.Time, argonTime)
+	c.Threads = cmp.Or(c.Threads, argonThreads)
 
 	return c
 }

@@ -792,8 +792,9 @@ const floorCostParams = "m=8,t=1,p=1"
 
 // TestNewKeyStoresTheCostItWasGiven pins the zero cost to RFC 9106's defaults
 // (64 MiB, one pass, four lanes), the cost every real key and the decoy pay,
-// and proves a chosen cost reaches the stored hash. Both are read back from
-// the PHC parameter field, the only place a key keeps its cost.
+// proves a chosen cost reaches the stored hash, and that a partial cost takes
+// the default for each zero field. Each is read back from the PHC parameter
+// field, where a key keeps its cost.
 func TestNewKeyStoresTheCostItWasGiven(t *testing.T) {
 	t.Parallel()
 
@@ -804,7 +805,8 @@ func TestNewKeyStoresTheCostItWasGiven(t *testing.T) {
 	}{
 		{name: "zero cost is the production default", cost: auth.HashCost{}, want: "m=65536,t=1,p=4"},
 		{name: "floor cost is stored as given", cost: authtest.FloorHashCost(), want: floorCostParams},
-		{name: "zero passes and lanes lift to one", cost: auth.HashCost{MemoryKiB: 8}, want: floorCostParams},
+		{name: "zero passes and lanes take the production values", cost: auth.HashCost{MemoryKiB: 8}, want: "m=8,t=1,p=4"},
+		{name: "zero memory takes the production value", cost: auth.HashCost{Time: 2, Threads: 1}, want: "m=65536,t=2,p=1"},
 	}
 
 	for _, tt := range cases {

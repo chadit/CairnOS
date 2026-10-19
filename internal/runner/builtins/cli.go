@@ -83,7 +83,7 @@ type CLI struct {
 func NewCLI(name string, tool CLITool, cfg map[string]any) (*CLI, error) {
 	built, err := decodeCLI(name, tool, cfg)
 	if err != nil {
-		return nil, wrapConfigErr(name, err)
+		return nil, &configError{runner: name, err: err}
 	}
 
 	return built, nil

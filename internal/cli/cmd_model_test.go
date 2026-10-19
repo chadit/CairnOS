@@ -3,7 +3,6 @@ package cli_test
 import (
 	"bytes"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/chadit/CairnOS/internal/cli"
 	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/localmodel"
+	"github.com/chadit/CairnOS/internal/nettest"
 )
 
 // cmdModelName is the top-level command under test.
@@ -236,20 +236,28 @@ func TestModelStatusReportsNothingInstalled(t *testing.T) {
 
 // TestModelStatusSeesAnAnsweringServer proves the probe is real: a server on
 // the reported port turns the endpoint line from "not answering" to
-// "answering".
+// "answering". The server answers in the process, and only on that port, so a
+// probe aimed anywhere else still reads as not answering.
 func TestModelStatusSeesAnAnsweringServer(t *testing.T) {
 	t.Parallel()
 
-	// Real socket on purpose: status probes the port it was handed, so there is
-	// nothing to answer unless something is bound to it.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	const port = "8085"
+
+	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host != "127.0.0.1:"+port {
+			w.WriteHeader(http.StatusNotFound)
+
+			return
+		}
+
 		if _, err := w.Write([]byte(`{"data":[]}`)); err != nil {
 			t.Errorf("write models response: %v", err)
 		}
-	}))
-	defer server.Close()
+	})
 
-	code, stdout, _ := runModel(t, "status", "--dir", t.TempDir(), "--"+cli.FlagPort, portOf(t, server.URL))
+	code, stdout, _ := runConfiguredCLI(t, func(app *cli.App) *cli.App {
+		return app.WithRunnerTransport(nettest.Transport(server))
+	}, cmdModelName, "status", "--dir", t.TempDir(), "--"+cli.FlagPort, port)
 	if code != cli.ExitFailure {
 		t.Errorf("exit = %d, want failure while the runtime is still missing", code)
 	}
@@ -312,18 +320,6 @@ func seedConfig(t *testing.T, home, content string) {
 	if err := os.WriteFile(filepath.Join(home, cli.ConfigFileName), []byte(content), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-}
-
-// portOf pulls the port out of an httptest server URL.
-func portOf(t *testing.T, rawURL string) string {
-	t.Helper()
-
-	_, port, found := strings.Cut(strings.TrimPrefix(rawURL, "http://"), ":")
-	if !found {
-		t.Fatalf("no port in %q", rawURL)
-	}
-
-	return port
 }
 
 // TestModelRejectsUnusableFlagValues proves the numeric flags are checked

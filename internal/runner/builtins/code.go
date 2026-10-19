@@ -124,7 +124,7 @@ func codeFromConfig(cfg map[string]any) (*Code, error) {
 
 	timeout, hasTimeout, err := configInt(cfg, cfgKeyTimeout)
 	if err != nil {
-		return nil, wrapConfigErr(CodeName, err)
+		return nil, &configError{runner: CodeName, err: err}
 	}
 
 	if hasTimeout && timeout > 0 {
@@ -133,12 +133,12 @@ func codeFromConfig(cfg map[string]any) (*Code, error) {
 
 	maxSteps, hasSteps, err := configInt(cfg, cfgKeyMaxSteps)
 	if err != nil {
-		return nil, wrapConfigErr(CodeName, err)
+		return nil, &configError{runner: CodeName, err: err}
 	}
 
 	if hasSteps {
 		if maxSteps <= 0 {
-			return nil, wrapConfigErr(CodeName, fmt.Errorf("%w: %s must be positive", ErrConfigValue, cfgKeyMaxSteps))
+			return nil, &configError{runner: CodeName, err: fmt.Errorf("%w: %s must be positive", ErrConfigValue, cfgKeyMaxSteps)}
 		}
 
 		code.maxSteps = uint64(maxSteps)

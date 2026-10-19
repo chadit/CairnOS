@@ -14,6 +14,17 @@ import (
 // MockName is the registry name of the test runner.
 const MockName = "mock"
 
+// Mock params and the fail_class values maybeFail switches on.
+const (
+	mockFailClass        = "fail_class"
+	mockFailTimes        = "fail_times"
+	mockDelayMs          = "delay_ms"
+	mockCostUSD          = "cost_usd"
+	mockClassTransient   = "transient"
+	mockClassPermanent   = "permanent"
+	mockClassRateLimited = "rate_limited"
+)
+
 // Mock returns canned output or failures driven by action params. The engine's
 // acceptance tests run against it.
 //
@@ -46,10 +57,38 @@ func (*Mock) Name() string {
 	return MockName
 }
 
-// Validate implements runner.Runner. The mock accepts anything; it exists to
-// exercise the engine, not to police fixtures.
-func (*Mock) Validate(_ *runner.Task) error {
-	return nil
+// Validate implements runner.Runner. A known param with the wrong shape fails
+// here because Execute would otherwise skip it, and a fixture that meant to
+// delay or fail would pass for the wrong reason.
+func (*Mock) Validate(task *runner.Task) error {
+	for _, key := range []string{mockFailTimes, mockDelayMs, mockCostUSD} {
+		if err := optionalNumberParam(task, key, MockName); err != nil {
+			return err
+		}
+	}
+
+	return validateMockFailClass(task)
+}
+
+// validateMockFailClass checks fail_class against the classes maybeFail
+// knows. The value check waits for resolved params, since a load-time
+// reference is a string that names no class yet.
+func validateMockFailClass(task *runner.Task) error {
+	if err := optionalStringParam(task, mockFailClass, MockName); err != nil {
+		return err
+	}
+
+	class, exists := task.Params[mockFailClass].(string)
+	if !exists || !task.Resolved {
+		return nil
+	}
+
+	switch class {
+	case mockClassTransient, mockClassPermanent, mockClassRateLimited:
+		return nil
+	default:
+		return paramError(MockName, mockFailClass, `must be "transient", "permanent", or "rate_limited"`)
+	}
 }
 
 // Describe implements runner.Describer so workflows can exercise the agent
@@ -86,7 +125,7 @@ func (m *Mock) Execute(ctx context.Context, task *runner.Task) (runner.Result, e
 
 	usage := runner.Usage{}
 
-	if cost, exists := task.Params["cost_usd"]; exists {
+	if cost, exists := task.Params[mockCostUSD]; exists {
 		if num, isFloat := toFloat(cost); isFloat {
 			usage.CostUSD = num
 		}
@@ -96,7 +135,7 @@ func (m *Mock) Execute(ctx context.Context, task *runner.Task) (runner.Result, e
 }
 
 func mockSleep(ctx context.Context, task *runner.Task) error {
-	delayMs, exists := task.Params["delay_ms"]
+	delayMs, exists := task.Params[mockDelayMs]
 	if !exists {
 		return nil
 	}
@@ -118,19 +157,20 @@ func mockSleep(ctx context.Context, task *runner.Task) error {
 }
 
 func (m *Mock) maybeFail(task *runner.Task) error {
-	classText, exists := task.Params["fail_class"]
-	if !exists {
+	// A null fail_class passes Validate as absent, so it must not fail here.
+	classText := task.Params[mockFailClass]
+	if classText == nil {
 		return nil
 	}
 
-	if times, hasTimes := toFloat(task.Params["fail_times"]); hasTimes && m.failuresSpent(task, times) {
+	if times, hasTimes := toFloat(task.Params[mockFailTimes]); hasTimes && m.failuresSpent(task, times) {
 		return nil
 	}
 
 	switch classText {
-	case "transient":
+	case mockClassTransient:
 		return taskError(runner.ClassTransient, "mock.transient", "configured transient failure")
-	case "rate_limited":
+	case mockClassRateLimited:
 		return taskError(runner.ClassRateLimited, "mock.rate_limited", "configured rate limit")
 	default:
 		return taskError(runner.ClassPermanent, "mock.permanent", "configured failure %v", classText)

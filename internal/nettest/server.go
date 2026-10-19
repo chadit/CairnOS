@@ -3,18 +3,11 @@ package nettest
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc/test/bufconn"
 )
-
-// memBufferBytes sizes one in-memory pipe. A writer blocks until the reader
-// drains, so this only bounds how far ahead a sender may run.
-const memBufferBytes = 256 * 1024
 
 // headerTimeout bounds how long the fixture server waits for request headers.
 // Nothing dials it, so this only catches a caller that opens a connection and
@@ -26,7 +19,7 @@ const headerTimeout = 30 * time.Second
 // WebSocket upgrade, chunked transfer, or a body read while the handler is
 // still writing it. Plain request and response fixtures want Transport.
 type Server struct {
-	listener *bufconn.Listener
+	pipe *Pipe
 
 	// URL is the origin to aim requests at. It resolves to nothing, so a client
 	// built without Client or DialContext fails at DNS instead of leaving the
@@ -39,30 +32,25 @@ type Server struct {
 func NewServer(t *testing.T, handler http.Handler) *Server {
 	t.Helper()
 
-	listener := bufconn.Listen(memBufferBytes)
+	pipe := NewPipe()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: headerTimeout}
 
 	go func() {
 		// Close in the cleanup below is the one expected way Serve returns.
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(pipe); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Errorf("serve in-memory fixture: %v", err)
 		}
 	}()
 
 	t.Cleanup(func() { _ = server.Close() })
 
-	return &Server{listener: listener, URL: BaseURL}
+	return &Server{pipe: pipe, URL: BaseURL}
 }
 
 // DialContext reaches this server whatever address it is handed, since one
 // listener sits behind it. It is the shape http.Transport.DialContext wants.
-func (s *Server) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
-	conn, err := s.listener.DialContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("dial in-memory listener: %w", err)
-	}
-
-	return conn, nil
+func (s *Server) DialContext(ctx context.Context, _, address string) (net.Conn, error) {
+	return s.pipe.DialAddress(ctx, address)
 }
 
 // Transport reaches this server and nothing else. Keep-alives are off so a

@@ -89,17 +89,17 @@ func NewHTTP(cfg map[string]any, client *http.Client) (*HTTP, error) {
 func NewHTTPWithCredentials(cfg map[string]any, client *http.Client, lookup TokenLookup) (*HTTP, error) {
 	baseURL, err := configValue(cfg, cfgKeyBaseURL, "")
 	if err != nil {
-		return nil, wrapConfigErr(HTTPName, err)
+		return nil, &configError{runner: HTTPName, err: err}
 	}
 
 	headers, err := configStringMap(cfg, cfgKeyDefaultHeaders)
 	if err != nil {
-		return nil, wrapConfigErr(HTTPName, err)
+		return nil, &configError{runner: HTTPName, err: err}
 	}
 
 	credential, err := requireCredential(cfg, lookup)
 	if err != nil {
-		return nil, wrapConfigErr(HTTPName, err)
+		return nil, &configError{runner: HTTPName, err: err}
 	}
 
 	return &HTTP{
@@ -127,12 +127,12 @@ func HTTPFactoryWithCredentials(lookup TokenLookup) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		timeout, has, err := configInt(cfg, cfgKeyTimeout)
 		if err != nil {
-			return nil, wrapConfigErr(HTTPName, err)
+			return nil, &configError{runner: HTTPName, err: err}
 		}
 
 		allowPrivate, err := configValue(cfg, cfgKeyAllowPrivateTargets, false)
 		if err != nil {
-			return nil, wrapConfigErr(HTTPName, err)
+			return nil, &configError{runner: HTTPName, err: err}
 		}
 
 		clientTimeout := defaultHTTPTimeout
