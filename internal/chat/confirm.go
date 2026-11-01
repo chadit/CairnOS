@@ -12,20 +12,19 @@ import (
 // write:workflow on the token, and the API enforces that at confirm time. So
 // ConfirmAction fires rather than authorizes.
 
-// ConfirmAction resolves a pending workflow proposal from the chat agent
-// (.agents/spec/14-open-decisions.md, D9). approve true fires it through the
-// engine under normal governance and streams run events; approve false denies
-// it. Either way the gate clears, so a second call reports no pending action.
-// out is closed exactly once on return; the caller ranges it until close.
+// ConfirmAction resolves a pending workflow proposal from the chat agent (D9).
+// approve true fires it through the engine under normal governance and streams
+// run events; approve false denies it. Either way the gate clears, so a second
+// call reports no pending action. out is closed exactly once on return; the
+// caller ranges it until close.
 func (a *Agent) ConfirmAction(ctx context.Context, sessionID string, approve bool, out chan<- Event) error {
 	defer close(out)
 
 	// Load the workspace-scoped session before touching the sessionID-keyed
 	// pending map: a session in another workspace reads as not-found here, so a
 	// tenant cannot confirm another tenant's staged proposal by guessing its
-	// session id (.agents/spec/08-auth-and-access.md, "Chat confirm workspace
-	// scoping"). pendingFor alone is keyed by sessionID only and would fire the
-	// foreign proposal.
+	// session id. pendingFor alone is keyed by sessionID only and would fire
+	// the foreign proposal.
 	if _, err := a.GetSession(ctx, sessionID); err != nil {
 		return err
 	}
@@ -65,8 +64,7 @@ func (a *Agent) recordDenial(ctx context.Context, sessionID string, out chan<- E
 // run-started and run-finished events and closing with turn-done. The run goes
 // through normal engine governance (Phase 5b budgets and pause) and at depth
 // exactly one: the spawned run's own actions still obey the one-level
-// no-recursion rule, so nothing it does starts a third loop
-// (.agents/spec/15-agent-loop.md; .agents/spec/14-open-decisions.md, D9).
+// no-recursion rule, so nothing it does starts a third loop (D9).
 func (a *Agent) fireProposal(ctx context.Context, sessionID string, proposal *Proposal, out chan<- Event) error {
 	if a.cfg.Trigger == nil {
 		return errf(CodeTriggerUnavailable,

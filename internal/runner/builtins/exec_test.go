@@ -5,9 +5,12 @@ import (
 	"errors"
 	"io/fs"
 	"maps"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -394,8 +397,8 @@ func TestExecMissingCommandIsPermanent(t *testing.T) {
 // that would otherwise outlive its schedule, and that the kill surfaces as a
 // transient error rather than a silent success.
 func TestExecTimeoutKillsTheProcess(t *testing.T) {
-	// The exec keeps sleep from surviving as an orphan holding the stdout pipe
-	// open past the kill.
+	// The exec makes sleep the direct child, so this case covers a single
+	// process. TestExecCancelKillsAForkedChild covers a script that forks.
 	sleeper := writeShim(t, t.TempDir(), "sleeper", "exec sleep 30")
 
 	t.Parallel()
@@ -416,6 +419,142 @@ func TestExecTimeoutKillsTheProcess(t *testing.T) {
 
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("kill took %v, want the 1s timeout to bound it", elapsed)
+	}
+}
+
+// Timing for the cases where a child outlives the command. execWaitDelay is the
+// runner's 2-second WaitDelay, the longest a run may outlast its exit or its
+// cancel while something holds its pipes. pipeHolderSlack absorbs a loaded
+// machine and stays well under the 30 seconds a surviving child holds a pipe.
+const (
+	execWaitDelay   = 2 * time.Second
+	pipeHolderSlack = 5 * time.Second
+)
+
+// TestExecCancelKillsAForkedChild covers a script that runs its work as a child
+// instead of exec-ing it. The child inherits stdout, so a kill that reached
+// only the script would leave the run reading until the child exited, and the
+// child would outlive the action. A deadline and a cancel share this kill path.
+func TestExecCancelKillsAForkedChild(t *testing.T) {
+	// The pid lands before the running marker, so the pid file is whole by the
+	// time waitForFile sees the marker.
+	forker := writeShim(t, t.TempDir(), "forker",
+		"sleep 30 &\necho $! > \"$0.pid\"\necho forked > \"$0.running\"\nwait")
+
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	execRunner := newExec(t, execConfig(nil))
+	runErr := make(chan error, oneShotBufferSize)
+
+	go func() {
+		_, err := execRunner.Execute(ctx, execTask(map[string]any{cmdKey: forker}))
+		runErr <- err
+	}()
+
+	// Canceling only once the child exists means the kill always meets it,
+	// where a short deadline on a loaded machine can pass before the fork.
+	waitForFile(t, forker+".running")
+	childPID := readChildPID(t, forker+".pid")
+
+	canceledAt := time.Now()
+
+	cancel()
+
+	err := <-runErr
+	elapsed := time.Since(canceledAt)
+
+	classified := classifiedError(t, err)
+	if classified.Class != runner.ClassTransient || classified.Code != codeExecTimeout {
+		t.Fatalf("class/code = %v/%q, want transient/%q", classified.Class, classified.Code, codeExecTimeout)
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(%v, context.Canceled) = false", err)
+	}
+
+	if bound := execWaitDelay + pipeHolderSlack; elapsed > bound {
+		t.Fatalf("run returned %v after the cancel, want under %v: the forked child held stdout", elapsed, bound)
+	}
+
+	requireProcessGone(t, childPID)
+}
+
+// readChildPID reads the pid a script recorded for the child it forked.
+func readChildPID(t *testing.T, pidFile string) int {
+	t.Helper()
+
+	raw, err := os.ReadFile(pidFile) // #nosec G304 -- the path is under t.TempDir.
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatalf("parse child pid %q: %v", raw, err)
+	}
+
+	return pid
+}
+
+// requireProcessGone polls signal 0 until pid no longer exists. The kill leaves
+// an orphan for its new parent to reap, so a dead child can still answer for a
+// moment. One that outlasts the window is killed so it cannot outlive the test.
+func requireProcessGone(t *testing.T, pid int) {
+	t.Helper()
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("find child %d: %v", pid, err)
+	}
+
+	t.Cleanup(func() {
+		if err := proc.Release(); err != nil {
+			t.Errorf("release child %d: %v", pid, err)
+		}
+	})
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+
+	deadline := time.After(2 * time.Second)
+
+	for !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+		select {
+		case <-ticker.C:
+		case <-deadline:
+			t.Fatalf("child %d outlived the kill; killing it now: %v", pid, proc.Kill())
+		}
+	}
+}
+
+// TestExecCleanExitIgnoresHelperHoldingStderr covers a command that exits 0
+// while a background helper keeps stderr open. stdout is complete, so the run
+// succeeds once WaitDelay passes rather than failing or waiting out the helper.
+func TestExecCleanExitIgnoresHelperHoldingStderr(t *testing.T) {
+	const output = "stdout complete"
+
+	shim := writeShim(t, t.TempDir(), "stderr-holder", "sleep 30 >/dev/null &\necho "+output)
+
+	t.Parallel()
+
+	start := time.Now()
+
+	result, err := newExec(t, execConfig(nil)).Execute(t.Context(), execTask(map[string]any{cmdKey: shim}))
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if bound := execWaitDelay + pipeHolderSlack; elapsed > bound {
+		t.Fatalf("run returned after %v, want under %v: the helper held stderr", elapsed, bound)
+	}
+
+	if result.Output != output {
+		t.Fatalf("output = %#v, want %q", result.Output, output)
 	}
 }
 
@@ -509,7 +648,7 @@ func TestExecPassesConfigEnvAndKeepsInheritedEnv(t *testing.T) {
 
 	cfg := execConfig(map[string]any{envKey: map[string]any{cfgEnvName: "from-config"}})
 
-	built, err := builtins.ExecFactoryWithHostEnv(nil, []string{hostEnvName + "=from-host"})(cfg)
+	built, err := builtins.ExecFactoryWithHostEnv(nil, []string{hostEnvName + "=from-host"}, builtins.ExecTrust{})(cfg)
 	if err != nil {
 		t.Fatalf("build exec: %v", err)
 	}

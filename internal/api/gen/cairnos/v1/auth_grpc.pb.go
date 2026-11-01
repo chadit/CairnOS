@@ -1,5 +1,4 @@
-// LoginService: access-key login and token revocation
-// (.agents/spec/08-auth-and-access.md, "Model"). A client exchanges its
+// LoginService: access-key login and token revocation. A client exchanges its
 // long-lived access key at /v1/login for a short-lived bearer token; the
 // revocation RPC feeds the jti/sub denylist that every verify consults, so
 // a token dies before its exp (Change 1 in the spec).
@@ -38,9 +37,8 @@ const (
 // scope, enforced by the auth interceptor like every other method.
 type LoginServiceClient interface {
 	// Login exchanges a valid, enabled access key for a short-lived token
-	// carrying the key's scopes. The long-lived key crosses the wire here,
-	// which is why a non-loopback bind demands TLS
-	// (.agents/spec/08-auth-and-access.md, "Model").
+	// carrying the key's scopes. The long-lived key crosses the wire here, which
+	// is why a non-loopback bind demands TLS.
 	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
 	// Revoke denylists one token by jti, or every live token minted from one
 	// access key by key id. Requires the admin scope.
@@ -84,9 +82,8 @@ func (c *loginServiceClient) Revoke(ctx context.Context, in *RevokeRequest, opts
 // scope, enforced by the auth interceptor like every other method.
 type LoginServiceServer interface {
 	// Login exchanges a valid, enabled access key for a short-lived token
-	// carrying the key's scopes. The long-lived key crosses the wire here,
-	// which is why a non-loopback bind demands TLS
-	// (.agents/spec/08-auth-and-access.md, "Model").
+	// carrying the key's scopes. The long-lived key crosses the wire here, which
+	// is why a non-loopback bind demands TLS.
 	Login(context.Context, *LoginRequest) (*LoginResponse, error)
 	// Revoke denylists one token by jti, or every live token minted from one
 	// access key by key id. Requires the admin scope.

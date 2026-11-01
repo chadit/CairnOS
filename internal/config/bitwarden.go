@@ -51,8 +51,11 @@ type Bitwarden struct {
 	// when both are set.
 	Item string
 
-	// CredentialsFile holds BW_CLIENTID, BW_CLIENTSECRET, and BW_PASSWORD at
-	// mode 0600. Relative paths resolve against the CairnOS home at use time.
+	// CredentialsFile holds the vault API key and master password at mode 0600,
+	// as BW_ KEY=VALUE lines or, for a path ending in .toml, as a chezmoi
+	// config's [data.secret] table. A leading ~/ expands to the operator's home
+	// and other relative paths resolve against the CairnOS home, both at use
+	// time.
 	CredentialsFile string
 
 	// EnvFile is the generated environment file, overwritten whole on each pull.

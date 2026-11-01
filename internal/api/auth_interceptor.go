@@ -46,9 +46,8 @@ const (
 // case-insensitive per RFC 9110.
 const bearerScheme = "bearer "
 
-// ScopeForMethod maps one full gRPC method name onto its required scope, per
-// the tables in .agents/spec/07-api-protocols.md. The second result marks a
-// public method: Health and Login carry no token.
+// ScopeForMethod maps one full gRPC method name onto its required scope. The
+// second result marks a public method: Health and Login carry no token.
 //
 // Exported because this table is the contract an operator reads when minting a
 // key: `cairnos keys add --scopes` has to name the scope a method will demand.
@@ -61,8 +60,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.WorkflowService/ApproveRun":
 		// ApproveRun sits with the other run mutations: deciding a gate
 		// changes what the run executes, per the D9 pattern of enforcing
-		// write:workflow at decision time
-		// (.agents/spec/parity/workflow-language.md, "Human approval").
+		// write:workflow at decision time.
 		return auth.ScopeWriteWorkflow, false
 	case "/cairnos.v1.WorkflowService/ValidateWorkflow", "/cairnos.v1.AdminService/ListRunners":
 		return auth.ScopeReadWorkflow, false
@@ -81,8 +79,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.LanguageRulesService/GetRules", "/cairnos.v1.LanguageRulesService/ListLanguages":
 		// Reading documents and rules takes read:vault. The rules service is a
 		// typed view over the vault, so its reads sit under the vault read
-		// scope rather than a separate rules scope
-		// (.agents/spec/14-open-decisions.md, S1 note).
+		// scope rather than a separate rules scope (S1 note).
 		return auth.ScopeReadVault, false
 	case "/cairnos.v1.VaultService/PutDocument", "/cairnos.v1.VaultService/DeleteDocument",
 		"/cairnos.v1.LanguageRulesService/PutRule":
@@ -92,11 +89,10 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.ChatService/ConfirmAction", "/cairnos.v1.ChatService/GetSession",
 		"/cairnos.v1.ChatService/ListSessions", "/cairnos.v1.ChatService/ListMessages",
 		"/cairnos.v1.ChatService/SearchMessages":
-		// Every chat method takes chat:session (.agents/spec/13-roadmap.md,
-		// Phase 9). Approving a workflow trigger also needs
-		// write:workflow, which ConfirmAction checks in-handler from the
-		// stamped scopes, since the method table grants one scope per method
-		// (.agents/spec/14-open-decisions.md, D9).
+		// Every chat method takes chat:session. Approving a workflow trigger
+		// also needs write:workflow, which ConfirmAction checks in-handler from
+		// the stamped scopes, since the method table grants one scope per
+		// method (D9).
 		return auth.ScopeChatSession, false
 	case "/cairnos.v1.AdminService/ResetBreaker", "/cairnos.v1.AdminService/RequestRestart",
 		"/cairnos.v1.SuggestionService/ApproveSuggestion", "/cairnos.v1.SuggestionService/RejectSuggestion",
@@ -105,9 +101,9 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.GovernanceService/ResumeWorkflow", "/cairnos.v1.GovernanceService/TerminateRun",
 		"/cairnos.v1.GovernanceService/ListAudit":
 		// Every governance method takes the admin scope: pause, resume, and
-		// terminate are admin control actions (.agents/spec/12-ui-and-governance.md,
-		// "Control actions"), and the budget-state and audit reads are operator
-		// concerns that sit alongside them rather than with run history.
+		// terminate are admin control actions, and the budget-state and audit
+		// reads are operator concerns that sit alongside them rather than with
+		// run history.
 		return auth.ScopeAdmin, false
 	case "/cairnos.v1.MessagingService/SendMessage", "/cairnos.v1.MessagingService/ListIdentities":
 		// Both messaging methods take the single message:send scope (FR30).
@@ -119,8 +115,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 	case "/cairnos.a2a.v1.A2AService/CreateTask", "/cairnos.a2a.v1.A2AService/GetTask",
 		"/cairnos.a2a.v1.A2AService/ListTasks", "/cairnos.a2a.v1.A2AService/CancelTask",
 		"/cairnos.a2a.v1.A2AService/TaskUpdates", "/cairnos.a2a.v1.A2AService/SendMessage":
-		// Every A2A method takes the single a2a:task scope
-		// (.agents/spec/09-a2a-and-hive.md, "Core methods"). The method names
+		// Every A2A method takes the single a2a:task scope. The method names
 		// are literals rather than a2a package constants because importing
 		// internal/a2a here would cycle: a2a depends on this package.
 		return auth.ScopeA2ATask, false
@@ -135,8 +130,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 // when Config.StreamRecheck is unset (spec M4).
 const defaultStreamRecheck = 15 * time.Second
 
-// authGuard enforces the Phase 4a token check on every RPC
-// (.agents/spec/08-auth-and-access.md, "Scopes"): validate the bearer
+// authGuard enforces the Phase 4a token check on every RPC: validate the bearer
 // token, consult the denylist, and require the method's scope before the
 // handler runs.
 type authGuard struct {
@@ -167,8 +161,7 @@ func newAuthGuard(authenticator Authenticator, streamRecheck time.Duration, now 
 
 // unary is the grpc.UnaryServerInterceptor face of the guard. The verified
 // token's workspace rides onto the context so the handler's store queries
-// filter by the caller's tenant (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
+// filter by the caller's tenant.
 func (g *authGuard) unary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	caller, err := g.authorize(ctx, info.FullMethod)
 	if err != nil {
@@ -226,10 +219,9 @@ type principal struct {
 }
 
 // stamp returns the context the handler runs under. The workspace makes store
-// queries filter by the caller's tenant
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"), the scopes let a
-// handler make a finer check the method table cannot express, and the subject
-// tells one caller from another within the tenant.
+// queries filter by the caller's tenant, the scopes let a handler make a finer
+// check the method table cannot express, and the subject tells one caller from
+// another within the tenant.
 func (p *principal) stamp(ctx context.Context) context.Context {
 	authed := contextWithScopes(store.ContextWithWorkspace(ctx, p.Workspace), p.Scopes)
 

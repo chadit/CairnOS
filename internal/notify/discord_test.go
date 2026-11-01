@@ -42,7 +42,7 @@ func recordBody(t *testing.T, got chan<- string) http.HandlerFunc {
 func TestDiscordNotifierPostsAlert(t *testing.T) {
 	t.Parallel()
 
-	got := make(chan string, 1)
+	got := make(chan string, captureBufferSize)
 
 	server := nettest.New(recordBody(t, got))
 
@@ -101,7 +101,7 @@ func TestDiscordNotifierRejectsEmptyWebhook(t *testing.T) {
 func TestReauthAlertMessageOmitsEmptyFields(t *testing.T) {
 	t.Parallel()
 
-	got := make(chan string, 1)
+	got := make(chan string, captureBufferSize)
 
 	server := nettest.New(recordBody(t, got))
 

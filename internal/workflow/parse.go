@@ -16,10 +16,10 @@ func Parse(data []byte) (*Workflow, error) {
 	return ParseInDir(data, "")
 }
 
-// ParseInDir decodes one workflow and validates it against every rule in
-// .agents/spec/02-workflow-schema.md, resolving each stdin_file param against
-// dir, the directory the workflow file lives in. The returned error is a
-// cairnerr.Errors listing all problems found, so authors fix a file in one pass.
+// ParseInDir decodes one workflow and validates it against every rule,
+// resolving each stdin_file param against dir, the directory the workflow file
+// lives in. The returned error is a cairnerr.Errors listing all problems found,
+// so authors fix a file in one pass.
 func ParseInDir(data []byte, dir string) (*Workflow, error) {
 	var raw map[string]any
 

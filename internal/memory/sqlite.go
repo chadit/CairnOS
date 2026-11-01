@@ -60,8 +60,8 @@ END;
 const entryColumns = "id, scope, content, importance, tags_json, token_cost, created_at, updated_at"
 
 // SQLite is the default Store backend: FTS5 keyword search, zero external
-// services, no vectors (.agents/spec/05-memory-and-knowledge.md,
-// "Backends"). Safe for concurrent use through WAL mode and busy_timeout.
+// services, no vectors. Safe for concurrent use through WAL mode and
+// busy_timeout.
 type SQLite struct {
 	db *sql.DB
 }
@@ -134,9 +134,8 @@ func (s *SQLite) Add(ctx context.Context, entry *Entry) (string, error) {
 	return id, nil
 }
 
-// Get fetches one entry by id, scoped to the request workspace so an entry
-// in another workspace reads as not-found
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// Get fetches one entry by id, scoped to the request workspace so an entry in
+// another workspace reads as not-found.
 func (s *SQLite) Get(ctx context.Context, id string) (Entry, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+entryColumns+" FROM memory_entries WHERE id = ? AND workspace_id = ?",

@@ -21,8 +21,7 @@ const (
 	deniedKeyPrefix = "key:"
 )
 
-// loginService implements cairnos.v1.LoginService
-// (.agents/spec/08-auth-and-access.md, "Model"): the access-key-to-token
+// loginService implements cairnos.v1.LoginService: the access-key-to-token
 // exchange plus the revocation RPC feeding the denylist. The auth
 // interceptor leaves Login public and gates Revoke behind admin.
 type loginService struct {

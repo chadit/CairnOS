@@ -1,6 +1,10 @@
 package cli
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/chadit/CairnOS/internal/bitwarden"
+)
 
 // Sentinel errors for the CLI.
 var (
@@ -13,16 +17,14 @@ var (
 	// errNoVaultItem reports that neither the config block nor the credentials
 	// file names the vault item to read.
 	errNoVaultItem = errors.New("no vault item is configured; " +
-		"set [secrets.bitwarden] item, or run `cairnos secrets auth` to write")
+		"set [secrets.bitwarden] item, bw_item_name under [data.secret] in a " +
+		".toml credentials file, or " + bitwarden.EnvItem + " in a KEY=VALUE " +
+		"credentials file or the environment")
 
 	// errNoFieldsOnItem reports an item carrying nothing the pull can use: no
 	// field named like a variable, and no mapping table to interpret the rest.
 	errNoFieldsOnItem = errors.New("no field on the vault item is named like a " +
 		"CAIRNOS_ variable, and [secrets.bitwarden.fields] maps none; item")
-
-	// errNotATerminal reports a stdin that is a pipe or a file, where there is
-	// no echo to turn off and nothing on screen to hide.
-	errNotATerminal = errors.New("stdin is not a terminal")
 
 	// errForeignOwner reports an atomic replace that would hand another user's
 	// file to the caller, which only root can avoid with a chown.
@@ -31,12 +33,6 @@ var (
 	// errNoPinnedBitwarden reports a platform this build has no pinned release
 	// for, which is every platform but the two CairnOS runs on.
 	errNoPinnedBitwarden = errors.New("no Bitwarden CLI release is pinned for")
-
-	// errNoValueForPrompt reports a prompt that had nothing to answer it: no
-	// environment value, no default, and a stdin that is done. Failing here beats
-	// blocking a deploy on a terminal that will never arrive.
-	errNoValueForPrompt = errors.New("no value was given and there is no default; " +
-		"set it in the environment or run this on a terminal")
 
 	// errNoBitwardenBinary reports a missing bw CLI on a platform this build
 	// pins no release for, where CairnOS has nothing of its own to fall back to.

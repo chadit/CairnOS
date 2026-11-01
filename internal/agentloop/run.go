@@ -71,8 +71,7 @@ type loopRun struct {
 	delegations int
 }
 
-// run drives iterations until a final answer or a wall
-// (.agents/spec/15-agent-loop.md, "Loop mechanics"). Steps persist as they
+// run drives iterations until a final answer or a wall. Steps persist as they
 // happen, so by the time any wall fails the action the partial transcript
 // is already durable.
 func (r *loopRun) run(ctx context.Context) (runner.Result, error) {

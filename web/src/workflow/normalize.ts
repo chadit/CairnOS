@@ -3,8 +3,7 @@
 // change behavior: stamped defaults (version "1", on_error "halt", kind
 // "task"), the order of depends_on and tools entries, and the order of action
 // and input keys. What stays is the actions, the edges, the params, and the
-// agent settings, which is exactly the round-trip contract
-// (.agents/spec/12-ui-and-governance.md, acceptance criteria).
+// agent settings, which is exactly the round-trip contract.
 
 import type { JsonValue } from '@/api/types';
 import {

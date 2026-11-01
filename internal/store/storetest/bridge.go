@@ -20,8 +20,7 @@ const (
 
 // testBridgeSessionRoundTrip proves a binding persists and reads back: the
 // chat-to-session link the Telegram loop resolves per turn so a conversation
-// survives a serve restart (.agents/spec/parity/messaging-bridge.md, decision
-// 1).
+// survives a serve restart.
 func testBridgeSessionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -83,10 +82,9 @@ func testBridgeSessionNotFound[S store.Store](t *testing.T, openFn OpenFunc[S]) 
 
 // testBridgeSessionIsolatesByWorkspace proves a binding in one workspace is
 // invisible to another, the tenancy boundary the bridge stamps before every
-// bind and lookup the way the gRPC interceptor stamps a token's workspace
-// (.agents/spec/parity/messaging-bridge.md, decision 1). Two tenants can bind
-// the same chat key independently: the (workspace_id, transport, chat_key) key
-// keeps the sessions separate.
+// bind and lookup the way the gRPC interceptor stamps a token's workspace. Two
+// tenants can bind the same chat key independently: the (workspace_id,
+// transport, chat_key) key keeps the sessions separate.
 func testBridgeSessionIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

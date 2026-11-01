@@ -37,7 +37,7 @@ var (
 	// ErrBridgeSessionNotFound reports a LookupBridgeSession against a
 	// (transport, chatKey) that has no binding in the request workspace, the
 	// signal the messaging bridge reads as first contact so it creates and
-	// binds a session (.agents/spec/parity/messaging-bridge.md).
+	// binds a session.
 	ErrBridgeSessionNotFound = errors.New("bridge session not found")
 
 	// ErrMessageThreadNotFound reports a thread key no post has opened yet in

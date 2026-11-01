@@ -1,5 +1,5 @@
-# Buf module config for the CairnOS protos (.agents/spec/07-api-protocols.md:
-# one proto source builds both the gRPC server and the HTTP gateway).
+# Buf module config for the CairnOS protos (one proto source builds both the
+# gRPC server and the HTTP gateway).
 version: v2
 modules:
   - path: proto
@@ -9,26 +9,22 @@ lint:
   use:
     - STANDARD
   except:
-    # RunWorkflow streams RunEvent by design (.agents/spec/07-api-protocols.md
-    # names the event stream); a RunWorkflowResponse wrapper would add noise
-    # to every streamed line.
+    # RunWorkflow streams RunEvent by design; a RunWorkflowResponse wrapper
+    # would add noise to every streamed line.
     - RPC_RESPONSE_STANDARD_NAME
   ignore_only:
-    # The plugin contract is named RunnerPlugin across the spec
-    # (.agents/spec/03-runner-interface.md, "Custom runners and plugins");
-    # a Service suffix would put the docs and the wire name out of step.
+    # The plugin contract is named RunnerPlugin across the spec; a Service
+    # suffix would put the docs and the wire name out of step.
     SERVICE_SUFFIX:
       - proto/cairnos/plugin/v1/plugin.proto
     # SendMessage and ConfirmAction both stream ChatEvent by design: an
-    # approved confirmation continues the same event stream a turn produces,
-    # so the web and CLI consumers fold one event union
-    # (.agents/spec/13-roadmap.md, "Phase 9 backend").
+    # approved confirmation continues the same event stream a turn produces, so
+    # the web and CLI consumers fold one event union.
     RPC_REQUEST_RESPONSE_UNIQUE:
       - proto/cairnos/v1/chat.proto
       # ReplayRun re-runs a workflow from its first failed action and streams
       # the same RunEvent stream RunWorkflow produces; a replay is a run, so a
-      # separate response type would only duplicate the event union
-      # (.agents/spec/parity/workflow-language.md, replay slice).
+      # separate response type would only duplicate the event union.
       - proto/cairnos/v1/workflow.proto
 breaking:
   use:

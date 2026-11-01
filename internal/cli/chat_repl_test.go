@@ -608,11 +608,11 @@ func TestChatInterruptMidTurnCancelsOnlyThatTurn(t *testing.T) {
 	stdinReader, stdinWriter := io.Pipe()
 	stdout := &syncBuffer{}
 	stderr := &syncBuffer{}
-	interrupts := make(chan os.Signal, 1)
+	interrupts := make(chan os.Signal, oneShotChanSize)
 
 	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts).WithServeDialer(chatServer.dial)
 
-	exit := make(chan int, 1)
+	exit := make(chan int, oneShotChanSize)
 
 	go func() {
 		exit <- app.Run(t.Context(), chatArgs(chatServer.addr))
@@ -667,7 +667,7 @@ func TestChatInterruptAtPromptPrintsQuitHint(t *testing.T) {
 
 	app := cli.New(stdout, stderr).WithStdin(stdinReader).WithInterrupts(interrupts).WithServeDialer(chatServer.dial)
 
-	exit := make(chan int, 1)
+	exit := make(chan int, oneShotChanSize)
 
 	go func() {
 		exit <- app.Run(t.Context(), chatArgs(chatServer.addr))

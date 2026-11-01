@@ -428,7 +428,7 @@ func TestParseAcceptsRequires(t *testing.T) {
 
 	const src = `
 [workflow]
-name     = "prflow_app"
+name     = "sample_app"
 schedule = "* * * * *"
 
 [workflow.requires]

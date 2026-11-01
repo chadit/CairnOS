@@ -6,10 +6,9 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 )
 
-// Roles map a workspace membership onto a scope set the auth layer enforces
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"). The mapping is a
-// decision recorded in .agents/spec/14-open-decisions.md, not a spec-given
-// table: three roles cover the governance surface this phase ships.
+// Roles map a workspace membership onto a scope set the auth layer enforces.
+// The mapping is a decision, not a spec-given table: three roles cover the
+// governance surface this phase ships.
 const (
 	// RoleAdmin holds every scope, including admin, so an admin manages keys,
 	// pauses workflows, and reads audit history in their workspace.

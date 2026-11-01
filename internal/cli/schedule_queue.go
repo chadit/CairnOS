@@ -31,8 +31,8 @@ const NotifyDiscordWebhookEnv = "CAIRNOS_NOTIFY_DISCORD_WEBHOOK" // #nosec G101 
 // queueMetricsAdapter forwards the worker's queue metrics to the telemetry
 // recorder, so the work-queue panels (depth, runs, dead-letters, reclaimed
 // leases, oldest age) land on the same Prometheus endpoint the rest of the
-// metrics use (.agents/spec/06-observability-and-tuning.md). Metric recording is
-// fire-and-forget, so it carries no request context.
+// metrics use. Metric recording is fire-and-forget, so it carries no request
+// context.
 type queueMetricsAdapter struct {
 	rec *telemetry.Recorder
 }
@@ -87,8 +87,7 @@ type SchedulePayload struct {
 // scheduleEnqueueRunner is the scheduler's Runner in the queue model: a cron
 // fire enqueues a work item instead of running the workflow inline. Enqueue is
 // exactly-once on the (schedule, fire-time) key, so a fire no worker can take
-// right away waits in the queue rather than being dropped
-// (.agents/spec/14-open-decisions.md, S8).
+// right away waits in the queue rather than being dropped (S8).
 type scheduleEnqueueRunner struct {
 	queue  scheduler.WorkQueue
 	logger *slog.Logger
@@ -246,8 +245,7 @@ func workQueueBackends(scheds scheduleStore) storeBackends[workQueue] {
 // wires runner.IsReauth as the hold predicate, so a NeedsReauth failure parks
 // the job for a human rather than dead-lettering it (D12). The fan-out routes
 // held and dead_lettered alerts to Discord when those events are selected; a
-// nil fan-out leaves both callbacks unset
-// (.agents/spec/parity/messaging-bridge.md, decision 7).
+// nil fan-out leaves both callbacks unset.
 func newQueueWorker(queue scheduler.WorkQueue, queueRunner scheduler.QueueRunner, cfg *config.Scheduler, metrics scheduler.QueueMetrics, fanout *notify.Fanout, monitor *reach.Monitor, logger *slog.Logger) *scheduler.Worker {
 	return scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
@@ -412,9 +410,9 @@ func reauthHoldKey(runErr error) string {
 // NewReauthOnHold builds the worker's hold callback, routing alerts through the
 // Discord fan-out when "held" is selected. Returns nil when the fan-out is off
 // or "held" is deselected, leaving holds logged and counted. The alert matches
-// the direct notifier's content, keeping the default ["held"] set byte-identical
-// (.agents/spec/parity/messaging-bridge.md, decision 7). Emit is
-// fire-and-forget: a dropped alert never changes the job's fate (D12).
+// the direct notifier's content, keeping the default ["held"] set
+// byte-identical. Emit is fire-and-forget: a dropped alert never changes the
+// job's fate (D12).
 func NewReauthOnHold(fanout *notify.Fanout, logger *slog.Logger) func(context.Context, *scheduler.WorkItem, error) {
 	if !fanout.Selects(config.NotifyEventHeld) {
 		return nil
@@ -438,8 +436,7 @@ func NewReauthOnHold(fanout *notify.Fanout, logger *slog.Logger) func(context.Co
 // NewDeadLetterFanout builds the worker's dead-letter callback, emitting a
 // dead_lettered line when that event is selected. It returns nil when the
 // fan-out is off or the event is deselected, so the worker's OnDeadLetter stays
-// unset and the dead-letter path is only logged and counted
-// (.agents/spec/parity/messaging-bridge.md, decision 7).
+// unset and the dead-letter path is only logged and counted.
 func NewDeadLetterFanout(fanout *notify.Fanout) func(context.Context, *scheduler.WorkItem, error) {
 	if !fanout.Selects(config.NotifyEventDeadLettered) {
 		return nil
@@ -487,8 +484,7 @@ type pollPauseChecker interface {
 // PollAwareRunner wraps the enqueue runner so a [workflow.poll] fire turns one
 // cron occurrence into zero or more enqueued events, deduped through the queue's
 // PollDedupKeyFor key. A non-poll workflow delegates straight to the wrapped
-// runner, byte-for-byte today's behavior
-// (.agents/spec/parity/triggers-webhooks.md, "Firing path").
+// runner, byte-for-byte today's behavior.
 type PollAwareRunner struct {
 	inner   scheduler.Runner
 	queue   pollQueue

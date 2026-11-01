@@ -149,13 +149,17 @@ type fakeRunStarter struct {
 	block         bool
 }
 
+// resultBufferSize gives a run's outcome channel one slot, so StartRun or
+// deliver hands over the result without waiting for the handler to read it.
+const resultBufferSize = 1
+
 func (f *fakeRunStarter) StartRun(ctx context.Context, _ string, inputs map[string]any, trigger string) (webhook.StartedRun, error) {
 	f.mu.Lock()
 	f.calls++
 	f.lastWorkspace = store.WorkspaceFromContext(ctx)
 	f.lastInputs = inputs
 	f.lastTrigger = trigger
-	outcome := make(chan webhook.RunResult, 1)
+	outcome := make(chan webhook.RunResult, resultBufferSize)
 	f.lastOutcome = outcome
 	block := f.block
 	result := f.result

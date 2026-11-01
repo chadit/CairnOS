@@ -48,6 +48,14 @@ const (
 
 	pluginDownCode = "echo.plugin_down"
 
+	// oneShotBufferSize gives a goroutine a slot for its one result, so it exits
+	// even after the test stopped reading on a timeout.
+	oneShotBufferSize = 1
+
+	// streamChunkBufferSize holds every chunk the echo plugin streams, because
+	// the test drains the channel only after ExecuteStream returns.
+	streamChunkBufferSize = 16
+
 	// hostHelperEnv hands the echo binary path to the test binary that
 	// TestPluginExitsWhenHostDies re-executes as a stand-in host.
 	hostHelperEnv = "CAIRNOS_TEST_PLUGIN_HOST"
@@ -208,7 +216,7 @@ func TestPluginStreamsChunksInOrder(t *testing.T) {
 
 	plug := newEchoPlugin(t)
 
-	out := make(chan runner.Chunk, 16)
+	out := make(chan runner.Chunk, streamChunkBufferSize)
 
 	_, err := plug.ExecuteStream(t.Context(), echoTask(map[string]any{
 		chunksKey: []any{chunkOne, chunkTwo, chunkThree},
@@ -312,7 +320,7 @@ func TestPluginKilledMidExecuteIsTransientPluginDown(t *testing.T) {
 	// cannot reach the result behind it. Killing the process group there
 	// breaks the in-flight call before any terminal event lands, every run.
 	out := make(chan runner.Chunk)
-	done := make(chan streamErr, 1)
+	done := make(chan streamErr, oneShotBufferSize)
 
 	go func() {
 		_, err := plug.ExecuteStream(t.Context(), echoTask(map[string]any{
@@ -514,7 +522,7 @@ func readHelperLine(t *testing.T, lines *bufio.Reader) string {
 func requirePluginExits(t *testing.T, stderr io.Reader, pid int) {
 	t.Helper()
 
-	drained := make(chan error, 1)
+	drained := make(chan error, oneShotBufferSize)
 
 	go func() {
 		_, err := io.Copy(io.Discard, stderr)

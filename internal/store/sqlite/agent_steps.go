@@ -13,8 +13,7 @@ import (
 // runs without ambiguous column names.
 const agentStepColumns = "ast.run_id, ast.action_name, ast.step, ast.kind, ast.tool, ast.input_json, ast.output_json, ast.usage_json, ast.created_at"
 
-// AppendAgentStep persists one agent-loop transcript step
-// (.agents/spec/15-agent-loop.md, "Transcript persistence"). Steps are
+// AppendAgentStep persists one agent-loop transcript step. Steps are
 // insert-only: the loop never rewrites history, so there is no upsert.
 func (s *Store) AppendAgentStep(ctx context.Context, step *store.AgentStep) error {
 	input, err := marshalJSON(step.Input, step.Input == nil)
@@ -47,7 +46,7 @@ func (s *Store) AppendAgentStep(ctx context.Context, step *store.AgentStep) erro
 // ListAgentSteps returns one agent action's transcript ordered by step. The
 // join to runs scopes the result to the request workspace, so a transcript
 // whose run belongs to another workspace is invisible, matching
-// ListActionResults (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// ListActionResults.
 func (s *Store) ListAgentSteps(ctx context.Context, runID, actionName string) ([]*store.AgentStep, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT "+agentStepColumns+` FROM agent_steps ast

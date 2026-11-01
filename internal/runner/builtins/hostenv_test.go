@@ -47,7 +47,7 @@ func TestExecPassesHostTableToChild(t *testing.T) {
 
 	t.Parallel()
 
-	built, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil)(execConfig(nil))
+	built, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil, builtins.ExecTrust{})(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec with a host table: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestExecWithoutHostTableLeavesTheChildAlone(t *testing.T) {
 
 	t.Parallel()
 
-	built, err := builtins.ExecFactoryWithHostEnv(nil, nil)(execConfig(nil))
+	built, err := builtins.ExecFactoryWithHostEnv(nil, nil, builtins.ExecTrust{})(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec without a host table: %v", err)
 	}
@@ -215,7 +215,7 @@ func assertRunnerName(t *testing.T, built runner.Runner, want string) {
 func TestHostEnvFactoriesBuildTheRightRunners(t *testing.T) {
 	t.Parallel()
 
-	execRunner, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil)(execConfig(nil))
+	execRunner, err := builtins.ExecFactoryWithHostEnv(hostTable(), nil, builtins.ExecTrust{})(execConfig(nil))
 	if err != nil {
 		t.Fatalf("build exec: %v", err)
 	}

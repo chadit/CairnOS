@@ -41,7 +41,8 @@ done
 echo '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":24,"windowDurationMins":10080,"resetsAt":1790416865},"secondary":null,"planType":"prolite"}},"jsonrpc":"2.0"}'`
 
 // usageHome scaffolds a home with the given usage block and one host, returning it
-// and the shim directory. Call it before t.Parallel: a fork racing a write fails the exec.
+// and the shim directory. It writes executable shims, so it runs before
+// t.Parallel, because a fork racing one of those writes fails the exec.
 func usageHome(t *testing.T, usageBlock string) (string, string) {
 	t.Helper()
 

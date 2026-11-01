@@ -84,8 +84,7 @@ func resolveItemRef(ref workflow.Ref, item any) (any, error) {
 }
 
 // resolveParams interpolates every reference in an action's params at launch
-// time, after upstream results are persisted
-// (.agents/spec/02-workflow-schema.md, "Interpolation and data passing").
+// time, after upstream results are persisted.
 func (e *Engine) resolveParams(ctx context.Context, params, inputs, outputs map[string]any) (map[string]any, error) {
 	return resolveParamsWith(params, e.resolver(ctx, inputs, outputs))
 }

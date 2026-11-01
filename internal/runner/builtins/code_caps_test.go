@@ -61,7 +61,7 @@ func TestCodeWallClockCapCancelsInfiniteLoop(t *testing.T) {
 	// long enough for the deadline to fire without allocating the range.
 	script := "def spin():\n    total = 0\n    for i in range(10000000000):\n        total += i\n    return total\noutput = spin()"
 
-	done := make(chan error, 1)
+	done := make(chan error, oneShotBufferSize)
 
 	go func() {
 		_, err := code.Execute(ctx, codeTask(script, nil, nil))

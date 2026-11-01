@@ -2,16 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"maps"
 	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/chadit/CairnOS/internal/agentloop"
+	"github.com/chadit/CairnOS/internal/discover"
 	"github.com/chadit/CairnOS/internal/engine"
-	"github.com/chadit/CairnOS/internal/poll"
 	"github.com/chadit/CairnOS/internal/scheduler"
 	"github.com/chadit/CairnOS/internal/store"
 	"github.com/chadit/CairnOS/internal/workflow"
@@ -47,11 +45,10 @@ func (a *App) cmdSchedule(ctx context.Context, args []string) int {
 	}
 }
 
-// cmdScheduleAdd stores a workflow file's schedule key
-// (.agents/spec/02-workflow-schema.md) as an absolute path, so the daemon can
-// load it from any directory. A required input no fire supplies and an
-// unregistered poll source both parse fine and fail every fire, so add refuses
-// the first and warns on the second while the operator is watching.
+// cmdScheduleAdd stores a workflow file's schedule key as an absolute path, so
+// the daemon can load it from any directory. It refuses and warns through
+// discover.CheckSchedulable, the same checks source discovery applies, so a file
+// one accepts the other cannot refuse.
 func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("schedule add", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -76,23 +73,21 @@ func (a *App) cmdScheduleAdd(ctx context.Context, args []string) int {
 		return ExitUsage
 	}
 
-	if flow.Schedule == "" {
+	warning, err := discover.CheckSchedulable(flow)
+	if errors.Is(err, discover.ErrNoSchedule) {
 		a.printErrf("schedule add: %s has no schedule key; add one (e.g. schedule = \"@hourly\")\n", path)
 
 		return ExitUsage
 	}
 
-	if missing := requiredInputsWithoutDefault(flow); len(missing) > 0 {
-		a.printErrf("schedule add: %s: required input(s) with no default that no scheduled fire supplies: %s; give each one a default\n",
-			path, strings.Join(missing, ", "))
+	if err != nil {
+		a.printErrf("schedule add: %s: %v\n", path, err)
 
 		return ExitUsage
 	}
 
-	if flow.Poll != nil {
-		if _, known := poll.BuiltinSourceInputs(flow.Poll.Source); !known {
-			a.printErrf("schedule add: warning: unknown poll source %q; the schedule will fail at fire time\n", flow.Poll.Source)
-		}
+	if warning != "" {
+		a.printErrf("schedule add: warning: %s\n", warning)
 	}
 
 	absPath, err := filepath.Abs(path)
@@ -277,8 +272,8 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
-		nil, a.logger, nil, a.runnerTransport)
+	registry, err := newRegistry(ctx, cfg.Runners, sourcesFor(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
+		nil, a.logger, a.runnerTransport)
 	if err != nil {
 		a.printErrf("schedule run: %v\n", err)
 
@@ -335,34 +330,6 @@ func (a *App) cmdScheduleRun(ctx context.Context, args []string) int {
 	}
 
 	return ExitOK
-}
-
-// requiredInputsWithoutDefault lists, sorted, the required inputs with no
-// default that a fire of flow never supplies, so the engine rejects every run.
-// A plain scheduled fire supplies no inputs, and a poll fire only the keys its
-// source emits. A poll source no wiring builds is skipped, since its keys are
-// unknown; add warns about it instead.
-func requiredInputsWithoutDefault(flow *workflow.Workflow) []string {
-	var supplied []string
-
-	if flow.Poll != nil {
-		emitted, known := poll.BuiltinSourceInputs(flow.Poll.Source)
-		if !known {
-			return nil
-		}
-
-		supplied = emitted
-	}
-
-	var missing []string
-
-	for _, name := range slices.Sorted(maps.Keys(flow.Inputs)) {
-		if flow.Inputs[name].MustBeSupplied() && !slices.Contains(supplied, name) {
-			missing = append(missing, name)
-		}
-	}
-
-	return missing
 }
 
 // engineFireRunner adapts the engine to the scheduler's Runner: each fire

@@ -21,7 +21,7 @@ import (
 // The vault item, the two fields, and the variables they render into. Spelled
 // the way a host config would spell them.
 const (
-	pullItem     = "chezmoi"
+	pullItem     = "cairnos"
 	pullFieldOne = "mattermost token"
 	pullFieldTwo = "zai key"
 	pullVarOne   = "CAIRNOS_BRIDGE_MATTERMOST_TOKEN"
@@ -819,8 +819,8 @@ func TestSecretsPullFailsWhenTheItemCarriesNothing(t *testing.T) {
 	}
 }
 
-// TestSecretsPullTakesTheItemFromTheCredentialsFile covers FR18: a host that
-// ran `secrets auth` and never edited config.toml still pulls.
+// TestSecretsPullTakesTheItemFromTheCredentialsFile covers FR18: a host whose
+// credentials file names the item and whose config.toml does not still pulls.
 func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 	t.Parallel()
 
@@ -841,11 +841,42 @@ func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 	}
 }
 
-// TestSecretsPullWarnsAboutImpliedVariables covers FR20. The host will want a
-// bot token and an API key at run time; the item carries neither. The pull says
-// so and still writes, because a value may well be in the hand-written env file
-// beside the generated one. The warning names the shared default an operator
-// should add, with the override mentioned separately.
+// TestSecretsPullReadsACredentialsFileWrittenUnderTilde covers a
+// credentials_file written as ~/..., the form a chezmoi pointer takes. The
+// environment carries no BW_ values, so the pull can only succeed by expanding
+// ~/ to the staged home and reading the file there.
+func TestSecretsPullReadsACredentialsFileWrittenUnderTilde(t *testing.T) {
+	t.Parallel()
+
+	binDir := stageFakeBW(t, bothFields())
+
+	home := t.TempDir()
+	writePullFile(t, filepath.Join(home, "bitwarden.env"), credentialsFixture())
+
+	dir := t.TempDir()
+	writePullFile(t, filepath.Join(dir, "config.toml"),
+		"[secrets.bitwarden]\nitem = \""+pullItem+"\"\n"+
+			"credentials_file = \"~/bitwarden.env\"\n\n"+
+			"[secrets.bitwarden.fields]\n"+pullVarOne+" = \""+pullFieldOne+"\"\n")
+
+	env := pathEnv(binDir)
+	env[cli.HomeEnvName()] = home
+
+	if code, _, stderr := runEnvCLI(t, env, secretsCmd, "pull", flagDirArg, dir); code != cli.ExitOK {
+		t.Fatalf("exit = %d, want ok\nstderr: %s", code, stderr)
+	}
+
+	rendered := runPullRead(t, filepath.Join(dir, "secrets.env"))
+	if !strings.Contains(rendered, pullVarOne+"='"+pullValueOne+"'") {
+		t.Fatalf("the pull did not render the mapped field:\n%s", rendered)
+	}
+}
+
+// TestSecretsPullWarnsAboutImpliedVariables covers FR20: the host will want a
+// bot token and an API key at run time, and the item carries neither. The pull
+// says so and still writes, because a value may well be in the hand-written env
+// file beside the generated one. The warning names the shared default an
+// operator should add and mentions the override separately.
 func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 	t.Parallel()
 

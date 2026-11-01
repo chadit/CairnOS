@@ -1,7 +1,6 @@
-// Package auth implements the Phase 4a access model
-// (.agents/spec/08-auth-and-access.md): admin-managed access keys stored
-// argon2id-hashed, short-lived JWTs minted at login with the key's scopes,
-// and a jti/sub denylist checked on every verify so revocation is real
+// Package auth implements the Phase 4a access model: admin-managed access keys
+// stored argon2id-hashed, short-lived JWTs minted at login with the key's
+// scopes, and a jti/sub denylist checked on every verify so revocation is real
 // before exp. Signing is two-tier by configuration: HS256 with a shared
 // secret for the self-issued single instance, EdDSA (ed25519) where
 // verifiers must not be able to mint.
@@ -101,8 +100,7 @@ type Store interface {
 // shortened TTL never resurrects it, and bounded so the row still prunes.
 const revokeCeiling = 24 * time.Hour
 
-// Config tunes token issue and verification
-// (.agents/spec/08-auth-and-access.md, "Configuration").
+// Config tunes token issue and verification.
 type Config struct {
 	// Now anchors issue and expiry math; nil means time.Now. Tests inject
 	// a fake clock here so expiry needs no sleeping.

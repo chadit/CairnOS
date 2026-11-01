@@ -192,15 +192,8 @@ func (c *CLI) ExecuteStream(ctx context.Context, task *runner.Task, stream chan<
 
 	stdoutText, scanErr := collectStdout(runCtx, io.TeeReader(piped.stdout, stdoutTail), stream)
 
-	waitErr := cmd.Wait()
+	waitErr := dropCleanExitWaitDelay(runCtx, cmd.Wait())
 	latency := time.Since(start)
-
-	// WaitDelay also cuts the wait short when the tool exits cleanly but leaves
-	// a helper holding stderr. stdout already reached EOF, so the result is
-	// whole and only the stderr tail can come up short.
-	if errors.Is(waitErr, exec.ErrWaitDelay) && runCtx.Err() == nil {
-		waitErr = nil
-	}
 
 	if waitErr != nil {
 		return runner.Result{}, c.classifyWait(runCtx, waitErr, stderr.Text(), stdoutTail.Text())
@@ -350,9 +343,8 @@ func (c *CLI) classifyWait(runCtx context.Context, waitErr error, stderrTail, st
 
 // classifyExitOutput reads a non-zero exit's output tails to pick the error
 // class. A limit wins over re-auth, so a capped call retries (the wrapped CLI
-// picks its account per launch) instead of holding the job for a human (D12,
-// .agents/spec/14-open-decisions.md). An unexplained non-zero exit is
-// permanent: it is not safe to repeat.
+// picks its account per launch) instead of holding the job for a human (D12).
+// An unexplained non-zero exit is permanent: it is not safe to repeat.
 func (c *CLI) classifyExitOutput(output, message string, cause error) error {
 	lowered := strings.ToLower(output)
 
@@ -482,6 +474,19 @@ func collectStdout(ctx context.Context, pipe io.Reader, stream chan<- runner.Chu
 	}
 
 	return collected.String(), nil
+}
+
+// dropCleanExitWaitDelay turns the ErrWaitDelay Wait reports after a zero exit
+// into success. A background helper the child left holding a pipe is not a
+// failure of the command: stdout reached EOF, so the output is whole and only
+// the stderr tail can come up short. Under a dead run context the error stands,
+// since the kill caused it.
+func dropCleanExitWaitDelay(runCtx context.Context, waitErr error) error {
+	if errors.Is(waitErr, exec.ErrWaitDelay) && runCtx.Err() == nil {
+		return nil
+	}
+
+	return waitErr
 }
 
 // forwardChunk sends one line to the stream, reporting false when the context

@@ -16,7 +16,7 @@ var (
 )
 
 // OpenAI error type values, the coarse class a client branches on alongside the
-// HTTP status (.agents/spec/parity/openai-compat.md, "Errors").
+// HTTP status.
 const (
 	typeAuthentication = "authentication_error"
 	typePermission     = "permission_error"

@@ -9,9 +9,8 @@ import (
 )
 
 // Fallback tries providers in order and returns the first success, so one
-// provider's outage does not fail an action another can serve
-// (.agents/spec/14-open-decisions.md, D12). call wires each provider's own
-// breaker, retry, and execute.
+// provider's outage does not fail an action another can serve (D12). call wires
+// each provider's own breaker, retry, and execute.
 //
 // When every provider fails, the last result comes back with a joined error
 // whose first classified failure wins, so a primary needing re-auth still holds

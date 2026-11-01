@@ -15,7 +15,7 @@ const versionColumns = "hash, workflow_name, definition_toml, created_at"
 // SaveWorkflowVersion records one workflow-definition snapshot, matching the
 // sqlite backend: a zero CreatedAt becomes the current time, and re-saving the
 // same hash is a no-op so a definition captured twice keeps its first
-// timestamp (.agents/spec/13-roadmap.md, Phase 6).
+// timestamp.
 func (s *Store) SaveWorkflowVersion(ctx context.Context, version *store.WorkflowVersion) error {
 	createdAt := version.CreatedAt
 	if createdAt.IsZero() {

@@ -20,8 +20,7 @@ import (
 // bridgeTelegramTokenEnv holds the Telegram bot token. The token is a credential
 // embedded in every Bot API URL path (/bot<token>/method), so it is read only
 // from the environment at serve wiring, never a config-file key; an unset token
-// treats the bridge as off, the same posture as the Discord webhook secret
-// (.agents/spec/parity/messaging-bridge.md, decision 3).
+// treats the bridge as off, the same posture as the Discord webhook secret.
 const bridgeTelegramTokenEnv = "CAIRNOS_BRIDGE_TELEGRAM_TOKEN" // #nosec G101 -- environment variable name, not a credential
 
 // bridgeDeps groups what the bridge builders wire their adapter over, so each

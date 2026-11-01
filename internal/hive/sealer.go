@@ -15,10 +15,10 @@ import (
 )
 
 // keySize is the AES-256 key length in bytes. The shared hive key is the
-// private cluster's privacy mechanism (R2/R3 in 14-open-decisions.md): the hive
-// covers one operator's own nodes, so there is no untrusted participant to
-// calibrate k-anonymity against, and a key the host and transport cannot read
-// carries privacy instead. AES-256 because the key is long-lived and shared.
+// private cluster's privacy mechanism (R2/R3): the hive covers one operator's
+// own nodes, so there is no untrusted participant to calibrate k-anonymity
+// against, and a key the host and transport cannot read carries privacy
+// instead. AES-256 because the key is long-lived and shared.
 const keySize = 32
 
 // keyIDLen is how many hex chars of a key's SHA-256 identify it on the wire. A

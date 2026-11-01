@@ -1,8 +1,7 @@
-// Package memory holds the bounded, curated notes that get loaded into
-// prompts at session start (.agents/spec/05-memory-and-knowledge.md,
-// "Memory"). Entries are small and high-value; Load pulls the most important
-// ones for a scope under a token budget so the system prompt stays small
-// without the runner managing memory itself.
+// Package memory holds the bounded, curated notes that get loaded into prompts
+// at session start. Entries are small and high-value; Load pulls the most
+// important ones for a scope under a token budget so the system prompt stays
+// small without the runner managing memory itself.
 package memory
 
 import (

@@ -20,6 +20,10 @@ const artifactName = "weights"
 // never get an answer from the network.
 const unreachableOrigin = "http://127.0.0.1:1"
 
+// progressChunkSize is each write's length against a 100-byte total, so ten
+// writes take the progress to 100%.
+const progressChunkSize = 10
+
 // TestFetchWritesVerifiedFile proves a download lands only after its digest
 // matches the pin.
 func TestFetchWritesVerifiedFile(t *testing.T) {
@@ -197,7 +201,7 @@ func TestProgressReportsIntermediateSteps(t *testing.T) {
 	writer := localmodel.NewProgressWriter(&out, artifactName, 100)
 
 	for range 10 {
-		if _, err := writer.Write(make([]byte, 10)); err != nil {
+		if _, err := writer.Write(make([]byte, progressChunkSize)); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -228,15 +232,13 @@ func (w *refusingWriter) Write([]byte) (int, error) {
 func TestProgressStopsPrintingAfterAFailedLine(t *testing.T) {
 	t.Parallel()
 
-	const chunkBytes = 10
-
 	refusing := &refusingWriter{}
 	writer := localmodel.NewProgressWriter(refusing, artifactName, 100)
 
 	for range 10 {
-		count, err := writer.Write(make([]byte, chunkBytes))
-		if err != nil || count != chunkBytes {
-			t.Fatalf("write = %d, %v; want %d, nil", count, err, chunkBytes)
+		count, err := writer.Write(make([]byte, progressChunkSize))
+		if err != nil || count != progressChunkSize {
+			t.Fatalf("write = %d, %v; want %d, nil", count, err, progressChunkSize)
 		}
 	}
 

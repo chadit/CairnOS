@@ -12,9 +12,8 @@ import (
 
 const (
 	// callbackPrefix and callbackSep frame a proposal keyboard's callback_data as
-	// "confirm:<sessionID>:approve|deny" (.agents/spec/parity/messaging-bridge.md,
-	// decision 5). The session id is parsed from the last separator so an id that
-	// itself carries a colon still round-trips.
+	// "confirm:<sessionID>:approve|deny". The session id is parsed from the last
+	// separator so an id that itself carries a colon still round-trips.
 	callbackPrefix = "confirm"
 	callbackSep    = ":"
 

@@ -40,7 +40,7 @@ func TestOpenAIValidateKeyRequirementFollowsTheAddress(t *testing.T) {
 		{"tailnet carrier-grade nat", "http://100.64.0.10:8089/v1", false},
 		{"hosted endpoint", "https://api.example.com/v1", true},
 		{"typo in a hosted endpoint", "https://api.openai.con/v1", true},
-		{"public address", "https://93.184.216.34/v1", true},
+		{"public address", "https://203.0.113.10/v1", true},
 	}
 
 	for _, testCase := range cases {

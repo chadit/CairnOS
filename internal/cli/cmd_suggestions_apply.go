@@ -15,7 +15,7 @@ import (
 // manual entry to the gated auto-apply path: it still refuses all kinds but
 // caching and batching, requires approval, and requires [autonomic]
 // auto_apply_enabled. Param tuning and prompt refactor never apply: verifying
-// they kept output quality is open R1 (.agents/spec/14-open-decisions.md).
+// they kept output quality is open R1.
 func (a *App) cmdSuggestionsApply(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("suggestions apply", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)

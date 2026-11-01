@@ -207,9 +207,12 @@ func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stor
 
 	logger := slog.New(telemetry.NewLogHandler(a.logger.Handler()))
 
+	reconcile := sourceReconciler(cfg.Sources, scheds, logger)
+	reconcileSources(ctx, specs, reconcile)
+
 	msgRegistry := messaging.NewRegistry()
 
-	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, specs, a.envLookup(), mem, stores.rules, credManager,
+	registry, sourceNotifier, err := newServeRegistry(ctx, cfg, reconcile, a.envLookup(), mem, stores.rules, credManager,
 		NewMessageSender(msgRegistry, logger), db, logger, a.runnerTransport)
 	if err != nil {
 		return a.failServe(ctx, tel, "runners", err)
@@ -553,10 +556,9 @@ const hiveSubscribeInterval = time.Hour
 
 // startHiveSubscribe runs a periodic hive subscribe on its own goroutine when
 // [hive] is enabled, landing tips in the suggestion queue so they flow through
-// the same human review as local suggestions (.agents/spec/09-a2a-and-hive.md).
-// It returns nil and starts nothing when the hive is disabled. Subscribing is
-// receive-only and never publishes, so the loop is safe regardless of the
-// publish gate.
+// the same human review as local suggestions. It returns nil and starts nothing
+// when the hive is disabled. Subscribing is receive-only and never publishes,
+// so the loop is safe regardless of the publish gate.
 func (a *App) startHiveSubscribe(ctx context.Context, cfg *config.Config, source secrets.Source, db store.Store, scheds scheduleStore, logger *slog.Logger) <-chan struct{} {
 	if !cfg.Hive.Enabled {
 		return nil
@@ -749,7 +751,7 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.L
 // on cancellation. The daemon enqueues each due fire and the worker drains the
 // queue through the manager fire runner. The coordinator is the advisory-lock PostgresCoordinator on a
 // Postgres backend, so only one serving node fires schedules, and the
-// SoloCoordinator on sqlite (.agents/spec/14-open-decisions.md, S2).
+// SoloCoordinator on sqlite (S2).
 func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
 	monitor := newReachMonitor(sched.fanout, a.logger)
 
@@ -771,8 +773,8 @@ func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched 
 	fire := api.NewFireRunner(sched.manager, sched.pauses, a.logger)
 	worker := newQueueWorker(sched.queue, &QueueRunnerAdapter{fire: fire, reach: monitor}, sched.cfg, sched.metrics, sched.fanout, monitor, a.logger)
 
-	daemonDone := make(chan error, 1)
-	workerDone := make(chan error, 1)
+	daemonDone := make(chan error, oneShotChanSize)
+	workerDone := make(chan error, oneShotChanSize)
 
 	go monitor.Run(ctx)
 	go func() { daemonDone <- daemon.Run(ctx) }()

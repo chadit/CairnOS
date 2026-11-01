@@ -14,11 +14,10 @@ import (
 // order.
 const approvalColumns = "run_id, action_name, workspace_id, status, message, actor, comment, created_at, decided_at"
 
-// CreateApproval records a new pending approval gate
-// (.agents/spec/parity/workflow-language.md, "Human approval"). A zero
-// CreatedAt is stamped with the current time, an empty WorkspaceID becomes the
-// request workspace, and an empty Status becomes pending, so the engine only
-// fills what it cares about.
+// CreateApproval records a new pending approval gate. A zero CreatedAt is
+// stamped with the current time, an empty WorkspaceID becomes the request
+// workspace, and an empty Status becomes pending, so the engine only fills what
+// it cares about.
 func (s *Store) CreateApproval(ctx context.Context, approval *store.Approval) error {
 	workspace := approval.WorkspaceID
 	if workspace == "" {

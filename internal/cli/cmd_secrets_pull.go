@@ -69,12 +69,12 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return a.reportNoVault(label, configPath)
 	}
 
-	opts := pullOptions{dir: dir, cfg: &cfg, system: *system, dryRun: *dryRun}
+	opts := pullOptions{dir: dir, cfg: &cfg, lookup: a.envLookup(), system: *system, dryRun: *dryRun}
 
 	return a.pullBitwarden(ctx, label, cfg.Secrets.Bitwarden, opts)
 }
 
-// resolveSecretsDir picks the home these two commands read their config from.
+// resolveSecretsDir picks the home `secrets pull` reads its config from.
 // With --system and no --dir that is the system install's data directory, not
 // the invoking user's: the documented `sudo cairnos secrets pull --system` would
 // otherwise read /root/.cairnos/config.toml, find no block, and report success
@@ -106,6 +106,10 @@ type pullOptions struct {
 	// credentials this host will want that the vault did not supply.
 	cfg *config.Config
 
+	// lookup is the injected environment, asked for the operator's home only
+	// when a configured path starts with ~/.
+	lookup environ.Lookup
+
 	dir    string
 	system bool
 	dryRun bool
@@ -116,7 +120,12 @@ type pullOptions struct {
 func (a *App) pullBitwarden(
 	ctx context.Context, label string, block *config.Bitwarden, opts pullOptions,
 ) int {
-	credsPath := opts.resolve(block.CredentialsFile, config.DefaultBitwardenCredentialsFile)
+	credsPath, err := opts.resolve(block.CredentialsFile, config.DefaultBitwardenCredentialsFile)
+	if err != nil {
+		a.printErrf("%s: %v\n", label, err)
+
+		return ExitFailure
+	}
 
 	creds, err := bitwarden.LoadCredentials(credsPath, a.envLookup().Get)
 	if err != nil {
@@ -148,7 +157,12 @@ func (a *App) pullBitwarden(
 
 	a.warnMissingImplied(label, opts.cfg, values)
 
-	target := opts.resolve(block.EnvFile, config.DefaultBitwardenEnvFile)
+	target, err := opts.resolve(block.EnvFile, config.DefaultBitwardenEnvFile)
+	if err != nil {
+		a.printErrf("%s: %v\n", label, err)
+
+		return ExitFailure
+	}
 
 	return a.renderEnvFile(label, target, values, opts.dryRun)
 }
@@ -173,20 +187,20 @@ func (a *App) warnMissingImplied(label string, cfg *config.Config, values map[st
 	}
 }
 
-// resolve decides where one of the two files lives. A configured value is taken
-// as written, absolute or relative to the home. A default goes through the
-// service package, which is what decides where the unit reads from: a system
-// unit loads /etc/cairnos, never the home.
-func (o pullOptions) resolve(configured, fallback string) string {
+// resolve decides where one of the two files lives. A configured value goes
+// through resolveHomePath. A default goes through the service package, which is
+// what decides where the unit reads from: a system unit loads /etc/cairnos,
+// never the home.
+func (o pullOptions) resolve(configured, fallback string) (string, error) {
 	if configured != fallback {
-		return resolveHomePath(o.dir, configured)
+		return resolveHomePath(o.dir, configured, o.lookup)
 	}
 
 	if fallback == config.DefaultBitwardenEnvFile {
-		return service.SecretsEnvFile(o.dir, o.system)
+		return service.SecretsEnvFile(o.dir, o.system), nil
 	}
 
-	return filepath.Join(service.EnvDir(o.dir, o.system), fallback)
+	return filepath.Join(service.EnvDir(o.dir, o.system), fallback), nil
 }
 
 // renderEnvFile writes the file and reports what went into it. Only variable
@@ -270,14 +284,27 @@ func sortedKeys(fields map[string]string) []string {
 	return names
 }
 
-// resolveHomePath resolves a configured path against the CairnOS home, the same
-// way the sqlite dsn does, so an operator can write either form.
-func resolveHomePath(dir, path string) string {
+// resolveHomePath keeps an absolute path, expands a leading ~/ against the
+// operator's home, and resolves anything else against the CairnOS home as the
+// sqlite dsn does. TOML never shell-expands a string, so without the ~/ case a
+// chezmoi pointer would land under the CairnOS home, read as absent, and leave
+// the pull on the environment without a word.
+func resolveHomePath(dir, path string, lookup environ.Lookup) (string, error) {
 	if filepath.IsAbs(path) {
-		return path
+		return path, nil
 	}
 
-	return filepath.Join(dir, path)
+	underHome, isTilde := strings.CutPrefix(path, "~/")
+	if !isTilde {
+		return filepath.Join(dir, path), nil
+	}
+
+	home, err := homeDir(lookup)
+	if err != nil {
+		return "", fmt.Errorf("expand %s: %w", path, err)
+	}
+
+	return filepath.Join(home, underHome), nil
 }
 
 // writeFileAtomic writes through a temp file in the same directory and renames,

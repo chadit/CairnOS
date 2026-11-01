@@ -2,9 +2,8 @@
 // as a child process serving the cairnos.plugin.v1.RunnerPlugin service over
 // a private unix socket; this package is the engine-side half that spawns the
 // process, speaks the protocol, and translates between proto and pkg/runner
-// types (.agents/spec/03-runner-interface.md, "Custom runners and plugins",
-// path 2). Crashes stay isolated: a dead or unresponsive plugin surfaces as
-// a transient <name>.plugin_down error, never a wedged engine.
+// types. Crashes stay isolated: a dead or unresponsive plugin surfaces as a
+// transient <name>.plugin_down error, never a wedged engine.
 package plugin
 
 import (
@@ -258,7 +257,9 @@ func (p *Plugin) ExecuteStream(ctx context.Context, task *runner.Task, out chan<
 	// a goroutine per event. The buffer of one lets a Recv that is unblocking
 	// after a process death finish its send and exit even when the loop has
 	// already returned on p.exited, so nothing leaks.
-	recv := make(chan recvResult, 1)
+	const recvBufferSize = 1
+
+	recv := make(chan recvResult, recvBufferSize)
 	go receiveLoop(stream, recv)
 
 	for {
@@ -467,7 +468,7 @@ func (p *Plugin) forwardChunk(ctx context.Context, out chan<- runner.Chunk, chun
 // event arrived. A caller that canceled the call still reads as a timeout;
 // otherwise the process died on its own, surfaced as the same transient
 // plugin_down the engine handles for any dead-plugin call, with how it exited
-// in the cause. Call it only once exited is closed.
+// in the cause. It reads waitErr, so exited must already be closed.
 func (p *Plugin) processExitedError(ctx context.Context) *runner.Error {
 	if ctx.Err() != nil {
 		return &runner.Error{

@@ -15,7 +15,7 @@ const approvalColumns = "run_id, action_name, workspace_id, status, message, act
 // CreateApproval records a new pending approval gate, keeping identical
 // defaulting to the sqlite backend: a zero CreatedAt becomes now, an empty
 // WorkspaceID becomes the request workspace, and an empty Status becomes
-// pending (.agents/spec/parity/workflow-language.md, "Human approval").
+// pending.
 func (s *Store) CreateApproval(ctx context.Context, approval *store.Approval) error {
 	workspace := approval.WorkspaceID
 	if workspace == "" {

@@ -10,12 +10,11 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// Claims is the CairnOS token payload (.agents/spec/08-auth-and-access.md,
-// "Tokens (JWT)"): sub is the access key id, and scopes ride alongside the
-// registered claims. Workspace names the tenant the token acts in
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"); the interceptor
-// lifts it onto the request context so every store query filters by it. Empty
-// means the default workspace, so tokens minted before tenancy still work.
+// Claims is the CairnOS token payload: sub is the access key id, and scopes
+// ride alongside the registered claims. Workspace names the tenant the token
+// acts in; the interceptor lifts it onto the request context so every store
+// query filters by it. Empty means the default workspace, so tokens minted
+// before tenancy still work.
 type Claims struct {
 	jwt.RegisteredClaims
 
@@ -31,10 +30,9 @@ func (a *Authenticator) issue(ctx context.Context, key *Key) (string, time.Time,
 
 // MintForSubject signs a token with subject as sub and the given workspace and
 // scopes. It trusts that grant as handed, so the caller resolves it first,
-// membership included for an IdP subject (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy"). jti/sub/exp are recorded before the token leaves, so
-// RevokeToken denies it until its real exp even after access_token_ttl drops
-// (spec M2).
+// membership included for an IdP subject. jti/sub/exp are recorded before the
+// token leaves, so RevokeToken denies it until its real exp even after
+// access_token_ttl drops (spec M2).
 func (a *Authenticator) MintForSubject(ctx context.Context, subject, workspace string, scopes []string) (string, time.Time, error) {
 	now := a.cfg.Now()
 	expiresAt := now.Add(a.cfg.TTL)

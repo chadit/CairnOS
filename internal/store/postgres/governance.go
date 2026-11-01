@@ -22,8 +22,7 @@ const pauseColumns = "workflow_name, actor, reason, paused_at"
 // a zero ID gets a fresh ULID and a zero CreatedAt the current time. Audit
 // rows are append-only and survive the retention sweep. The row is stamped with
 // the request workspace so the audit trail is per tenant, the same boundary
-// every governance read honors (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
+// every governance read honors.
 func (s *Store) AppendAudit(ctx context.Context, entry *store.AuditEntry) error {
 	id := entry.ID
 	if id == "" {
@@ -73,8 +72,7 @@ func (s *Store) ListAudit(ctx context.Context, filter store.AuditFilter) ([]*sto
 // request workspace. A zero PausedAt becomes the current time. Re-pausing
 // overwrites the actor, reason, and timestamp rather than failing. Two tenants
 // can pause the same workflow name independently: the (workspace_id,
-// workflow_name) key keeps the flags separate
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// workflow_name) key keeps the flags separate.
 func (s *Store) SetWorkflowPause(ctx context.Context, pause *store.WorkflowPause) error {
 	pausedAt := pause.PausedAt
 	if pausedAt.IsZero() {
@@ -149,8 +147,7 @@ func (s *Store) ListWorkflowPauses(ctx context.Context) ([]*store.WorkflowPause,
 // runs created at or after since, matching the sqlite backend. usage_json
 // carries cost_usd as JSONB text, so ->> reads it out for the cast, and
 // COALESCE keeps an all-NULL sum from returning NULL. The workspace clause
-// gives two tenants running the same workflow name separate budgets
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// gives two tenants running the same workflow name separate budgets.
 func (s *Store) SpendSince(ctx context.Context, workflowName string, since time.Time) (float64, error) {
 	row := s.pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM((ar.usage_json->>'cost_usd')::double precision), 0)

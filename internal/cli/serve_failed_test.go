@@ -64,7 +64,7 @@ ref  = "main"
 func fakeMattermost(t *testing.T) (http.Handler, chan string) {
 	t.Helper()
 
-	posts := make(chan string, 4)
+	posts := make(chan string, postCaptureSize)
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/v4/teams/name/main/channels/name/alerts", func(w http.ResponseWriter, _ *http.Request) {

@@ -31,6 +31,10 @@ const (
 // drains it, matching internal/api's chatEventBuffer.
 const completionEventBuffer = 32
 
+// callDoneBufferSize gives the SendMessage goroutine a slot for its one error,
+// so it exits when the turn ends instead of waiting on the handler's read.
+const callDoneBufferSize = 1
+
 // completionRequest is the subset of the OpenAI chat completions body the
 // adapter reads. Tuning params (temperature, top_p, max_tokens, n, stop, tools,
 // tool_choice, response_format, ...) are accepted and ignored; the driver owns
@@ -80,8 +84,7 @@ type responseMessage struct {
 }
 
 // usageBlock reports the turn's real token spend, so clients see counts instead
-// of fabricated zeros (.agents/spec/parity/openai-compat.md, "Real usage
-// numbers").
+// of fabricated zeros.
 type usageBlock struct {
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
@@ -171,7 +174,7 @@ func (s *Service) handleCompletions(w http.ResponseWriter, r *http.Request) {
 // decodeRequest reads the body under the configured cap and decodes the JSON. An
 // over-limit body answers 413 request_too_large; malformed JSON answers 400
 // invalid_body. The cap is applied here because extension routes bypass the
-// gateway's limitBody wrapper (.agents/spec/parity/openai-compat.md, "Body cap").
+// gateway's limitBody wrapper.
 func (s *Service) decodeRequest(w http.ResponseWriter, r *http.Request) (*completionRequest, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxBodyBytes)
 
@@ -191,7 +194,7 @@ func (s *Service) decodeRequest(w http.ResponseWriter, r *http.Request) (*comple
 // splitMessages validates the message list and splits it into the trailing user
 // prompt and the prior history to seed. messages must be non-empty and the
 // trailing message must be role user; content may be a string or an array of
-// text parts, any other part type a 400 (.agents/spec/parity/openai-compat.md).
+// text parts, any other part type a 400.
 func splitMessages(messages []requestMessage) (string, []seededMessage, error) {
 	if len(messages) == 0 {
 		return "", nil, errMissingMessages("messages must contain at least one message")
@@ -273,8 +276,8 @@ func seedRole(clientRole string) string {
 // seedHistory appends every prior-history message into the fresh session in
 // order, so the turn's prompt replays the client's conversation. The client is
 // stateless (it resends the whole thread each call) while the session is
-// stateful, so the adapter re-persists the history each request, the O(n^2)
-// write the spec accepts for v1 parity (.agents/spec/parity/openai-compat.md).
+// stateful, so the adapter re-persists the history each request and accepts
+// the O(n^2) writes that adds up to over a long thread.
 func (s *Service) seedHistory(ctx context.Context, sessionID string, seed []seededMessage) error {
 	// The ChatStore has no batch append, so each prior message is one write.
 	// This is the documented O(n^2) history cost of per-request sessions, not an
@@ -301,7 +304,7 @@ func (s *Service) seedHistory(ctx context.Context, sessionID string, seed []seed
 // surface has no confirm route.
 func (s *Service) runTurn(ctx context.Context, sessionID, prompt string) (string, runner.Usage, error) {
 	events := make(chan chat.Event, completionEventBuffer)
-	callDone := make(chan error, 1)
+	callDone := make(chan error, callDoneBufferSize)
 
 	go func() {
 		callDone <- s.agent.SendMessage(ctx, sessionID, prompt, events)
@@ -367,8 +370,7 @@ const confirmationTemplate = "I want to run a workflow, but this OpenAI-compatib
 
 // renderConfirmation turns a D9 proposal into assistant text naming the pending
 // proposal in full, so a human can act on a native surface. This endpoint has no
-// confirm route by design, so a foreign client can never fire the proposal
-// (.agents/spec/parity/openai-compat.md, "The D9 gate over a foreign client").
+// confirm route by design, so a foreign client can never fire the proposal.
 func renderConfirmation(proposal *chat.Proposal, sessionID string) string {
 	return fmt.Sprintf(
 		confirmationTemplate,

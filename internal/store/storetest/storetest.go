@@ -3,8 +3,7 @@
 // against a fresh store: the sqlite backend calls it, and the postgres
 // backend calls it when a test DSN is configured. One spec, two backends,
 // so a behavioral difference between them fails a test instead of going
-// unnoticed (.agents/spec/05-memory-and-knowledge.md, the interface-seam
-// acceptance criterion carried into Phase 4c).
+// unnoticed.
 package storetest
 
 import (
@@ -418,8 +417,8 @@ func sameActionColumns(got, want *store.ActionResult) bool {
 
 // testParentRunIDRoundTrip proves runs.parent_run_id survives the store: a
 // child run created with ParentRunID set reads it back, while a root run reads
-// the empty string. Replay, workflow-call, and error-workflow children all
-// rely on this link (.agents/spec/parity/workflow-language.md).
+// the empty string. Replay, workflow-call, and error-workflow children all rely
+// on this link.
 func testParentRunIDRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -614,9 +613,8 @@ func testListRunsFiltersAndOrdersNewestFirst[S store.Store](t *testing.T, openFn
 
 // testWorkspaceIsolatesRunsAndActions is the multi-tenancy invariant the spec
 // rests on: a run created in one workspace is invisible to a context scoped to
-// another, for GetRun, ListRuns, and ListActionResults
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"). The context carries
-// the workspace; the store filters by it.
+// another, for GetRun, ListRuns, and ListActionResults. The context carries the
+// workspace; the store filters by it.
 func testWorkspaceIsolatesRunsAndActions[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -1379,9 +1377,8 @@ func testPruneDeletesStaleSuggestions[S store.Store](t *testing.T, openFn OpenFu
 // testSuggestionIsolatesByWorkspace proves a suggestion saved in one workspace
 // is invisible to another: GetSuggestion across the boundary returns not-found
 // rather than leaking the evidence and proposed change, and ListSuggestions is
-// scoped to the request tenant (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy"). A non-admin token in one tenant must not read another's
-// suggestion, which embeds workflow names and costs.
+// scoped to the request tenant. A non-admin token in one tenant must not read
+// another's suggestion, which embeds workflow names and costs.
 func testSuggestionIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -1457,8 +1454,7 @@ func suggestionIDs(suggestions []*store.Suggestion) []string {
 
 // testAgentStepsIsolateByWorkspace proves a run's transcript is invisible to a
 // context scoped to another workspace, matching ListActionResults: agent steps
-// for a run in workspace A read as empty under a workspace-B context
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// for a run in workspace A read as empty under a workspace-B context.
 func testAgentStepsIsolateByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

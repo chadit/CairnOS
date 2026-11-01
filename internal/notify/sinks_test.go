@@ -21,7 +21,7 @@ type recordingPoster struct {
 }
 
 func newRecordingPoster(err error) *recordingPoster {
-	return &recordingPoster{posted: make(chan string, 16), err: err}
+	return &recordingPoster{posted: make(chan string, captureBufferSize), err: err}
 }
 
 func (p *recordingPoster) Post(_ context.Context, content string) error {

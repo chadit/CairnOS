@@ -20,13 +20,19 @@ const (
 	// dottedName is testName with a dot and capitals, which normalization must
 	// fold to the same secret.
 	dottedName = "DB.PASSWORD"
+
+	// aesKeySize is the AES-256 key length the sealer requires.
+	aesKeySize = 32
+	// shortKeySize is a valid AES-128 length, so its rejection proves the
+	// sealer's own AES-256 check rather than the cipher's.
+	shortKeySize = 16
 )
 
 // randomKey returns 32 random bytes for an AES-256 sealer.
 func randomKey(t *testing.T) []byte {
 	t.Helper()
 
-	key := make([]byte, 32)
+	key := make([]byte, aesKeySize)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
@@ -193,11 +199,11 @@ func TestOpenRejectsUnknownKeyID(t *testing.T) {
 func TestNewSealerRejectsWrongSizeKey(t *testing.T) {
 	t.Parallel()
 
-	if _, err := secrets.NewSealer(make([]byte, 16)); !errors.Is(err, secrets.ErrKeyWrongSize) {
+	if _, err := secrets.NewSealer(make([]byte, shortKeySize)); !errors.Is(err, secrets.ErrKeyWrongSize) {
 		t.Errorf("short primary key = %v, want ErrKeyWrongSize", err)
 	}
 
-	if _, err := secrets.NewSealer(randomKey(t), make([]byte, 16)); !errors.Is(err, secrets.ErrKeyWrongSize) {
+	if _, err := secrets.NewSealer(randomKey(t), make([]byte, shortKeySize)); !errors.Is(err, secrets.ErrKeyWrongSize) {
 		t.Errorf("short previous key = %v, want ErrKeyWrongSize", err)
 	}
 }

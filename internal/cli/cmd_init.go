@@ -14,7 +14,7 @@ import (
 
 // configTemplate is the commented config init writes. The verbs are filled
 // from config.Default() so this file and the binary never disagree about
-// defaults (.agents/spec/11-deployment-and-config.md, "Configuration").
+// defaults.
 const configTemplate = `# CairnOS configuration.
 #
 # Every key can be overridden by an environment variable named
@@ -153,10 +153,9 @@ func (a *App) cmdInit(args []string) int {
 	return ExitOK
 }
 
-// scaffold creates the init layout (.agents/spec/11-deployment-and-config.md,
-// "cairnos init"): config.toml, data/, workflows/, examples/, skills/, and
-// context/ (per-workspace chat context docs). Existing files are kept so
-// re-running init never clobbers an edited config or skill.
+// scaffold creates the init layout: config.toml, data/, workflows/, examples/,
+// skills/, and context/ (per-workspace chat context docs). Existing files are
+// kept so re-running init never clobbers an edited config or skill.
 func scaffold(dir string) error {
 	for _, sub := range []string{dataDirName, workflowsDirName, examplesDirName, skillsDirName, contextDirName} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), dirPerm); err != nil {

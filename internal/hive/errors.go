@@ -38,8 +38,8 @@ var (
 
 	// ErrKeyWrongSize reports a shared hive key that is not the 32 bytes
 	// AES-256 needs. The key is the private cluster's only privacy mechanism
-	// (R2/R3 in 14-open-decisions.md), so a wrong-sized key is a hard failure,
-	// never a silent downgrade.
+	// (R2/R3), so a wrong-sized key is a hard failure, never a silent
+	// downgrade.
 	ErrKeyWrongSize = errors.New("hive key must be 32 bytes (AES-256)")
 
 	// ErrBadKeyEncoding reports a shared hive key secret that is not valid

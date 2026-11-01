@@ -25,9 +25,8 @@ const paramURL = "url"
 // this only catches an endpoint that hangs when no deadline is configured.
 const defaultWebhookTimeout = 30 * time.Second
 
-// Webhook posts a workflow payload to an HTTP endpoint, the second
-// notification sink in the built-ins table
-// (.agents/spec/03-runner-interface.md).
+// Webhook posts a workflow payload to an HTTP endpoint, the second notification
+// sink in the built-ins table.
 //
 // Config: url, the default target. Params: body (required; strings post
 // verbatim, anything else JSON-encodes) and url (overrides the config

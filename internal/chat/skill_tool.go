@@ -12,7 +12,7 @@ import (
 // description-match invocation path alongside the slash grammar. The driver
 // calls it to load one operator-authored skill by name. A load influences
 // prompt text only: it adds no capability, raises no budget, and cannot move
-// the D9 confirmation gate (.agents/spec/parity/skills-context.md, Part 1).
+// the D9 confirmation gate.
 const SkillToolName = "skill"
 
 // skill tool argument and output keys. name is both the required argument and
@@ -127,10 +127,9 @@ func toolExchangeRecord(tool string, arguments map[string]any, output any) strin
 
 // skillToolRecord renders the persisted record for a successful skill-tool
 // result: the raw body, uncut, so the tool path and the slash path carry
-// byte-identical skill text (.agents/spec/parity/skills-context.md,
-// "Truncation parity"). Load already capped the body at 16 KiB, so the record
-// stays bounded. Any other shape, including an error result, reports ok false
-// and takes the normal truncating render.
+// byte-identical skill text. Load already capped the body at 16 KiB, so the
+// record stays bounded. Any other shape, including an error result, reports ok
+// false and takes the normal truncating render.
 func skillToolRecord(output any) (string, bool) {
 	table, isTable := output.(map[string]any)
 	if !isTable {

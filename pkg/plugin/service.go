@@ -17,6 +17,10 @@ import (
 // send loop, so a bursty runner is not gated on the wire per chunk.
 const chunkBuffer = 16
 
+// handoffBufferSize gives the runner goroutine a slot for its one outcome, so
+// it can finish without waiting for the send loop to come back around.
+const handoffBufferSize = 1
+
 // service adapts a runner.Runner onto the RunnerPlugin gRPC surface.
 type service struct {
 	pluginv1.UnimplementedRunnerPluginServer
@@ -122,7 +126,7 @@ func runStreaming(ctx context.Context, task *runner.Task, streamer runner.Stream
 	}
 
 	chunks := make(chan runner.Chunk, chunkBuffer)
-	done := make(chan outcome, 1)
+	done := make(chan outcome, handoffBufferSize)
 
 	go func() {
 		result, err := streamer.ExecuteStream(ctx, task, chunks)

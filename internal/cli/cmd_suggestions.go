@@ -22,8 +22,7 @@ const suggestionsUsage = "usage: cairnos suggestions <scan|list|approve|reject|a
 // when reconstructing recorded inputs for one suggestion.
 const replayRunWindow = 20
 
-// cmdSuggestions dispatches the Phase 3 review-flow subcommands
-// (.agents/spec/06-observability-and-tuning.md, "Review flow").
+// cmdSuggestions dispatches the Phase 3 review-flow subcommands.
 func (a *App) cmdSuggestions(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", suggestionsUsage)
@@ -147,8 +146,8 @@ func (a *App) cmdSuggestionsScan(ctx context.Context, args []string) int {
 // opens no secret source, so a workflow binding a credential to a runner fails
 // here at BuildAll, the same signal a missing credential gives elsewhere.
 func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.Registry, error) {
-	return newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), nil, nil, nil, nil,
-		nil, a.logger, nil, a.runnerTransport)
+	return newRegistry(ctx, cfg.Runners, sourcesFor(cfg.Sources), cfg.Hosts, a.envLookup(), nil, nil, nil, nil,
+		nil, a.logger, a.runnerTransport)
 }
 
 // replayComparator builds the output-equivalence comparator for replay. An

@@ -171,7 +171,7 @@ type turn struct {
 // operator can approve it (confirm.go).
 func (c *Core) runTurn(ctx context.Context, inbound *Inbound, sessionID string) {
 	events := make(chan chat.Event, turnEventBuffer)
-	result := make(chan error, 1)
+	result := make(chan error, resultBufferSize)
 
 	go func() {
 		result <- c.chat.SendMessage(ctx, sessionID, inbound.Text, events)

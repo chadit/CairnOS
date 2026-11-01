@@ -4,9 +4,8 @@ import { clearToken, getToken } from './token';
 
 // Both streaming endpoints (RunWorkflow, and chat's SendMessage/ConfirmAction)
 // speak the same newline-delimited JSON protocol: one {result?, error?} envelope
-// per line, an `error` line aborting the stream
-// (.agents/spec/07-api-protocols.md, "Streaming"). This module holds that
-// protocol once so chat.ts and stream.ts only describe what they send.
+// per line, an `error` line aborting the stream. This module holds that protocol
+// once so chat.ts and stream.ts only describe what they send.
 
 /**
  * openNdjsonStream POSTs a JSON body and returns the response body to read

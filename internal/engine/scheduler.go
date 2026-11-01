@@ -41,7 +41,7 @@ type actionEvent struct {
 // seedEntry primes one action's already-known output into a new run's
 // scheduling state so the loop treats it as succeeded and never launches it.
 // Replay carries a prior run's succeeded outputs forward this way; resume
-// (Phase parity S5) reloads a held run's outputs the same way.
+// reloads a held run's outputs the same way.
 type seedEntry struct {
 	Output any
 }
@@ -160,7 +160,7 @@ func (x *runExec) loop(ctx context.Context) {
 	// in flight but an action parked on a human decision quiesces the run, and
 	// the break lets finalize settle it as held. Every in-flight branch still
 	// reports first, since inFlight stays true until the last worker's event
-	// lands (.agents/spec/parity/workflow-language.md, "Human approval").
+	// lands.
 	for !x.allTerminal() {
 		if !x.inFlight() {
 			break
@@ -215,7 +215,7 @@ func (x *runExec) finalize(parent, runCtx context.Context) {
 
 	// A held run is parked, not finished: leave FinishedAt zero so the in-memory
 	// run matches the store, which never stamps finished_at for a non-terminal
-	// status (.agents/spec/parity/workflow-language.md, "Human approval").
+	// status.
 	if status != store.RunHeld {
 		x.run.FinishedAt = time.Now()
 	}
@@ -467,7 +467,7 @@ func (e *Engine) executeSeededDAG(ctx context.Context, flow *workflow.Workflow, 
 	// workflow-call action spawns, so it becomes the child's parent, and this
 	// run's name extends the ancestry chain the depth cap prints. A root run
 	// starts from the zero callInfo; a workflow-call child inherits the depth
-	// and ancestry the caller set (.agents/spec/parity/workflow-language.md).
+	// and ancestry the caller set.
 	incoming := callInfoFrom(ctx)
 	ctx = withCallInfo(ctx, callInfo{
 		parentRunID: run.ID,
@@ -494,13 +494,12 @@ func (e *Engine) executeSeededDAG(ctx context.Context, flow *workflow.Workflow, 
 	// finalize already persisted the terminal status, so the error-workflow
 	// fire runs after every watcher has seen the failure and cannot race a
 	// one-shot process exit. It reads exec.firstErrAction to name the stage
-	// that failed (.agents/spec/parity/workflow-language.md, "Error workflow").
+	// that failed.
 	e.fireErrorWorkflow(ctx, flow, run, exec.firstErrAction)
 }
 
 // triggerError marks a run created by an error-workflow fire. A run already
-// carrying this trigger never fires its own error workflow, the n8n loop guard
-// (.agents/spec/parity/workflow-language.md, "Error workflow").
+// carrying this trigger never fires its own error workflow, the n8n loop guard.
 const triggerError = "error"
 
 // fireErrorWorkflow runs a failed run's declared error_workflow to completion,

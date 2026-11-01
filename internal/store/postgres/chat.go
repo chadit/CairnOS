@@ -15,10 +15,9 @@ import (
 // scanChatSession order.
 const chatSessionColumns = "id, workspace_id, personality, created_at, updated_at"
 
-// CreateSession persists a new conversation (.agents/spec/13-roadmap.md,
-// Phase 9), keeping identical defaulting to the sqlite backend: a zero
-// timestamp becomes now and an empty WorkspaceID becomes the request
-// workspace.
+// CreateSession persists a new conversation, keeping identical defaulting to
+// the sqlite backend: a zero timestamp becomes now and an empty WorkspaceID
+// becomes the request workspace.
 func (s *Store) CreateSession(ctx context.Context, session *store.ChatSession) error {
 	workspace := session.WorkspaceID
 	if workspace == "" {

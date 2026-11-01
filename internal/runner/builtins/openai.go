@@ -40,8 +40,7 @@ const openaiStreamDone = "[DONE]"
 // message and the user prompt.
 const openaiPromptMessages = 2
 
-// OpenAI calls the OpenAI chat-completions API, a Phase 1a API runner
-// (.agents/spec/03-runner-interface.md).
+// OpenAI calls the OpenAI chat-completions API, a Phase 1a API runner.
 //
 // Config: model (required to run), base_url, max_tokens, temperature, and
 // price_in/price_out in USD per million tokens for cost reporting. Params:

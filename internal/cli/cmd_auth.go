@@ -12,8 +12,7 @@ const authUsage = `usage: cairnos auth revoke (--jti X | --key K) [--dir D]
   revoke --key K   Denylist every live token minted from access key K
 `
 
-// cmdAuth dispatches the Phase 4a revocation subcommand
-// (.agents/spec/08-auth-and-access.md, Change 1). Revocation writes the
+// cmdAuth dispatches the Phase 4a revocation subcommand. Revocation writes the
 // shared denylist directly, so it works while the serve daemon holds the
 // database open (WAL) and takes effect on the daemon's next verify.
 func (a *App) cmdAuth(ctx context.Context, args []string) int {

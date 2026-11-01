@@ -342,9 +342,9 @@ func TestAutoUpdateWillNotRestartOntoTheWrongBuild(t *testing.T) {
 }
 
 // TestAutoUpdateStartsOnlyWhenAskedAndSupervised covers serve's decision to
-// start the loop. Off is silent. On without a supervisor warns once and names
-// why, since a drained serve with nothing to restart it would stay down. On
-// under a supervisor starts the loop, which ends with serve.
+// start the loop. Off is silent, and on under a supervisor starts the loop,
+// which ends with serve. On without a supervisor warns once and names why, since
+// a drained serve with nothing to restart it would stay down.
 func TestAutoUpdateStartsOnlyWhenAskedAndSupervised(t *testing.T) {
 	t.Parallel()
 

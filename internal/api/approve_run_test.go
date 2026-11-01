@@ -1,8 +1,7 @@
 package api_test
 
-// ApproveRun over the API: park a run on an approval gate, decide it over
-// gRPC, and prove the run resumes in the serve process
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// ApproveRun over the API: park a run on an approval gate, decide it over gRPC,
+// and prove the run resumes in the serve process.
 
 import (
 	"context"

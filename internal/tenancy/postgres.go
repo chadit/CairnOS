@@ -11,10 +11,9 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgTenancySchema holds the workspaces and members
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy") with timestamptz and
-// IF NOT EXISTS so opening an existing database is idempotent. It shares the
-// run store's Postgres database with disjoint tables, the same arrangement the
+// pgTenancySchema holds the workspaces and members with timestamptz and IF NOT
+// EXISTS so opening an existing database is idempotent. It shares the run
+// store's Postgres database with disjoint tables, the same arrangement the
 // sqlite backends use within one file.
 const pgTenancySchema = `
 CREATE TABLE IF NOT EXISTS workspaces (

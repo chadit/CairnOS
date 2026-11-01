@@ -16,7 +16,7 @@ import (
 // attemptOutcome is everything one action execution produced. waiting is set
 // only by an approval action that parked pending a human decision: the action
 // neither succeeded nor failed, so runAction records it as ActionWaiting and
-// the run quiesces to held (.agents/spec/parity/workflow-language.md).
+// the run quiesces to held.
 type attemptOutcome struct {
 	cerr     *cairnerr.Error
 	result   runner.Result
@@ -129,6 +129,7 @@ func (e *Engine) runResolvedParams(ctx context.Context, runID string, action *wo
 	task := &runner.Task{
 		RunID:      runID,
 		ActionName: action.Name,
+		Definition: action.Definition,
 		Params:     params,
 		Inputs:     inputs,
 		Idempotent: action.Idempotent,

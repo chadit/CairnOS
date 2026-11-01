@@ -222,7 +222,9 @@ func TestReplayCapsSamples(t *testing.T) {
 
 	// Five recorded samples against the default cap of three: replay spends
 	// real tokens per sample, so the cap is a cost guard.
-	samples := make([]tuning.Sample, 5)
+	const recordedSampleCount = 5
+
+	samples := make([]tuning.Sample, recordedSampleCount)
 	for idx := range samples {
 		samples[idx] = tuning.Sample{RecordedOutput: sameOutput}
 	}

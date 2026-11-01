@@ -17,8 +17,7 @@ import (
 // user home (~/.codex, ~/.qwen, ~/.claude).
 type Provider string
 
-// Known providers, the subscription CLI tools D12 sanctions
-// (.agents/spec/14-open-decisions.md, S5/D12).
+// Known providers, the subscription CLI tools D12 sanctions (S5/D12).
 const (
 	ProviderCodex  Provider = "codex"
 	ProviderQwen   Provider = "qwen"

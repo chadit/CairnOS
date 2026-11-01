@@ -8,9 +8,8 @@ import (
 // DedupKeyFor builds the exactly-once enqueue key for one scheduled occurrence:
 // a single work item per (schedule, fire-time). Every node's cron may observe
 // the same occurrence, but the unique key lands one row, so the queue needs no
-// scheduling leader on the enqueue side (.agents/spec/14-open-decisions.md, S8).
-// The fire time keeps sub-minute precision, so two occurrences inside one
-// minute key two rows.
+// scheduling leader on the enqueue side (S8). The fire time keeps sub-minute
+// precision, so two occurrences inside one minute key two rows.
 func DedupKeyFor(scheduleID string, fireTime time.Time) string {
 	return OccurrencePrefix(scheduleID) + fireTime.UTC().Format(time.RFC3339Nano)
 }
@@ -30,8 +29,7 @@ const pollDedupPrefix = "poll"
 // PollDedupKeyFor builds the exactly-once enqueue key for one polled event:
 // poll|<scheduleID>|<eventID>. A repeat observation of the same event across
 // overlapping poll windows or concurrent leader fires lands one row, so a poll
-// workflow runs once per event while that row exists
-// (.agents/spec/parity/triggers-webhooks.md, "Delivery semantics").
+// workflow runs once per event while that row exists.
 func PollDedupKeyFor(scheduleID, eventID string) string {
 	return pollDedupPrefix + "|" + scheduleID + "|" + eventID
 }
@@ -40,7 +38,7 @@ func PollDedupKeyFor(scheduleID, eventID string) string {
 // item; a worker leases it; success acks (deletes) it; failure naks it back to
 // ready with backoff, or dead-letters it once it has been delivered too many
 // times. A held item is parked on a NeedsReauth pause (D12) and is not
-// redelivered until resumed (.agents/spec/14-open-decisions.md, S8).
+// redelivered until resumed (S8).
 type WorkState string
 
 // Work item states. Completed items are deleted on ack rather than kept in a
@@ -76,9 +74,8 @@ type WorkItem struct {
 }
 
 // QueueStats is the dashboard snapshot the Grafana panels read: how deep the
-// queue is, how much is in flight, and how stale the oldest waiting item is
-// (.agents/spec/06-observability-and-tuning.md). OldestReadyAge is zero when
-// nothing is waiting.
+// queue is, how much is in flight, and how stale the oldest waiting item is.
+// OldestReadyAge is zero when nothing is waiting.
 type QueueStats struct {
 	Ready          int
 	Leased         int
@@ -173,7 +170,7 @@ type SweepQueue interface {
 // is single-node (its write lock serializes the claim); the Postgres backend
 // claims with FOR UPDATE SKIP LOCKED so several workers across nodes pull
 // disjoint items. Both satisfy the same contract, proven by one conformance
-// suite (.agents/spec/14-open-decisions.md, S8).
+// suite (S8).
 type WorkQueue interface {
 	ProducerQueue
 	LeaseQueue

@@ -7,8 +7,7 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Canonical agent.* error codes the loop owns
-// (.agents/spec/15-agent-loop.md, "Termination").
+// Canonical agent.* error codes the loop owns.
 const (
 	// CodeMaxIterations marks a loop that used every driver iteration
 	// without reaching a final answer.

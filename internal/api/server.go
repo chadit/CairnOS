@@ -53,10 +53,9 @@ type Config struct {
 	// listener accepts plaintext loopback.
 	GatewayDialCreds credentials.TransportCredentials
 
-	// Creds is the gRPC transport credential. Non-nil turns on TLS (or mTLS)
-	// on the gRPC listener; the A2A mTLS option sets it
-	// (.agents/spec/09-a2a-and-hive.md, "Transport security"). Nil keeps the
-	// plaintext transport, which the localhost guard still protects.
+	// Creds is the gRPC transport credential. Non-nil turns on TLS (or mTLS) on
+	// the gRPC listener; the A2A mTLS option sets it. Nil keeps the plaintext
+	// transport, which the localhost guard still protects.
 	Creds credentials.TransportCredentials
 
 	// Store is the durable run store.
@@ -74,15 +73,12 @@ type Config struct {
 	Rules rules.Service
 
 	// Chat is the Phase 9 chat agent backing ChatService. Nil leaves the chat
-	// methods answering UNIMPLEMENTED, for nodes that run with chat disabled
-	// (.agents/spec/13-roadmap.md, Phase 9).
+	// methods answering UNIMPLEMENTED, for nodes that run with chat disabled.
 	Chat ChatAgent
 
-	// Auth turns on Phase 4a token enforcement
-	// (.agents/spec/08-auth-and-access.md): a unary and stream
-	// interceptor verify the bearer token and its scope on every method
-	// except Health and Login. Nil means auth is disabled and every call
-	// passes unchecked.
+	// Auth turns on Phase 4a token enforcement: a unary and stream interceptor
+	// verify the bearer token and its scope on every method except Health and
+	// Login. Nil means auth is disabled and every call passes unchecked.
 	Auth Authenticator
 
 	// Manager owns run starts, event fan-out, and cancellation.
@@ -339,7 +335,7 @@ func (s *Server) startGRPC() {
 
 	// mTLS proves the connection; the token proves the caller's scopes. The
 	// two layer independently, so the interceptor above still runs on a TLS
-	// connection (.agents/spec/09-a2a-and-hive.md, "Transport security").
+	// connection.
 	if s.cfg.Creds != nil {
 		options = append(options, grpc.Creds(s.cfg.Creds))
 	}

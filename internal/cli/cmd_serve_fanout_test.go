@@ -31,7 +31,7 @@ const fanoutTestWorkflow = "wf"
 func fanoutCaptureServer(t *testing.T) (*nettest.Fake, chan string) {
 	t.Helper()
 
-	bodies := make(chan string, 8)
+	bodies := make(chan string, postCaptureSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(r.Body)
@@ -91,8 +91,7 @@ func assertNoSecondPost(t *testing.T, bodies <-chan string) {
 
 // TestReauthOnHoldRoutesHeldByteIdentical proves the default ["held"] config
 // routes a held alert through the fan-out with a body byte-identical to the
-// direct Notify path, so serve keeps today's re-auth hold message
-// (.agents/spec/parity/messaging-bridge.md, decision 7, acceptance 7).
+// direct Notify path, so serve keeps today's re-auth hold message.
 func TestReauthOnHoldRoutesHeldByteIdentical(t *testing.T) {
 	t.Parallel()
 

@@ -2,7 +2,7 @@
 // edges; this maps the Workflow model onto that and back. A node is an action,
 // an edge is a depends_on relationship pointing from the upstream action to
 // the downstream one. The edge direction matches the data flow: source
-// produces, target consumes (.agents/spec/02-workflow-schema.md).
+// produces, target consumes.
 //
 // Round-trip note: graphToWorkflow rebuilds depends_on purely from edges, so
 // the canvas is the single source of truth for the DAG. The mapper carries the

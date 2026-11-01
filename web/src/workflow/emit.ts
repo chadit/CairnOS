@@ -1,8 +1,7 @@
 // Workflow model to TOML text. The emitter writes a canonical form: tables in
 // a fixed order, only non-default fields present, so the output is stable and
-// re-parses to the same Workflow (.agents/spec/12-ui-and-governance.md,
-// "semantic round-trip"). Comments and the author's original formatting are
-// not reproduced; behavior is.
+// re-parses to the same Workflow. Comments and the author's original formatting
+// are not reproduced; behavior is.
 //
 // We build TOML by hand rather than handing the model to a generic encoder so
 // the inline-vs-block table choices (params as an inline table, retry as a

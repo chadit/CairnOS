@@ -14,10 +14,10 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// workItemSchema is the durable work-queue table (.agents/spec/14-open-decisions.md,
-// S8) with IF NOT EXISTS so reopening is idempotent. The claim index covers the
-// hot path: ready items ordered by when they became available. dedup_key is
-// unique so an enqueue several nodes attempt lands exactly one row.
+// workItemSchema is the durable work-queue table (S8) with IF NOT EXISTS so
+// reopening is idempotent. The claim index covers the hot path: ready items
+// ordered by when they became available. dedup_key is unique so an enqueue
+// several nodes attempt lands exactly one row.
 const workItemSchema = `
 CREATE TABLE IF NOT EXISTS work_item (
     id           TEXT PRIMARY KEY,
@@ -39,7 +39,7 @@ const workItemColumns = "id, dedup_key, payload, state, available_at, lease_unti
 
 // SQLiteQueue is the single-node WorkQueue backend. The SQLite write lock
 // serializes claims, so it needs no SKIP LOCKED; the design pairs it with one
-// worker (.agents/spec/14-open-decisions.md, S8).
+// worker (S8).
 type SQLiteQueue struct {
 	db *sql.DB
 }

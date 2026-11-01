@@ -22,9 +22,8 @@ const pauseColumns = "workflow_name, actor, reason, paused_at"
 
 // AppendAudit persists one governance audit row. A zero ID gets a fresh ULID
 // and a zero CreatedAt the current time, so callers fill only what they care
-// about. Audit rows are append-only and survive the retention sweep. The row
-// is stamped with the request workspace so the audit trail is per tenant
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// about. Audit rows are append-only and survive the retention sweep. The row is
+// stamped with the request workspace so the audit trail is per tenant.
 func (s *Store) AppendAudit(ctx context.Context, entry *store.AuditEntry) error {
 	id := entry.ID
 	if id == "" {
@@ -73,9 +72,8 @@ func (s *Store) ListAudit(ctx context.Context, filter store.AuditFilter) ([]*sto
 // SetWorkflowPause records or overwrites the pause flag for one workflow in the
 // request workspace. A zero PausedAt becomes the current time. Re-pausing an
 // already paused workflow overwrites the actor, reason, and timestamp rather
-// than failing. Two tenants can pause the same workflow name independently:
-// the (workspace_id, workflow_name) key keeps the flags separate
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// than failing. Two tenants can pause the same workflow name independently: the
+// (workspace_id, workflow_name) key keeps the flags separate.
 func (s *Store) SetWorkflowPause(ctx context.Context, pause *store.WorkflowPause) error {
 	pausedAt := pause.PausedAt
 	if pausedAt.IsZero() {
@@ -155,8 +153,7 @@ func (s *Store) ListWorkflowPauses(ctx context.Context) ([]*store.WorkflowPause,
 // workflow's runs created at or after since. A workflow with no runs in the
 // window sums to zero. COALESCE keeps an all-NULL sum from returning NULL.
 // The workspace clause scopes the budget to the request tenant, so two
-// workspaces running the same workflow name keep separate budgets
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// workspaces running the same workflow name keep separate budgets.
 func (s *Store) SpendSince(ctx context.Context, workflowName string, since time.Time) (float64, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(CAST(json_extract(ar.usage_json, '$.cost_usd') AS REAL)), 0)

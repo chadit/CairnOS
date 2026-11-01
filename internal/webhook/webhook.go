@@ -1,5 +1,4 @@
-// Package webhook holds the webhook-ingress registration store
-// (.agents/spec/parity/triggers-webhooks.md, "Webhook ingress"). One
+// Package webhook holds the webhook-ingress registration store. One
 // registration per workflow opts that workflow into a stable POST URL; the
 // store keeps only hex SHA-256 hashes of the two path tokens, so a dumped
 // table can never be replayed against the endpoint. The two backends mirror

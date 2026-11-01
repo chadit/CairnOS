@@ -12,9 +12,9 @@ type Resolver func(Ref) (any, error)
 
 // Expr is one node of a parsed condition. The grammar is deliberately small:
 // comparisons, boolean operators, parentheses, literals, and references. No
-// function calls, no arbitrary code (.agents/spec/02-workflow-schema.md,
-// "Conditional actions"). Every node shares this one struct and kind says which
-// fields it uses, so the four node shapes evaluate through a single switch.
+// function calls, no arbitrary code. Every node shares this one struct and kind
+// says which fields it uses, so the four node shapes evaluate through a single
+// switch.
 type Expr struct {
 	literal  any    // exprLiteral
 	operand  *Expr  // exprNot

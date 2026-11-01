@@ -1,0 +1,93 @@
+name: Bug report
+description: Report something in CairnOS that does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report security problems privately through
+        [GitHub private vulnerability reporting][pvr], not in an issue.
+        See SECURITY.md.
+
+        [pvr]: https://github.com/chadit/CairnOS/security/advisories/new
+  - type: input
+    id: version
+    attributes:
+      label: CairnOS version
+      description: >-
+        The release tag, or the commit you built from.
+        `go version -m <path-to-cairnos> | grep vcs.revision`
+        prints the commit a binary was built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run CairnOS
+      options:
+        - Release binary
+        - Container image
+        - Built from a clone
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store
+      options:
+        - SQLite
+        - Postgres
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, including any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran, in order.
+      placeholder: |
+        1. cairnos serve --dir ...
+        2. cairnos run workflow.toml
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config and workflow
+      description: >-
+        The parts of the config and workflow TOML that reproduce the problem.
+        Remove API keys, tokens, webhook URLs, and other secrets first.
+      render: toml
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Relevant log lines from serve or the command. Remove secrets first.
+      render: text
+    validations:
+      required: false

@@ -2,7 +2,7 @@
 // author implements pkg/runner.Runner (plus any of Streamer and Describer)
 // and hands it to Serve; everything else, the socket, the gRPC service, the
 // proto translation, and stopping on SIGTERM or a closed stdin pipe, lives
-// here (.agents/spec/03-runner-interface.md, "Custom runners and plugins").
+// here.
 package plugin
 
 import (

@@ -12,7 +12,7 @@ import (
 // variable, and bwTokenField the item field it reads. All are spelled the way a
 // host config would spell them.
 const (
-	bwItem       = "chezmoi"
+	bwItem       = "cairnos"
 	bwTokenVar   = "CAIRNOS_RUNNER_OPENAI_API_KEY"
 	bwTokenField = "openai key"
 

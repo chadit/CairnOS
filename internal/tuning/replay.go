@@ -10,10 +10,10 @@ import (
 )
 
 // Comparator decides whether a replayed output is equivalent to the recorded
-// one. It is the R1 seam (.agents/spec/14-open-decisions.md): how to judge
-// equivalence is still open, so the method is swappable. ExactMatch is the v1
-// default and EmbeddingComparator drops in here. Compare takes a context and
-// may fail because a non-trivial comparator calls a model over the network.
+// one. It is the R1 seam: how to judge equivalence is still open, so the method
+// is swappable. ExactMatch is the v1 default and EmbeddingComparator drops in
+// here. Compare takes a context and may fail because a non-trivial comparator
+// calls a model over the network.
 type Comparator interface {
 	// Compare reports equivalence in a Comparison. A returned error means the
 	// comparison could not be run at all (an embedder was unreachable), which

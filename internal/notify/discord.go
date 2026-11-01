@@ -27,7 +27,7 @@ type ReauthAlert struct {
 
 // DiscordNotifier posts re-auth alerts to a Discord channel webhook. The webhook
 // URL grants posting rights, so it is sourced from the environment, never a
-// config file (.agents/spec/14-open-decisions.md, D12).
+// config file (D12).
 type DiscordNotifier struct {
 	http       *http.Client
 	webhookURL string
@@ -55,8 +55,8 @@ type discordPayload struct {
 
 // Post sends content as one Discord webhook message. It is the generic sink the
 // event fan-out drains one line at a time, and the primitive Notify renders an
-// alert through (.agents/spec/parity/messaging-bridge.md, decision 7). A non-2xx
-// response is an error so the caller can log a failed delivery.
+// alert through. A non-2xx response is an error so the caller can log a failed
+// delivery.
 func (d *DiscordNotifier) Post(ctx context.Context, content string) error {
 	if d.webhookURL == "" {
 		return ErrEmptyWebhook

@@ -25,8 +25,7 @@ const cancelAckState = a2av1.TaskState_TASK_STATE_RUNNING
 
 // Service implements cairnos.a2a.v1.A2AService by translating the A2A task
 // vocabulary onto CairnOS runs and reusing the run manager, the workflow
-// resolver, and the durable store (.agents/spec/09-a2a-and-hive.md, "Core
-// methods"). It owns no engine of its own.
+// resolver, and the durable store. It owns no engine of its own.
 type Service struct {
 	a2av1.UnimplementedA2AServiceServer
 

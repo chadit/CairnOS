@@ -1,10 +1,9 @@
 // Package telemetry wires the OpenTelemetry SDK behind the engine and
-// agent-loop instrumentation seams
-// (.agents/spec/06-observability-and-tuning.md): one tracer provider and
-// one meter provider feed a Recorder, a Prometheus exporter serves
-// /metrics, and an OTLP gRPC exporter pushes traces and metrics to a
-// collector when one is configured. Disabled telemetry still hands out a
-// working Recorder over no-op providers, so wiring code never branches.
+// agent-loop instrumentation seams: one tracer provider and one meter provider
+// feed a Recorder, a Prometheus exporter serves /metrics, and an OTLP gRPC
+// exporter pushes traces and metrics to a collector when one is configured.
+// Disabled telemetry still hands out a working Recorder over no-op providers,
+// so wiring code never branches.
 package telemetry
 
 import (

@@ -124,7 +124,7 @@ func (s *webhookRunStarter) StartRun(ctx context.Context, workflowPath string, i
 	// The manager's buffered Outcome carries a *store.Run; the handler wants an
 	// opaque record on a RunResult channel. One goroutine forwards the single
 	// terminal value so the buffered manager channel never blocks.
-	outcome := make(chan webhook.RunResult, 1)
+	outcome := make(chan webhook.RunResult, oneShotChanSize)
 
 	go func() {
 		res := <-handle.Outcome

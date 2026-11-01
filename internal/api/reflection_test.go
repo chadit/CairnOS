@@ -10,9 +10,8 @@ import (
 )
 
 // TestReflectionListsServices is the grpcurl-equivalent discovery check: the
-// reflection service must list every cairnos.v1 service so standard tooling
-// can call them without a hand-written client
-// (.agents/spec/07-api-protocols.md, "Discovery").
+// reflection service must list every cairnos.v1 service so standard tooling can
+// call them without a hand-written client.
 func TestReflectionListsServices(t *testing.T) {
 	t.Parallel()
 

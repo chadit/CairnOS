@@ -34,9 +34,8 @@ const (
 // message and the assistant reply or proposal persist for the next turn.
 
 // SendMessage runs one conversation turn for a new user message and streams its
-// events to out, closing out exactly once on return
-// (.agents/spec/13-roadmap.md, Phase 9). The caller ranges out until close and
-// reads the returned error for the turn's outcome.
+// events to out, closing out exactly once on return. The caller ranges out
+// until close and reads the returned error for the turn's outcome.
 func (a *Agent) SendMessage(ctx context.Context, sessionID, userMessage string, out chan<- Event) error {
 	defer close(out)
 

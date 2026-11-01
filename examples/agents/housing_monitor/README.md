@@ -8,12 +8,11 @@ No matches means the alert is skipped, not failed.
 ## Where the listings come from (read this first)
 
 This workflow does not scrape listing sites, and you shouldn't make it.
-Scraping Zillow, Redfin, or similar violates their terms of service (S5 in
-`.agents/spec/14-open-decisions.md`). The `listings_url` input must be a
-source you may query: an official API you hold a key for, an MLS feed you
-have access to, or a service you run yourself. The fetch step is a plain
-`webhook` POST; swap it for an `mcp_client` action if your source speaks
-MCP.
+Scraping Zillow, Redfin, or similar violates their terms of service (S5). The
+`listings_url` input must be a source you may query: an official API you hold a
+key for, an MLS feed you have access to, or a service you run yourself. The
+fetch step is a plain `webhook` POST; swap it for an `mcp_client` action if your
+source speaks MCP.
 
 ## Runners
 

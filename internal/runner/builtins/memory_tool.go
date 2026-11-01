@@ -62,9 +62,9 @@ const (
 	keyName     = "name"
 )
 
-// Memory is the built-in agent-loop tool over the memory store
-// (.agents/spec/15-agent-loop.md, "Tools"), which is how an agent remembers
-// across runs. Wiring registers it only when a memory store is configured.
+// Memory is the built-in agent-loop tool over the memory store, which is how an
+// agent remembers across runs. Wiring registers it only when a memory store is
+// configured.
 //
 // Params: op ("search", "add", or "load"), query plus optional limit for
 // search, content plus optional importance and tags for add, optional

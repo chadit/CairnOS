@@ -61,7 +61,7 @@ type Config struct {
 	// Rules backs the get_language_rules tool. Nil leaves that tool out of the
 	// server, so a node without a rules store exposes an honestly absent tool
 	// rather than one that always errors (the stance 7a took before the rules
-	// service existed) (.agents/spec/10-mcp-integration.md, get_language_rules).
+	// service existed).
 	Rules RulesLookup
 
 	// Auth turns on token enforcement. Nil disables auth: every call passes on
@@ -146,7 +146,7 @@ func (s *Service) AuthEnabled() bool {
 // Catalog returns the tool surface this node serves, the same gating build
 // applies: get_language_rules appears only when a rules store is wired. It
 // shares ServerRecord's tool list so a published record never drifts from the
-// running server (.agents/spec/10-mcp-integration.md, "MCP Registry").
+// running server.
 func (s *Service) Catalog() []ToolEntry {
 	return ServerRecord("", s.rules != nil).Tools
 }
@@ -157,8 +157,7 @@ func (s *Service) Catalog() []ToolEntry {
 // is the process boundary.
 //
 // get_language_rules registers only with a rules store wired. Without one the
-// tool stays absent rather than erroring on every call
-// (.agents/spec/10-mcp-integration.md).
+// tool stays absent rather than erroring on every call.
 func (s *Service) build(token string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: serverVersion}, nil)
 

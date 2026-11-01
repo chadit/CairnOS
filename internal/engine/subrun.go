@@ -19,7 +19,7 @@ const triggerWorkflow = "workflow"
 
 // detailChildRunID names the failed child run on a workflow-call action's
 // error, so history points from the parent action at the run that failed under
-// it (.agents/spec/parity/workflow-language.md, "Workflow call").
+// it.
 const detailChildRunID = "child_run_id"
 
 // fieldRunID is the run-id key in the maps the engine hands a workflow: a
@@ -35,8 +35,7 @@ const fieldRunID = "run_id"
 // callInfo travels a package-private context key down a workflow-call tree. It
 // carries the run that owns the executing actions (the parent for any child a
 // workflow-call action spawns), that run's nesting depth, and the chain of
-// workflow names from the root down to it
-// (.agents/spec/parity/workflow-language.md, "Workflow call").
+// workflow names from the root down to it.
 type callInfo struct {
 	parentRunID string
 	ancestry    []string
@@ -65,8 +64,7 @@ func withCallInfo(ctx context.Context, info callInfo) context.Context {
 // name, refuses recursion past MaxCallDepth, interpolates the inputs table, and
 // runs the child as a real run through RunWorkflow. Governance and input
 // validation need no new code here, because the recursive RunWorkflow re-applies
-// validateInputs, checkRunners, and checkGovernance on the child
-// (.agents/spec/parity/workflow-language.md, "Workflow call").
+// validateInputs, checkRunners, and checkGovernance on the child.
 func (e *Engine) workflowCallAttempt(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any) attemptOutcome {
 	if e.cfg.Workflows == nil {
 		return attemptOutcome{attempts: 1, cerr: errf(CodeWorkflowSourceMissing,
@@ -111,7 +109,7 @@ func (e *Engine) workflowCallAttempt(ctx context.Context, runID string, action *
 // outcome: a succeeded child yields the {run_id, status, outputs} output shape,
 // where outputs is the child's per-action output map; a non-succeeded child
 // fails the parent action with the child's canonical error code and the child
-// run ID in Details (.agents/spec/parity/workflow-language.md, "Workflow call").
+// run ID in Details.
 func (e *Engine) workflowCallOutcome(ctx context.Context, child *store.Run) attemptOutcome {
 	if child.Status != store.RunSucceeded {
 		return attemptOutcome{attempts: 1, cerr: childFailure(child).WithDetail(detailChildRunID, child.ID)}

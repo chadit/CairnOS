@@ -39,8 +39,7 @@ const fileRefSigil = '@'
 // the reads all the same, because a request-supplied workspace id and a
 // user-typed path are attacker-influenced even when the files are not: the
 // workspace id is charset-checked before any context path is built, and an
-// @-ref path must resolve inside an operator-configured allowlist root
-// (.agents/spec/parity/skills-context.md, "Trust boundary").
+// @-ref path must resolve inside an operator-configured allowlist root.
 
 // A node without a context directory runs chat unchanged. The request
 // workspace is charset-checked before a path is built: a traversal-shaped id

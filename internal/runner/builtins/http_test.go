@@ -214,7 +214,7 @@ func TestHTTPJSONParamRejectsNonJSON(t *testing.T) {
 func TestHTTPPostEncodesObjectBody(t *testing.T) {
 	t.Parallel()
 
-	received := make(chan map[string]any, 1)
+	received := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any

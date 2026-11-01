@@ -13,10 +13,9 @@ export interface RunStreamOptions {
 
 /**
  * streamRunEvents starts a run and yields each RunEvent from the gateway's
- * newline-delimited JSON stream in order (.agents/spec/07-api-protocols.md,
- * "Streaming"). Each line is a {result?, error?} envelope; a line carrying
- * `error` aborts the stream by throwing a CairnApiError, matching the unary
- * client's failure shape.
+ * newline-delimited JSON stream in order. Each line is a {result?, error?}
+ * envelope; a line carrying `error` aborts the stream by throwing a
+ * CairnApiError, matching the unary client's failure shape.
  */
 export async function* streamRunEvents(
   workflowName: string,

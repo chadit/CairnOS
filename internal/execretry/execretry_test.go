@@ -43,8 +43,8 @@ func holdOpen(t *testing.T, path string) {
 	t.Cleanup(func() { _ = busy.Close() })
 }
 
-// stageShim writes a runnable shim into a fresh directory. Call it before
-// t.Parallel so its own write handle is closed before any fork.
+// stageShim writes a runnable shim into a fresh directory. Tests stage it
+// before t.Parallel so its own write handle is closed before any fork.
 func stageShim(t *testing.T) string {
 	t.Helper()
 

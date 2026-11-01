@@ -1,6 +1,4 @@
-// MemoryService: CRUD and search over the curated memory entries
-// (.agents/spec/05-memory-and-knowledge.md, "Memory";
-// .agents/spec/07-api-protocols.md, "Core services").
+// MemoryService: CRUD and search over the curated memory entries.
 
 syntax = "proto3";
 

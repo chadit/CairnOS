@@ -6,9 +6,8 @@ import (
 )
 
 // Built-in personality names. A personality is a named system prompt that
-// frames every turn in a session (.agents/spec/13-roadmap.md, Phase 9:
-// "pluggable personalities (system prompts)"). The config can add or override
-// personalities; these two ship so a fresh node has something to pick.
+// frames every turn in a session. The config can add or override personalities;
+// these two ship so a fresh node has something to pick.
 const (
 	// PersonalityAssistant is the general helper: answers questions, reads
 	// memory and the vault, proposes workflows when asked to do real work.

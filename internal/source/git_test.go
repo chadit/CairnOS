@@ -37,14 +37,18 @@ const killedCallDeadline = 200 * time.Millisecond
 // full minute, so this case reports the hang instead of sitting through it.
 const returnBound = 20 * time.Second
 
+// oneShotChanSize buffers the channel carrying the killed call's one error, so
+// the goroutine finishes even when the case fails before reading it.
+const oneShotChanSize = 1
+
 // stubPerm is the mode the stand-in script needs to be launched.
 const stubPerm = 0o700
 
 // stageStubGit writes one stand-in script into a fresh directory and returns a
 // source.Git whose PATH is that directory plus searchPath. Handing the
 // environment over is what replaces t.Setenv, so nothing a case stages reaches
-// the rest of the process. Call it before t.Parallel: a fork racing the open
-// write fd fails with ETXTBSY.
+// the rest of the process. Each case calls it before t.Parallel, because a fork
+// racing the open write fd fails with ETXTBSY.
 func stageStubGit(t *testing.T, script, searchPath string, extra ...string) source.Git {
 	t.Helper()
 
@@ -121,7 +125,7 @@ func TestGitCommandReturnsAfterKillWithOrphanHoldingPipes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), killedCallDeadline)
 	defer cancel()
 
-	done := make(chan error, 1)
+	done := make(chan error, oneShotChanSize)
 	start := time.Now()
 
 	go func() {

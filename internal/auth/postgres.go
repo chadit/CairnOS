@@ -11,12 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// pgAuthSchema holds the access keys and the revocation denylist
-// (.agents/spec/08-auth-and-access.md, "Access keys" and Change 1) with
-// JSONB scopes and timestamptz, plus IF NOT EXISTS so opening an existing
-// database is idempotent. It shares the run store's Postgres database with
-// disjoint tables, the same arrangement the sqlite backends use within one
-// file.
+// pgAuthSchema holds the access keys and the revocation denylist with JSONB
+// scopes and timestamptz, plus IF NOT EXISTS so opening an existing database is
+// idempotent. It shares the run store's Postgres database with disjoint tables,
+// the same arrangement the sqlite backends use within one file.
 const pgAuthSchema = `
 CREATE TABLE IF NOT EXISTS auth_keys (
     id           TEXT PRIMARY KEY,
@@ -52,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_issued_sub ON auth_issued(sub);
 // Postgres is the multi-node Store backend: the same access-key and denylist
 // surface the sqlite backend offers, over pgxpool. It shares the run store's
 // database (different tables), so several nodes verify and revoke against one
-// auth state (.agents/spec/11-deployment-and-config.md, "Scaling").
+// auth state.
 type Postgres struct {
 	pool *pgxpool.Pool
 }
@@ -268,9 +266,8 @@ func (s *Postgres) IsDenied(ctx context.Context, jti, sub string, iat, now time.
 	return count > 0, nil
 }
 
-// PruneDenylist deletes denylist and issued-token rows whose expiry has
-// passed: a token past its exp is dead with or without the rows
-// (.agents/spec/08-auth-and-access.md, Change 1).
+// PruneDenylist deletes denylist and issued-token rows whose expiry has passed:
+// a token past its exp is dead with or without the rows.
 func (s *Postgres) PruneDenylist(ctx context.Context, now time.Time) (int, error) {
 	stored := now.UTC()
 

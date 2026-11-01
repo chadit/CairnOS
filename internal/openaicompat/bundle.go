@@ -11,7 +11,7 @@ const extensionName = "openai-compat"
 
 // Route patterns the adapter mounts on. Go 1.22+ method patterns on the root
 // mux beat the gateway's "/" catch-all, so these win over the gRPC gateway
-// without shadowing it (.agents/spec/parity/openai-compat.md, "Routing safety").
+// without shadowing it.
 const (
 	routeCompletions = "POST /v1/chat/completions"
 	routeModels      = "GET /v1/models"

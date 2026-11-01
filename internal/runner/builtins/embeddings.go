@@ -22,10 +22,9 @@ const defaultEmbeddingModel = "text-embedding-3-small"
 const embeddingsCodePrefix = OpenAIName + ".embeddings"
 
 // OpenAIEmbedder vectorizes text for the tuning engine's embedding-similarity
-// comparator (R1, .agents/spec/14-open-decisions.md). It satisfies
-// tuning.Embedder structurally, so the CLI wires it in without the tuning
-// package importing this one, and reuses the openai runner's base URL and API
-// key.
+// comparator (R1). It satisfies tuning.Embedder structurally, so the CLI wires
+// it in without the tuning package importing this one, and reuses the openai
+// runner's base URL and API key.
 //
 // The base URL is operator-configured, so a plain client suffices without the
 // SSRF egress guard.

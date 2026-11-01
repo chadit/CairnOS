@@ -20,7 +20,7 @@ import (
 // CodeBadInclude marks a stdin_file param that cannot be read into the action:
 // one on a runner other than exec, a path that is not a plain relative one, a file that is missing, oversized, or
 // not UTF-8 text, or a workflow parsed from bytes with no directory to resolve
-// against (.agents/spec/parity/workflow-language.md, "stdin_file").
+// against.
 const CodeBadInclude = "workflow.bad_include"
 
 const (
@@ -47,8 +47,9 @@ const (
 // includedFile is one stdin_file read at load, kept so the definition hash
 // covers the text as well as the workflow bytes that name it.
 type includedFile struct {
-	path string
-	text string
+	action string
+	path   string
+	text   string
 }
 
 // DefinitionHash is the identity a run records for this workflow: HashBytes of
@@ -100,7 +101,7 @@ func (b *builder) resolveStdinFile(flow *Workflow, action *Action) {
 		text, problem = readInclude(b.dir, rel)
 		if problem == "" {
 			action.Params[paramStdin] = text
-			flow.includes = append(flow.includes, includedFile{path: rel, text: text})
+			flow.includes = append(flow.includes, includedFile{action: action.Name, path: rel, text: text})
 
 			return
 		}

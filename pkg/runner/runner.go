@@ -1,7 +1,6 @@
 // Package runner defines the contract between the CairnOS engine and the
 // adapters that execute work. It is the only package external runner authors
-// import, so its surface must stay stable across engine changes
-// (.agents/spec/03-runner-interface.md).
+// import, so its surface must stay stable across engine changes.
 package runner
 
 import (
@@ -46,17 +45,15 @@ type Closer interface {
 
 // Describer makes a runner usable as an agent-loop tool: the descriptor is
 // what the driver model sees when deciding to call it. A runner without
-// Describer cannot appear in an agent action's tools list
-// (.agents/spec/15-agent-loop.md).
+// Describer cannot appear in an agent action's tools list.
 type Describer interface {
 	Describe() ToolSpec
 }
 
 // ToolCaller marks an LLM runner that supports its provider's native tool-use
-// mode, making it eligible as an agent-loop driver
-// (.agents/spec/15-agent-loop.md). There is no JSON-in-text fallback (D8 in
-// .agents/spec/14-open-decisions.md): a driver that does not implement
-// ToolCaller fails agent validation with agent.driver_incapable.
+// mode, making it eligible as an agent-loop driver. There is no JSON-in-text
+// fallback (D8): a driver that does not implement ToolCaller fails agent
+// validation with agent.driver_incapable.
 type ToolCaller interface {
 	// ExecuteWithTools runs one driver turn with tools offered. A tool call
 	// sets Output to map[string]any{ToolCallName: <name>, ToolCallArguments:
@@ -83,6 +80,15 @@ const (
 	ToolCallArguments = "arguments"
 )
 
+// DefinitionFile is one file an action was read from. BlobID is the git object
+// ID of the bytes that were read, so a check against a commit judges what will
+// run rather than whatever the disk holds by the time it looks.
+type DefinitionFile struct {
+	// Path is absolute.
+	Path   string
+	BlobID string
+}
+
 // Task is one action's worth of work.
 type Task struct {
 	// Deadline is the absolute time this task must finish by, derived from the
@@ -100,6 +106,11 @@ type Task struct {
 	// RunID and ActionName identify where this task sits in a workflow run.
 	RunID      string
 	ActionName string
+
+	// Definition lists the files the action was read from: the workflow file
+	// first, then any stdin_file it included. It is empty when the run started
+	// from bytes or outside a workflow, such as an agent loop's tool call.
+	Definition []DefinitionFile
 
 	// Idempotent mirrors the action's idempotent flag. A runner may read it
 	// but the engine, not the runner, decides retries.

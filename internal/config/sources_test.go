@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,14 @@ import (
 // sourceRepoURL is the clone URL every fixture block names. Nothing dials it:
 // config validation only checks that the key carries a value.
 const sourceRepoURL = "https://github.com/example/automation.git"
+
+// wantWorkflowsArray is the refusal for a workflows value that is not an array
+// of strings, whether the array itself or one element is the wrong type.
+const wantWorkflowsArray = "source.automation.workflows must be an array of strings"
+
+// wantGlobSlashes is the refusal for a glob that has a doubled or trailing
+// slash, the two spellings that leave an empty element.
+const wantGlobSlashes = "must not contain an empty element or end in a slash"
 
 // sourceTOML builds one [source.automation] block from the lines a case
 // wants, so each test states only the keys it is about.
@@ -110,6 +119,54 @@ func TestLoadSourceAcceptsDirtyResetFalse(t *testing.T) {
 	}
 }
 
+func TestLoadSourceParsesDiscoveryKeys(t *testing.T) {
+	t.Parallel()
+
+	toml := sourceTOML(
+		`repo      = "`+sourceRepoURL+`"`,
+		`dest      = "/opt/src/automation"`,
+		`workflows = ["engines/*/cairnos/*.toml", " jobs/*.toml "]`,
+		`trusted   = true`,
+	)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	src := cfg.Sources["automation"]
+
+	want := []string{"engines/*/cairnos/*.toml", "jobs/*.toml"}
+	if !slices.Equal(src.Workflows, want) {
+		t.Fatalf("workflows = %q, want %q", src.Workflows, want)
+	}
+
+	if !src.Trusted {
+		t.Fatal("trusted = false with the key written true")
+	}
+}
+
+// TestLoadSourceLeavesDiscoveryOffByDefault proves a block written before the
+// two keys existed keeps its old behavior: nothing discovered, nothing trusted.
+func TestLoadSourceLeavesDiscoveryOffByDefault(t *testing.T) {
+	t.Parallel()
+
+	toml := sourceTOML(
+		`repo = "`+sourceRepoURL+`"`,
+		`dest = "/opt/src/automation"`,
+	)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	src := cfg.Sources["automation"]
+	if len(src.Workflows) != 0 || src.Trusted {
+		t.Fatalf("workflows = %q, trusted = %v, want none and false", src.Workflows, src.Trusted)
+	}
+}
+
 func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +256,96 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 				`dest = "src/automation"`,
 			),
 			want: "must be an absolute path",
+		},
+		{
+			name: "workflows not an array",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = "engines/*.toml"`,
+			),
+			want: wantWorkflowsArray,
+		},
+		{
+			name: "workflows element not a string",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = [7]`,
+			),
+			want: wantWorkflowsArray,
+		},
+		{
+			name: "blank workflow glob",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["  "]`,
+			),
+			want: "must not be empty",
+		},
+		{
+			name: "absolute workflow glob",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["/etc/*.toml"]`,
+			),
+			want: "must be relative to dest",
+		},
+		{
+			name: "workflow glob climbing out of dest",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["engines/../../*.toml"]`,
+			),
+			want: "must not contain a .. element",
+		},
+		{
+			name: "workflow glob with a leading dot element",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["./engines/*.toml"]`,
+			),
+			want: "must not contain a . element",
+		},
+		{
+			name: "workflow glob with a doubled slash",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["engines//*.toml"]`,
+			),
+			want: wantGlobSlashes,
+		},
+		{
+			name: "workflow glob with a trailing slash",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["engines/*/"]`,
+			),
+			want: wantGlobSlashes,
+		},
+		{
+			name: "malformed workflow glob",
+			toml: sourceTOML(
+				`repo      = "`+sourceRepoURL+`"`,
+				`dest      = "/opt/src/automation"`,
+				`workflows = ["engines/[*.toml"]`,
+			),
+			want: "is not a valid pattern",
+		},
+		{
+			name: "non-bool trusted",
+			toml: sourceTOML(
+				`repo    = "`+sourceRepoURL+`"`,
+				`dest    = "/opt/src/automation"`,
+				`trusted = "yes"`,
+			),
+			want: "source.automation.trusted must be a boolean",
 		},
 		{
 			name: "name outside the identifier grammar",

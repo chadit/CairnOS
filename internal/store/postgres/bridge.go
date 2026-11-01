@@ -11,8 +11,8 @@ import (
 // BindBridgeSession upserts the (transport, chatKey) -> sessionID binding in
 // the request workspace, keeping the sqlite backend's semantics: ON CONFLICT
 // makes a rebind (the bridge's /new path) overwrite the prior session id in one
-// statement (.agents/spec/parity/messaging-bridge.md, decision 1). The
-// workspace stamp keeps a chat bound in one tenant invisible from another.
+// statement. The workspace stamp keeps a chat bound in one tenant invisible
+// from another.
 func (s *Store) BindBridgeSession(ctx context.Context, transport, chatKey, sessionID string) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO bridge_sessions (workspace_id, transport, chat_key, session_id, updated_at)

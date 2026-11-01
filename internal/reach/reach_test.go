@@ -16,8 +16,12 @@ import (
 const (
 	repoURL      = "https://git.example.com/team/app"
 	hostAddr     = "git.example.com:443"
-	workflowName = "prflow_app"
+	workflowName = "sample_app"
 )
+
+// oneShotChanSize gives fakeNet.reached one slot, so the first probe's signal
+// waits for the test while a later probe's non-blocking send drops.
+const oneShotChanSize = 1
 
 var errRefused = errors.New("dial tcp 203.0.113.10:443: connect: connection refused")
 
@@ -39,7 +43,7 @@ type fakeNet struct {
 func newFakeNet() *fakeNet {
 	return &fakeNet{
 		refuse:  map[string]error{},
-		reached: make(chan struct{}, 1),
+		reached: make(chan struct{}, oneShotChanSize),
 		vpnUp:   true,
 		ifaceOK: true,
 		now:     time.Date(2026, 9, 14, 17, 58, 0, 0, time.UTC),
@@ -222,7 +226,7 @@ func TestOutageIsAnnouncedOnceThenRepeatedHourly(t *testing.T) {
 		_, _ = monitor.Check(t.Context(), workflowName)
 	}
 
-	if lines := net.lines(); len(lines) != 1 || !strings.HasPrefix(lines[0], `CairnOS: workflow "prflow_app" paused: `) {
+	if lines := net.lines(); len(lines) != 1 || !strings.HasPrefix(lines[0], `CairnOS: workflow "sample_app" paused: `) {
 		t.Fatalf("lines = %q, want one pause line for three failed probes", lines)
 	}
 
@@ -266,7 +270,7 @@ func TestRecoveryIsAnnouncedWithTheOutageLength(t *testing.T) {
 		t.Fatalf("lines = %q, want the pause and the recovery", lines)
 	}
 
-	want := `CairnOS: workflow "prflow_app" resumed: ` + repoURL + " reachable again after 4m0s"
+	want := `CairnOS: workflow "sample_app" resumed: ` + repoURL + " reachable again after 4m0s"
 	if lines[1] != want {
 		t.Fatalf("recovery line = %q, want %q", lines[1], want)
 	}
@@ -499,7 +503,7 @@ func TestRunProbesOnTheInterval(t *testing.T) {
 func TestUnreachableErrorCarriesTheRunFailure(t *testing.T) {
 	t.Parallel()
 
-	cause := errors.New("run prflow_app: exit 1")
+	cause := errors.New("run sample_app: exit 1")
 	err := reach.NewUnreachable(workflowName, "host down", cause)
 
 	if !reach.IsUnreachable(err) || !errors.Is(err, cause) {

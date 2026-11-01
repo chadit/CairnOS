@@ -9,10 +9,9 @@ import (
 )
 
 // ExecutionInstrumentation follows a run through its actions and runner calls,
-// the hooks that build the run -> action -> runner.call span tree
-// (.agents/spec/06-observability-and-tuning.md). A Started hook's context
-// carries its scope into the work it covers, and each finish func is called
-// exactly once.
+// the hooks that build the run -> action -> runner.call span tree. A Started
+// hook's context carries its scope into the work it covers, and each finish
+// func is called exactly once.
 type ExecutionInstrumentation interface {
 	// RunStarted opens the run scope as the run record turns running. The
 	// finish func runs once the run is terminal, with status and error

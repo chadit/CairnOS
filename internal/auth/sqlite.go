@@ -11,10 +11,9 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// authSchema holds the access keys and the revocation denylist
-// (.agents/spec/08-auth-and-access.md, "Access keys" and Change 1), plus
-// IF NOT EXISTS so opening an existing database is idempotent. It shares
-// the run store's database file with disjoint tables, the same arrangement
+// authSchema holds the access keys and the revocation denylist, plus IF NOT
+// EXISTS so opening an existing database is idempotent. It shares the run
+// store's database file with disjoint tables, the same arrangement
 // internal/scheduler and internal/memory use.
 const authSchema = `
 CREATE TABLE IF NOT EXISTS auth_keys (
@@ -295,9 +294,8 @@ func (s *SQLite) IsDenied(ctx context.Context, jti, sub string, iat, now time.Ti
 	return count > 0, nil
 }
 
-// PruneDenylist deletes denylist and issued-token rows whose expiry has
-// passed: a token past its exp is dead with or without the rows
-// (.agents/spec/08-auth-and-access.md, Change 1).
+// PruneDenylist deletes denylist and issued-token rows whose expiry has passed:
+// a token past its exp is dead with or without the rows.
 func (s *SQLite) PruneDenylist(ctx context.Context, now time.Time) (int, error) {
 	stored := authStoredTime(now)
 

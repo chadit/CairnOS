@@ -54,7 +54,7 @@ Env keys below are all prefixed `CAIRNOS_RUNNER_`; runner config blocks
 - `browser_snapshot` drives a containerized Playwright MCP server through a
   named `mcp_client` runner. Its `[runner.browser_nav]` block goes in
   `config.toml` (see that sample's README) and needs the `mcp_client`
-  named-instance path from `parity/mcp-import-fix.md` slice 1.
+  named-instance path.
 - Every file here passes `cairnos validate`. Start with
   `examples/hello.toml` (created by `cairnos init`) if you want the bare
   minimum first.

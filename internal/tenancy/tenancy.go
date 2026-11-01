@@ -1,8 +1,7 @@
 // Package tenancy holds the workspace model that isolates users, workflows,
-// runs, memory, and budgets (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy"). A workspace is the tenancy boundary every stored row
-// carries; users belong to workspaces with roles, and a role maps to a scope
-// set the auth layer enforces. The store filtering itself lives on the
+// runs, memory, and budgets. A workspace is the tenancy boundary every stored
+// row carries; users belong to workspaces with roles, and a role maps to a
+// scope set the auth layer enforces. The store filtering itself lives on the
 // request context (internal/store.WorkspaceFromContext); this package owns the
 // workspace and membership records and the role-to-scope mapping.
 package tenancy
@@ -12,12 +11,11 @@ import (
 	"time"
 )
 
-// Store is the workspace and membership persistence
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"). It is intentionally
-// narrow so the OAuth handler, the CLI, and the login path depend on the
-// surface they use rather than a broad aggregate. SQLite implements it sharing
-// the run store's database file with disjoint tables; Postgres does the same
-// in one database.
+// Store is the workspace and membership persistence. It is intentionally narrow
+// so the OAuth handler, the CLI, and the login path depend on the surface they
+// use rather than a broad aggregate. SQLite implements it sharing the run
+// store's database file with disjoint tables; Postgres does the same in one
+// database.
 type Store interface {
 	WorkspaceStore
 	MembershipStore
@@ -57,7 +55,7 @@ type MembershipStore interface {
 }
 
 // Workspace is one tenancy boundary: an id, a unique name, and a creation
-// instant (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// instant.
 type Workspace struct {
 	CreatedAt time.Time
 	ID        string

@@ -92,8 +92,8 @@ type syncCheckoutCase struct {
 
 // TestUpdateSyncCheckout covers the checkout step on each shape a host's clone
 // can be found in. A clean clone behind its upstream is fast-forwarded with no
-// warning. Anything else is reset onto the upstream branch, and the warning
-// names what went. Every case ends on main at the upstream commit with a clean
+// warning, while anything else is reset onto the upstream branch with a warning
+// naming what went. Every case ends on main at the upstream commit with a clean
 // tree, and the ignored bin/ survives.
 func TestUpdateSyncCheckout(t *testing.T) {
 	t.Parallel()

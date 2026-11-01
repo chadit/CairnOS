@@ -662,8 +662,8 @@ func TestExpiredTokenRejectedWithItsOwnCode(t *testing.T) {
 }
 
 // TestLoginRunRevokeFlow is the full Phase 4a integration: login, run a
-// workflow with the token, revoke it, and watch the very next call fail
-// before exp (.agents/spec/08-auth-and-access.md, Change 1).
+// workflow with the token, revoke it, and watch the very next call fail before
+// exp.
 func TestLoginRunRevokeFlow(t *testing.T) {
 	t.Parallel()
 
@@ -971,11 +971,10 @@ func (f *authFixture) tokenInWorkspace(t *testing.T, workspace string, scopes ..
 }
 
 // TestWorkspaceIsolatesRunsAcrossTokens is the API-level multi-tenancy
-// acceptance: a token scoped to workspace A runs a workflow, and a token
-// scoped to workspace B can neither list nor fetch that run
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"). The workspace
-// rides the token claim, the interceptor lifts it onto the context, and the
-// store filters by it.
+// acceptance: a token scoped to workspace A runs a workflow, and a token scoped
+// to workspace B can neither list nor fetch that run. The workspace rides the
+// token claim, the interceptor lifts it onto the context, and the store filters
+// by it.
 func TestWorkspaceIsolatesRunsAcrossTokens(t *testing.T) {
 	t.Parallel()
 

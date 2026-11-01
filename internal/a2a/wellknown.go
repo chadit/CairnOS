@@ -5,8 +5,7 @@ import (
 	"net/http"
 )
 
-// WellKnownPath is where the agent card is published
-// (.agents/spec/09-a2a-and-hive.md, "Agent card"). Discovery is public: the
+// WellKnownPath is where the agent card is published. Discovery is public: the
 // handler sits outside the auth interceptor so any consumer can fetch the
 // card, and the card's signature is what lets that consumer trust it.
 const WellKnownPath = "/.well-known/agent.json"

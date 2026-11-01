@@ -37,8 +37,7 @@ const (
 )
 
 // testChatSessionRoundTrip proves a session and its ordered messages persist
-// and read back, the conversation-context-persisted contract Phase 9 rests on
-// (.agents/spec/13-roadmap.md, Phase 9).
+// and read back, the conversation-context-persisted contract Phase 9 rests on.
 func testChatSessionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -108,9 +107,9 @@ func testChatSessionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 
 // testChatSessionSeedsSystemRole proves a system-role message persists and
 // reads back in sequence order alongside the user and assistant rows, the row
-// the OpenAI-compatible adapter seeds when a client sends a `system` message
-// (.agents/spec/parity/openai-compat.md). The role column is a plain string, so
-// this is the store proving it accepts the value with no schema change.
+// the OpenAI-compatible adapter seeds when a client sends a `system` message.
+// The role column is a plain string, so this is the store proving it accepts
+// the value with no schema change.
 func testChatSessionSeedsSystemRole[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -215,8 +214,7 @@ func testChatSessionListNewestFirst[S store.Store](t *testing.T, openFn OpenFunc
 }
 
 // testChatSessionIsolatesByWorkspace proves a session created in one workspace
-// is invisible to another, the tenancy boundary every chat read honors
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// is invisible to another, the tenancy boundary every chat read honors.
 func testChatSessionIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -344,8 +342,7 @@ func testChatSearchLimitsResults[S store.Store](t *testing.T, openFn OpenFunc[S]
 
 // testChatSearchIsolatesByWorkspace proves a search from one workspace never
 // sees another's messages, even when both hold the same matching content: the
-// tenancy boundary every chat read honors
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// tenancy boundary every chat read honors.
 func testChatSearchIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

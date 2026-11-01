@@ -49,8 +49,7 @@ const (
 // anthropicBlockToolUse is the content-block type carrying a tool call.
 const anthropicBlockToolUse = "tool_use"
 
-// Anthropic calls the Messages API, a Phase 1a API runner
-// (.agents/spec/03-runner-interface.md).
+// Anthropic calls the Messages API, a Phase 1a API runner.
 //
 // Config: model (required to run), base_url, max_tokens (the API requires it;
 // default 4096), temperature, and price_in/price_out in USD per million

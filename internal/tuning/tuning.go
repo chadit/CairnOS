@@ -1,11 +1,9 @@
-// Package tuning is the Phase 3 suggestion engine
-// (.agents/spec/06-observability-and-tuning.md, Phase 3 half).
-// It reads persisted run history, looks for mechanical waste (repeated
-// identical calls, burst calls that could batch, token caps far above
-// observed output), and emits evidence-backed suggestions for a human to
-// approve or reject. Nothing here changes a workflow: approval renders an
-// annotated diff the operator applies by hand, and auto-apply waits for
-// Phase 6.
+// Package tuning is the Phase 3 suggestion engine. It reads persisted run
+// history, looks for mechanical waste (repeated identical calls, burst calls
+// that could batch, token caps far above observed output), and emits
+// evidence-backed suggestions for a human to approve or reject. Nothing here
+// changes a workflow: approval renders an annotated diff the operator applies
+// by hand, and auto-apply waits for Phase 6.
 package tuning
 
 import (

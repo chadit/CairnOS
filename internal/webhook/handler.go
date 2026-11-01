@@ -655,8 +655,8 @@ func (h *Handler) writeAccepted(w http.ResponseWriter, r *http.Request, runID st
 	h.writeJSON(w, r, http.StatusAccepted, acceptedBody{Status: envelopeStatusOK, RunID: runID})
 }
 
-// writeError writes the canonical HTTP error body
-// (.agents/spec/07-api-protocols.md). A nil details map serializes as {}.
+// writeError writes the canonical HTTP error body. A nil details map serializes
+// as {}.
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string, details map[string]any) {
 	if details == nil {
 		details = map[string]any{}

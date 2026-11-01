@@ -34,9 +34,8 @@ const mcpUsage = `usage: cairnos mcp <serve|publish|import> [--dir D]
 // convention runner API keys and the store DSN follow.
 const mcpRegistryTokenEnv = "CAIRNOS_MCP_REGISTRY_TOKEN" // #nosec G101 -- environment variable name, not a credential
 
-// cmdMCP dispatches the Phase 7a MCP subcommands
-// (.agents/spec/10-mcp-integration.md, "MCP Server"). Only the stdio serve
-// path lives here; the http transport mounts on the serve process's API mux.
+// cmdMCP dispatches the MCP subcommands. Its serve runs the stdio transport
+// only; the http transport mounts on the serve process's API mux.
 func (a *App) cmdMCP(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", mcpUsage)
@@ -129,8 +128,8 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 		return ExitFailure
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, rulesSvc, credManager, nil,
-		nil, a.logger, nil, a.runnerTransport)
+	registry, err := newRegistry(ctx, cfg.Runners, sourcesFor(cfg.Sources), cfg.Hosts, a.envLookup(), mem, rulesSvc, credManager, nil,
+		nil, a.logger, a.runnerTransport)
 	if err != nil {
 		a.printErrf("mcp serve: %v\n", err)
 
@@ -176,8 +175,7 @@ func (a *App) runMCPStdio(ctx context.Context, cfg *config.Config, dir string, d
 }
 
 // cmdMCPPublish registers this node's MCP tool catalog with the configured
-// registry so other nodes can discover and import it
-// (.agents/spec/10-mcp-integration.md, "MCP Registry"). It reads only the config
+// registry so other nodes can discover and import it. It reads only the config
 // and the network, opening no store: the catalog is built from the same
 // constants the server registers, so publish works while serve holds the
 // database. --dry-run prints the record without contacting the registry.
@@ -255,9 +253,9 @@ func (a *App) printMCPRecord(record *mcp.ServerEntry) int {
 }
 
 // cmdMCPImport pulls registry records and prints mcp_client runner config blocks
-// on stdout, one per remote tool, for an operator to paste into their config
-// (.agents/spec/10-mcp-integration.md, "MCP Registry"). The status line goes to
-// stderr, so `cairnos mcp import >> config.toml` captures only the config.
+// on stdout, one per remote tool, for an operator to paste into their config.
+// The status line goes to stderr, so `cairnos mcp import >> config.toml`
+// captures only the config.
 func (a *App) cmdMCPImport(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("mcp import", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)

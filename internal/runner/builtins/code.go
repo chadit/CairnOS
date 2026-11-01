@@ -15,8 +15,8 @@ import (
 )
 
 // CodeName is the registry name of the inline Starlark runner: an action with
-// runner = "code" runs an operator-authored script for transform and glue
-// logic without standing up a service (.agents/spec/parity/code-node.md).
+// runner = "code" runs an operator-authored script for transform and glue logic
+// without standing up a service.
 const CodeName = "code"
 
 // paramScript is the required params key holding the script text. It is dropped

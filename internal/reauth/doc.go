@@ -1,8 +1,8 @@
 // Package reauth probes a CLI tool's stored OAuth credential to learn whether it
 // is currently valid and which account it belongs to, without making a network
-// call (.agents/spec/14-open-decisions.md, D12). The scheduler uses it to resume
-// a job held on an expired credential once an operator has signed back in, and
-// the notifier uses it to name the affected account.
+// call (D12). The scheduler uses it to resume a job held on an expired
+// credential once an operator has signed back in, and the notifier uses it to
+// name the affected account.
 //
 // The credential file formats are undocumented and version-sensitive, so every
 // reader is defensive: a missing file, a missing field, or a malformed token

@@ -163,7 +163,7 @@ func TestLoadKeysBadBase64IsErrBadKeyEncoding(t *testing.T) {
 func TestLoadKeysWrongSizeReportsLengthNotBytes(t *testing.T) {
 	t.Parallel()
 
-	shortKey := base64.StdEncoding.EncodeToString(make([]byte, 16))
+	shortKey := base64.StdEncoding.EncodeToString(make([]byte, shortKeySize))
 
 	_, _, err := secrets.LoadKeys(fakeEnv(map[string]string{keyEnvName: shortKey}))
 	if !errors.Is(err, secrets.ErrKeyWrongSize) {
@@ -223,8 +223,8 @@ func TestGenerateKeyProducesLoadable32ByteKey(t *testing.T) {
 		t.Fatalf("generated key is not valid base64: %v", err)
 	}
 
-	if len(decoded) != 32 {
-		t.Fatalf("generated key = %d bytes, want 32", len(decoded))
+	if len(decoded) != aesKeySize {
+		t.Fatalf("generated key = %d bytes, want %d", len(decoded), aesKeySize)
 	}
 
 	second, err := secrets.GenerateKey()
@@ -253,14 +253,14 @@ func TestGenerateKeyProducesLoadable32ByteKey(t *testing.T) {
 func TestLoadKeysAcceptsLowEntropyKeyByLength(t *testing.T) {
 	t.Parallel()
 
-	lowEntropy := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("A"), 32))
+	lowEntropy := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("A"), aesKeySize))
 
 	primary, _, err := secrets.LoadKeys(fakeEnv(map[string]string{keyEnvName: lowEntropy}))
 	if err != nil {
 		t.Fatalf("low-entropy 32-byte key rejected by length check: %v", err)
 	}
 
-	if len(primary) != 32 {
-		t.Fatalf("primary = %d bytes, want 32", len(primary))
+	if len(primary) != aesKeySize {
+		t.Fatalf("primary = %d bytes, want %d", len(primary), aesKeySize)
 	}
 }

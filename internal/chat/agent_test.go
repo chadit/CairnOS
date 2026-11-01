@@ -146,7 +146,11 @@ func (e *engineTrigger) Run(ctx context.Context, name string, inputs map[string]
 		return "", nil, err
 	}
 
-	done := make(chan chat.RunResult, 1)
+	// The fake sends the run's one result before returning the channel, so the
+	// channel needs a slot to hold it.
+	const resultBufferSize = 1
+
+	done := make(chan chat.RunResult, resultBufferSize)
 	done <- chat.RunResult{Status: string(run.Status)}
 
 	return run.ID, done, nil
@@ -440,7 +444,7 @@ func TestUnknownPersonalityRejected(t *testing.T) {
 
 // TestTurnDoneCarriesUsage proves the turn's accumulated token spend lands on
 // the turn-done event, the field the OpenAI-compatible adapter reports as its
-// usage block (.agents/spec/parity/openai-compat.md, "Real usage numbers").
+// usage block.
 func TestTurnDoneCarriesUsage(t *testing.T) {
 	t.Parallel()
 

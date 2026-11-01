@@ -9,7 +9,7 @@ import (
 	"github.com/chadit/CairnOS/internal/workflow"
 )
 
-// Governance error codes (.agents/spec/12-ui-and-governance.md, "Governance").
+// Governance error codes.
 const (
 	// CodeBudgetExceeded marks a run refused because the workflow's
 	// accumulated spend for the current period passed its limit and the
@@ -64,7 +64,7 @@ type BudgetNotifier interface {
 // period's accumulated spend passes the limit. A warn-mode budget never
 // refuses; it notifies and counts when over the limit but lets the run
 // proceed. In-flight runs already created are untouched: enforcement is at
-// run-start only (.agents/spec/12-ui-and-governance.md, "Governance").
+// run-start only.
 func (e *Engine) checkGovernance(ctx context.Context, flow *workflow.Workflow) error {
 	if err := e.checkPaused(ctx, flow.Name); err != nil {
 		return err

@@ -94,9 +94,9 @@ func assertStepKinds(t *testing.T, steps []*store.AgentStep, kinds []string) {
 	}
 }
 
-// Spec 15 (parity) acceptance: an action listing "delegate" spawns one child
-// whose answer lands in the parent's delegate tool_call, and the child's
-// transcript persists under <action>/sub-1 with no schema change.
+// An action listing "delegate" spawns one child whose answer lands in the
+// parent's delegate tool_call, and the child's transcript persists under
+// <action>/sub-1 with no schema change.
 func TestDelegateSpawnsChildAndCarriesAnswer(t *testing.T) {
 	t.Parallel()
 

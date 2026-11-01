@@ -33,8 +33,7 @@ type DispatchInput struct {
 // cursor, so events wait for resume. A live schedule reads the cursor, polls,
 // enqueues one item per event, then advances it. A source or enqueue error
 // returns without advancing, so the next poll re-reads the same window and
-// dedup keeps queued events from double-firing
-// (.agents/spec/parity/triggers-webhooks.md, "Firing path").
+// dedup keeps queued events from double-firing.
 func Dispatch(ctx context.Context, input DispatchInput) error {
 	if input.Paused {
 		return nil

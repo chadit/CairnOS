@@ -68,8 +68,7 @@ const docColumns = "id, title, body, tags_json, created_at, updated_at"
 
 // SQLite is the default Store backend: FTS5 keyword search over title and
 // body, a links table for backlink derivation, zero external services, no
-// vectors (.agents/spec/05-memory-and-knowledge.md). Safe for concurrent use
-// through WAL mode and busy_timeout.
+// vectors. Safe for concurrent use through WAL mode and busy_timeout.
 type SQLite struct {
 	db *sql.DB
 }

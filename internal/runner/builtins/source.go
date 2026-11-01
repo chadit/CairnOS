@@ -43,27 +43,35 @@ type SourceObserver interface {
 	Synced(name string)
 }
 
+// SourceReconciler runs after every sync that succeeded, moved or not, so a
+// pass that failed last time heals on the next tick. It is serve's workflow
+// discovery; the runner holds the source's lock while it runs, so two fires
+// never reconcile the same source at once.
+type SourceReconciler func(ctx context.Context, name string)
+
 // Source brings one configured git tree to the current tip of its ref. Polling
 // is an ordinary scheduled workflow rather than a loop inside serve, so this
 // runner is the whole of the sync path.
 //
 // Config: none, since the blocks live in [source.<name>]. Params: source.
 type Source struct {
-	specs    map[string]source.Spec
-	locks    map[string]*sync.Mutex
-	git      source.Git
-	logger   *slog.Logger
-	observer SourceObserver
+	specs     map[string]source.Spec
+	locks     map[string]*sync.Mutex
+	git       source.Git
+	logger    *slog.Logger
+	observer  SourceObserver
+	reconcile SourceReconciler
 }
 
 // SourceFactory adapts the configured specs to the registry contract. Every
-// instance shares one lock per spec, which is what keeps a webhook fire and a
-// schedule fire from running git in the same tree at once (FR12).
+// instance shares one lock per spec, so a webhook fire and a schedule fire
+// never run git in the same tree at once (FR12).
 //
-// logger and observer may both be nil: only serve has a fan-out, and the four
-// one-shot commands build the same registry without one.
+// logger, observer, and reconcile may be nil: only serve has a fan-out and a
+// running scheduler, and the one-shot commands build the registry without
+// either.
 func SourceFactory(
-	specs []source.Spec, git source.Git, logger *slog.Logger, observer SourceObserver,
+	specs []source.Spec, git source.Git, logger *slog.Logger, observer SourceObserver, reconcile SourceReconciler,
 ) runner.Factory {
 	indexed := make(map[string]source.Spec, len(specs))
 	locks := make(map[string]*sync.Mutex, len(specs))
@@ -74,7 +82,9 @@ func SourceFactory(
 	}
 
 	return func(_ map[string]any) (runner.Runner, error) {
-		return &Source{specs: indexed, locks: locks, git: git, logger: logger, observer: observer}, nil
+		return &Source{
+			specs: indexed, locks: locks, git: git, logger: logger, observer: observer, reconcile: reconcile,
+		}, nil
 	}
 }
 
@@ -140,6 +150,10 @@ func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result,
 	}
 
 	s.report(ctx, spec, result)
+
+	if s.reconcile != nil {
+		s.reconcile(ctx, name)
+	}
 
 	meta := map[string]string{
 		paramSource: name,

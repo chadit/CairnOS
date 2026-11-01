@@ -18,15 +18,13 @@ const DefaultRequestTimeout = 30 * time.Second
 // publish a pattern, independent of the server's k-anonymity floor. The client
 // refuses below this even though the server enforces its own k, because a node
 // must never publish a pattern it has barely seen, regardless of what the
-// server would accept (.agents/spec/09-a2a-and-hive.md, "k-anonymity
-// threshold").
+// server would accept.
 const defaultMinObservations = 5
 
-// Client is the node's side of the hive API
-// (.agents/spec/09-a2a-and-hive.md, "Trust and operation"). Subscribe is
-// always safe: the node receives tips and sends nothing. Publish is gated and
-// off by default, because publishing is the part that risks a content leak and
-// waits on the privacy review (R2) and the hosting decision (R3).
+// Client is the node's side of the hive API. Subscribe is always safe: the node
+// receives tips and sends nothing. Publish is gated and off by default, because
+// publishing is the part that risks a content leak and waits on the privacy
+// review (R2) and the hosting decision (R3).
 type Client interface {
 	// Subscribe pulls tips for the given categories. It is receive-only, so it
 	// is safe regardless of the publish gate. A category outside the fixed set
@@ -42,9 +40,9 @@ type Client interface {
 	Publish(ctx context.Context, tip Tip, observations int) error
 }
 
-// Config holds the [hive] settings (.agents/spec/09-a2a-and-hive.md). The
-// node pseudonym is a rotating id, never a stable instance name, so a tip
-// cannot be traced back to one node across publishes.
+// Config holds the [hive] settings. The node pseudonym is a rotating id, never
+// a stable instance name, so a tip cannot be traced back to one node across
+// publishes.
 type Config struct {
 	// Endpoint is the hive API base URL.
 	Endpoint string

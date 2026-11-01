@@ -19,8 +19,8 @@ import (
 // uses a GIN index over to_tsvector(title||body) because Postgres full-text
 // search runs against the base row, not a separate virtual table.
 //
-// The pgvector path stays a stub (.agents/spec/14-open-decisions.md, D2): a
-// semantic Query falls back to keyword and flags it.
+// The pgvector path stays a stub (D2): a semantic Query falls back to keyword
+// and flags it.
 const pgVaultSchema = `
 CREATE TABLE IF NOT EXISTS documents (
     id           TEXT PRIMARY KEY,
@@ -51,8 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_document_links_target ON document_links(workspace
 // scanPGDocument order.
 const pgDocColumns = "id, title, body, tags_json, created_at, updated_at"
 
-// Postgres is the shared, multi-node Store backend
-// (.agents/spec/05-memory-and-knowledge.md, "Backends"): keyword search via
+// Postgres is the shared, multi-node Store backend: keyword search via
 // to_tsvector/plainto_tsquery, a links table for backlinks, no vectors yet.
 // Safe for concurrent use through pgxpool. It shares the run store's database
 // (different tables), the same arrangement the sqlite backends use within one

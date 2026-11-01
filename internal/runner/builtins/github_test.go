@@ -67,7 +67,7 @@ func newGitHub(t *testing.T, server *nettest.Fake) *builtins.GitHub {
 func TestGitHubListsReleases(t *testing.T) {
 	t.Parallel()
 
-	paths := make(chan string, 1)
+	paths := make(chan string, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths <- r.URL.Path + "?" + r.URL.RawQuery
@@ -103,7 +103,7 @@ func TestGitHubListsReleases(t *testing.T) {
 func TestGitHubCreatesIssue(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -157,7 +157,7 @@ const githubIssuesBody = `[
 func TestGitHubListsIssues(t *testing.T) {
 	t.Parallel()
 
-	queries := make(chan string, 1)
+	queries := make(chan string, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery

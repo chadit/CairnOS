@@ -14,8 +14,7 @@ import (
 
 // Registry contract paths, relative to the configured base URL. CairnOS owns
 // this small JSON contract (POST /publish, GET /servers); pointing baseURL at
-// the public MCP registry is the path forward once its schema settles
-// (.agents/spec/10-mcp-integration.md, "MCP Registry").
+// the public MCP registry is the path forward once its schema settles.
 const (
 	registryPublishPath = "/publish"
 	registryServersPath = "/servers"
@@ -239,10 +238,9 @@ func ServerRecord(endpoint string, includeRules bool) ServerEntry {
 // the built-in instead of registering a new runner.
 
 // ImportConfig renders registry server records as mcp_client runner blocks, one
-// per tool, in the TOML an operator pastes into their config
-// (.agents/spec/10-mcp-integration.md, "MCP Registry"). A server whose endpoint
-// matches selfEndpoint is skipped, so a node does not import its own published
-// tools. Returns the rendered TOML and the runner names it defined.
+// per tool, in the TOML an operator pastes into their config. A server whose
+// endpoint matches selfEndpoint is skipped, so a node does not import its own
+// published tools. Returns the rendered TOML and the runner names it defined.
 func ImportConfig(servers []ServerEntry, selfEndpoint string) (string, []string) {
 	self := strings.TrimRight(strings.TrimSpace(selfEndpoint), "/")
 

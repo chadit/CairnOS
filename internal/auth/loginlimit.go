@@ -9,10 +9,10 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// Login DoS defaults (.agents/spec/08-auth-and-access.md, M1). A small
-// derivation pool bounds how many unauthenticated argon2id derivations run at
-// once, since each costs ~64 MiB; the per-peer bucket throttles a single
-// source so it cannot monopolize even the bounded pool.
+// Login DoS defaults (M1). A small derivation pool bounds how many
+// unauthenticated argon2id derivations run at once, since each costs ~64 MiB;
+// the per-peer bucket throttles a single source so it cannot monopolize even
+// the bounded pool.
 const (
 	defaultMaxConcurrentLogins = 4
 	defaultLoginRatePerMinute  = 60

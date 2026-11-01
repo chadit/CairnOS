@@ -17,6 +17,9 @@ import (
 const (
 	sqliteDriver = "sqlite"
 	sqliteDBFile = "secrets.db"
+	// corruptTailSize is the run of zero bytes after a bare SQLite header, so
+	// the file is neither empty nor a database.
+	corruptTailSize = 64
 	// rolledBackStamp is a timestamp far from any real write, so a version
 	// derived from it can never coincide with the one a fresh seal bound.
 	rolledBackStamp = "2030-01-01T00:00:00.000000000Z"
@@ -133,7 +136,7 @@ func TestSQLiteRefusesAFileThatIsNotADatabase(t *testing.T) {
 
 	// A valid header followed by nothing is what a half-written copy leaves,
 	// and it is the shape an empty-file check would wave through.
-	corrupt := append([]byte("SQLite format 3\x00"), make([]byte, 64)...)
+	corrupt := append([]byte("SQLite format 3\x00"), make([]byte, corruptTailSize)...)
 	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
 		t.Fatalf("write the corrupt database: %v", err)
 	}

@@ -1,8 +1,7 @@
-// Package agentloop is the engine-owned loop behind kind = "agent" actions
-// (.agents/spec/15-agent-loop.md): a driver model plans inside hard walls
-// (max_iterations, budget_usd, the action timeout), calling only
-// allowlisted tool runners, with every step persisted as an agent_steps
-// row.
+// Package agentloop is the engine-owned loop behind kind = "agent" actions: a
+// driver model plans inside hard walls (max_iterations, budget_usd, the action
+// timeout), calling only allowlisted tool runners, with every step persisted as
+// an agent_steps row.
 //
 // # Driver convention
 //
@@ -18,9 +17,8 @@
 //     "end_turn".
 //
 // When the Output shape alone is ambiguous (a final answer that is a map
-// with a "tool" key), the stop reason decides. Per D8 in
-// .agents/spec/14-open-decisions.md there is no JSON-in-text fallback:
-// a driver without native tool calling fails validation with
+// with a "tool" key), the stop reason decides. Per D8 there is no JSON-in-text
+// fallback: a driver without native tool calling fails validation with
 // agent.driver_incapable.
 //
 // # Tool calls
@@ -51,10 +49,9 @@ type StepWriter interface {
 
 // Instrumentation observes loop iterations and tool calls so the telemetry layer
 // can hang per-iteration child spans under the action's span and feed the two
-// agent metrics (.agents/spec/15-agent-loop.md, "Transcript persistence") without
-// the loop importing a telemetry SDK. The engine threads the action scope through
-// ctx. Implementations must be concurrency-safe and return promptly; each finish
-// func is called exactly once.
+// agent metrics without the loop importing a telemetry SDK. The engine threads
+// the action scope through ctx. Implementations must be concurrency-safe and
+// return promptly; each finish func is called exactly once.
 type Instrumentation interface {
 	// DriverCall opens one driver turn's scope under the action scope in
 	// ctx; iteration is 1-based. The finish func receives the turn's usage
@@ -129,8 +126,7 @@ func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runne
 // and no registry runner starts a workflow or another loop. Delegation is bounded
 // by its own walls (opt-in via tools, depth capped at 1, one delegation per action
 // run, iteration and budget clamped to the parent's remaining), so it adds exactly
-// one child level and never a third (.agents/spec/15-agent-loop.md, "No recursion
-// in v1"; D9 and D15 in .agents/spec/14-open-decisions.md).
+// one child level and never a third (D9 and D15).
 
 // ValidateAction applies the run-start checks from the spec's termination table:
 // the driver must be a registered runner.ToolCaller (agent.driver_incapable
@@ -194,9 +190,9 @@ func (b *binding) bindDriver(registry *runner.Registry, action *workflow.Action)
 }
 
 // bindTool resolves one tools entry, enforcing registration and the Describer
-// capability (.agents/spec/15-agent-loop.md, "Tools"). The one exception is
-// "delegate", the loop-owned delegation tool: it is accepted without a registry
-// lookup and supplies its own descriptor (internal/agentloop/delegate.go).
+// capability. The one exception is "delegate", the loop-owned delegation tool:
+// it is accepted without a registry lookup and supplies its own descriptor
+// (internal/agentloop/delegate.go).
 func (b *binding) bindTool(registry *runner.Registry, action *workflow.Action, name string) {
 	if name == DelegateToolName {
 		tool := &DelegateTool{}

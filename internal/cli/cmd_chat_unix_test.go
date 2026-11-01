@@ -213,7 +213,7 @@ func waitForLine(t *testing.T, child *exec.Cmd, lines *bufio.Scanner, want strin
 
 // exitOf waits for the child in the background so a caller can bound the wait.
 func exitOf(child *exec.Cmd) <-chan error {
-	exited := make(chan error, 1)
+	exited := make(chan error, oneShotChanSize)
 
 	go func() {
 		exited <- child.Wait()

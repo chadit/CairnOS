@@ -31,6 +31,10 @@ const (
 	sentinelRefresh = "super-secret-refresh-value"
 )
 
+// handoffBufferSize gives a test goroutine a slot for its one send, so it can
+// finish even after the test stops receiving.
+const handoffBufferSize = 1
+
 // errSecretMissing lets the fake resolver report an unknown ref the way the real
 // chain does, so New's wrapping is exercised.
 var errSecretMissing = errors.New("secret missing")
@@ -425,7 +429,7 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 	t.Parallel()
 
 	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
+	entered := make(chan struct{}, handoffBufferSize)
 
 	var count atomic.Int64
 
@@ -451,7 +455,7 @@ func TestShortDeadlineStillYieldsTokenThenServesCache(t *testing.T) {
 		token string
 	}
 
-	done := make(chan result, 1)
+	done := make(chan result, handoffBufferSize)
 
 	go func() {
 		token, err := manager.Token(short, credName)

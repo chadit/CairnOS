@@ -79,8 +79,7 @@ func (a *App) cmdRun(ctx context.Context, args []string) int {
 // executeRun reconciles interrupted work, wires the engine (agent loop and
 // telemetry included), runs the flow, and renders the outcome. A held run parked
 // on an approval exits OK, because the operator decides it later with
-// `cairnos runs approve` (.agents/spec/parity/workflow-language.md, "Human
-// approval").
+// `cairnos runs approve`.
 func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store, mem memory.Store, flow *workflow.Workflow, values map[string]any, workflowsDir string) int {
 	reconciled, err := db.ReconcileInterrupted(ctx)
 	if err != nil {
@@ -125,8 +124,7 @@ func (a *App) executeRun(ctx context.Context, cfg *config.Config, db store.Store
 // onto an engine for a one-shot CLI command, returning a cleanup that flushes
 // telemetry and closes the registry. run and replay share it, so both execute
 // against an identically configured engine. A local command honors budgets and
-// pauses too: governance is an engine feature, not a serve-only one
-// (.agents/spec/12-ui-and-governance.md).
+// pauses too: governance is an engine feature, not a serve-only one.
 func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *config.Config, db store.Store, mem memory.Store) (*engine.Engine, func(), int, bool) {
 	tel, err := telemetry.Setup(ctx, oneShotTelemetry(cfg.Telemetry), appVersion(), nil)
 	if err != nil {
@@ -152,8 +150,8 @@ func (a *App) buildEngine(ctx context.Context, label, workflowsDir string, cfg *
 		return nil, nil, ExitFailure, false
 	}
 
-	registry, err := newRegistry(ctx, cfg.Runners, sourceSpecs(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
-		nil, a.logger, nil, a.runnerTransport)
+	registry, err := newRegistry(ctx, cfg.Runners, sourcesFor(cfg.Sources), cfg.Hosts, a.envLookup(), mem, nil, credManager, nil,
+		nil, a.logger, a.runnerTransport)
 	if err != nil {
 		a.closeTelemetry(ctx, tel)
 		a.runCloser("secret source", closeSource)

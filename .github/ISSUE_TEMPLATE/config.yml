@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/chadit/CairnOS/security/advisories/new
+    about: >-
+      Report security problems privately through GitHub private vulnerability
+      reporting. Do not open a public issue.

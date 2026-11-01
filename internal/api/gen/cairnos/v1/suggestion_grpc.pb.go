@@ -1,5 +1,4 @@
-// SuggestionService: the Phase 3 tuning-suggestion review queue
-// (.agents/spec/06-observability-and-tuning.md, "Review flow"). The API
+// SuggestionService: the Phase 3 tuning-suggestion review queue. The API
 // mirrors the CLI: list the queue, approve, reject. There is no scan or
 // replay RPC on purpose; replay re-invokes real runners with real cost, so
 // it stays behind the CLI's explicit --replay flag, and nothing in Phase 3

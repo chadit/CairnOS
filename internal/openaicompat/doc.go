@@ -1,10 +1,9 @@
 // Package openaicompat adapts CairnOS's Phase 9 ChatService to the
 // OpenAI-compatible chat completions wire shape, so off-the-shelf OpenAI
 // clients and chat frontends (OpenWebUI, LibreChat, the openai SDKs) can point
-// at a CairnOS node with a base URL and a token
-// (.agents/spec/parity/openai-compat.md). It is protocol translation only, not
-// a second chat implementation: the one dangerous action, firing a workflow,
-// stays on the already-guarded native surface.
+// at a CairnOS node with a base URL and a token. It is protocol translation
+// only, not a second chat implementation: the one dangerous action, firing a
+// workflow, stays on the already-guarded native surface.
 //
 // # What maps to what
 //

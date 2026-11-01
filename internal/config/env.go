@@ -10,8 +10,7 @@ import (
 )
 
 // envPrefix namespaces every override: engine.max_concurrent_actions becomes
-// CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS
-// (.agents/spec/11-deployment-and-config.md, "Environment override convention").
+// CAIRNOS_ENGINE_MAX_CONCURRENT_ACTIONS.
 const envPrefix = "CAIRNOS_"
 
 // applyEnv overlays environment overrides onto cfg. The key set is an
@@ -83,8 +82,7 @@ func envBindings(cfg *Config) []envBinding {
 		{suffix: "OAUTH_ISSUER", set: intoString(&cfg.OAuth.Issuer)},
 		{suffix: "OAUTH_CLIENT_ID", set: intoString(&cfg.OAuth.ClientID)},
 		// The client secret is a credential, so it comes only from the
-		// environment, never the config file (.agents/spec/08-auth-and-access.md,
-		// "Configuration").
+		// environment, never the config file.
 		{suffix: "OAUTH_CLIENT_SECRET", set: intoString(&cfg.OAuth.ClientSecret)},
 		{suffix: "OAUTH_REDIRECT_URL", set: intoString(&cfg.OAuth.RedirectURL)},
 		{suffix: "OAUTH_DEFAULT_WORKSPACE", set: intoString(&cfg.OAuth.DefaultWorkspace)},

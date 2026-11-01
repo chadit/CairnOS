@@ -1,15 +1,19 @@
 package workflow
 
 import (
+	"crypto/sha1" // #nosec G505 -- git names objects by SHA-1; matching its IDs secures nothing on its own
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
+
+	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Canonical workflow.* error codes (.agents/spec/04-execution-engine.md).
+// Canonical workflow.* error codes.
 const (
 	CodeInvalid           = "workflow.invalid"
 	CodeBadName           = "workflow.bad_name"
@@ -28,14 +32,12 @@ const (
 	CodeBadRequires       = "workflow.bad_requires"
 	// CodeSecretNotAllowed marks a ${{ secrets.* }} reference in a place the
 	// value would be persisted: a workflow-call action's inputs (which become
-	// the child run's stored inputs) or, from parity slice 5, an approval
-	// message. Both round-trip through the store, so a secret there would leak
-	// (.agents/spec/parity/workflow-language.md).
+	// the child run's stored inputs) or an approval message. Both round-trip
+	// through the store, so a secret there would leak.
 	CodeSecretNotAllowed = "workflow.secret_not_allowed" // #nosec G101 -- canonical error code, not a credential
 )
 
-// Budget periods and on-exceed actions (.agents/spec/12-ui-and-governance.md,
-// "Budgets").
+// Budget periods and on-exceed actions.
 const (
 	BudgetPeriodDay     = "day"
 	BudgetPeriodWeek    = "week"
@@ -52,13 +54,10 @@ const (
 	OnErrorContinue = "continue"
 
 	// KindWorkflow runs another workflow as a child action, resolving it by
-	// name and passing an interpolated inputs table
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	// name and passing an interpolated inputs table.
 	KindWorkflow = "workflow"
-	// KindApproval names the human-approval kind a later parity slice adds.
-	// Reserved here by name so a file using it ahead of that slice fails with a
-	// clear "reserved" message rather than a bare "unknown kind", and so
-	// foreach rejects it.
+	// KindApproval holds the run at this action until a person approves or
+	// denies it.
 	KindApproval = "approval"
 )
 
@@ -71,8 +70,7 @@ const (
 	TypeStringSlice = "string[]"
 )
 
-// Workflow is one parsed and validated workflow file: a named DAG of actions
-// (.agents/spec/02-workflow-schema.md).
+// Workflow is one parsed and validated workflow file: a named DAG of actions.
 type Workflow struct {
 	Inputs map[string]InputDecl
 
@@ -83,13 +81,11 @@ type Workflow struct {
 
 	// Poll is the optional [workflow.poll] table that turns this scheduled
 	// workflow into a poll trigger: each cron fire polls an app event source
-	// and enqueues one run per new event. Nil means an ordinary schedule
-	// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers").
+	// and enqueues one run per new event. Nil means an ordinary schedule.
 	Poll *PollSpec
 
-	// Budget is the optional per-workflow cost ceiling
-	// (.agents/spec/12-ui-and-governance.md, "Budgets"). Nil means no budget,
-	// so the engine never accumulates spend or refuses a run for this workflow.
+	// Budget is the optional per-workflow cost ceiling. Nil means no budget, so
+	// the engine never accumulates spend or refuses a run for this workflow.
 	Budget *BudgetSpec
 
 	Actions map[string]*Action
@@ -105,8 +101,7 @@ type Workflow struct {
 
 	// ErrorWorkflow names a workflow fired once, synchronously, when a run of
 	// this workflow fails. Empty means no error handler. It must match the
-	// workflow-name pattern and cannot point back at this workflow
-	// (.agents/spec/parity/workflow-language.md, "Error workflow").
+	// workflow-name pattern and cannot point back at this workflow.
 	ErrorWorkflow string
 
 	OnError     string
@@ -138,7 +133,7 @@ type RequiresSpec struct {
 // poll and the source-specific params that scope the poll. A poll workflow is
 // an ordinary scheduled workflow, so it needs a non-empty top-level schedule;
 // the fire path in internal/cli turns one cron fire into zero or more enqueued
-// events (.agents/spec/parity/triggers-webhooks.md).
+// events.
 type PollSpec struct {
 	// Params are the source-specific arguments (repo, state, ...) passed
 	// through to the source untouched.
@@ -153,7 +148,7 @@ type PollSpec struct {
 // BudgetSpec is one workflow's [workflow.budget] table: a cost ceiling over a
 // period and what to do when spend passes it. Spend rides on the estimated
 // cost runners report, so the ceiling is soft and can drift from a real
-// invoice (.agents/spec/12-ui-and-governance.md, "Budgets").
+// invoice.
 type BudgetSpec struct {
 	// Period is the accumulation window: day, week, or month.
 	Period string
@@ -173,23 +168,21 @@ type Action struct {
 
 	// Inputs is the interpolatable table a workflow-call action passes as the
 	// child run's inputs. Secret refs are banned here at validate time because
-	// the resolved values become the child run's persisted inputs
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	// the resolved values become the child run's persisted inputs.
 	Inputs map[string]any
 
 	Params map[string]any
 
 	// Foreach fans a task action over a list, running one attempt per element
 	// with ${{ item }} and ${{ index }} bound. Nil means the action runs once.
-	// Only legal on a task action (.agents/spec/parity/workflow-language.md).
+	// Only legal on a task action.
 	Foreach *ForeachSpec
 
 	Retry     *RetryPolicy
 	Condition string
 
 	// Driver, MemoryScope, and SystemPrompt configure an agent action, as do
-	// Goal, Tools, HasTools, MaxIterations, and BudgetUSD further down
-	// (.agents/spec/15-agent-loop.md).
+	// Goal, Tools, HasTools, MaxIterations, and BudgetUSD further down.
 	Driver       string
 	MemoryScope  string
 	SystemPrompt string
@@ -203,17 +196,22 @@ type Action struct {
 	Goal string
 
 	// Workflow names the child workflow a workflow-call action (kind =
-	// "workflow") runs, with Inputs above as that child run's inputs
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	// "workflow") runs, with Inputs above as that child run's inputs.
 	Workflow string
+
+	// Definition is the workflow file Load read this action from, then the
+	// stdin_file the action included, each with the object ID of the bytes
+	// read; empty for a workflow parsed from bytes. It rides on the action
+	// because the engine hands runners one action at a time, and the exec gate
+	// reads it to recognize files a trusted source committed.
+	Definition []runner.DefinitionFile
 
 	Kind string
 
 	// Message is the optional, interpolated prompt an approval action
 	// (kind = "approval") shows the operator. It can reference upstream outputs
 	// but never a secret: validation bans secret refs because the resolved
-	// message is persisted to the approval record
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// message is persisted to the approval record.
 	Message string
 
 	DependsOn []string
@@ -250,7 +248,7 @@ type ForeachSpec struct {
 }
 
 // RetryPolicy mirrors the per-action retry table; zero value means "use the
-// engine default" (.agents/spec/04-execution-engine.md).
+// engine default".
 type RetryPolicy struct {
 	Backoff     string
 	MaxAttempts int
@@ -278,12 +276,17 @@ func (decl InputDecl) MustBeSupplied() bool {
 
 // Load reads and parses a workflow file, resolving stdin_file params against
 // the file's directory, and stamps Hash with DefinitionHash so run records can
-// identify the exact definition. The returned error is a cairnerr.Errors
-// carrying every problem found, not just the first.
+// identify the exact definition, plus each action's Definition. The returned
+// error is a cairnerr.Errors carrying every problem found, not just the first.
 func Load(path string) (*Workflow, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- the path is the operator's own CLI argument; reading it is the command's purpose
 	if err != nil {
 		return nil, fmt.Errorf("read workflow: %w", err)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow path: %w", err)
 	}
 
 	flow, err := ParseInDir(data, filepath.Dir(path))
@@ -292,14 +295,48 @@ func Load(path string) (*Workflow, error) {
 	}
 
 	flow.Hash = flow.DefinitionHash(data)
+	flow.stampDefinitions(absPath, data)
 
 	return flow, nil
 }
 
+// stampDefinitions records on each action the files it was built from. Each
+// action gets its own slice, so appending an include to one never shows up in
+// another that shares the workflow file.
+func (flow *Workflow) stampDefinitions(absPath string, data []byte) {
+	workflowFile := runner.DefinitionFile{Path: absPath, BlobID: GitBlobID(data)}
+
+	for _, action := range flow.Actions {
+		action.Definition = []runner.DefinitionFile{workflowFile}
+	}
+
+	dir := filepath.Dir(absPath)
+
+	for _, file := range flow.includes {
+		action := flow.Actions[file.action]
+		action.Definition = append(action.Definition, runner.DefinitionFile{
+			Path:   filepath.Join(dir, file.path),
+			BlobID: GitBlobID([]byte(file.text)),
+		})
+	}
+}
+
+// GitBlobID is the object ID a SHA-1 git repository gives data stored as a
+// file, computed here so the exec gate compares the bytes Load read with a
+// commit instead of asking git to hash a file that may have changed since. A
+// SHA-256 repository names objects differently, so its files never match and
+// the gate denies.
+func GitBlobID(data []byte) string {
+	hasher := sha1.New() // #nosec G401 -- git's object naming, not a security primitive here
+	hasher.Write([]byte("blob " + strconv.Itoa(len(data)) + "\x00"))
+	hasher.Write(data)
+
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
 // HashBytes returns the hex SHA-256 of definition bytes, the same identity
 // Load stamps onto a workflow's Hash. Inline runs share it so a run started
-// from unsaved bytes records the same hash a saved file would
-// (.agents/spec/parity/builder-ops.md, "Inline run").
+// from unsaved bytes records the same hash a saved file would.
 func HashBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 

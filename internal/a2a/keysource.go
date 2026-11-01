@@ -31,10 +31,8 @@ const (
 
 // ResolveSigningKey picks the card signing key in priority order: the configured
 // PEM file, the auth layer's EdDSA key when the auth tier is asymmetric, then an
-// ephemeral key (.agents/spec/09-a2a-and-hive.md, "Agent card";
-// .agents/spec/08-auth-and-access.md, Change 3). Ephemeral warns because a key
-// that dies on restart is dev-only. authKey is nil when auth is off or the tier
-// is HS256.
+// ephemeral key. Ephemeral warns because a key that dies on restart is dev-only.
+// authKey is nil when auth is off or the tier is HS256.
 func ResolveSigningKey(keyFile string, authKey ed25519.PrivateKey, logger *slog.Logger) (ed25519.PrivateKey, KeyOrigin, error) {
 	if logger == nil {
 		logger = slog.Default()

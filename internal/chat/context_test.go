@@ -392,8 +392,11 @@ func TestFileRefLimitNote(t *testing.T) {
 
 	root := t.TempDir()
 
-	refs := make([]string, 0, 9)
-	for idx := range 9 {
+	// One past the per-message limit of 8, so exactly one ref overflows.
+	const numRefs = 9
+
+	refs := make([]string, 0, numRefs)
+	for idx := range numRefs {
 		refs = append(refs, "@"+filepath.Join(root, fmt.Sprintf("f%d.txt", idx)))
 	}
 

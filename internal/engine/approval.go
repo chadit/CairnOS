@@ -13,8 +13,7 @@ import (
 )
 
 // CodeApprovalDenied marks an approval action an operator denied. It engages
-// on_error and error_workflow like any action failure
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// on_error and error_workflow like any action failure.
 const CodeApprovalDenied = "action.approval_denied"
 
 // detailComment carries a denier's note on the action error, so history shows
@@ -25,8 +24,7 @@ const detailComment = "comment"
 // row yet means the gate is fresh: it persists a pending row and parks the run
 // as held. A decided row resolves the action: approval succeeds with the
 // decider's identity, denial fails with action.approval_denied. A still-pending
-// row (a resume before deciding) re-parks without writing a second gate
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// row (a resume before deciding) re-parks without writing a second gate.
 func (e *Engine) approvalAttempt(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any) attemptOutcome {
 	// The read detaches from cancellation so a run being torn down still sees the
 	// decision it already recorded, the same reason persistAction writes detached.
@@ -145,8 +143,7 @@ func deniedError(action *workflow.Action, decision *store.Approval) *cairnerr.Er
 // Seeding does not re-write the succeeded rows, so they stay byte-identical. A
 // nil error means the resume drove the existing run. A run that is not held (a
 // terminal run whose gate a failure or cancel orphaned by beating the park) is
-// rejected with ErrRunNotHeld so it stays terminal
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// rejected with ErrRunNotHeld so it stays terminal.
 
 // ResumeRun drives a held run forward after its approval was decided. It seeds
 // the run's already-succeeded actions in memory, then re-runs the parked

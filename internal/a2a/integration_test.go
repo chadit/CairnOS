@@ -158,9 +158,8 @@ func drainHTTPUpdates(t *testing.T, url string) {
 	}
 }
 
-// TestEndToEndCardLoginCreateStream is the spec's acceptance loop
-// (.agents/spec/09-a2a-and-hive.md): fetch and verify the card, log in,
-// CreateTask, stream TaskUpdates to completion.
+// TestEndToEndCardLoginCreateStream is the spec's acceptance loop: fetch and
+// verify the card, log in, CreateTask, stream TaskUpdates to completion.
 func TestEndToEndCardLoginCreateStream(t *testing.T) {
 	t.Parallel()
 

@@ -381,7 +381,11 @@ func TestSendMessageDetachesTheTurnFromTheRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	sendErr := make(chan error, 1)
+	// One slot lets the SendMessage goroutine exit even when the test fails
+	// before it reads the error.
+	const resultBufferSize = 1
+
+	sendErr := make(chan error, resultBufferSize)
 
 	go func() {
 		_, err := service.SendMessage(ctx, &a2av1.SendMessageRequest{ContextId: contextOne, Text: msgHello})

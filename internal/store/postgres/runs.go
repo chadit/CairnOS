@@ -92,9 +92,8 @@ func isTerminal(status store.RunStatus) bool {
 }
 
 // GetRun fetches one run by id, including its terminal error if any. The
-// query is scoped to the request workspace, so a run in another workspace
-// reads as not-found rather than crossing the tenancy boundary
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// query is scoped to the request workspace, so a run in another workspace reads
+// as not-found rather than crossing the tenancy boundary.
 func (s *Store) GetRun(ctx context.Context, id string) (*store.Run, error) {
 	row := s.pool.QueryRow(ctx,
 		"SELECT "+runColumns+" FROM runs WHERE id = $1 AND workspace_id = $2",

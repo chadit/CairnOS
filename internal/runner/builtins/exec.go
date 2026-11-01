@@ -56,7 +56,11 @@ const (
 // user's full authority.
 type Exec struct {
 	allowActions map[string]struct{}
-	env          []string // "KEY=VALUE" entries appended to the inherited environment
+
+	// trusted admits actions from files a trusted source committed; its zero
+	// value trusts nothing.
+	trusted ExecTrust
+	env     []string // "KEY=VALUE" entries appended to the inherited environment
 
 	// inherited is the environment children start from. Nil leaves cmd.Env
 	// unset, so the child inherits this process's environment the way it always
@@ -98,10 +102,12 @@ func ExecFactory() runner.Factory {
 }
 
 // ExecFactoryWithHostEnv adapts the runner to the registry contract and hands
-// every child the rendered host table. The entries land after the config env
-// table, though nothing can collide there: decodeExecEnv refuses a key with the
-// reserved prefix, so the rendered table is the only writer of those names.
-func ExecFactoryWithHostEnv(hostEnv, inherited []string) runner.Factory {
+// every child the rendered host table after the config env table. They cannot
+// collide: decodeExecEnv refuses a key with the reserved prefix, so only the
+// rendered table writes those names.
+// trust widens the gate to files trusted sources committed; its zero value
+// leaves allow_actions the only way through.
+func ExecFactoryWithHostEnv(hostEnv, inherited []string, trust ExecTrust) runner.Factory {
 	return func(cfg map[string]any) (runner.Runner, error) {
 		built, err := NewExec(cfg)
 		if err != nil {
@@ -110,6 +116,7 @@ func ExecFactoryWithHostEnv(hostEnv, inherited []string) runner.Factory {
 
 		built.env = append(built.env, hostEnv...)
 		built.inherited = inherited
+		built.trusted = trust
 
 		return built, nil
 	}
@@ -120,9 +127,58 @@ func (*Exec) Name() string { return ExecName }
 
 // Validate runs in both engine passes. The gate fires regardless of
 // Task.Resolved, since ActionName is never a ${{ }} reference: a denied action
-// fails at workflow load, before anything runs.
+// fails at workflow load, before anything runs. The engine's Validate carries
+// no context, so the trusted-source check is bounded by its own timeout.
 func (e *Exec) Validate(task *runner.Task) error {
-	if err := e.gate(task); err != nil {
+	return e.validateIn(context.Background(), task)
+}
+
+// Execute implements runner.Runner. A non-zero exit comes back permanent with
+// its code in the message, so the engine's retry policy decides what happens
+// next rather than this runner.
+func (e *Exec) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
+	if err := e.validateIn(ctx, task); err != nil {
+		return runner.Result{}, err
+	}
+
+	command, _ := task.Params[paramCommand].(string)
+
+	runCtx, cancel := e.runContext(ctx, task)
+	defer cancel()
+
+	return launchExec(runCtx, func() *exec.Cmd {
+		// #nosec G204 -- the command and its argv come from a workflow action whose
+		// name the operator listed in allow_actions, or whose file a trusted source
+		// committed. This runner has no isolation by design (see the type doc); the
+		// gate is the trust boundary.
+		cmd := exec.CommandContext(runCtx, command, execArgv(task)...)
+
+		// A script can fork a child that inherits stdout, so the deadline kills the
+		// whole process group, and WaitDelay bounds the wait on a child that left it.
+		cmd.WaitDelay = cliWaitDelay
+		groupProcess(cmd)
+
+		cmd.Dir, _ = task.Params[keyWorkdir].(string)
+
+		if e.inherited != nil || len(e.env) > 0 {
+			cmd.Env = append(slices.Clone(e.inherited), e.env...)
+		}
+
+		// A nil Stdin hands the child /dev/null, so an absent param leaves a command
+		// that reads stdin seeing EOF straight away instead of blocking on the
+		// serve process's own terminal.
+		if text, hasStdin := task.Params[paramStdin].(string); hasStdin {
+			cmd.Stdin = strings.NewReader(text)
+		}
+
+		return cmd
+	})
+}
+
+// validateIn is Validate under a caller's context, so Execute's cancellation
+// reaches the trusted-source check's git calls.
+func (e *Exec) validateIn(ctx context.Context, task *runner.Task) error {
+	if err := e.gate(ctx, task); err != nil {
 		return err
 	}
 
@@ -141,47 +197,26 @@ func (e *Exec) Validate(task *runner.Task) error {
 	return optionalStringParam(task, paramStdin, ExecName)
 }
 
-// Execute implements runner.Runner. A non-zero exit comes back permanent with
-// its code in the message, so the engine's retry policy decides what happens
-// next rather than this runner.
-func (e *Exec) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
-	if err := e.Validate(task); err != nil {
-		return runner.Result{}, err
-	}
-
-	command, _ := task.Params[paramCommand].(string)
-
-	runCtx, cancel := e.runContext(ctx, task)
-	defer cancel()
-
-	return launchExec(runCtx, func() *exec.Cmd {
-		// #nosec G204 -- the command and its argv come from a workflow action whose
-		// name the operator listed in allow_actions. This runner has no isolation by
-		// design (see the type doc); the gate is the trust boundary.
-		cmd := exec.CommandContext(runCtx, command, execArgv(task)...)
-		cmd.Dir, _ = task.Params[keyWorkdir].(string)
-
-		if e.inherited != nil || len(e.env) > 0 {
-			cmd.Env = append(slices.Clone(e.inherited), e.env...)
-		}
-
-		// A nil Stdin hands the child /dev/null, so an absent param leaves a command
-		// that reads stdin seeing EOF straight away instead of blocking on the
-		// serve process's own terminal.
-		if text, hasStdin := task.Params[paramStdin].(string); hasStdin {
-			cmd.Stdin = strings.NewReader(text)
-		}
-
-		return cmd
-	})
-}
-
 // gate is the deny-by-default check and the only control this runner has. An
 // absent block, an absent key, and an empty list all leave allowActions empty,
-// which denies everything.
-func (e *Exec) gate(task *runner.Task) error {
+// which denies everything unless the action's own file is committed, unchanged,
+// under a trusted source.
+func (e *Exec) gate(ctx context.Context, task *runner.Task) error {
 	if _, allowed := e.allowActions[task.ActionName]; allowed {
 		return nil
+	}
+
+	trusted, err := e.trusted.allows(ctx, task.Definition)
+	if trusted {
+		return nil
+	}
+
+	// A failed git read says nothing about the file, and the next attempt may
+	// get an answer, so it is the one denial a retry can clear.
+	if err != nil {
+		return taskError(runner.ClassTransient, codeExecDenied,
+			"action %s is not in %s allow_actions, and the trusted-source check failed: %v",
+			task.ActionName, ExecName, err)
 	}
 
 	return taskError(runner.ClassPermanent, codeExecDenied,
@@ -190,8 +225,9 @@ func (e *Exec) gate(task *runner.Task) error {
 
 // runContext derives the effective deadline: the config timeout as the
 // backstop, Task.Deadline when the engine set an earlier one. The timeout is
-// always positive whenever the gate can pass, since only a configured block
-// carries a non-empty allow list and such a block must set one.
+// always positive: a written block must set one, and a host with no block,
+// whose only way through the gate is a trusted source, gets
+// unconfiguredExecTimeout.
 func (e *Exec) runContext(ctx context.Context, task *runner.Task) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(e.timeout)
 
@@ -221,7 +257,7 @@ func launchExec(runCtx context.Context, build func() *exec.Cmd) (runner.Result, 
 
 	stdoutText, scanErr := collectStdout(runCtx, piped.stdout, nil)
 
-	waitErr := cmd.Wait()
+	waitErr := dropCleanExitWaitDelay(runCtx, cmd.Wait())
 	latency := time.Since(start)
 
 	if waitErr != nil {
@@ -357,12 +393,18 @@ func decodeExecTimeout(cfg map[string]any) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
+// defaultExecTimeout bounds a command on a host with no [runner.exec] block,
+// which only a trusted source's action can reach. It matches the engine's stock
+// action timeout, so such an action is cut off where any other would be, and an
+// earlier engine deadline still wins in runContext.
+const defaultExecTimeout = 5 * time.Minute
+
 // unconfiguredExecTimeout decides what an absent timeout means. No keys at all
-// is the startup default on a host that never enabled exec; anything else is an
-// operator who wrote a block and left the bound out.
+// is a host that never wrote the block, which gets the default; anything else
+// is an operator who wrote a block and left the bound out.
 func unconfiguredExecTimeout(cfg map[string]any) (time.Duration, error) {
 	if len(cfg) == 0 {
-		return 0, nil
+		return defaultExecTimeout, nil
 	}
 
 	return 0, fmt.Errorf("%w: %s is required and must be a positive number of seconds",

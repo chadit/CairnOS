@@ -6,10 +6,10 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// RunWorkflowToolName is the registry name of the D9 gated workflow trigger
-// the chat agent holds (.agents/spec/14-open-decisions.md, D9). It is the one
-// tool whose call the chat agent intercepts instead of executing: a call
-// raises a confirmation gate rather than running anything.
+// RunWorkflowToolName is the registry name of the D9 gated workflow trigger the
+// chat agent holds (D9). It is the one tool whose call the chat agent
+// intercepts instead of executing: a call raises a confirmation gate rather
+// than running anything.
 const RunWorkflowToolName = "run_workflow"
 
 // run_workflow tool argument keys.

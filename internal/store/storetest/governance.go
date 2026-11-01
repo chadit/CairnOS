@@ -272,8 +272,7 @@ func testSpendSinceSumsCostInWindow[S store.Store](t *testing.T, openFn OpenFunc
 
 // testWorkflowPauseIsolatesByWorkspace proves two tenants can pause the same
 // workflow name independently: a pause in workspace A does not pause it in
-// workspace B, and resuming in one tenant leaves the other's pause standing
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// workspace B, and resuming in one tenant leaves the other's pause standing.
 func testWorkflowPauseIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -319,8 +318,7 @@ func testWorkflowPauseIsolatesByWorkspace[S store.Store](t *testing.T, openFn Op
 }
 
 // testAuditIsolatesByWorkspace proves the audit trail is per tenant: a row
-// written under one workspace is invisible to another's ListAudit
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// written under one workspace is invisible to another's ListAudit.
 func testAuditIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

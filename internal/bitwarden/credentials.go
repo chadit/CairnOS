@@ -12,9 +12,13 @@ package bitwarden
 import (
 	"bufio"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/chadit/CairnOS/internal/cairnerr"
 )
@@ -30,11 +34,17 @@ const (
 	// read a variable name as a hardcoded value.
 	EnvMasterKey = "BW_PASSWORD"
 
-	// EnvItem names the vault item. It lives beside the credentials because
-	// `cairnos secrets auth` writes all four together, and a host that never
-	// edits config.toml still ends up with a working pull.
+	// EnvItem names the vault item. It lives beside the credentials so the one
+	// file that opens the vault also says what to read from it, and a host that
+	// never edits config.toml still ends up with a working pull.
 	EnvItem = "BW_ITEM"
 )
+
+// chezmoiExt marks a credentials path as a chezmoi config rather than a
+// KEY=VALUE file, in any letter case. The extension decides, not the content,
+// so a file that fails to parse is reported against the format the operator
+// chose.
+const chezmoiExt = ".toml"
 
 // credentialsPerm is the loosest mode the credentials file may carry. Anything
 // group- or world-readable is refused rather than warned about: the file opens a
@@ -57,12 +67,10 @@ type Credentials struct {
 	Item string
 }
 
-// LoadCredentials reads the three values from path and falls back to env for any
-// the file omits, so a host can keep them in either place. env is a parameter so
-// a test can supply one without touching the process.
-//
-// A missing file is fine when the environment supplies everything; one readable
-// beyond its owner is always an error.
+// LoadCredentials reads the values from path and falls back to env for any the
+// file omits. A .toml path is read as a chezmoi config, so a workstation keeps
+// one copy of the four values. A missing file is fine when env supplies
+// everything; a file readable beyond its owner is always an error.
 func LoadCredentials(path string, env func(string) string) (Credentials, error) {
 	fromFile, err := readCredentialsFile(path)
 	if err != nil {
@@ -80,7 +88,7 @@ func LoadCredentials(path string, env func(string) string) (Credentials, error) 
 }
 
 // pick prefers the file's value and falls back to the environment, so a host can
-// keep two of the three in a file and the last one somewhere else.
+// keep three of the four in a file and the last one somewhere else.
 func pick(fromFile map[string]string, env func(string) string, name string) string {
 	if value := fromFile[name]; value != "" {
 		return value
@@ -91,30 +99,46 @@ func pick(fromFile map[string]string, env func(string) string, name string) stri
 
 // checkComplete names every value still missing rather than the first, so one
 // run tells the operator everything to fix. The item is not on the list: it may
-// come from the config block instead.
+// come from the config block instead. A chezmoi config never holds a BW_ name,
+// so for one the file half of the message names its [data.secret] keys, the
+// tags on chezmoiConfig.
 func checkComplete(creds Credentials, path string) error {
-	var missing []string
+	var missingEnv, missingKeys []string
 
-	for _, pair := range []struct{ name, value string }{
-		{EnvClientID, creds.ClientID},
-		{EnvClientSecret, creds.ClientSecret},
-		{EnvMasterKey, creds.MasterKey},
+	for _, required := range []struct{ env, chezmoiKey, value string }{
+		{EnvClientID, "bw_client_id", creds.ClientID},
+		{EnvClientSecret, "bw_client_secret", creds.ClientSecret},
+		{EnvMasterKey, "bw_master_key", creds.MasterKey},
 	} {
-		if pair.value == "" {
-			missing = append(missing, pair.name)
+		if required.value == "" {
+			missingEnv = append(missingEnv, required.env)
+			missingKeys = append(missingKeys, required.chezmoiKey)
 		}
 	}
 
-	if len(missing) == 0 {
+	if len(missingEnv) == 0 {
 		return nil
 	}
 
+	if isChezmoiConfig(path) {
+		return vaultError(CodeCredentials, "%s has no [data.secret] %s, and the environment has no %s",
+			path, strings.Join(missingKeys, ", "), strings.Join(missingEnv, ", "))
+	}
+
 	return vaultError(CodeCredentials, "%s is missing from %s and the environment",
-		strings.Join(missing, ", "), path)
+		strings.Join(missingEnv, ", "), path)
 }
 
-// readCredentialsFile parses the KEY=VALUE file, refusing one anybody but its
-// owner can read. An absent file returns nothing and no error.
+// isChezmoiConfig reports whether path names a chezmoi config. The comparison
+// ignores case because a file named chezmoi.TOML sent to the KEY=VALUE parser
+// would have every line dropped without a word.
+func isChezmoiConfig(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), chezmoiExt)
+}
+
+// readCredentialsFile parses the credentials file in the format its extension
+// names, refusing one anybody but its owner can read. An absent file returns
+// nothing and no error.
 //
 // The mode is read off the descriptor, not the path: checking a path and then
 // opening it are two resolutions, and anything that can write the directory
@@ -142,11 +166,66 @@ func readCredentialsFile(path string) (map[string]string, error) {
 			path, perm, credentialsPerm)
 	}
 
+	if isChezmoiConfig(path) {
+		return parseChezmoiConfig(file, path)
+	}
+
 	return parseCredentialsFile(file, path)
 }
 
+// chezmoiConfig mirrors the one table of a chezmoi config this package reads.
+// Every other key is left to the decoder to skip, so a config that grows new
+// sections still loads.
+type chezmoiConfig struct {
+	Data struct {
+		Secret struct {
+			ClientID     string `toml:"bw_client_id"`
+			ClientSecret string `toml:"bw_client_secret"`
+			MasterKey    string `toml:"bw_master_key"`
+			Item         string `toml:"bw_item_name"`
+		} `toml:"secret"`
+	} `toml:"data"`
+}
+
+// parseChezmoiConfig reads the four values from a chezmoi config's
+// [data.secret] table, keyed by the variable names the file fallback uses so
+// LoadCredentials treats both formats the same. An empty value counts as
+// absent, which is what lets the environment fill it in.
+func parseChezmoiConfig(reader io.Reader, path string) (map[string]string, error) {
+	var parsed chezmoiConfig
+
+	if err := toml.NewDecoder(reader).Decode(&parsed); err != nil {
+		return nil, tomlProblem(err, path)
+	}
+
+	secret := parsed.Data.Secret
+
+	return map[string]string{
+		EnvClientID:     secret.ClientID,
+		EnvClientSecret: secret.ClientSecret,
+		EnvMasterKey:    secret.MasterKey,
+		EnvItem:         secret.Item,
+	}, nil
+}
+
+// tomlProblem reports where a chezmoi config stopped decoding by line and
+// column only, because the decoder's error keeps the offending line, which can
+// hold the master key. A type mismatch decodes to the same error, so the
+// message does not say invalid TOML. Any other error is a read failure and
+// quotes nothing from the file.
+func tomlProblem(err error, path string) error {
+	if decodeErr, isDecode := errors.AsType[*toml.DecodeError](err); isDecode {
+		row, column := decodeErr.Position()
+
+		return vaultError(CodeCredentials, "%s cannot be read as a chezmoi config at line %d, column %d",
+			path, row, column)
+	}
+
+	return cairnerr.Wrapf(err, CodeCredentials, "read %s: %v", path, err)
+}
+
 // parseCredentialsFile reads the KEY=VALUE lines the file is allowed to carry.
-// Only the three names this package knows are kept, so anything else an operator
+// Only the four names this package knows are kept, so anything else an operator
 // parks in the file is not silently picked up.
 func parseCredentialsFile(file *os.File, path string) (map[string]string, error) {
 	wanted := map[string]struct{}{EnvClientID: {}, EnvClientSecret: {}, EnvMasterKey: {}, EnvItem: {}}

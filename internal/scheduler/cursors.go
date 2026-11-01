@@ -5,7 +5,7 @@ import "context"
 // PollCursors persists one opaque cursor string per schedule so re-polls do not
 // re-read events whose acked queue rows are already gone. The poll fire path
 // reads the cursor before polling a source and writes the advanced cursor after
-// enqueuing the events (.agents/spec/parity/triggers-webhooks.md, "Cursors").
+// enqueuing the events.
 type PollCursors interface {
 	// GetCursor returns the schedule's stored cursor, or ErrCursorNotFound when
 	// the schedule has never polled. The empty-cursor first poll is the caller's

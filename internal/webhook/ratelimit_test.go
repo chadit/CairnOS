@@ -89,11 +89,13 @@ func TestUnknownTokenGlobalRateCap(t *testing.T) {
 
 	env := newRig(t, func(cfg *webhook.HandlerConfig) { cfg.UnknownRatePerMinute = 2 })
 
-	statuses := make([]int, 0, 3)
+	const numUnknownPosts = 3
+
+	statuses := make([]int, 0, numUnknownPosts)
 
 	var last *httptest.ResponseRecorder
 
-	for range 3 {
+	for range numUnknownPosts {
 		token, _ := mint(t)
 		rec := env.post(t, prodPrefix+token, []byte(sampleJSON), nil)
 		statuses = append(statuses, rec.Code)

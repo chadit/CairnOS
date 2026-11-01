@@ -11,7 +11,7 @@ import (
 
 // TestConfirmProposalRendersKeyboard proves a raised proposal renders an
 // Approve/Deny inline keyboard whose callback_data carries the session id and
-// verb (.agents/spec/parity/messaging-bridge.md, acceptance 2).
+// verb.
 func TestConfirmProposalRendersKeyboard(t *testing.T) {
 	t.Parallel()
 

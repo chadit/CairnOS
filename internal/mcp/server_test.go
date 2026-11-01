@@ -116,7 +116,7 @@ func TestRunWorkflowStartsRealRun(t *testing.T) {
 // default. A workspace-B-scoped store read sees the run; a workspace-A read does
 // not; and the budget spend sums against B, not default. This is the regression
 // guard for the run_workflow handler stamping the caller's workspace before
-// StartRun (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// StartRun.
 func TestRunWorkflowStampsCallerWorkspace(t *testing.T) {
 	t.Parallel()
 

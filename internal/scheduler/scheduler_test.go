@@ -31,6 +31,11 @@ const (
 // errFireBoom is the failure the failing-runner tests inject.
 var errFireBoom = errors.New("fire boom")
 
+// oneShotChanSize buffers a channel that carries one value, such as the
+// daemon's exit error or a hook's single notice, so the send never waits on
+// the receiver and a test that fails before reading leaks no goroutine.
+const oneShotChanSize = 1
+
 // memStore is an in-memory Schedules fake so daemon tests run inside a
 // synctest bubble without SQLite's background machinery.
 type memStore struct {
@@ -146,7 +151,7 @@ func startDaemon(t *testing.T, sched *scheduler.Scheduler) func() {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
+	done := make(chan error, oneShotChanSize)
 
 	go func() {
 		done <- sched.Run(ctx)
@@ -475,7 +480,7 @@ func TestDaemonFiresMissedScheduleOnceWithoutBacklog(t *testing.T) {
 		now := time.Now()
 
 		// Three hourly intervals passed while the process was "down": the
-		// spec's policy is one fire, no burst (.agents/spec/14, S8).
+		// spec's policy is one fire, no burst (S8).
 		if _, err := store.Add(t.Context(), &scheduler.Schedule{
 			ID: behindScheduleID, WorkflowName: flowName, Cron: hourlyCron,
 			NextFire: now.Add(-3 * hourInterval),

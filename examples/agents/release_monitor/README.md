@@ -77,10 +77,11 @@ repos directly, so editing `repos` alone changes nothing they fetch. A
 
 `issues_repo` is required and has no default, so a run without it stops before
 any step does work instead of failing on the first day a release matches. Pass
-it as `owner/name` with `--input`. A scheduled run supplies no inputs, and
-`cairnos schedule add` refuses a file whose required input has no default, so
-before you schedule your copy, replace its `[workflow.inputs.issues_repo]`
-table with one that has a `default`:
+your own repo as `owner/name` with `--input`, in place of the
+`your-org/your-issues-repo` placeholder this README uses. A scheduled run
+supplies no inputs, and `cairnos schedule add` refuses a file whose required
+input has no default, so before you schedule your copy, replace its
+`[workflow.inputs.issues_repo]` table with one that has a `default`:
 
 ```toml
 [workflow.inputs.issues_repo]

@@ -11,8 +11,8 @@
 # a workflow file holds only [workflow] and [action] tables; its
 # [runner.browser_nav] config block lives in the README, ready to paste into
 # ~/.cairnos/config.toml. Registering that named block needs the mcp_client
-# named-instance path (parity/mcp-import-fix.md slice 1); without it the block
-# registers nothing and the run fails to resolve browser_nav.
+# named-instance path; without it the block registers nothing and the run fails
+# to resolve browser_nav.
 
 [workflow]
 name        = "browser_snapshot"

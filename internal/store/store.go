@@ -1,9 +1,7 @@
-// Package store defines the durable state contract for runs and action
-// results (.agents/spec/04-execution-engine.md, "State persistence"). The
-// engine depends only on this interface; SQLite implements it in the sqlite
+// Package store defines the durable state contract for runs and action results.
+// The engine depends only on this interface; SQLite implements it in the sqlite
 // subpackage, Postgres arrives in Phase 4c, and tests use an in-memory fake.
-// That seam is the Phase 0 acceptance criterion from
-// .agents/spec/05-memory-and-knowledge.md.
+// That seam is the Phase 0 acceptance criterion.
 package store
 
 import (
@@ -27,8 +25,7 @@ const (
 	RunCanceled  RunStatus = "canceled"
 	// RunHeld is a run parked on a human-approval action. No goroutine runs
 	// while it waits, so ReconcileInterrupted leaves it alone across a restart,
-	// and it is not terminal: deciding the approval resumes the same run
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// and it is not terminal: deciding the approval resumes the same run.
 	RunHeld RunStatus = "held"
 )
 
@@ -46,8 +43,7 @@ const (
 	ActionSkipped   ActionStatus = "skipped"
 	// ActionWaiting marks an approval action parked pending a human decision.
 	// It is not terminal: the run finalizes as held while the action waits, and
-	// the action re-runs to a terminal state when the run resumes
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// the action re-runs to a terminal state when the run resumes.
 	ActionWaiting ActionStatus = "waiting"
 )
 
@@ -66,9 +62,8 @@ type Run struct {
 	Trigger      string // cli|schedule|api|a2a|webhook|webhook_test|poll|replay|error|workflow
 
 	// ParentRunID links a child run to the run that spawned it: a replay to
-	// the run it reruns, a workflow-call child to its caller, an error
-	// workflow to the failed run that fired it. Empty means a root run
-	// (.agents/spec/parity/workflow-language.md, "Replay from failed action").
+	// the run it reruns, a workflow-call child to its caller, an error workflow
+	// to the failed run that fired it. Empty means a root run.
 	ParentRunID string
 }
 
@@ -87,7 +82,7 @@ type ActionResult struct {
 	Attempt    int
 }
 
-// Agent-step kinds (.agents/spec/15-agent-loop.md, "Transcript persistence").
+// Agent-step kinds.
 const (
 	// StepDriverCall records a driver turn that requested (or badly
 	// requested) a tool call.
@@ -116,9 +111,8 @@ type AgentStep struct {
 // SuggestionStatus is the review state of a tuning suggestion.
 type SuggestionStatus string
 
-// Suggestion review states (.agents/spec/06-observability-and-tuning.md,
-// "Review flow"). Phase 3 stops at approved/rejected: approval prints an
-// annotated diff for the human to apply by hand, and "applied" only arrives
+// Suggestion review states. Phase 3 stops at approved/rejected: approval prints
+// an annotated diff for the human to apply by hand, and "applied" only arrives
 // with Phase 6 auto-apply.
 const (
 	SuggestionOpen     SuggestionStatus = "open"
@@ -130,8 +124,7 @@ const (
 	SuggestionApplied SuggestionStatus = "applied"
 )
 
-// SuggestionKind names what a tuning suggestion proposes
-// (.agents/spec/06-observability-and-tuning.md, "Suggestion kinds").
+// SuggestionKind names what a tuning suggestion proposes.
 type SuggestionKind string
 
 // Phase 3 suggestion kinds. Prompt refactoring is deliberately absent: it is
@@ -181,11 +174,10 @@ type SuggestionFilter struct {
 }
 
 // WorkflowVersion is one captured snapshot of a workflow definition, the
-// rollback point auto-apply records before it edits a file
-// (.agents/spec/13-roadmap.md, Phase 6; .agents/spec/09-a2a-and-hive.md). The
-// hash identifies the exact bytes (the same SHA-256 a run records), so
-// capturing one file twice collides on the primary key rather than duplicating.
-// DefinitionTOML is the verbatim content to restore.
+// rollback point auto-apply records before it edits a file. The hash identifies
+// the exact bytes (the same SHA-256 a run records), so capturing one file twice
+// collides on the primary key rather than duplicating. DefinitionTOML is the
+// verbatim content to restore.
 type WorkflowVersion struct {
 	CreatedAt      time.Time
 	Hash           string
@@ -193,10 +185,8 @@ type WorkflowVersion struct {
 	DefinitionTOML string
 }
 
-// WorkflowVersionStore is the rollback slice of the store
-// (.agents/spec/13-roadmap.md, Phase 6: "a workflow-definition version store
-// so an auto-applied change can be rolled back"). Split out so the autonomic
-// applier depends on this narrow surface instead of all of Store.
+// WorkflowVersionStore is the rollback slice of the store. Split out so the
+// autonomic applier depends on this narrow surface instead of all of Store.
 type WorkflowVersionStore interface {
 	// SaveWorkflowVersion records one definition snapshot. A zero CreatedAt is
 	// stamped with the current time. Saving the same (hash, workflow) twice is
@@ -219,8 +209,7 @@ type ListFilter struct {
 	Limit        int
 }
 
-// PruneOptions bounds a retention sweep (.agents/spec/04-execution-engine.md,
-// "Retention and pruning").
+// PruneOptions bounds a retention sweep.
 type PruneOptions struct {
 	// Now anchors age math so tests can use a fixed clock.
 	Now time.Time
@@ -240,10 +229,9 @@ type PruneStats struct {
 	SuggestionsDeleted int
 }
 
-// SuggestionStore is the tuning-suggestion slice of the store
-// (.agents/spec/06-observability-and-tuning.md, "Review flow"), split out so
-// the tuning engine and its surfaces can depend on this narrow surface
-// instead of all of Store.
+// SuggestionStore is the tuning-suggestion slice of the store, split out so the
+// tuning engine and its surfaces can depend on this narrow surface instead of
+// all of Store.
 type SuggestionStore interface {
 	// SaveSuggestion persists one suggestion. A zero CreatedAt is stamped
 	// with the current time and an empty Status becomes open.
@@ -260,11 +248,10 @@ type SuggestionStore interface {
 	UpdateSuggestionStatus(ctx context.Context, id string, status SuggestionStatus) error
 }
 
-// Chat message roles (.agents/spec/13-roadmap.md, Phase 9). A conversation
-// alternates user prompts and assistant replies, with tool rows recording the
-// agent's tool calls so a replayed history shows what the agent did, not just
-// what it said. A system row carries framing a client seeds ahead of the first
-// user turn (.agents/spec/parity/openai-compat.md).
+// Chat message roles. A conversation alternates user prompts and assistant
+// replies, with tool rows recording the agent's tool calls so a replayed
+// history shows what the agent did, not just what it said. A system row carries
+// framing a client seeds ahead of the first user turn.
 const (
 	// ChatRoleUser marks a message the human or bot sent.
 	ChatRoleUser = "user"
@@ -279,10 +266,9 @@ const (
 	ChatRoleTool = "tool"
 )
 
-// ChatSession is one long-lived conversation (.agents/spec/13-roadmap.md,
-// Phase 9): a persisted thread tied to a workspace, carrying the personality
-// (system prompt) that frames every turn. The session outlives any single
-// turn, so its context persists across calls.
+// ChatSession is one long-lived conversation: a persisted thread tied to a
+// workspace, carrying the personality (system prompt) that frames every turn.
+// The session outlives any single turn, so its context persists across calls.
 type ChatSession struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -324,11 +310,10 @@ type ChatSearchQuery struct {
 	Limit int
 }
 
-// ChatStore is the conversation slice of the store (.agents/spec/13-roadmap.md,
-// Phase 9), split out so the chat agent and its API surface depend on this
-// narrow surface instead of all of Store. Every method is workspace-scoped
-// through the request context the way runs are, so one tenant never reads
-// another's conversations.
+// ChatStore is the conversation slice of the store, split out so the chat agent
+// and its API surface depend on this narrow surface instead of all of Store.
+// Every method is workspace-scoped through the request context the way runs
+// are, so one tenant never reads another's conversations.
 type ChatStore interface {
 	ChatSessionStore
 	ChatMessageStore
@@ -375,11 +360,10 @@ type ChatMessageStore interface {
 }
 
 // BridgeSessionStore maps a messaging-transport chat to its chat session, so
-// the binding survives a serve restart
-// (.agents/spec/parity/messaging-bridge.md, decision 1). Every method is
-// workspace-scoped through the request context: the bridge stamps the mapped
-// workspace the way the gRPC interceptor stamps a verified token's workspace,
-// so a chat bound in one tenant is invisible from another.
+// the binding survives a serve restart. Every method is workspace-scoped
+// through the request context: the bridge stamps the mapped workspace the way
+// the gRPC interceptor stamps a verified token's workspace, so a chat bound in
+// one tenant is invisible from another.
 type BridgeSessionStore interface {
 	// BindBridgeSession upserts the binding for (transport, chatKey) in the
 	// request workspace. A rebind (the bridge's /new path) overwrites the prior
@@ -409,8 +393,8 @@ type MessageThreadStore interface {
 // ApprovalStatus is the decision state of a human-approval gate.
 type ApprovalStatus string
 
-// Approval decision states (.agents/spec/parity/workflow-language.md, "Human
-// approval"). A gate opens pending and moves once to approved or denied.
+// Approval decision states. A gate opens pending and moves once to approved or
+// denied.
 const (
 	ApprovalPending  ApprovalStatus = "pending"
 	ApprovalApproved ApprovalStatus = "approved"
@@ -434,11 +418,10 @@ type Approval struct {
 	Comment     string
 }
 
-// ApprovalStore is the human-approval slice of the store
-// (.agents/spec/parity/workflow-language.md, "Human approval"), split out so
-// the engine and the decision surfaces depend on this narrow surface instead
-// of all of Store. Every method is workspace-scoped the way runs are, so a
-// decision or read across the tenancy boundary reads as not-found.
+// ApprovalStore is the human-approval slice of the store, split out so the
+// engine and the decision surfaces depend on this narrow surface instead of all
+// of Store. Every method is workspace-scoped the way runs are, so a decision or
+// read across the tenancy boundary reads as not-found.
 type ApprovalStore interface {
 	// CreateApproval records a new pending approval gate. A zero CreatedAt is
 	// stamped with the current time, an empty WorkspaceID becomes the request
@@ -461,9 +444,8 @@ type ApprovalStore interface {
 	DecideApproval(ctx context.Context, runID, actionName string, status ApprovalStatus, actor, comment string) error
 }
 
-// AgentStepStore is the transcript slice of the store
-// (.agents/spec/15-agent-loop.md, "Transcript persistence"), split out so
-// the agent loop can depend on this narrow surface instead of all of Store.
+// AgentStepStore is the transcript slice of the store, split out so the agent
+// loop can depend on this narrow surface instead of all of Store.
 type AgentStepStore interface {
 	// AppendAgentStep persists one agent-loop transcript step. The loop
 	// writes steps in order; (RunID, ActionName, Step) is unique.
@@ -506,21 +488,19 @@ type Store interface {
 	WorkflowVersionStore
 
 	// GovernanceStore carries the budget-spend, audit-log, and workflow-pause
-	// methods (.agents/spec/12-ui-and-governance.md).
+	// methods.
 	GovernanceStore
 
 	// ChatStore carries the conversation-session and message methods Phase 9
-	// chat persists (.agents/spec/13-roadmap.md, Phase 9).
+	// chat persists.
 	ChatStore
 
 	// ApprovalStore carries the human-approval gate methods the engine parks a
-	// run on and the decision surfaces resolve
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// run on and the decision surfaces resolve.
 	ApprovalStore
 
 	// BridgeSessionStore carries the messaging-bridge chat-to-session bindings
-	// the Telegram long-poll loop resolves per turn
-	// (.agents/spec/parity/messaging-bridge.md).
+	// the Telegram long-poll loop resolves per turn.
 	BridgeSessionStore
 
 	// MessageThreadStore carries the thread_key roots the message runner posts

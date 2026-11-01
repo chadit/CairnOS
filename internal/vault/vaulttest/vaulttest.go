@@ -2,8 +2,7 @@
 // implementations. RunConformance is one suite every backend runs against a
 // fresh store: the sqlite backend calls it, and the postgres backend calls it
 // when a test DSN is configured. One spec, two backends, so a graph-traversal
-// or backlink difference between them fails a test instead of going unnoticed
-// (.agents/spec/05-memory-and-knowledge.md, the backend-swappable criterion).
+// or backlink difference between them fails a test instead of going unnoticed.
 package vaulttest
 
 import (

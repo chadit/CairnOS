@@ -17,7 +17,7 @@ import (
 
 // The item and fields every case reads, spelled the way a host config would.
 const (
-	vaultItem = "chezmoi"
+	vaultItem = "cairnos"
 
 	// statusUnauthenticated is the one bw status value that triggers a login.
 	statusUnauthenticated = "unauthenticated"

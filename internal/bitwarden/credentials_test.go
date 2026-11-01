@@ -1,10 +1,15 @@
 package bitwarden_test
 
 import (
+	"cmp"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 
 	"github.com/chadit/CairnOS/internal/bitwarden"
 )
@@ -170,7 +175,222 @@ func TestLoadCredentialsNamesEveryMissingValue(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(message, fixtureID) {
-		t.Fatalf("the error carries a value: %s", message)
+	assertNoValues(t, message, fixtureID)
+}
+
+// assertNoValues fails when an error message carries any of the values a
+// credentials file held, since that message lands in a deploy log.
+func assertNoValues(t *testing.T, message string, values ...string) {
+	t.Helper()
+
+	for _, value := range values {
+		if strings.Contains(message, value) {
+			t.Fatalf("the error carries a value: %s", message)
+		}
+	}
+}
+
+// fixtureItem is the vault item a chezmoi config names alongside the three
+// credentials.
+const fixtureItem = "item-1"
+
+// The [data.secret] keys a chezmoi config carries the four values under.
+const (
+	chezmoiClientID     = "bw_client_id"
+	chezmoiClientSecret = "bw_client_secret"
+	chezmoiMasterKey    = "bw_master_key"
+	chezmoiItem         = "bw_item_name"
+)
+
+// chezmoiEntry is one key = value line of a chezmoi config's [data.secret] table.
+type chezmoiEntry struct{ key, value string }
+
+// chezmoiConfig renders a chezmoi config whose [data.secret] table carries the
+// given keys, between the unrelated sections a real one holds, so every case
+// also proves those sections are skipped.
+func chezmoiConfig(entries ...chezmoiEntry) string {
+	var out strings.Builder
+
+	out.WriteString("[data]\nemail = \"ops@example.com\"\n\n[data.secret]\n")
+
+	for _, entry := range entries {
+		fmt.Fprintf(&out, "%s = %q\n", entry.key, entry.value)
+	}
+
+	out.WriteString("\n[git]\nautoCommit = true\n")
+
+	return out.String()
+}
+
+// TestLoadCredentialsReadsAChezmoiConfig covers a credentials_file ending in
+// .toml, which is read as a chezmoi config so a workstation keeps one copy of
+// the vault credentials. It gets the same mode check and environment fallback
+// as the KEY=VALUE file.
+func TestLoadCredentialsReadsAChezmoiConfig(t *testing.T) {
+	t.Parallel()
+
+	const envMaster = "env-mk"
+
+	allFour := chezmoiConfig(
+		chezmoiEntry{chezmoiClientID, fixtureID},
+		chezmoiEntry{chezmoiClientSecret, fixtureSecret},
+		chezmoiEntry{chezmoiMasterKey, fixtureMaster},
+		chezmoiEntry{chezmoiItem, fixtureItem},
+	)
+
+	fixtureCreds := bitwarden.Credentials{
+		ClientID: fixtureID, ClientSecret: fixtureSecret, MasterKey: fixtureMaster, Item: fixtureItem,
+	}
+
+	fullEnv := map[string]string{
+		bitwarden.EnvClientID:     fixtureID,
+		bitwarden.EnvClientSecret: fixtureSecret,
+		bitwarden.EnvMasterKey:    fixtureMaster,
+		bitwarden.EnvItem:         fixtureItem,
+	}
+
+	// idLine puts a valid line ahead of the master key's, so a decode error at
+	// line 3 is one the master key line caused.
+	idLine := "[data.secret]\n" + chezmoiClientID + " = \"" + fixtureID + "\"\n"
+
+	const masterKeyLineErr = "cannot be read as a chezmoi config at line 3,"
+
+	cases := []struct {
+		env      map[string]string
+		want     bitwarden.Credentials
+		name     string
+		fileName string
+		content  string
+		wantErr  string
+		perm     os.FileMode
+	}{
+		{
+			name:    "all four keys at mode 0600",
+			content: allFour,
+			perm:    0o600,
+			want:    fixtureCreds,
+		},
+		{
+			name: "no bw_master_key with the master key in the environment",
+			content: chezmoiConfig(
+				chezmoiEntry{chezmoiClientID, fixtureID},
+				chezmoiEntry{chezmoiClientSecret, fixtureSecret},
+				chezmoiEntry{chezmoiItem, fixtureItem},
+			),
+			perm: 0o600,
+			env:  map[string]string{bitwarden.EnvMasterKey: envMaster},
+			want: bitwarden.Credentials{
+				ClientID: fixtureID, ClientSecret: fixtureSecret, MasterKey: envMaster, Item: fixtureItem,
+			},
+		},
+		{
+			name:     "all four keys in a file named chezmoi.TOML",
+			fileName: "chezmoi.TOML",
+			content:  allFour,
+			perm:     0o600,
+			want:     fixtureCreds,
+		},
+		{
+			name: "empty bw_master_key with the master key in the environment",
+			content: chezmoiConfig(
+				chezmoiEntry{chezmoiClientID, fixtureID},
+				chezmoiEntry{chezmoiClientSecret, fixtureSecret},
+				chezmoiEntry{chezmoiMasterKey, ""},
+				chezmoiEntry{chezmoiItem, fixtureItem},
+			),
+			perm: 0o600,
+			env:  map[string]string{bitwarden.EnvMasterKey: envMaster},
+			want: bitwarden.Credentials{
+				ClientID: fixtureID, ClientSecret: fixtureSecret, MasterKey: envMaster, Item: fixtureItem,
+			},
+		},
+		{
+			name:    "no [data] table with every value in the environment",
+			content: "[git]\nautoCommit = true\n",
+			perm:    0o600,
+			env:     fullEnv,
+			want:    fixtureCreds,
+		},
+		{
+			name:    "empty [data.secret] table with nothing in the environment",
+			content: chezmoiConfig(),
+			perm:    0o600,
+			wantErr: "has no [data.secret] " + chezmoiClientID + ", " + chezmoiClientSecret + ", " +
+				chezmoiMasterKey + ", and the environment has no " + bitwarden.EnvClientID + ", " +
+				bitwarden.EnvClientSecret + ", " + bitwarden.EnvMasterKey,
+		},
+		{
+			name:    "all four keys at mode 0644",
+			content: allFour,
+			perm:    0o644,
+			wantErr: "0600",
+		},
+		{
+			name:    "KEY=VALUE lines behind a .toml name",
+			content: completeFile(),
+			perm:    0o600,
+			wantErr: "cannot be read as a chezmoi config at line 1,",
+		},
+		{
+			name:    "unterminated string on the bw_master_key line",
+			content: idLine + chezmoiMasterKey + " = \"" + fixtureMaster + "\n",
+			perm:    0o600,
+			wantErr: masterKeyLineErr,
+		},
+		{
+			name:    "integer bw_master_key in otherwise valid TOML",
+			content: idLine + chezmoiMasterKey + " = 12345\n",
+			perm:    0o600,
+			wantErr: masterKeyLineErr,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), cmp.Or(testCase.fileName, "chezmoi.toml"))
+			writeFixture(t, path, testCase.content, testCase.perm)
+
+			creds, err := bitwarden.LoadCredentials(path, func(name string) string { return testCase.env[name] })
+
+			if testCase.wantErr != "" {
+				assertCredentialsRefused(t, err, testCase.wantErr)
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+
+			if creds != testCase.want {
+				t.Fatalf("creds = %+v, want %+v", creds, testCase.want)
+			}
+		})
+	}
+}
+
+// assertCredentialsRefused checks a refusal says what to fix and carries none
+// of the values it read, since a parse error on this file sits next to the
+// master key. The decoder's error must not be wrapped either: its String()
+// prints the line Error() omits, putting the master key one formatting verb
+// from a log.
+func assertCredentialsRefused(t *testing.T, err error, want string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("load succeeded, want an error naming %q", want)
+	}
+
+	message := err.Error()
+	if !strings.Contains(message, want) {
+		t.Fatalf("error %q does not contain %q", message, want)
+	}
+
+	assertNoValues(t, message, fixtureID, fixtureSecret, fixtureMaster)
+
+	if _, wrapsDecodeErr := errors.AsType[*toml.DecodeError](err); wrapsDecodeErr {
+		t.Fatalf("the error wraps the TOML decoder's error, which quotes the failing line: %s", message)
 	}
 }

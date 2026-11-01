@@ -8,12 +8,11 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// Canonical auth error codes, matching what the gRPC interceptor answers with
-// (.agents/spec/08-auth-and-access.md): a missing scope is auth.forbidden,
-// every token failure collapses to auth.unauthenticated so an attacker learns
-// nothing about which check tripped, and an expired token gets its own code so
-// a client knows to re-login. Defined here rather than imported from
-// internal/api to keep the import graph acyclic.
+// Canonical auth error codes, matching what the gRPC interceptor answers with:
+// a missing scope is auth.forbidden, every token failure collapses to
+// auth.unauthenticated so an attacker learns nothing about which check tripped,
+// and an expired token gets its own code so a client knows to re-login. Defined
+// here rather than imported from internal/api to keep the import graph acyclic.
 const (
 	codeAuthUnauthenticated = "auth.unauthenticated"
 	codeAuthForbidden       = "auth.forbidden"
@@ -45,12 +44,11 @@ func (e *authError) Error() string {
 	return e.code + ": " + e.message
 }
 
-// authorize runs the same verify-then-scope path the gRPC interceptor runs
-// (.agents/spec/08-auth-and-access.md, "Scopes"): with auth disabled it passes
-// on the default workspace, otherwise the token must verify and its scopes must
-// cover the required one. It returns the caller's workspace so the handler's
-// store queries filter by the right tenant, the same property the gRPC guard
-// gives unary handlers.
+// authorize runs the same verify-then-scope path the gRPC interceptor runs:
+// with auth disabled it passes on the default workspace, otherwise the token
+// must verify and its scopes must cover the required one. It returns the
+// caller's workspace so the handler's store queries filter by the right tenant,
+// the same property the gRPC guard gives unary handlers.
 func (s *Service) authorize(ctx context.Context, token, requiredScope string) (string, error) {
 	if s.authenticator == nil {
 		return store.DefaultWorkspace, nil

@@ -1,17 +1,15 @@
-// Package chat is the Phase 9 conversational front end over the Phase 1c
-// agent loop (.agents/spec/13-roadmap.md, Phase 9): a conversation is a
-// long-lived agent action whose tools are memory, the vault, and a gated
-// run_workflow trigger. ChatAgent builds one turn over the conversation
-// history, drives a runner.ToolCaller the same way internal/agentloop drives
-// an agent action, and streams assistant text, tool-call events, and the D9
-// confirmation-required signal back to the caller.
+// Package chat is the Phase 9 conversational front end over the Phase 1c agent
+// loop: a conversation is a long-lived agent action whose tools are memory, the
+// vault, and a gated run_workflow trigger. ChatAgent builds one turn over the
+// conversation history, drives a runner.ToolCaller the same way
+// internal/agentloop drives an agent action, and streams assistant text,
+// tool-call events, and the D9 confirmation-required signal back to the caller.
 //
 // # The D9 confirmation gate
 //
-// Agent loops are one level: an agent action's tools may not start a workflow
-// (.agents/spec/15-agent-loop.md, "No recursion in v1"). The chat agent is the
-// single, carefully-gated exception (D9 in .agents/spec/14-open-decisions.md).
-// The run_workflow tool the chat agent holds does not run a workflow when the
+// Agent loops are one level: an agent action's tools may not start a workflow.
+// The chat agent is the single, carefully-gated exception (D9). The
+// run_workflow tool the chat agent holds does not run a workflow when the
 // driver calls it. Instead the turn stops with a ConfirmationRequired event
 // carrying the proposed workflow, its inputs, and the estimated budget, and
 // waits for an explicit ConfirmAction from the user. Only an approval, on a
@@ -29,8 +27,7 @@ import (
 )
 
 // Tool names the chat agent offers. The trio is the Phase 9 tool set: memory
-// (search and load), the vault read tool, and the gated workflow trigger
-// (.agents/spec/13-roadmap.md, Phase 9).
+// (search and load), the vault read tool, and the gated workflow trigger.
 const (
 	// ToolMemory is the memory built-in (search, load, add).
 	ToolMemory = builtins.MemoryName
@@ -44,9 +41,7 @@ const (
 	ToolRunWorkflow = RunWorkflowToolName
 )
 
-// EventType classifies one streamed turn event (.agents/spec/13-roadmap.md,
-// Phase 9: "emits assistant text chunks, tool-call events,
-// confirmation-required events, run-started/finished ..., turn-done").
+// EventType classifies one streamed turn event.
 type EventType string
 
 // Turn event kinds, in the order a typical turn emits them.
@@ -97,13 +92,13 @@ type Event struct {
 	// Usage carries the turn's accumulated driver-and-tool token spend, set on
 	// EventTurnDone so a caller reports real counts. The gRPC surface ignores it
 	// until someone maps it; the OpenAI-compatible adapter reads it for its
-	// usage block (.agents/spec/parity/openai-compat.md).
+	// usage block.
 	Usage runner.Usage
 }
 
 // Proposal is the D9 confirmation payload: what the chat agent wants to run,
 // with what inputs, and the estimated spend, so the user can approve or deny
-// from full information (.agents/spec/13-roadmap.md, Phase 9 guardrail).
+// from full information.
 type Proposal struct {
 	// Inputs are the run inputs the agent proposes.
 	Inputs map[string]any

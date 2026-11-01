@@ -71,8 +71,7 @@ const metaStatusCode = "status_code"
 const defaultGitHubTimeout = 30 * time.Second
 
 // GitHub reads release feeds and lists or creates issues over the REST v3 API,
-// backing the release monitor and the github_issues poll source
-// (.agents/spec/03-runner-interface.md, .agents/spec/parity/triggers-webhooks.md).
+// backing the release monitor and the github_issues poll source.
 //
 // Config: base_url (default https://api.github.com). Params: op (releases,
 // list_issues, create_issue), repo as owner/name, plus limit for releases,
@@ -257,7 +256,7 @@ func (g *GitHub) createIssue(ctx context.Context, task *runner.Task) (runner.Res
 // github_issues poll source offers a workflow. Two GitHub quirks need absorbing
 // here: the since filter matches updated_at, so a fresh comment resurfaces an
 // old issue, and pull requests come back as issue rows carrying a pull_request
-// field (.agents/spec/parity/triggers-webhooks.md, "Sources").
+// field.
 func (g *GitHub) listIssues(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	repo, _ := task.Params[paramRepo].(string)
 

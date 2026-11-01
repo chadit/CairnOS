@@ -26,9 +26,8 @@ const defaultEquivalenceThreshold = 0.95
 // EmbeddingComparator judges equivalence by cosine similarity of the two
 // outputs' embeddings: at or above the threshold is equivalent. It answers R1
 // for free-text outputs that exact match calls divergent on harmless
-// rephrasing (.agents/spec/14-open-decisions.md). The threshold is a knob
-// because the right value depends on the embedding model and the workflow's
-// domain.
+// rephrasing. The threshold is a knob because the right value depends on the
+// embedding model and the workflow's domain.
 type EmbeddingComparator struct {
 	// embedder produces the vectors.
 	embedder Embedder

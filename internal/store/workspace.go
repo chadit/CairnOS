@@ -4,9 +4,8 @@ import "context"
 
 // DefaultWorkspace is the tenancy boundary every row falls into when no
 // workspace rides the request context. Access-key logins and auth-disabled
-// local use both land here, so single-tenant setups behave exactly as they
-// did before multi-tenancy: one workspace named "default"
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// local use both land here, so single-tenant setups behave exactly as they did
+// before multi-tenancy: one workspace named "default".
 const DefaultWorkspace = "default"
 
 // workspaceCtxKey is the unexported type for the workspace context value, so

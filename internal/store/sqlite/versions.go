@@ -15,11 +15,10 @@ import (
 const versionColumns = "hash, workflow_name, definition_toml, created_at"
 
 // SaveWorkflowVersion records one workflow-definition snapshot, the rollback
-// point auto-apply captures before it edits a file
-// (.agents/spec/13-roadmap.md, Phase 6). A zero CreatedAt is stamped with the
-// current time. Re-saving the same hash is a no-op: the bytes are already
-// captured, so ON CONFLICT DO NOTHING leaves the original snapshot and its
-// timestamp untouched.
+// point auto-apply captures before it edits a file. A zero CreatedAt is stamped
+// with the current time. Re-saving the same hash is a no-op: the bytes are
+// already captured, so ON CONFLICT DO NOTHING leaves the original snapshot and
+// its timestamp untouched.
 func (s *Store) SaveWorkflowVersion(ctx context.Context, version *store.WorkflowVersion) error {
 	createdAt := version.CreatedAt
 	if createdAt.IsZero() {

@@ -51,9 +51,8 @@ const (
 	mcpTransportCodeMax = -32001 // unknown error / header mismatch
 )
 
-// MCPClient calls one tool on a remote MCP server
-// (.agents/spec/10-mcp-integration.md). One runner type covers every remote
-// MCP tool; instances are configured per server/tool.
+// MCPClient calls one tool on a remote MCP server. One runner type covers every
+// remote MCP tool; instances are configured per server/tool.
 //
 // Config: server_url (streamable HTTP) or command (stdio argv array), plus the
 // tool name. Params pass through verbatim as the tool's arguments. Connections

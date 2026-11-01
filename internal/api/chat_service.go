@@ -138,8 +138,7 @@ func (s *chatService) SendMessage(req *cairnosv1.SendMessageRequest, stream cair
 // ConfirmAction resolves a pending workflow proposal. An approval is the D9
 // trigger, so it also requires write:workflow on the token, checked
 // here from the stamped scopes since the method table grants one scope per
-// method (.agents/spec/14-open-decisions.md, D9). A denial needs only
-// chat:session, since nothing runs.
+// method (D9). A denial needs only chat:session, since nothing runs.
 func (s *chatService) ConfirmAction(req *cairnosv1.ConfirmActionRequest, stream cairnosv1.ChatService_ConfirmActionServer) error {
 	if req.GetApprove() && !hasScope(stream.Context(), auth.ScopeWriteWorkflow) {
 		return errorStatus(codes.PermissionDenied, cairnerr.Newf(codeAuthForbidden,
@@ -164,7 +163,7 @@ type chatStreamSender interface {
 // call's terminal error surfaces after the last event.
 func (*chatService) streamTurn(stream chatStreamSender, call func(context.Context, chan<- chat.Event) error) error {
 	events := make(chan chat.Event, chatEventBuffer)
-	callDone := make(chan error, 1)
+	callDone := make(chan error, resultBufferSize)
 
 	go func() {
 		callDone <- call(stream.Context(), events)

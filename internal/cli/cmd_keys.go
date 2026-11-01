@@ -18,8 +18,7 @@ const keysUsage = `usage: cairnos keys <add|list|enable|disable> [flags]
   disable  <id>                                       Disable a key and deny its live tokens
 `
 
-// cmdKeys dispatches the Phase 4a access-key management subcommands
-// (.agents/spec/08-auth-and-access.md, "Access keys").
+// cmdKeys dispatches the Phase 4a access-key management subcommands.
 func (a *App) cmdKeys(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", keysUsage)

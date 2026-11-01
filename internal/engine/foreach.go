@@ -16,8 +16,7 @@ const detailItemIndex = "item_index"
 // foreachAttempt fans a task action over a list, running one attempt per
 // element and collapsing the results into a single action outcome. The whole
 // fan-out rides the action's one slot of the run semaphore, so a local
-// semaphore of size max_parallel is what bounds the elements
-// (.agents/spec/parity/workflow-language.md, "foreach").
+// semaphore of size max_parallel is what bounds the elements.
 func (e *Engine) foreachAttempt(ctx context.Context, runID string, action *workflow.Action, inputs, outputs map[string]any) attemptOutcome {
 	items, cerr := e.resolveForeachItems(ctx, action, inputs, outputs)
 	if cerr != nil {

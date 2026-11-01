@@ -58,7 +58,7 @@ const (
 
 // HTTP performs a single configurable HTTP request, the read-capable sibling to
 // the webhook notification sink. It reaches the GET feeds and JSON APIs that
-// POST-only webhook cannot (.agents/spec/03-runner-interface.md).
+// POST-only webhook cannot.
 //
 // Config: base_url (prefix for path), timeout (seconds), default_headers
 // (merged under per-call headers). Params: method (default GET), url or path,

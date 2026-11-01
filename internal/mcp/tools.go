@@ -24,8 +24,7 @@ type runWorkflowInput struct {
 
 // runWorkflowOutput is what run_workflow returns: the created run id and its
 // status at creation. Progress is not streamed here; a consumer streams
-// TaskUpdates over A2A or the gRPC run stream
-// (.agents/spec/10-mcp-integration.md, "MCP Server").
+// TaskUpdates over A2A or the gRPC run stream.
 type runWorkflowOutput struct {
 	RunID  string `json:"run_id"`
 	Status string `json:"status"`
@@ -67,7 +66,7 @@ type queryMemoryOutput struct {
 // CreateTask comment calls out). Returning then would hand back an id that a
 // GetRun could miss. v1 is non-streaming, so waiting for completion is the
 // honest answer; a consumer that wants live progress streams TaskUpdates over
-// A2A or the gRPC run stream instead (.agents/spec/10-mcp-integration.md).
+// A2A or the gRPC run stream instead.
 
 // runWorkflowHandler returns the typed handler for the run_workflow tool, bound
 // to one connection's token. It enforces write:workflow, resolves the named

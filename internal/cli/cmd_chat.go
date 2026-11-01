@@ -26,16 +26,20 @@ const defaultChatAddr = "127.0.0.1:7777"
 // agree on how much transcript floods the terminal.
 const defaultChatSearchLimit = 20
 
+// signalChanSize follows signal.Notify's contract: delivery never blocks and
+// drops a signal the channel has no room for, so one slot holds an interrupt
+// until the REPL's watcher takes it.
+const signalChanSize = 1
+
 // flagSearch is looked up after parsing as well as registered, because only
 // flag.Visit can tell an explicit --search "" from an absent flag.
 const flagSearch = "search"
 
-// cmdChat is the interactive chat REPL (.agents/spec/13-roadmap.md, Phase 9):
-// it dials a serve API, opens or continues a session, and hands the
-// conversation to chatREPL, which owns the line loop, slash commands, and
-// streaming. It is a thin client over ChatService, so the agent, gate, and
-// budget all live server-side. --search skips the REPL: one query, hits
-// printed, exit.
+// cmdChat is the interactive chat REPL: it dials a serve API, opens or
+// continues a session, and hands the conversation to chatREPL, which owns the
+// line loop, slash commands, and streaming. It is a thin client over
+// ChatService, so the agent, gate, and budget all live server-side. --search
+// skips the REPL: one query, hits printed, exit.
 func (a *App) cmdChat(ctx context.Context, args []string) int {
 	opts, code, proceed := a.parseChatFlags(args)
 	if !proceed {
@@ -79,7 +83,7 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 	interrupts := a.interrupts
 	if interrupts == nil {
 		// No injected seam, so watch the real signal for the REPL's lifetime.
-		signals := make(chan os.Signal, 1)
+		signals := make(chan os.Signal, signalChanSize)
 		signal.Notify(signals, os.Interrupt)
 
 		defer signal.Stop(signals)
@@ -96,7 +100,7 @@ func (a *App) cmdChat(ctx context.Context, args []string) int {
 // ctx. The REPL blocks on a stdin read no context can interrupt, so a stop
 // leaves its goroutine parked there, and main exits right after this returns.
 func (a *App) untilStopped(ctx context.Context, repl func() int) int {
-	exited := make(chan int, 1)
+	exited := make(chan int, oneShotChanSize)
 
 	go func() {
 		exited <- repl()

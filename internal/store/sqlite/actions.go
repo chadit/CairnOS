@@ -63,8 +63,7 @@ func (s *Store) UpsertActionResult(ctx context.Context, result *store.ActionResu
 // ListActionResults returns every action row for a run, ordered by action
 // name so callers see a stable listing. The join to runs scopes the result
 // to the request workspace, so an action row whose run belongs to another
-// workspace is invisible (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
+// workspace is invisible.
 func (s *Store) ListActionResults(ctx context.Context, runID string) ([]*store.ActionResult, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT "+actionColumns+` FROM action_results ar

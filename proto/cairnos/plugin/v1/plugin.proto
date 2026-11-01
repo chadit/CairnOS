@@ -1,8 +1,7 @@
-// RunnerPlugin is the out-of-process runner contract
-// (.agents/spec/03-runner-interface.md, "Custom runners and plugins", path 2).
-// A plugin is a separate process serving this service over a private unix
-// socket; the engine host mirrors each call onto the pkg/runner interface, so
-// a crash or hang stays inside the child process instead of the engine.
+// RunnerPlugin is the out-of-process runner contract. A plugin is a separate
+// process serving this service over a private unix socket; the engine host
+// mirrors each call onto the pkg/runner interface, so a crash or hang stays
+// inside the child process instead of the engine.
 //
 // Open-typed fields (task params, task inputs, result output, tool input
 // schema) travel as JSON strings rather than google.protobuf.Struct. The

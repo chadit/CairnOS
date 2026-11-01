@@ -18,9 +18,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Metric catalog names (.agents/spec/06-observability-and-tuning.md). The
-// Prometheus exporter translates without appending suffixes, so these land
-// on the scrape endpoint exactly as written.
+// Metric catalog names. The Prometheus exporter translates without appending
+// suffixes, so these land on the scrape endpoint exactly as written.
 const (
 	metricRuns               = "cairnos_runs_total"
 	metricRunDuration        = "cairnos_run_duration_seconds"
@@ -394,9 +393,10 @@ func (r *Recorder) DriverCall(ctx context.Context, actionName string, iteration 
 }
 
 // ObserveBreakers registers the cairnos_circuit_state gauge over a breaker
-// snapshot function, normally the engine's Breakers().States. Call it once, after
-// the engine exists; every metric collection then reads a fresh snapshot,
-// so the gauge needs no transition bookkeeping.
+// snapshot function, normally the engine's Breakers().States. Each call adds
+// another collection callback, so the wiring makes one call, after the engine
+// exists. Every metric collection then reads a fresh snapshot, so the gauge
+// needs no transition bookkeeping.
 func (r *Recorder) ObserveBreakers(states func() map[string]reliability.State) error {
 	gauge, err := r.meter.Int64ObservableGauge(metricCircuitState,
 		metric.WithDescription("Circuit breaker position per runner: 0 closed, 1 half-open, 2 open."))

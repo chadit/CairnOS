@@ -400,8 +400,7 @@ func drainChatStream(stream grpc.ServerStreamingClient[cairnosv1.ChatEvent]) err
 // TestChatScopeEnforced proves the Phase 9 scope rules over the auth fixture: a
 // token without chat:session is refused at SendMessage, a chat:session token
 // without write:workflow holds a conversation but its approve is refused at
-// ConfirmAction, and a token with both can confirm a workflow trigger
-// (.agents/spec/13-roadmap.md, Phase 9; .agents/spec/14-open-decisions.md, D9).
+// ConfirmAction, and a token with both can confirm a workflow trigger (D9).
 func TestChatScopeEnforced(t *testing.T) {
 	t.Parallel()
 
@@ -520,7 +519,7 @@ func TestChatSearchMessagesOverGRPC(t *testing.T) {
 		t.Fatalf("search messages: %v", err)
 	}
 
-	roles := make(map[string]bool, 2)
+	roles := make(map[string]bool, len(resp.GetMessages()))
 
 	for _, hit := range resp.GetMessages() {
 		if hit.GetSessionId() != sessionID {

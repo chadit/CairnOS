@@ -109,7 +109,7 @@ func writeEnvelope(writer http.ResponseWriter, result any) {
 
 // TestClientRedactsTokenOnConnectionFailure proves a transport error, which
 // carries the token in the *url.Error URL, is returned with the token replaced
-// by the redaction marker (.agents/spec/parity/messaging-bridge.md, decision 3).
+// by the redaction marker.
 func TestClientRedactsTokenOnConnectionFailure(t *testing.T) {
 	t.Parallel()
 

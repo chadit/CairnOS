@@ -1,12 +1,9 @@
-// Package postgres is the multi-node store.Store backend
-// (.agents/spec/04-execution-engine.md, "State persistence"; the schema
-// "mirrors this with JSONB columns and the same indexes"). It uses pgx/v5
+// Package postgres is the multi-node store.Store backend. It uses pgx/v5
 // with pgxpool so the engine's many goroutines share a bounded connection
 // pool, creates the schema on Open so a fresh database is immediately
 // usable, and keeps identical semantics to the sqlite backend: same ULID
 // ids, same lifecycle stamping, same retention rules. The shared Postgres
-// database is what lets several nodes run against one state
-// (.agents/spec/11-deployment-and-config.md, "Scaling").
+// database is what lets several nodes run against one state.
 package postgres
 
 import (
@@ -177,8 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_run_approvals_pending ON run_approvals(workspace_
 -- runs.parent_run_id rides a guarded ALTER because the schema has no migration
 -- framework: CREATE TABLE IF NOT EXISTS never adds a column to a database an
 -- older binary already created. Postgres has ADD COLUMN IF NOT EXISTS, so this
--- is idempotent across restarts and across nodes opening the same database
--- (.agents/spec/parity/workflow-language.md, "Replay from failed action").
+-- is idempotent across restarts and across nodes opening the same database.
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT;
 `
 

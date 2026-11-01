@@ -1,6 +1,5 @@
-// Package main is the cairnos entrypoint: parse arguments, dispatch through
-// the internal cli package, exit with its code
-// (.agents/spec/11-deployment-and-config.md, "CLI surface").
+// Package main is the cairnos entrypoint: parse arguments, dispatch through the
+// internal cli package, exit with its code.
 package main
 
 import (

@@ -8,9 +8,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Canonical chat.* error codes the agent owns (.agents/spec/13-roadmap.md,
-// Phase 9). They classify onto gRPC status the same family way the engine and
-// agent codes do.
+// Canonical chat.* error codes the agent owns. They classify onto gRPC status
+// the same family way the engine and agent codes do.
 const (
 	// CodeBudgetExhausted marks a turn whose estimated spend reached the turn's
 	// budget cap before it answered.

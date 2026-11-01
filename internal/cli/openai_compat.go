@@ -45,9 +45,9 @@ type openaiCompatDeps struct {
 
 // attachOpenAICompat mounts the OpenAI-compatible chat completions adapter on
 // the API server when [chat] openai_compat is set, reusing the chat agent, the
-// personality set, the store, and the authenticator the rest of serve runs over
-// (.agents/spec/parity/openai-compat.md). It returns whether it mounted, so the
-// caller prints the banner, and an error only when the wiring is wrong.
+// personality set, the store, and the authenticator the rest of serve runs
+// over. It returns whether it mounted, so the caller prints the banner, and an
+// error only when the wiring is wrong.
 func attachOpenAICompat(cfg *config.Config, deps *openaiCompatDeps, apiCfg *api.Config) (bool, error) {
 	if !cfg.Chat.OpenAICompat {
 		return false, nil

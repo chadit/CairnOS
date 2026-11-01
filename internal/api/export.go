@@ -9,13 +9,12 @@ import (
 )
 
 // The exports below are the surface internal/a2a and internal/messaging build
-// on. Both are protocol adapters over behavior this package fronts
-// (.agents/spec/09-a2a-and-hive.md, "Core methods"; FR26), so they reuse this
-// one error-mapping path rather than duplicating the 04 status table, and the
-// canonical code strings stay in status.go where the gRPC mapping reads them.
-// Keeping the export list small and in one file documents the seam. The names
-// carry a Wire suffix to stay clear of the package-private helpers they
-// delegate to.
+// on. Both are protocol adapters over behavior this package fronts (FR26), so
+// they reuse this one error-mapping path rather than duplicating the 04 status
+// table, and the canonical code strings stay in status.go where the gRPC
+// mapping reads them. Keeping the export list small and in one file documents
+// the seam. The names carry a Wire suffix to stay clear of the package-private
+// helpers they delegate to.
 
 // WireStatus classifies any error into the canonical gRPC shape, mapping
 // cairnerr values through the 04 table and everything else to INTERNAL. The

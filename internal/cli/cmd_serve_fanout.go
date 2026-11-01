@@ -128,8 +128,7 @@ func runFailedLine(evt *engine.Event) string {
 // BudgetFanoutNotifier routes engine budget breaches to the fan-out. Its
 // BudgetWarn reproduces the warning the engine's nil-notifier fallback logs, so
 // warn-mode behavior is unchanged; BudgetDenied emits a budget_denied line on the
-// pause path when that event is selected (.agents/spec/parity/messaging-bridge.md,
-// decision 7).
+// pause path when that event is selected.
 type BudgetFanoutNotifier struct {
 	fanout *notify.Fanout
 	logger *slog.Logger

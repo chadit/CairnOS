@@ -27,6 +27,11 @@ const (
 	repoParam      = "repo"
 )
 
+// oneShotChanSize gives the stub handler a slot for the one query a poll
+// sends. The test reads it only after Poll returns, and Poll needs the handler
+// to finish first.
+const oneShotChanSize = 1
+
 const issuesBody = `[
 	{"number": 10, "title": "new bug", "body": "found it", "html_url": "https://github.test/o/r/issues/10", "created_at": "2026-06-20T00:00:00Z", "user": {"login": "octocat"}},
 	{"number": 9, "title": "old churn", "body": "still open", "html_url": "https://github.test/o/r/issues/9", "created_at": "2026-06-01T00:00:00Z", "user": {"login": "hubber"}},
@@ -47,7 +52,7 @@ func newIssuesSource(t *testing.T, server *nettest.Fake) *poll.GitHubIssues {
 func TestGitHubIssuesPollAdvancesCursor(t *testing.T) {
 	t.Parallel()
 
-	queries := make(chan string, 1)
+	queries := make(chan string, oneShotChanSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queries <- r.URL.RawQuery

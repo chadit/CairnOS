@@ -14,14 +14,13 @@ import (
 // wins the resolution chain, so a shadowed store value is not the one served.
 const envShadowMarker = "shadowed_by_env"
 
-// cmdSecrets dispatches the encrypted secret store subcommands
-// (.agents/spec/parity/secrets-credentials.md, "CLI"). The help states the two
-// rotation facts (a row under an unloaded key is lost outside the prev-key
-// window, the ls key id is the only diagnostic) and that keygen output must come
-// from a CSPRNG, so the hazards are visible before anything runs (security
-// council amendment 3).
+// cmdSecrets dispatches the encrypted secret store subcommands. The help states
+// the two rotation facts (a row under an unloaded key is lost outside the
+// prev-key window, the ls key id is the only diagnostic) and that keygen output
+// must come from a CSPRNG, so the hazards are visible before anything runs
+// (security council amendment 3).
 func (a *App) cmdSecrets(ctx context.Context, args []string) int {
-	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen|install-bw|auth|pull> [flags]
+	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen|install-bw|pull> [flags]
 
   set <name>   Read a value from stdin (never argv, which leaks into shell
                history and ps) and seal it. One trailing newline is trimmed.
@@ -42,11 +41,6 @@ func (a *App) cmdSecrets(ctx context.Context, args []string) int {
                commands do not need this: they use the bw the host has when it
                is not older than the pin, and otherwise install the pinned
                release into a directory of their own, off PATH.
-  auth         Write the Bitwarden credentials file when it is missing,
-               prompting for the item name and the API credentials and taking
-               chezmoi's values as the defaults. When the file already exists,
-               open the vault once and report the item and how many CAIRNOS_
-               fields it carries, then lock it again.
   pull         Render the [secrets.bitwarden] fields into the service's second
                environment file. Runs at deployment, not at run time, because
                most credentials here are read by bare os.Getenv. --dry-run
@@ -78,8 +72,6 @@ Only set, get, rm, ls, and rotate need [secrets] backend = "store".
 		return a.cmdSecretsRotate(ctx, args[1:])
 	case "install-bw":
 		return a.cmdSecretsInstallBW(ctx, args[1:])
-	case subcmdAuth:
-		return a.cmdSecretsAuth(ctx, args[1:])
 	case "pull":
 		return a.cmdSecretsPull(ctx, args[1:])
 	case "keygen":

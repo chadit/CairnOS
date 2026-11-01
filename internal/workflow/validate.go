@@ -11,9 +11,9 @@ import (
 
 const defaultMaxIterations = 10
 
-// validate runs every load-time rule from 02-workflow-schema.md against the
-// built workflow. Runner existence and tool capability checks happen at run
-// start instead, because the registry is runtime state, not file state.
+// validate runs every load-time rule against the built workflow. Runner
+// existence and tool capability checks happen at run start instead, because the
+// registry is runtime state, not file state.
 func (b *builder) validate(flow *Workflow) {
 	b.checkWorkflowName(flow)
 	b.checkErrorWorkflow(flow)
@@ -46,8 +46,7 @@ func (b *builder) checkWorkflowName(flow *Workflow) {
 // error handler, a set value must match the workflow-name pattern, and it
 // cannot point back at the workflow that declares it, because a run triggered
 // as "error" never fires its own error workflow anyway and a self-reference
-// only ever signals a mistake (.agents/spec/parity/workflow-language.md,
-// "Error workflow").
+// only ever signals a mistake.
 func (b *builder) checkErrorWorkflow(flow *Workflow) {
 	if flow.ErrorWorkflow == "" {
 		return
@@ -138,10 +137,9 @@ func (b *builder) checkBudget(flow *Workflow) {
 }
 
 // checkPoll enforces the [workflow.poll] rules: source is required, and a poll
-// needs a top-level schedule because a poll with no cadence never fires
-// (.agents/spec/parity/triggers-webhooks.md, "Poll triggers"). Whether the
-// source name resolves is a runtime concern, checked at fire time against the
-// registered source map, so an unknown source is not a load error.
+// needs a top-level schedule because a poll with no cadence never fires.
+// Whether the source name resolves is a runtime concern, checked at fire time
+// against the registered source map, so an unknown source is not a load error.
 func (b *builder) checkPoll(flow *Workflow) {
 	if flow.Poll == nil {
 		return
@@ -305,8 +303,7 @@ func (b *builder) checkRetry(action *Action) {
 // checkWorkflowAction enforces the workflow-call kind's rules: it names a child
 // workflow by the shared identifier pattern, uses none of the task or agent
 // fields, and its inputs table interpolates upstream data but never a secret,
-// because those inputs become the child run's persisted inputs
-// (.agents/spec/parity/workflow-language.md, "Workflow call").
+// because those inputs become the child run's persisted inputs.
 func (b *builder) checkWorkflowAction(flow *Workflow, action *Action) {
 	switch {
 	case action.Workflow == "":
@@ -360,9 +357,8 @@ func (b *builder) checkWorkflowCallInputs(flow *Workflow, action *Action) {
 // checkApprovalAction enforces the human-approval kind's rules: it uses none of
 // the task, agent, or workflow-call fields, and its optional message
 // interpolates upstream data but never a secret, because the resolved message is
-// persisted to the approval record (.agents/spec/parity/workflow-language.md,
-// "Human approval"). The foreach ban rides checkForeach, which rejects a
-// non-task foreach for every kind.
+// persisted to the approval record. The foreach ban rides checkForeach, which
+// rejects a non-task foreach for every kind.
 func (b *builder) checkApprovalAction(flow *Workflow, action *Action) {
 	if action.Runner != "" || action.Params != nil || len(action.Fallback) > 0 {
 		b.addf(CodeInvalid, "approval action %q cannot use runner, params, or fallback; those belong to task actions", action.Name)
@@ -410,8 +406,7 @@ func (b *builder) checkApprovalMessage(flow *Workflow, action *Action) {
 
 // checkForeach enforces the foreach rules: it only rides a task action,
 // max_parallel stays at least one, and items is either one whole reference
-// (bound by rule 5) or a literal array
-// (.agents/spec/parity/workflow-language.md, "foreach").
+// (bound by rule 5) or a literal array.
 func (b *builder) checkForeach(flow *Workflow, action *Action) {
 	if action.Foreach == nil {
 		return
@@ -497,9 +492,8 @@ func (b *builder) checkTaskAction(action *Action) {
 	}
 }
 
-// checkAgentAction enforces rule 11: driver, goal, and budget_usd are
-// required, tools must be declared, and the task fields are forbidden
-// (.agents/spec/15-agent-loop.md).
+// checkAgentAction enforces rule 11: driver, goal, and budget_usd are required,
+// tools must be declared, and the task fields are forbidden.
 func (b *builder) checkAgentAction(action *Action) {
 	if action.Driver == "" {
 		b.addf(CodeAgentFields, "agent action %q is missing its driver", action.Name)

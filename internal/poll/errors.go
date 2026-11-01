@@ -7,8 +7,7 @@ import "errors"
 var (
 	// ErrUnknownSource reports a [workflow.poll] table naming a source that is
 	// not registered. It surfaces at fire time, not at load, because the source
-	// registry is runtime state, not file state
-	// (.agents/spec/parity/triggers-webhooks.md, "Sources").
+	// registry is runtime state, not file state.
 	ErrUnknownSource = errors.New("unknown poll source")
 
 	// ErrBadResult reports a source's backing runner returning a result whose

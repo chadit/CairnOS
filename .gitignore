@@ -45,10 +45,19 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# OS and tool caches. Listed here so a contributor without a global ignore
+# does not commit them.
+.DS_Store
+.mypy_cache/
+.ruff_cache/
+
 # The linter config stays tracked. A global ignore for `.golangci.yml` on a
 # contributor's machine would otherwise keep it out of the checkout CI lints,
 # so CI and `make lint` would run different rule sets.
 !.golangci.yml
+# .github/ stays tracked for the same reason: a global ignore for it would hide
+# new workflows, issue forms, and CODEOWNERS from `git add`.
+!/.github/
 
 # Local agent working directories (specs, scratch, review output). They hold
 # machine-specific notes and never belong in the public tree, whatever a

@@ -15,10 +15,9 @@ import (
 // scanChatSession order.
 const chatSessionColumns = "id, workspace_id, personality, created_at, updated_at"
 
-// CreateSession persists a new conversation (.agents/spec/13-roadmap.md,
-// Phase 9). A zero timestamp is stamped with the current time and an empty
-// WorkspaceID becomes the request workspace, so the row lands in the caller's
-// tenant.
+// CreateSession persists a new conversation. A zero timestamp is stamped with
+// the current time and an empty WorkspaceID becomes the request workspace, so
+// the row lands in the caller's tenant.
 func (s *Store) CreateSession(ctx context.Context, session *store.ChatSession) error {
 	workspace := session.WorkspaceID
 	if workspace == "" {
@@ -50,7 +49,7 @@ func (s *Store) CreateSession(ctx context.Context, session *store.ChatSession) e
 
 // GetSession fetches one session by id, scoped to the request workspace so a
 // session in another workspace reads as not-found rather than leaking across
-// the tenancy boundary (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// the tenancy boundary.
 func (s *Store) GetSession(ctx context.Context, id string) (*store.ChatSession, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+chatSessionColumns+" FROM chat_sessions WHERE id = ? AND workspace_id = ?",

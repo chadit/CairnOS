@@ -8,7 +8,7 @@ import (
 // (memory, vault_query, skill, usage) keyed by name, plus every tool's
 // descriptor in a stable order for the driver. The run_workflow descriptor is in Specs but
 // never in Tools, since its call is intercepted into the confirmation gate
-// rather than executed (.agents/spec/14-open-decisions.md, D9).
+// rather than executed (D9).
 type ToolSet struct {
 	// Tools are the executable read tools, keyed by name.
 	Tools map[string]runner.Runner

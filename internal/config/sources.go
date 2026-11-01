@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"maps"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,6 +20,8 @@ const (
 	sourceKeyDest       = "dest"
 	sourceKeyRef        = "ref"
 	sourceKeyDirtyReset = "dirty_reset"
+	sourceKeyWorkflows  = "workflows"
+	sourceKeyTrusted    = "trusted"
 )
 
 // DefaultSourceRef is what a block that names no ref follows.
@@ -98,6 +101,10 @@ func applySourceKey(src *Source, entry sourceEntry) error {
 		src.Ref, err = sourceString(entry)
 	case sourceKeyDirtyReset:
 		src.DirtyReset, err = sourceBool(entry)
+	case sourceKeyWorkflows:
+		src.Workflows, err = sourceStrings(entry)
+	case sourceKeyTrusted:
+		src.Trusted, err = sourceBool(entry)
 	default:
 		err = fmt.Errorf("%w: source.%s has unknown key %q", ErrInvalidConfig, entry.block, entry.key)
 	}
@@ -117,6 +124,30 @@ func sourceString(entry sourceEntry) (string, error) {
 	}
 
 	return strings.TrimSpace(str), nil
+}
+
+// sourceStrings asserts an array of strings, trimming each element for the same
+// reason sourceString trims: validation and the matcher must judge one text.
+func sourceStrings(entry sourceEntry) ([]string, error) {
+	items, ok := entry.value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: source.%s.%s must be an array of strings",
+			ErrInvalidConfig, entry.block, entry.key)
+	}
+
+	values := make([]string, 0, len(items))
+
+	for _, item := range items {
+		str, isString := item.(string)
+		if !isString {
+			return nil, fmt.Errorf("%w: source.%s.%s must be an array of strings",
+				ErrInvalidConfig, entry.block, entry.key)
+		}
+
+		values = append(values, strings.TrimSpace(str))
+	}
+
+	return values, nil
 }
 
 // sourceBool asserts a bool value or returns a key-named type error. A quoted
@@ -172,7 +203,56 @@ func validateSource(name string, src *Source, homeDir string) error {
 		return err
 	}
 
-	return validateSourceDest(name, src.Dest, homeDir)
+	if err := validateSourceDest(name, src.Dest, homeDir); err != nil {
+		return err
+	}
+
+	return validateSourceWorkflows(name, src.Workflows)
+}
+
+// validateSourceWorkflows refuses a glob that could name a file outside dest or
+// that the matcher would reject at every sync. Discovery joins each match onto
+// dest, so an absolute glob or a ".." element is the one way a pattern could
+// reach a file the source does not carry.
+func validateSourceWorkflows(name string, globs []string) error {
+	for _, glob := range globs {
+		if err := validateWorkflowGlob(glob); err != nil {
+			return fmt.Errorf("%w: source.%s.%s %q %w", ErrInvalidConfig, name, sourceKeyWorkflows, glob, err)
+		}
+	}
+
+	return nil
+}
+
+// validateWorkflowGlob checks one pattern. Matching runs on git's slash
+// separated paths, so the checks split on "/" rather than the host separator.
+// git never writes a "." or empty element or a trailing slash, so a glob with
+// one would match nothing and discovery would stay silent about it.
+func validateWorkflowGlob(glob string) error {
+	if glob == "" {
+		return errGlobEmpty
+	}
+
+	if path.IsAbs(glob) || filepath.IsAbs(glob) {
+		return errGlobAbsolute
+	}
+
+	elements := strings.Split(glob, "/")
+
+	switch {
+	case slices.Contains(elements, ".."):
+		return errGlobParent
+	case slices.Contains(elements, "."):
+		return errGlobDot
+	case slices.Contains(elements, ""):
+		return errGlobSlashes
+	}
+
+	if _, err := path.Match(glob, ""); err != nil {
+		return fmt.Errorf("is not a valid pattern: %w", err)
+	}
+
+	return nil
 }
 
 // validateSourceArg rejects the two values that reach a git argv. Parsing has

@@ -14,8 +14,7 @@ import (
 const triggerSchedule = "schedule"
 
 // SchedulePauseChecker reports whether a workflow is paused so the scheduler
-// skips firing it (.agents/spec/12-ui-and-governance.md, "Control actions").
-// The store satisfies it.
+// skips firing it. The store satisfies it.
 type SchedulePauseChecker interface {
 	GetWorkflowPause(ctx context.Context, workflowName string) (*store.WorkflowPause, bool, error)
 }
@@ -82,8 +81,7 @@ func (r *FireRunner) FireRun(ctx context.Context, sched *scheduler.Schedule, inp
 	if out.Run.Status == store.RunHeld {
 		// A parked run acks its queue item: run parking lives in the runs table,
 		// and resuming as a refire would mint a duplicate run, so the fire is done
-		// once the run exists and waits for an operator decision
-		// (.agents/spec/parity/workflow-language.md, "Human approval").
+		// once the run exists and waits for an operator decision.
 		r.logger.Info("scheduled run parked awaiting approval", "run_id", out.Run.ID, "workflow", sched.WorkflowName)
 
 		return nil

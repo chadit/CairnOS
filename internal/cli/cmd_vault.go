@@ -13,8 +13,7 @@ const vaultUsage = "usage: cairnos vault <put|get|query> [flags]\n"
 // vaultListLimit caps query and list output when no --limit is given.
 const vaultListLimit = 20
 
-// cmdVault dispatches the vault subcommands (.agents/spec/05-memory-and-knowledge.md,
-// "Vault and Knowledge Graph").
+// cmdVault dispatches the vault subcommands.
 func (a *App) cmdVault(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", vaultUsage)

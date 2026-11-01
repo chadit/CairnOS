@@ -129,8 +129,11 @@ func Ensure(ctx context.Context, git Git, spec Spec, logger *slog.Logger) error 
 	return cloneInto(runCtx, git, spec)
 }
 
-// EnsureAll runs Ensure for every spec in name order and logs the tree each one
-// left behind, so the startup log says which commit a host is about to run.
+// EnsureAll runs Ensure for every spec in name order, fetches, and logs each
+// resulting tree, so the startup log says which commit a host will run. The
+// fetch updates origin's remote-tracking ref, which discovery and the exec gate
+// trust, before the first discovery pass. A host that cannot reach origin still
+// starts on the ref as it stands.
 func EnsureAll(ctx context.Context, git Git, specs []Spec, logger *slog.Logger) error {
 	ordered := slices.Clone(specs)
 	slices.SortFunc(ordered, func(left, right Spec) int {
@@ -142,6 +145,7 @@ func EnsureAll(ctx context.Context, git Git, specs []Spec, logger *slog.Logger) 
 			return fmt.Errorf("source %s: %w", spec.Name, err)
 		}
 
+		refreshAtBoot(ctx, git, spec, logger)
 		logReady(ctx, git, spec, logger)
 	}
 
@@ -155,8 +159,8 @@ func Sync(ctx context.Context, git Git, spec Spec) (Result, error) {
 	runCtx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
 
-	if _, err := git(runCtx, spec.Dest, "fetch", "--prune", "--tags", "origin"); err != nil {
-		return Result{}, transientf(err, CodeFetch, "fetch origin in %s: %v", spec.Dest, err)
+	if err := fetchOrigin(runCtx, git, spec); err != nil {
+		return Result{}, err
 	}
 
 	want, err := resolveRef(runCtx, git, spec)
@@ -184,6 +188,34 @@ func Sync(ctx context.Context, git Git, spec Spec) (Result, error) {
 	}
 
 	return Result{Old: old, New: moved}, nil
+}
+
+// fetchOrigin updates every remote-tracking ref and tag from origin. The
+// default refspec a clone writes is what moves refs/remotes/origin/<branch>,
+// and it is a forced update, so a local write to that ref lasts only until
+// the next call.
+func fetchOrigin(ctx context.Context, git Git, spec Spec) error {
+	if _, err := git(ctx, spec.Dest, "fetch", "--prune", "--tags", "origin"); err != nil {
+		return transientf(err, CodeFetch, "fetch origin in %s: %v", spec.Dest, err)
+	}
+
+	return nil
+}
+
+// refreshAtBoot fetches once Ensure has proved the tree is this source's. A
+// failure is a warning, not a stop: an offline host keeps starting, the way
+// Ensure lets it, and the first sync fetches again.
+func refreshAtBoot(ctx context.Context, git Git, spec Spec, logger *slog.Logger) {
+	fetchCtx, cancel := context.WithTimeout(ctx, syncTimeout)
+	defer cancel()
+
+	err := fetchOrigin(fetchCtx, git, spec)
+	if err == nil || logger == nil {
+		return
+	}
+
+	logger.Warn("source fetch at startup failed; trusting origin's ref as last fetched",
+		"source", spec.Name, "dest", spec.Dest, "ref", spec.Ref, "error", err)
 }
 
 // tryAdvance moves HEAD onto want when nothing is in the way, and otherwise

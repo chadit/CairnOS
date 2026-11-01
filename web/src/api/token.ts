@@ -1,8 +1,8 @@
 // Token storage for the bearer credential. The token lives in a module-level
 // variable so calls within a session never touch storage, and mirrors to
 // localStorage so a refresh keeps the user signed in. Auth is optional in
-// CairnOS (.agents/spec/07-api-protocols.md, "Authentication boundary"): when
-// the server runs with auth off, no token is ever set and calls still work.
+// CairnOS: when the server runs with auth off, no token is ever set and calls
+// still work.
 
 const STORAGE_KEY = 'cairnos.token';
 

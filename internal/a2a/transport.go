@@ -7,12 +7,11 @@ import (
 	"os"
 )
 
-// TLSConfig is the [a2a] mTLS block (.agents/spec/09-a2a-and-hive.md,
-// "Transport security"). mTLS proves the connection, the token proves scopes:
-// orthogonal layers, so an mTLS connection still presents a token and a token
-// alone still works on a loopback bind. All three files are required or
-// omitted together; a partial trio is a config error, not a silent downgrade
-// to one-way TLS.
+// TLSConfig is the [a2a] mTLS block. mTLS proves the connection, the token
+// proves scopes: orthogonal layers, so an mTLS connection still presents a
+// token and a token alone still works on a loopback bind. All three files are
+// required or omitted together; a partial trio is a config error, not a silent
+// downgrade to one-way TLS.
 type TLSConfig struct {
 	CertFile     string
 	KeyFile      string

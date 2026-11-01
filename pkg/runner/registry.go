@@ -17,8 +17,7 @@ type Factory func(cfg map[string]any) (Runner, error)
 // runs, which is why Execute must be safe for concurrent use.
 type Registry struct {
 	// Table holds the built instances. Its Get is the runner-not-found check at
-	// run start (.agents/spec/02-workflow-schema.md, validation rule 7), and its
-	// List gives the built names sorted for stable output.
+	// run start, and its List gives the built names sorted for stable output.
 	registry.Table[Runner]
 
 	factories registry.Table[Factory]

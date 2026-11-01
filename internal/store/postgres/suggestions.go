@@ -12,13 +12,11 @@ import (
 // scanSuggestion order.
 const suggestionColumns = "id, kind, target, status, rationale, evidence_json, proposed_json, savings_json, created_at"
 
-// SaveSuggestion persists one tuning suggestion
-// (.agents/spec/06-observability-and-tuning.md, "Review flow"). A zero
-// CreatedAt is stamped with the current time and an empty Status becomes open,
-// matching the sqlite backend, so the tuning engine fills only what it
-// computed. The workspace stamp makes the suggestion the generating tenant's;
-// cross-tenant reads then return not-found
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// SaveSuggestion persists one tuning suggestion. A zero CreatedAt is stamped
+// with the current time and an empty Status becomes open, matching the sqlite
+// backend, so the tuning engine fills only what it computed. The workspace
+// stamp makes the suggestion the generating tenant's; cross-tenant reads then
+// return not-found.
 func (s *Store) SaveSuggestion(ctx context.Context, suggestion *store.Suggestion) error {
 	status := suggestion.Status
 	if status == "" {
@@ -59,8 +57,7 @@ func (s *Store) SaveSuggestion(ctx context.Context, suggestion *store.Suggestion
 
 // GetSuggestion fetches one suggestion by id, scoped to the request workspace
 // so a suggestion owned by another tenant reads as not-found rather than
-// leaking its evidence and proposal across the boundary
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// leaking its evidence and proposal across the boundary.
 func (s *Store) GetSuggestion(ctx context.Context, id string) (*store.Suggestion, error) {
 	row := s.pool.QueryRow(ctx,
 		"SELECT "+suggestionColumns+" FROM suggestions WHERE id = $1 AND workspace_id = $2",

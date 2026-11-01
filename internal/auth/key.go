@@ -72,12 +72,10 @@ const decoySecret = "decoy"
 // two constants are pinned equal by TestKeyWorkspaceDefaults.
 const defaultWorkspace = "default"
 
-// Key is one admin-managed access key (.agents/spec/08-auth-and-access.md,
-// "Access keys"): id, label, scope set, enabled flag, the workspace the key
-// acts in (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"), and the
-// argon2id hash of its secret. The plaintext exists only in the one
-// `cairnos keys add` printout. An empty Workspace means the default
-// workspace, so a key created before tenancy still behaves as one.
+// Key is one admin-managed access key: id, label, scope set, enabled flag, the
+// workspace the key acts in, and the argon2id hash of its secret. The plaintext
+// exists only in the one `cairnos keys add` printout. An empty Workspace means
+// the default workspace, so a key created before tenancy still behaves as one.
 type Key struct {
 	CreatedAt time.Time
 	ID        string

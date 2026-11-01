@@ -6,12 +6,11 @@ import (
 	"github.com/chadit/CairnOS/internal/api"
 )
 
-// The wire* funnels below adapt the api package's canonical status helpers
-// (.agents/spec/04-execution-engine.md, "Mapping to gRPC status codes"). Each
-// hands back a gRPC status error, which is the transport contract: wrapping it
-// would hide the gRPC code from the classifier, so the wrapcheck suppression
-// lives here, in one documented place, rather than scattered across the
-// service handlers.
+// The wire* funnels below adapt the api package's canonical status helpers.
+// Each hands back a gRPC status error, which is the transport contract:
+// wrapping it would hide the gRPC code from the classifier, so the wrapcheck
+// suppression lives here, in one documented place, rather than scattered across
+// the service handlers.
 
 // wirePassthrough returns an error the api package already shaped as a gRPC
 // status (the workflow resolver's NotFound). Re-wrapping or re-classifying it

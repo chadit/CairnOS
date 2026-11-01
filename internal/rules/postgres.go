@@ -24,11 +24,10 @@ CREATE TABLE IF NOT EXISTS language_rules (
 CREATE INDEX IF NOT EXISTS idx_language_rules_lookup ON language_rules(workspace_id, language, project);
 `
 
-// Postgres is the shared, multi-node rules backend
-// (.agents/spec/05-memory-and-knowledge.md, "Backends"). It shares the run
-// store's database (a different table), the same arrangement the sqlite
-// backends use within one file, and runs the same conformance suite as the
-// sqlite backend so the two stay behaviorally identical.
+// Postgres is the shared, multi-node rules backend. It shares the run store's
+// database (a different table), the same arrangement the sqlite backends use
+// within one file, and runs the same conformance suite as the sqlite backend so
+// the two stay behaviorally identical.
 type Postgres struct {
 	pool *pgxpool.Pool
 }

@@ -33,6 +33,16 @@ const (
 	fixtureMalformed     = "posted_malformed.json"
 )
 
+const (
+	// resultBufferSize gives Listen's terminal error a slot, so its goroutine
+	// exits even when the test stops waiting first.
+	resultBufferSize = 1
+
+	// strayEventSize gives a Listen that should emit nothing room for one event,
+	// so a wrong emit lands in the channel instead of blocking Listen.
+	strayEventSize = 1
+)
+
 // replayOrder is the order the replay server writes the frames. Two of them are
 // frames the bridge must ignore rather than act on.
 func replayOrder() []string {
@@ -130,7 +140,7 @@ func replay(t *testing.T, names []string, abrupt bool) ([]mattermost.Event, erro
 	client := newTestClient(t, server, nil)
 
 	events := make(chan mattermost.Event, len(frames))
-	done := make(chan error, 1)
+	done := make(chan error, resultBufferSize)
 
 	go func() { done <- client.Listen(t.Context(), events) }()
 
@@ -291,7 +301,7 @@ func TestListenRefusesAServerThatRejectsTheToken(t *testing.T) {
 
 	client := newTestClient(t, server, nil)
 
-	events := make(chan mattermost.Event, 1)
+	events := make(chan mattermost.Event, strayEventSize)
 
 	err := client.Listen(t.Context(), events)
 	if err == nil {
@@ -323,7 +333,7 @@ func TestListenStopsWhenTheContextEnds(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 
-	done := make(chan error, 1)
+	done := make(chan error, resultBufferSize)
 	go func() { done <- client.Listen(ctx, make(chan mattermost.Event)) }()
 
 	cancel()
@@ -457,8 +467,8 @@ func TestListenFailsWhenTheSocketStopsAnsweringPings(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	events := make(chan mattermost.Event, 1)
-	done := make(chan error, 1)
+	events := make(chan mattermost.Event, strayEventSize)
+	done := make(chan error, resultBufferSize)
 
 	go func() { done <- client.Listen(t.Context(), events) }()
 

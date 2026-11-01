@@ -37,6 +37,10 @@ const (
 	// turnEventBuffer bounds the per-turn event channel the agent streams into.
 	turnEventBuffer = 32
 
+	// resultBufferSize gives a turn's error channel one slot, so the goroutine
+	// running the chat call exits as soon as the call returns.
+	resultBufferSize = 1
+
 	// Bridge commands a message can carry instead of chat text.
 	cmdNew     = "/new"
 	cmdSession = "/session"

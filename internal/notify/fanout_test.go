@@ -25,13 +25,17 @@ const (
 	lineBudget       = "workflow over budget"
 )
 
+// captureBufferSize holds every line a case posts, so a fake sink or webhook
+// handler records it without waiting for the test to read.
+const captureBufferSize = 16
+
 // captureServer answers every webhook POST with status and pushes the decoded
 // content string onto the returned channel, so a test observes what the fan-out
 // actually posted.
 func captureServer(t *testing.T, status int) (*nettest.Fake, chan string) {
 	t.Helper()
 
-	bodies := make(chan string, 16)
+	bodies := make(chan string, captureBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {

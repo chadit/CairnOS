@@ -41,7 +41,7 @@ type issueRunner interface {
 // GitHubIssues adapts the github builtin runner's list_issues op to Source. The
 // cursor is the latest issue created_at seen (RFC3339); a poll passes it as the
 // op's since so only newer issues come back, and advances it to the newest
-// created_at observed (.agents/spec/parity/triggers-webhooks.md, "Sources").
+// created_at observed.
 type GitHubIssues struct {
 	runner issueRunner
 }

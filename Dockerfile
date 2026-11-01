@@ -1,5 +1,4 @@
-# CairnOS container image (.agents/spec/11-deployment-and-config.md,
-# "Container image"): multi-stage, static binary, distroless runtime,
+# CairnOS container image: multi-stage, static binary, distroless runtime,
 # non-root, exec-form entrypoint and health check.
 
 # hadolint ignore=DL3007

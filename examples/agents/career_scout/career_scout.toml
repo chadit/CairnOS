@@ -6,10 +6,9 @@
 #     --input resume_summary="Senior Go engineer, distributed systems" \
 #     --input notify_to=me@example.com
 #
-# Sourcing (S5 in .agents/spec/14-open-decisions.md): feed_url must be a
-# source you're allowed to query. An official API you hold a key for, or a
-# feed you run yourself. Never a scraped listing site; scraping LinkedIn or
-# Indeed violates their terms of service.
+# Sourcing (S5): feed_url must be a source you're allowed to query. An official
+# API you hold a key for, or a feed you run yourself. Never a scraped listing
+# site; scraping LinkedIn or Indeed violates their terms of service.
 
 [workflow]
 name        = "career_scout"

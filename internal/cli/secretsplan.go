@@ -18,9 +18,9 @@ import (
 var inferredFieldPattern = regexp.MustCompile(`^CAIRNOS_[A-Z0-9_]+$`)
 
 // resolveItem picks the vault item: the config block wins, the credentials file
-// is the fallback. Two places on purpose, because `cairnos secrets auth` writes
-// the credentials file and a host that never edits config.toml still gets a
-// working pull out of it.
+// is the fallback. Two places on purpose, because the credentials file already
+// has to exist on the host, and a host that never edits config.toml still gets
+// a working pull out of it.
 func resolveItem(block *config.Bitwarden, creds bitwarden.Credentials) (string, error) {
 	if block.Item != "" {
 		return block.Item, nil
@@ -30,7 +30,7 @@ func resolveItem(block *config.Bitwarden, creds bitwarden.Credentials) (string, 
 		return creds.Item, nil
 	}
 
-	return "", fmt.Errorf("%w: %s", errNoVaultItem, bitwarden.EnvItem)
+	return "", errNoVaultItem
 }
 
 // planValues decides what the generated file holds. Fields named like the
@@ -231,14 +231,6 @@ func mattermostOverrideApplies(cfg *config.Config, values map[string]string) boo
 	}
 
 	return false
-}
-
-// countPulledFields reports how many variables a pull would take off the item
-// without a mapping, which is what `secrets auth` prints back as a status check.
-// Fields named after a bot count too, so the number matches the file a pull
-// writes rather than one naming convention.
-func countPulledFields(cfg *config.Config, item bitwarden.Item) int {
-	return len(inferredValues(cfg, item))
 }
 
 // joinNames renders a list for one output line.

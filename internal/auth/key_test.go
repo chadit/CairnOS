@@ -71,7 +71,7 @@ func TestVerifyKeyRejectsWrongSecret(t *testing.T) {
 // TestNewKeyWorkspace pins the multi-tenancy field: a named workspace is kept,
 // and an empty one defaults to store.DefaultWorkspace, so an access-key login
 // always carries a workspace and the store-level default matches the auth
-// default (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// default.
 func TestNewKeyWorkspace(t *testing.T) {
 	t.Parallel()
 

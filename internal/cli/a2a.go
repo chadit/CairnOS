@@ -153,9 +153,9 @@ func a2aChannels(registry *messaging.Registry) []a2a.Channel {
 
 // reusableAuthKey returns the auth layer's EdDSA private key when the auth
 // tier is asymmetric, so the card and the cross-org tokens share one trust
-// anchor (.agents/spec/08-auth-and-access.md, Change 3). It returns nil when
-// auth is off, when auth runs HS256, or when the material fails to load, which
-// sends ResolveSigningKey to its file or ephemeral path instead.
+// anchor. It returns nil when auth is off, when auth runs HS256, or when the
+// material fails to load, which sends ResolveSigningKey to its file or
+// ephemeral path instead.
 func reusableAuthKey(cfg *config.Config, lookup environ.Lookup) ed25519.PrivateKey {
 	if !cfg.Auth.Enabled || cfg.Auth.SigningAlgorithm != auth.AlgEdDSA {
 		return nil

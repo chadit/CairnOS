@@ -3,8 +3,7 @@
 // fresh store: the sqlite backend calls it, and the postgres backend calls it
 // when a test DSN is configured. One spec, two backends, so a merge or
 // list-languages difference between them fails a test instead of going
-// unnoticed (.agents/spec/05-memory-and-knowledge.md, the merge-semantics
-// acceptance criterion).
+// unnoticed.
 package rulestest
 
 import (

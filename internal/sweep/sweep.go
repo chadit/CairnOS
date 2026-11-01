@@ -1,7 +1,6 @@
-// Package sweep runs the retention prune on a schedule
-// (.agents/spec/04-execution-engine.md, "Retention and pruning"): a
-// background loop in the serve process deletes runs past the window,
-// truncates old outputs, and logs what each pass removed.
+// Package sweep runs the retention prune on a schedule: a background loop in
+// the serve process deletes runs past the window, truncates old outputs, and
+// logs what each pass removed.
 package sweep
 
 import (
@@ -18,9 +17,8 @@ type Pruner interface {
 	Prune(ctx context.Context, opts store.PruneOptions) (store.PruneStats, error)
 }
 
-// DenylistPruner is the auth slice of the sweep: expired revocation rows
-// are dead weight once their token's exp has passed
-// (.agents/spec/08-auth-and-access.md, Change 1); auth.SQLite satisfies it.
+// DenylistPruner is the auth slice of the sweep: expired revocation rows are
+// dead weight once their token's exp has passed; auth.SQLite satisfies it.
 type DenylistPruner interface {
 	PruneDenylist(ctx context.Context, now time.Time) (int, error)
 }

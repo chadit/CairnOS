@@ -42,8 +42,7 @@ func CLIDefaults() map[string]CLITool {
 }
 
 // CLI wraps one prompt-driven command-line tool as a runner. Every named CLI
-// built-in is one CLI over its own launch template
-// (.agents/spec/03-runner-interface.md, "Built-in runners").
+// built-in is one CLI over its own launch template.
 //
 // Config keys (all optional): binary overrides the launched executable, args
 // is the argv template where {prompt} substitutes the prompt param, and

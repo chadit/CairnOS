@@ -420,9 +420,10 @@ func TestInstallStopsAProbeThatHangs(t *testing.T) {
 }
 
 // TestInstallLeavesTheProbeWithoutVaultCredentials covers the child's
-// environment. `secrets auth` reads the vault API key and master password from
-// the environment serve runs under, and a version probe has no business seeing
-// either. The staged fake echoes the marker, so its output says what it got.
+// environment. `secrets pull` can read the vault API key and master password
+// from the environment serve runs under, and a version probe has no business
+// seeing either. The staged fake echoes the marker, so its output says what it
+// got.
 func TestInstallLeavesTheProbeWithoutVaultCredentials(t *testing.T) {
 	t.Parallel()
 

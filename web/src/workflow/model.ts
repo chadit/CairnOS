@@ -1,7 +1,7 @@
 // The workflow model, a TypeScript mirror of internal/workflow/workflow.go.
 // This is the canonical in-memory shape the builder edits and the TOML mapper
 // reads and writes. Field names and defaults match the Go parser exactly so a
-// round-trip stays faithful (.agents/spec/02-workflow-schema.md).
+// round-trip stays faithful.
 
 import type { JsonValue } from '@/api/types';
 
@@ -58,7 +58,7 @@ export interface Action {
   runner?: string;
   params?: Record<string, JsonValue>;
 
-  // Agent fields (.agents/spec/15-agent-loop.md).
+  // Agent fields.
   driver?: string;
   goal?: string;
   tools?: string[];

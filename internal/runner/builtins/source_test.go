@@ -160,7 +160,7 @@ func sourceRunnerWith(
 ) *builtins.Source {
 	t.Helper()
 
-	built, err := builtins.SourceFactory([]source.Spec{spec}, git.run, nil, obs)(nil)
+	built, err := builtins.SourceFactory([]source.Spec{spec}, git.run, nil, obs, nil)(nil)
 	if err != nil {
 		t.Fatalf("build source runner: %v", err)
 	}
@@ -374,5 +374,63 @@ func TestSourceExecuteRefusesUnresolvedName(t *testing.T) {
 
 	if classified.Code != builtins.SourceName+".unknown" {
 		t.Fatalf("code = %q, want %s.unknown", classified.Code, builtins.SourceName)
+	}
+}
+
+// errFetchFailed stands in for a remote the sync cannot reach.
+var errFetchFailed = errors.New("fatal: could not read from remote repository")
+
+// failingFetch is a git whose every call fails, so the sync fails at its fetch.
+func failingFetch(context.Context, string, ...string) (string, error) {
+	return "", errFetchFailed
+}
+
+// TestSourceReconcilesAfterEverySuccessfulSync covers the discovery hook: it
+// runs whether or not HEAD moved, and on a skip, so a pass that failed earlier
+// heals on the next tick; a sync that failed leaves the schedule alone.
+func TestSourceReconcilesAfterEverySuccessfulSync(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		git        source.Git
+		name       string
+		dirtyReset bool
+		wantErr    bool
+	}{
+		{name: "moved", git: (&fakeGit{head: headBefore, afterFF: headAfter}).run, dirtyReset: true},
+		{name: "already current", git: (&fakeGit{head: headBefore, afterFF: headBefore}).run, dirtyReset: true},
+		{name: "skipped", git: (&fakeGit{head: headBefore, status: dirtyStatus}).run},
+		{name: "failed", git: failingFetch, dirtyReset: true, wantErr: true},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			var reconciled []string
+
+			record := func(_ context.Context, name string) { reconciled = append(reconciled, name) }
+
+			built, err := builtins.SourceFactory(
+				[]source.Spec{sourceSpec(testCase.dirtyReset)}, testCase.git, nil, nil, record,
+			)(nil)
+			if err != nil {
+				t.Fatalf("build source runner: %v", err)
+			}
+
+			_, err = built.Execute(t.Context(), sourceTask(sourceSpecName))
+			if (err != nil) != testCase.wantErr {
+				t.Fatalf("execute error = %v, want error %v", err, testCase.wantErr)
+			}
+
+			want := []string{sourceSpecName}
+			if testCase.wantErr {
+				want = nil
+			}
+
+			if !slices.Equal(reconciled, want) {
+				t.Fatalf("reconciled %v, want %v", reconciled, want)
+			}
+		})
 	}
 }

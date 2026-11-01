@@ -224,7 +224,7 @@ func (c *Core) resolveConfirm(ctx context.Context, inbound *Inbound, sessionID s
 	c.takeRoute(sessionID)
 
 	events := make(chan chat.Event, turnEventBuffer)
-	result := make(chan error, 1)
+	result := make(chan error, resultBufferSize)
 
 	go func() {
 		result <- c.chat.ConfirmAction(ctx, sessionID, approve, events)

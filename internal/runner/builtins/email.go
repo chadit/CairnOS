@@ -54,7 +54,7 @@ const crlf = "\r\n"
 const headerOverhead = 64
 
 // Email sends a notification message over SMTP, one of the terminal-action
-// sinks in the built-ins table (.agents/spec/03-runner-interface.md).
+// sinks in the built-ins table.
 //
 // Config: host, port (default 587), from, and an optional auth user; the
 // password comes from the CAIRNOS_RUNNER_EMAIL_PASSWORD environment variable

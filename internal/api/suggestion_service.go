@@ -16,7 +16,7 @@ import (
 // suggestion slice. It is review-only by design: scanning and replay stay on
 // the CLI (replay spends real runner tokens), and nothing here writes
 // workflow or config files; approval returns an annotation for the human to
-// apply by hand (.agents/spec/06-observability-and-tuning.md, "Review flow").
+// apply by hand.
 type suggestionService struct {
 	cairnosv1.UnimplementedSuggestionServiceServer
 

@@ -41,7 +41,7 @@ type swaggerPaths struct {
 
 // buildRoutes derives the route table from the embedded OpenAPI document, so
 // /routes stays a thin view over generated artifacts rather than a second
-// source of truth (.agents/spec/07-api-protocols.md, "Discovery").
+// source of truth.
 func buildRoutes() ([]routeEntry, error) {
 	var doc swaggerPaths
 

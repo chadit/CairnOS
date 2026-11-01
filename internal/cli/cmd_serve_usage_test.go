@@ -44,7 +44,7 @@ func TestServeRunsTheUsageReportScriptOnStart(t *testing.T) {
 
 	stdout, _, exit, cancel := serveUntilReady(t, dir, nil)
 
-	ran := make(chan usageScriptRun, 1)
+	ran := make(chan usageScriptRun, oneShotChanSize)
 
 	go func() {
 		data, err := os.ReadFile(signal)

@@ -824,7 +824,7 @@
     },
     "/v1/login": {
       "post": {
-        "summary": "Login exchanges a valid, enabled access key for a short-lived token\ncarrying the key's scopes. The long-lived key crosses the wire here,\nwhich is why a non-loopback bind demands TLS\n(.agents/spec/08-auth-and-access.md, \"Model\").",
+        "summary": "Login exchanges a valid, enabled access key for a short-lived token\ncarrying the key's scopes. The long-lived key crosses the wire here, which\nis why a non-loopback bind demands TLS.",
         "operationId": "LoginService_Login",
         "responses": {
           "200": {
@@ -1885,7 +1885,7 @@
           "description": "comment is an optional decision note recorded on the gate."
         }
       },
-      "description": "ApproveRunRequest decides one pending approval gate on a held run.\naction_name may be omitted when exactly one gate is pending; with zero or\nseveral pending the request is refused, the several case listing the\ncandidate action names (.agents/spec/parity/workflow-language.md, \"Human\napproval\")."
+      "description": "ApproveRunRequest decides one pending approval gate on a held run.\naction_name may be omitted when exactly one gate is pending; with zero or\nseveral pending the request is refused, the several case listing the\ncandidate action names."
     },
     "WorkflowServiceCancelRunBody": {
       "type": "object"
@@ -2004,7 +2004,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": {}
+      "additionalProperties": true
     },
     "protobufNullValue": {
       "type": "string",
@@ -2639,7 +2639,7 @@
         "expiresAt": {
           "type": "string",
           "format": "date-time",
-          "description": "expires_at is the token's exp; clients re-call Login with their access\nkey for a fresh token (.agents/spec/08-auth-and-access.md, Change 2)."
+          "description": "expires_at is the token's exp; clients re-call Login with their access key\nfor a fresh token."
         }
       }
     },

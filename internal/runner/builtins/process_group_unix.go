@@ -11,7 +11,7 @@ import (
 )
 
 // groupProcess gives a child its own process group and kills that group on
-// cancel, since every caller may run a wrapper script that forks its CLI.
+// cancel, since every caller may run a script that forks its real work.
 // Neither launchd's job-exit sweep nor a terminal hangup reaches the new group,
 // so cmd/cairnos turns SIGTERM and SIGHUP into a cancel. A SIGKILL to the
 // parent still leaves the group running.

@@ -112,10 +112,9 @@ func runGit(ctx context.Context, parent []string, dir string, argv []string) (st
 	var stderr bytes.Buffer
 
 	stdout, err := execretry.Output(ctx, func() (*exec.Cmd, error) {
-		// #nosec G204 -- argv comes from this package's own fixed command sequences
-		// and from a repo and ref the operator wrote in config.toml, both of which
-		// config load has already refused if they could pass as an option. Neither
-		// workflow nor network input reaches here.
+		// #nosec G204 -- argv comes from this package's own fixed command sequences,
+		// a repo and ref config load refused if they could pass as an option, and a
+		// workflow file's path relative to dest, which always follows "--".
 		cmd := exec.CommandContext(ctx, binary, full...)
 
 		cmd.Env = gitEnv(parent)

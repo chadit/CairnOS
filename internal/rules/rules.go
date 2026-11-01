@@ -1,8 +1,7 @@
 // Package rules is the Language Rules Service: coding standards keyed by
-// language and project, with project overrides merged over language defaults
-// (.agents/spec/05-memory-and-knowledge.md, "Language Rules Service"). It backs
-// the language_rules_service runner and the Language Rules Assistant sample
-// agent.
+// language and project, with project overrides merged over language defaults.
+// It backs the language_rules_service runner and the Language Rules Assistant
+// sample agent.
 //
 // Storage choice: a dedicated rules table keyed (workspace, language, project,
 // key), not the vault. The spec calls the service "a typed view over the

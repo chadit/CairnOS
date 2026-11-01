@@ -29,8 +29,7 @@ const (
 	// codeRunNotHeld refuses an approval decision on a run that is not
 	// parked: a finished run can still own an orphaned pending gate (a
 	// failure or cancel beat the approval branch), and deciding it must not
-	// resurrect the terminal run
-	// (.agents/spec/parity/workflow-language.md, "Human approval").
+	// resurrect the terminal run.
 	codeRunNotHeld = "api.run_not_held"
 	// codeNoPendingApproval reports an approval decision with no gate left
 	// to decide.
@@ -46,7 +45,7 @@ const (
 	// codeWorkflowNameMismatch reports a save or inline run whose definition
 	// name differs from the {workflow_name} path param. Without the check a
 	// save could strand a file the resolver maps under a different name than
-	// the URL the client used (.agents/spec/parity/builder-ops.md).
+	// the URL the client used.
 	codeWorkflowNameMismatch = "api.workflow_name_mismatch"
 	// codeIdentityNotFound reports a send addressed to a messaging identity
 	// the registry never held: the caller named an identity this serve was
@@ -72,11 +71,10 @@ const (
 	codeAgentDriverIncapable = "agent.driver_incapable"
 )
 
-// Canonical auth.* codes (.agents/spec/08-auth-and-access.md, "Scopes"):
-// a missing or bad token is auth.unauthenticated, a token past exp is
-// auth.token_expired (both UNAUTHENTICATED), a valid token without the
-// method's scope is auth.forbidden (PERMISSION_DENIED via the auth.*
-// prefix fallback), and a login against a server running with auth
+// Canonical auth.* codes: a missing or bad token is auth.unauthenticated, a
+// token past exp is auth.token_expired (both UNAUTHENTICATED), a valid token
+// without the method's scope is auth.forbidden (PERMISSION_DENIED via the
+// auth.* prefix fallback), and a login against a server running with auth
 // disabled is auth.disabled (FAILED_PRECONDITION).
 const (
 	codeAuthUnauthenticated = "auth.unauthenticated"
@@ -98,9 +96,8 @@ const (
 	prefixAPI      = "api."
 )
 
-// grpcCodeFor maps a canonical dotted code to its gRPC status code, per the
-// table in .agents/spec/04-execution-engine.md ("Mapping to gRPC status
-// codes"). Exact codes first, then family prefixes, then INTERNAL.
+// grpcCodeFor maps a canonical dotted code to its gRPC status code. Exact codes
+// first, then family prefixes, then INTERNAL.
 func grpcCodeFor(code string) codes.Code {
 	if mapped, exact := exactGRPCCode(code); exact {
 		return mapped
@@ -180,8 +177,8 @@ func protoError(cerr *cairnerr.Error) *cairnosv1.Error {
 }
 
 // errorStatus builds the gRPC error for one canonical failure, carrying the
-// full structured error in the status details so gRPC and HTTP clients see
-// the same code (.agents/spec/07-api-protocols.md, "HTTP response (error)").
+// full structured error in the status details so gRPC and HTTP clients see the
+// same code.
 //
 //nolint:wrapcheck // status errors are the gRPC transport contract; wrapping them adds nothing for handlers that all funnel through here
 func errorStatus(grpcCode codes.Code, cerr *cairnerr.Error) error {

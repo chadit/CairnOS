@@ -2,8 +2,7 @@ package messaging
 
 import "github.com/chadit/CairnOS/internal/api"
 
-// The wire* funnels below adapt the api package's canonical status helpers
-// (.agents/spec/04-execution-engine.md, "Mapping to gRPC status codes"), the
+// The wire* funnels below adapt the api package's canonical status helpers, the
 // same seam internal/a2a uses. Each hands back a gRPC status error, which is
 // the transport contract: wrapping it would hide the gRPC code from the
 // classifier, so the wrapcheck suppression lives here, in one documented

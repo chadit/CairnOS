@@ -3,7 +3,7 @@
 // fresh store: the sqlite backend calls it, and the postgres backend calls
 // it when a test DSN is configured. One spec, two backends, so a key CRUD or
 // denylist-window difference between them fails a test instead of going
-// unnoticed (.agents/spec/08-auth-and-access.md).
+// unnoticed.
 package authtest
 
 import (
@@ -139,8 +139,7 @@ func testKeyCRUD[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 
 // testKeyWorkspaceRoundTrip pins the multi-tenancy column on the key store: a
 // key created with a workspace reads it back, so login can mint the workspace
-// claim, while an empty-workspace key reads back the default workspace
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// claim, while an empty-workspace key reads back the default workspace.
 func testKeyWorkspaceRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

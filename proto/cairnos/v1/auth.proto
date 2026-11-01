@@ -1,5 +1,4 @@
-// LoginService: access-key login and token revocation
-// (.agents/spec/08-auth-and-access.md, "Model"). A client exchanges its
+// LoginService: access-key login and token revocation. A client exchanges its
 // long-lived access key at /v1/login for a short-lived bearer token; the
 // revocation RPC feeds the jti/sub denylist that every verify consults, so
 // a token dies before its exp (Change 1 in the spec).
@@ -18,9 +17,8 @@ option go_package = "github.com/chadit/CairnOS/internal/api/gen/cairnos/v1;cairn
 // scope, enforced by the auth interceptor like every other method.
 service LoginService {
   // Login exchanges a valid, enabled access key for a short-lived token
-  // carrying the key's scopes. The long-lived key crosses the wire here,
-  // which is why a non-loopback bind demands TLS
-  // (.agents/spec/08-auth-and-access.md, "Model").
+  // carrying the key's scopes. The long-lived key crosses the wire here, which
+  // is why a non-loopback bind demands TLS.
   rpc Login(LoginRequest) returns (LoginResponse) {
     option (google.api.http) = {
       post: "/v1/login"
@@ -47,8 +45,8 @@ message LoginResponse {
   // token is the signed JWT to present as `Authorization: Bearer <token>`.
   string token = 1;
 
-  // expires_at is the token's exp; clients re-call Login with their access
-  // key for a fresh token (.agents/spec/08-auth-and-access.md, Change 2).
+  // expires_at is the token's exp; clients re-call Login with their access key
+  // for a fresh token.
   google.protobuf.Timestamp expires_at = 2;
 }
 

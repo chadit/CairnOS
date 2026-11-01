@@ -1,6 +1,5 @@
 // Package config loads CairnOS settings: defaults, then the TOML file, then
-// environment overrides, strongest last
-// (.agents/spec/11-deployment-and-config.md, "Configuration").
+// environment overrides, strongest last.
 package config
 
 import (
@@ -73,11 +72,10 @@ const (
 )
 
 // Credential is one outbound OAuth2 credential parsed from a [credential.<name>]
-// block (.agents/spec/parity/secrets-credentials.md, "outbound OAuth2
-// credentials"). The http and mcp_client runners reference it by name to send a
-// bearer token. Client secrets and refresh tokens never live in this struct or
-// the config file: only the secret-ref name does, resolved through the secret
-// chain at wiring time.
+// block. The http and mcp_client runners reference it by name to send a bearer
+// token. Client secrets and refresh tokens never live in this struct or the
+// config file: only the secret-ref name does, resolved through the secret chain
+// at wiring time.
 type Credential struct {
 	// Grant is GrantClientCredentials or GrantRefreshToken.
 	Grant string
@@ -125,19 +123,32 @@ type Source struct {
 	// newest match by version sort wins. Empty means DefaultSourceRef.
 	Ref string
 
+	// Workflows are path.Match globs, relative to Dest, naming the workflow
+	// files this source carries. Every file committed at HEAD that matches one
+	// and has a schedule key is kept registered with the scheduler after each
+	// sync. Empty turns discovery off, which is what every host that predates
+	// the key gets.
+	Workflows []string
+
 	// DirtyReset lets the sync force the tree back onto Ref when it carries
 	// tracked changes, sits elsewhere, or cannot fast-forward. It defaults to
 	// true so a host repairs itself instead of failing a scheduled sync every
 	// few minutes until someone logs in. False leaves the tree alone.
 	DirtyReset bool
+
+	// Trusted lets the exec runner run an action whose workflow file is
+	// committed at HEAD under Dest and unchanged on disk, without listing the
+	// action in allow_actions. It defaults to false because it hands exec to
+	// whoever can push to Ref.
+	Trusted bool
 }
 
 // Engine bounds execution.
 type Engine struct {
 	// Fallback is the mixed-model chain, keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
-	// order before the action fails (.agents/spec/14-open-decisions.md, D12). An
-	// absent or empty entry means the action's runner has no fallback.
+	// order before the action fails (D12). An absent or empty entry means the
+	// action's runner has no fallback.
 	Fallback map[string][]string
 
 	Retry                Retry
@@ -145,8 +156,7 @@ type Engine struct {
 	DefaultTimeout       time.Duration
 
 	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
-	// engine.call_depth_exceeded. Below 1 falls back to the engine default
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	// engine.call_depth_exceeded. Below 1 falls back to the engine default.
 	MaxCallDepth int
 }
 
@@ -169,10 +179,9 @@ type Store struct {
 // needs no server, so `cairnos init` runs immediately.
 const defaultBackend = "sqlite"
 
-// Secrets selects how a ${{ secrets.name }} reference resolves
-// (.agents/spec/parity/secrets-credentials.md, "Config"). "env" reads only
-// CAIRNOS_SECRET_<NAME>; "store" chains env ahead of an encrypted store, so
-// env wins.
+// Secrets selects how a ${{ secrets.name }} reference resolves. "env" reads
+// only CAIRNOS_SECRET_<NAME>; "store" chains env ahead of an encrypted store,
+// so env wins.
 //
 // "Encrypted" is narrow: the store defends a read-at-rest attacker, not one
 // who injects environment variables. Secrets interpolated into action output
@@ -205,7 +214,7 @@ type Memory struct {
 	Vector          bool
 }
 
-// Retention bounds state growth (.agents/spec/04-execution-engine.md).
+// Retention bounds state growth.
 type Retention struct {
 	Runs    time.Duration
 	Outputs time.Duration
@@ -249,9 +258,8 @@ type API struct {
 	Enabled bool
 }
 
-// Auth gates external calls (.agents/spec/08-auth-and-access.md,
-// "Configuration"). Signing secrets are never config-file keys: the HS256
-// secret and the EdDSA key file paths come from CAIRNOS_AUTH_HS256_SECRET
+// Auth gates external calls. Signing secrets are never config-file keys: the
+// HS256 secret and the EdDSA key file paths come from CAIRNOS_AUTH_HS256_SECRET
 // and CAIRNOS_AUTH_PRIVATE_KEY_FILE / CAIRNOS_AUTH_PUBLIC_KEY_FILE.
 type Auth struct {
 	// SigningAlgorithm picks the token tier: HS256 (self-issued, shared
@@ -304,12 +312,11 @@ type Auth struct {
 	Enabled bool
 }
 
-// OAuth configures the Phase 5b OIDC human-login path
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"): browser users sign
-// in at an identity provider, and CairnOS mints its own JWT carrying the
-// workspace and the role's scopes. It sits alongside the access-key model,
-// not in place of it. Off by default; the client secret never lives in the
-// config file, only in CAIRNOS_OAUTH_CLIENT_SECRET.
+// OAuth configures the Phase 5b OIDC human-login path: browser users sign in at
+// an identity provider, and CairnOS mints its own JWT carrying the workspace
+// and the role's scopes. It sits alongside the access-key model, not in place
+// of it. Off by default; the client secret never lives in the config file, only
+// in CAIRNOS_OAUTH_CLIENT_SECRET.
 type OAuth struct {
 	// Issuer is the IdP's OIDC issuer URL; the provider's discovery document
 	// and JWKS are fetched from it.
@@ -354,10 +361,10 @@ type OAuth struct {
 	AutoProvision bool
 }
 
-// A2A configures the Phase 4b Agent-to-Agent protocol adapter
-// (.agents/spec/09-a2a-and-hive.md). Off by default; when enabled, the serve
-// process registers the A2A service, serves the signed agent card at the
-// well-known path, and optionally fronts the gRPC listener with mTLS.
+// A2A configures the Phase 4b Agent-to-Agent protocol adapter. Off by default;
+// when enabled, the serve process registers the A2A service, serves the signed
+// agent card at the well-known path, and optionally fronts the gRPC listener
+// with mTLS.
 type A2A struct {
 	// CardSigningKeyFile names a PEM ed25519 private key that signs the agent
 	// card. Empty reuses the auth EdDSA key when the auth tier is asymmetric;
@@ -370,10 +377,9 @@ type A2A struct {
 	// right for local use but usually wrong behind NAT or a proxy.
 	EndpointAdvertise string
 
-	// CertFile, KeyFile, and ClientCAFile turn on mTLS at the gRPC transport
-	// (.agents/spec/09-a2a-and-hive.md, "Transport security"). All three are
-	// required together; any subset is a configuration error. mTLS is
-	// orthogonal to the bearer token: the connection proves itself with
+	// CertFile, KeyFile, and ClientCAFile turn on mTLS at the gRPC transport.
+	// All three are required together; any subset is a configuration error.
+	// mTLS is orthogonal to the bearer token: the connection proves itself with
 	// certificates, the caller proves its scopes with the token.
 	CertFile     string
 	KeyFile      string
@@ -382,12 +388,11 @@ type A2A struct {
 	Enabled bool
 }
 
-// MCP configures the Phase 7a MCP server
-// (.agents/spec/10-mcp-integration.md, "MCP Server"). Off by default; with the
-// http transport the serve process mounts the streamable handler on the API
-// mux at Path, and an external client presents the same bearer token, under
-// the same scopes. The stdio transport is the `cairnos mcp serve` subcommand,
-// where auth is the process boundary.
+// MCP configures the Phase 7a MCP server. Off by default; with the http
+// transport the serve process mounts the streamable handler on the API mux at
+// Path, and an external client presents the same bearer token, under the same
+// scopes. The stdio transport is the `cairnos mcp serve` subcommand, where auth
+// is the process boundary.
 type MCP struct {
 	// Transport selects how the server is reached: "http" mounts the streamable
 	// handler on the shared API mux, "stdio" is served only by the mcp serve
@@ -404,10 +409,9 @@ type MCP struct {
 	WorkflowsDir string
 
 	// RegistryURL is the base URL of the MCP registry this node publishes to and
-	// imports from (.agents/spec/10-mcp-integration.md, "MCP Registry"). Empty
-	// disables both: mcp publish and mcp import report it must be set. The
-	// registry token is a secret read from CAIRNOS_MCP_REGISTRY_TOKEN, never this
-	// struct.
+	// imports from. Empty disables both: mcp publish and mcp import report it
+	// must be set. The registry token is a secret read from
+	// CAIRNOS_MCP_REGISTRY_TOKEN, never this struct.
 	RegistryURL string
 
 	// AdvertiseURL is this node's externally reachable MCP http endpoint, the
@@ -435,13 +439,12 @@ const (
 )
 
 // defaultMCPPath is the mux pattern the http transport mounts on when the
-// config sets no path (.agents/spec/10-mcp-integration.md, "MCP Server").
+// config sets no path.
 const defaultMCPPath = "/mcp"
 
-// Hive gates network tip sharing (Phase 6,
-// .agents/spec/09-a2a-and-hive.md). Subscribing is always safe; publishing is
-// gated and off by default, pending the privacy review (R2) and the hosting
-// decision (R3) in .agents/spec/14-open-decisions.md.
+// Hive gates network tip sharing (Phase 6). Subscribing is always safe;
+// publishing is gated and off by default, pending the privacy review (R2) and
+// the hosting decision (R3).
 type Hive struct {
 	// Endpoint is the hive API base URL.
 	Endpoint string
@@ -452,17 +455,16 @@ type Hive struct {
 	NodePseudonym string
 
 	// KeyRef is the secret name of the shared cluster key, resolved through the
-	// SecretSource seam (R2/R3 in .agents/spec/14-open-decisions.md). Empty means
-	// no key: the client keeps the plaintext wire format, the no-key mode for
-	// SQLite or an unconfigured cluster. When set, published tips are sealed and
-	// received envelopes opened under the resolved 32-byte key.
+	// SecretSource seam (R2/R3). Empty means no key: the client keeps the
+	// plaintext wire format, the no-key mode for SQLite or an unconfigured
+	// cluster. When set, published tips are sealed and received envelopes opened
+	// under the resolved 32-byte key.
 	KeyRef string
 
 	// PrevKeyRef is the secret name of the previous shared key, still accepted
 	// during a key rotation so opening keeps working. Empty when no rotation is
 	// in flight. A node seals under KeyRef and opens under KeyRef or PrevKeyRef,
-	// so a cluster rotates keys without a flag day (R2/R3 in
-	// .agents/spec/14-open-decisions.md).
+	// so a cluster rotates keys without a flag day (R2/R3).
 	PrevKeyRef string
 
 	// Categories are the opted-in categories. Sharing is per-category, off
@@ -488,7 +490,7 @@ type Hive struct {
 
 // hiveBackend is the only store backend that can run the hive: it is a private
 // cluster over shared state, so the elected primary and the sealed multi-node
-// model need Postgres (R2/R3 in .agents/spec/14-open-decisions.md).
+// model need Postgres (R2/R3).
 const hiveBackend = "postgres"
 
 // HiveNeedsPostgres reports a hive that is enabled but configured on a store
@@ -498,17 +500,15 @@ func (c *Config) HiveNeedsPostgres() bool {
 	return c.Hive.Enabled && c.Store.Backend != hiveBackend
 }
 
-// Autonomic gates the Phase 6 auto-apply path
-// (.agents/spec/06-observability-and-tuning.md, "Review flow"). Default off:
-// nothing auto-applies until the operator opts in, and even then only the
+// Autonomic gates the Phase 6 auto-apply path. Default off: nothing
+// auto-applies until the operator opts in, and even then only the
 // output-neutral kinds (caching, batching) ever apply.
 type Autonomic struct {
 	// AutoApplyEnabled is the master switch. Default false.
 	AutoApplyEnabled bool
 }
 
-// Tuning bounds the Phase 3 suggestion scan
-// (.agents/spec/06-observability-and-tuning.md, "Guardrail").
+// Tuning bounds the Phase 3 suggestion scan.
 type Tuning struct {
 	// EmbeddingModel opts the replay guardrail into similarity comparison
 	// (R1): when set, an output-changing suggestion's replay judges
@@ -528,9 +528,9 @@ type Tuning struct {
 }
 
 // Scheduler tunes the durable work-queue the scheduler enqueues into and the
-// worker drains (.agents/spec/14-open-decisions.md, S8). A cron fire enqueues a
-// work item; a worker claims and runs it. A fire no worker can take right away
-// is not dropped, it waits in the queue for the next free worker.
+// worker drains (S8). A cron fire enqueues a work item; a worker claims and
+// runs it. A fire no worker can take right away is not dropped, it waits in the
+// queue for the next free worker.
 type Scheduler struct {
 	// AckWait is the lease an item holds while a worker runs it. The worker
 	// renews the lease while the run is still going, so this bounds how long a
@@ -561,7 +561,7 @@ type Scheduler struct {
 }
 
 // Scheduler work-queue defaults, chosen for a small calm node; an operator tunes
-// them per deployment (.agents/spec/14-open-decisions.md, S8).
+// them per deployment (S8).
 const (
 	defaultSchedulerAckWait       = 5 * time.Minute
 	defaultSchedulerBackoff       = 30 * time.Second
@@ -571,10 +571,9 @@ const (
 	defaultSchedulerSweepInterval = time.Minute
 )
 
-// Chat configures the Phase 9 conversational interface
-// (.agents/spec/13-roadmap.md, Phase 9). Off by default; when enabled the
-// serve process mounts ChatService and the chat agent over the same engine the
-// workflows run on.
+// Chat configures the Phase 9 conversational interface. Off by default; when
+// enabled the serve process mounts ChatService and the chat agent over the same
+// engine the workflows run on.
 type Chat struct {
 	// Personalities maps personality names to their system prompts, overlaid on
 	// the built-ins. A name matching a built-in overrides it.
@@ -590,11 +589,10 @@ type Chat struct {
 	DefaultPersonality string
 
 	// FileAllowlist lists the absolute directory roots an @-file reference may
-	// read from (.agents/spec/parity/skills-context.md, Part 2). Empty (the
-	// default) leaves every @-token inert. A path is readable only when its
-	// symlink-resolved form sits inside a symlink-resolved root, so a symlink
-	// cannot escape a root and a sibling sharing a root's name prefix is
-	// rejected.
+	// read from. Empty (the default) leaves every @-token inert. A path is
+	// readable only when its symlink-resolved form sits inside a
+	// symlink-resolved root, so a symlink cannot escape a root and a sibling
+	// sharing a root's name prefix is rejected.
 	FileAllowlist []string
 
 	// TurnBudgetUSD caps one chat turn's estimated driver-and-tool spend, the
@@ -613,17 +611,16 @@ type Chat struct {
 	Enabled bool
 
 	// OpenAICompat mounts the OpenAI-compatible chat completions adapter over
-	// the chat surface, so off-the-shelf OpenAI clients can point at this node
-	// (.agents/spec/parity/openai-compat.md). Default false; it requires chat
-	// enabled, so serve fails fast when this is on with chat off.
+	// the chat surface, so off-the-shelf OpenAI clients can point at this node.
+	// Default false; it requires chat enabled, so serve fails fast when this is
+	// on with chat off.
 	OpenAICompat bool
 }
 
-// Webhook configures the webhook-ingress subsystem
-// (.agents/spec/parity/triggers-webhooks.md, "Webhook ingress"). Off by
-// default: serve mounts no ingress routes until [webhook] enabled is true and
-// an admin has registered at least one workflow with `cairnos webhook add`, so
-// the default posture exposes no public webhook surface.
+// Webhook configures the webhook-ingress subsystem. Off by default: serve
+// mounts no ingress routes until [webhook] enabled is true and an admin has
+// registered at least one workflow with `cairnos webhook add`, so the default
+// posture exposes no public webhook surface.
 type Webhook struct {
 	// Enabled gates the ingress routes. With it off, buildWebhookExtension
 	// returns nil and serve mounts nothing, so an unregistered node is
@@ -647,9 +644,8 @@ type Webhook struct {
 	SignatureSkew time.Duration
 }
 
-// Bridge configures the Phase 9b messaging bridge
-// (.agents/spec/parity/messaging-bridge.md). Off by default; a second transport
-// beyond Telegram is additive.
+// Bridge configures the Phase 9b messaging bridge. Off by default; a second
+// transport beyond Telegram is additive.
 type Bridge struct {
 	Telegram   Telegram
 	Mattermost Mattermost
@@ -659,8 +655,7 @@ type Bridge struct {
 // credential, so it is read only from CAIRNOS_BRIDGE_TELEGRAM_TOKEN at serve
 // wiring, never a config-file key. There is deliberately no base_url key: a
 // configurable base URL plus the token-in-path Bot API is a token-exfiltration
-// vector, so the client's base URL stays a test-only unexported field
-// (.agents/spec/parity/messaging-bridge.md, decision 3).
+// vector, so the client's base URL stays a test-only unexported field.
 type Telegram struct {
 	// Users is the allowlist keyed by Telegram user ID (as a string), mapping
 	// each permitted sender to a workspace and its grants. An enabled bridge with
@@ -689,8 +684,7 @@ type Telegram struct {
 // TelegramUser maps one allowlisted Telegram sender to a workspace and its
 // grants. The bridge is an in-process trusted surface with no token to carry
 // scopes, so approving a D9 workflow is a distinct operator-set grant
-// (AllowConfirm) rather than a scope check
-// (.agents/spec/parity/messaging-bridge.md, decision 4).
+// (AllowConfirm) rather than a scope check.
 type TelegramUser struct {
 	// Workspace is the workspace every turn from this sender is stamped with,
 	// exactly as the gRPC interceptor would. Required: an empty workspace is a
@@ -707,10 +701,8 @@ type TelegramUser struct {
 	AllowConfirm bool
 }
 
-// Notify configures outbound event notifications
-// (.agents/spec/parity/messaging-bridge.md, decision 7). The Discord webhook URL
-// is a credential, so it stays in CAIRNOS_NOTIFY_DISCORD_WEBHOOK, never a config
-// key.
+// Notify configures outbound event notifications. The Discord webhook URL is a
+// credential, so it stays in CAIRNOS_NOTIFY_DISCORD_WEBHOOK, never a config key.
 type Notify struct {
 	Discord    Discord
 	Mattermost NotifyMattermost
@@ -834,11 +826,10 @@ func Default() Config {
 	}
 }
 
-// Webhook ingress defaults (.agents/spec/parity/triggers-webhooks.md,
-// "Config"). The per-registration cap matches the login rate's calm-node
-// default; the test endpoint holds a connection at most 30s before it answers
-// 202 and lets the run finish in the background. Both only matter once an
-// operator sets [webhook] enabled = true.
+// Webhook ingress defaults. The per-registration cap matches the login rate's
+// calm-node default; the test endpoint holds a connection at most 30s before it
+// answers 202 and lets the run finish in the background. Both only matter once
+// an operator sets [webhook] enabled = true.
 const (
 	defaultWebhookRatePerMinute = 60
 	defaultWebhookTestWait      = 30 * time.Second
@@ -850,9 +841,9 @@ const (
 )
 
 // Chat defaults: the anthropic runner drives turns (it implements ToolCaller),
-// and the assistant personality frames a session that names none
-// (.agents/spec/13-roadmap.md, Phase 9). Chat stays off until [chat] enabled is
-// set, so these only matter once an operator turns it on.
+// and the assistant personality frames a session that names none. Chat stays
+// off until [chat] enabled is set, so these only matter once an operator turns
+// it on.
 const (
 	defaultChatDriver      = "anthropic"
 	defaultChatPersonality = "assistant"
@@ -862,23 +853,22 @@ const (
 	defaultChatMaxFileBytes = 64 << 10
 )
 
-// Telegram bridge timing defaults (.agents/spec/parity/messaging-bridge.md,
-// "Config"). The long poll holds each getUpdates call for 50s, each outbound
-// call gets 10s, and an unanswered proposal expires as deny after 10m. All only
-// matter once an operator sets [bridge.telegram] enabled = true. Mattermost
-// shares the send timeout and confirm TTL, which mean the same thing there.
+// Telegram bridge timing defaults. The long poll holds each getUpdates call for
+// 50s, each outbound call gets 10s, and an unanswered proposal expires as deny
+// after 10m. All only matter once an operator sets [bridge.telegram]
+// enabled = true. Mattermost shares the send timeout and confirm TTL, which mean
+// the same thing there.
 const (
 	defaultBridgePollTimeout = 50 * time.Second
 	defaultBridgeSendTimeout = 10 * time.Second
 	defaultBridgeConfirmTTL  = 10 * time.Minute
 )
 
-// Discord fan-out event names (.agents/spec/parity/messaging-bridge.md,
-// decision 7). These are the only values [notify.discord] events accepts; the
-// default set is exactly held, which keeps today's re-auth hold behavior.
-// Exported so the serve producers (held, run_failed, dead_lettered,
-// budget_denied) name the same events config validates against, one source of
-// truth rather than magic strings on both sides of the wiring.
+// Discord fan-out event names. These are the only values [notify.discord]
+// events accepts; the default set is exactly held, which keeps today's re-auth
+// hold behavior. Exported so the serve producers (held, run_failed,
+// dead_lettered, budget_denied) name the same events config validates against,
+// one source of truth rather than magic strings on both sides of the wiring.
 const (
 	NotifyEventHeld         = "held"
 	NotifyEventRunFailed    = "run_failed"
@@ -932,8 +922,7 @@ const (
 	defaultSweepInterval   = 6 * time.Hour
 )
 
-// Hive publish floor defaults (.agents/spec/09-a2a-and-hive.md,
-// "k-anonymity threshold"). The k-anonymity floor is the server-side k the
+// Hive publish floor defaults. The k-anonymity floor is the server-side k the
 // client knows about; the local min-observations floor is the count a node
 // insists on seeing before it will publish a pattern, ahead of the server's k.
 const (
@@ -943,32 +932,30 @@ const (
 
 // OAuth login defaults: a first-time human lands in the default workspace as
 // a viewer, the least-privilege role, so a new sign-in cannot change anything
-// until an admin grants more (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
+// until an admin grants more.
 const (
 	defaultOAuthWorkspace = "default"
 	defaultOAuthRole      = "viewer"
 )
 
 // defaultMinSavingsUSD is the spec's suggestion savings floor: a penny per
-// run, low enough to surface real waste and high enough to keep noise out
-// of the review queue (.agents/spec/06-observability-and-tuning.md).
+// run, low enough to surface real waste and high enough to keep noise out of
+// the review queue.
 const defaultMinSavingsUSD = 0.01
 
-// API request-size defaults (.agents/spec/08-auth-and-access.md, M4). The
-// gateway body cap and the gRPC message cap both land at 1 MiB, enough for the
-// JSON and proto payloads CairnOS exchanges and small enough that an
-// over-limit request is rejected before it buffers. 1 << 20 is shift form for
-// 1 MiB per the house power-of-two rule.
+// API request-size defaults (M4). The gateway body cap and the gRPC message cap
+// both land at 1 MiB, enough for the JSON and proto payloads CairnOS exchanges
+// and small enough that an over-limit request is rejected before it buffers.
+// 1 << 20 is shift form for 1 MiB per the house power-of-two rule.
 const (
 	defaultMaxBodyBytes    = 1 << 20
 	defaultMaxRecvMsgBytes = 1 << 20
 )
 
-// Login DoS and verification defaults (.agents/spec/08-auth-and-access.md,
-// M1/M4/L2). The login pool is small because each argon2id derivation costs
-// ~64 MiB; the per-peer rate is one login per second on average; the stream
-// recheck and the cross-instance clock skew are the spec's stated defaults.
+// Login DoS and verification defaults (M1/M4/L2). The login pool is small
+// because each argon2id derivation costs ~64 MiB; the per-peer rate is one
+// login per second on average; the stream recheck and the cross-instance clock
+// skew are the spec's stated defaults.
 const (
 	defaultMaxConcurrentLogins = 4
 	defaultLoginRatePerMinute  = 60
@@ -1152,8 +1139,8 @@ func validOAuthRole(role string) bool {
 // validateBridge fails fast when the Telegram bridge is enabled but unusable:
 // no allowlisted users accepts nobody, and a user entry with no workspace has
 // nothing to stamp turns with. The chat cross-check (bridge on while [chat] is
-// off) lives at serve wiring (.agents/spec/parity/messaging-bridge.md,
-// decision 6). Iteration is sorted by ID so the reported entry is reproducible.
+// off) lives at serve wiring. Iteration is sorted by ID so the reported entry
+// is reproducible.
 func validateBridge(telegram *Telegram) error {
 	if !telegram.Enabled {
 		return nil

@@ -13,9 +13,8 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// tenancySchema holds the workspaces and their members
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"), plus IF NOT EXISTS
-// so opening an existing database is idempotent. It shares the run store's
+// tenancySchema holds the workspaces and their members, plus IF NOT EXISTS so
+// opening an existing database is idempotent. It shares the run store's
 // database file with disjoint tables, the same arrangement internal/auth and
 // internal/memory use. The unique name index enforces the spec's
 // unique-workspace-name invariant.

@@ -7,7 +7,7 @@ import "os/exec"
 func groupProcess(_ *exec.Cmd) {
 	// Windows has no process group to signal, and the plugin host's job object
 	// covers only plugin processes. Cancellation keeps the os/exec default,
-	// which kills the process a caller started but not a CLI a wrapper script
-	// started. That CLI can hold the caller's pipes open, so every caller must
+	// which kills the process a caller started but not a child that process
+	// forked. That child can hold the caller's pipes open, so every caller must
 	// set WaitDelay to bound the wait.
 }

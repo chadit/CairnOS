@@ -53,8 +53,8 @@ type workflowService struct {
 
 // RunWorkflow starts a run by name and streams its events until the run
 // finalizes. A dropped HTTP or gRPC client does not cancel the run; only
-// CancelRun and server shutdown do (.agents/spec/04-execution-engine.md:
-// canceled means an operator stopped the run).
+// CancelRun and server shutdown do (canceled means an operator stopped the
+// run).
 func (s *workflowService) RunWorkflow(req *cairnosv1.RunWorkflowRequest, stream cairnosv1.WorkflowService_RunWorkflowServer) error {
 	flow, err := s.resolveRunFlow(req)
 	if err != nil {
@@ -145,8 +145,7 @@ func (s *workflowService) CancelRun(ctx context.Context, req *cairnosv1.CancelRu
 // run's events until it finalizes. A foreign run reads as not-found, the
 // workflow is resolved fresh by name, and a workflow-hash mismatch is refused
 // unless force is set. The replay goes through the manager, so it is watchable
-// and cancelable (.agents/spec/parity/workflow-language.md, "Replay from failed
-// action").
+// and cancelable.
 func (s *workflowService) ReplayRun(req *cairnosv1.ReplayRunRequest, stream cairnosv1.WorkflowService_ReplayRunServer) error {
 	ctx := stream.Context()
 
@@ -215,8 +214,7 @@ func (s *workflowService) ValidateWorkflow(ctx context.Context, req *cairnosv1.V
 // the version store before the write, so cairnos suggestions revert restores
 // the pre-save definition with no new rollback machinery. Unlike
 // ValidateWorkflow, a bad file here is an RPC error: the save refuses it and
-// nothing touches disk (.agents/spec/parity/builder-ops.md, "SaveWorkflow
-// handler").
+// nothing touches disk.
 func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveWorkflowRequest) (*cairnosv1.SaveWorkflowResponse, error) {
 	name := req.GetWorkflowName()
 
@@ -252,8 +250,7 @@ func (s *workflowService) SaveWorkflow(ctx context.Context, req *cairnosv1.SaveW
 // manager. The resume is detached, so the response is only an ack and GetRun
 // reports the outcome. Everything fallible resolves before the decision is
 // written, so nothing strands a decided gate on a held run. A foreign run is
-// not-found, never forbidden (.agents/spec/parity/workflow-language.md,
-// "Human approval").
+// not-found, never forbidden.
 func (s *workflowService) ApproveRun(ctx context.Context, req *cairnosv1.ApproveRunRequest) (*cairnosv1.ApproveRunResponse, error) {
 	held, err := s.store.GetRun(ctx, req.GetRunId())
 	if err != nil {
@@ -429,8 +426,7 @@ func approvalActionNames(pending []*store.Approval) []string {
 // named file from the workflows directory. A non-empty toml runs inline: parsed,
 // name-checked against the path param, and hash-stamped so the run records a
 // saved file's identity, all before any stream event. Running unsaved is
-// scope-equivalent to save-then-run, so no extra privilege is needed
-// (.agents/spec/parity/builder-ops.md, "Inline run").
+// scope-equivalent to save-then-run, so no extra privilege is needed.
 func (s *workflowService) resolveRunFlow(req *cairnosv1.RunWorkflowRequest) (*workflow.Workflow, error) {
 	if len(req.GetToml()) == 0 {
 		return NewWorkflowResolver(s.workflowsDir, s.logger).Resolve(req.GetWorkflowName())
@@ -487,8 +483,7 @@ func (s *workflowService) captureRollbackPoint(ctx context.Context, name string)
 // the path param. A parse failure returns the INVALID_ARGUMENT list
 // ValidateWorkflow reports. A mismatch answers api.workflow_name_mismatch, or a
 // save could strand a file under a name the client never used and an inline run
-// execute under the wrong identity (.agents/spec/parity/builder-ops.md).
-// stdin_file resolves in the workflows dir.
+// execute under the wrong identity. stdin_file resolves in the workflows dir.
 func (s *workflowService) parseNamedDefinition(toml []byte, name string) (*workflow.Workflow, error) {
 	flow, err := workflow.ParseInDir(toml, s.workflowsDir)
 	if err != nil {

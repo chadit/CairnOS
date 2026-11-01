@@ -1,7 +1,7 @@
 // Package engine turns a parsed workflow into a finished run: it builds the
 // DAG, schedules ready actions under a concurrency cap, interpolates params,
 // applies retry and circuit breaking around runner calls, and persists every
-// state transition (.agents/spec/04-execution-engine.md).
+// state transition.
 package engine
 
 import (
@@ -22,8 +22,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Canonical error codes the engine owns (.agents/spec/04-execution-engine.md,
-// "Error model"). Load-time workflow codes live in internal/workflow.
+// Canonical error codes the engine owns. Load-time workflow codes live in
+// internal/workflow.
 const (
 	// CodeCircuitOpen marks a call rejected because the runner's breaker is
 	// open; the service was never touched.
@@ -90,18 +90,16 @@ type SecretSource interface {
 // WorkflowSource resolves a child workflow by name for a workflow-call action
 // (kind = "workflow"). The interface lives in the engine so nothing here imports
 // the API package; api.WorkflowResolver satisfies it structurally, so the CLI
-// and serve wiring pass the same directory-backed resolver
-// (.agents/spec/parity/workflow-language.md, "Workflow call"). Nil makes every
+// and serve wiring pass the same directory-backed resolver. Nil makes every
 // workflow-call action fail with engine.workflow_source_missing.
 type WorkflowSource interface {
 	// Resolve returns the workflow named name, or an error when none exists.
 	Resolve(name string) (*workflow.Workflow, error)
 }
 
-// AgentExecutor runs agent-kind actions: the Phase 1c loop
-// (.agents/spec/15-agent-loop.md), injected as an interface so the engine
-// never imports the loop package. Nil keeps the pre-1c behavior where agent
-// actions fail with engine.agent_not_available.
+// AgentExecutor runs agent-kind actions: the Phase 1c loop, injected as an
+// interface so the engine never imports the loop package. Nil keeps the pre-1c
+// behavior where agent actions fail with engine.agent_not_available.
 type AgentExecutor interface {
 	// ValidateAction applies the run-start half of agent validation: the
 	// driver must be a registered runner implementing runner.ToolCaller, and
@@ -119,15 +117,13 @@ type AgentExecutor interface {
 
 // Config tunes one Engine.
 type Config struct {
-	// Budget sums a workflow's spend over a period so the engine can compare
-	// it to the budget limit (.agents/spec/12-ui-and-governance.md,
-	// "Budgets"). Nil turns budget enforcement off, the pre-governance
+	// Budget sums a workflow's spend over a period so the engine can compare it
+	// to the budget limit. Nil turns budget enforcement off, the pre-governance
 	// behavior; the store satisfies it.
 	Budget BudgetChecker
 
-	// Pause reports whether a workflow is paused so the engine refuses new
-	// runs of it (.agents/spec/12-ui-and-governance.md, "Control actions").
-	// Nil turns the pause check off; the store satisfies it.
+	// Pause reports whether a workflow is paused so the engine refuses new runs
+	// of it. Nil turns the pause check off; the store satisfies it.
 	Pause PauseChecker
 
 	// Instrumentation observes runs, actions, and runner calls for the
@@ -150,14 +146,13 @@ type Config struct {
 	AgentExecutor AgentExecutor
 
 	// Workflows resolves a workflow-call action's child by name. Nil makes
-	// every workflow-call action fail with engine.workflow_source_missing
-	// (.agents/spec/parity/workflow-language.md, "Workflow call").
+	// every workflow-call action fail with engine.workflow_source_missing.
 	Workflows WorkflowSource
 
 	// Fallback is the mixed-model chain keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
-	// order before failing the action (.agents/spec/14-open-decisions.md, D12).
-	// An absent entry means the action's runner runs alone, exactly as before.
+	// order before failing the action (D12). An absent entry means the action's
+	// runner runs alone, exactly as before.
 	Fallback map[string][]string
 
 	// Clock supplies the current time for budget period-start math. Injected
@@ -251,7 +246,7 @@ func New(cfg Config, registry *runner.Registry, stateStore store.Store) *Engine 
 
 // Breakers returns the per-runner circuit breakers the engine calls through,
 // keyed by runner name. The admin API resets them and telemetry reads and
-// watches them (.agents/spec/06-observability-and-tuning.md).
+// watches them.
 func (e *Engine) Breakers() *reliability.BreakerSet {
 	return e.breakers
 }
@@ -355,6 +350,7 @@ func (e *Engine) checkRunners(flow *workflow.Workflow, inputs map[string]any) er
 
 		task := &runner.Task{
 			ActionName: name,
+			Definition: action.Definition,
 			Params:     action.Params,
 			Inputs:     inputs,
 			Idempotent: action.Idempotent,

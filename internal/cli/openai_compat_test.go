@@ -26,7 +26,7 @@ openai_compat = true
 
 // TestServeFailsWhenOpenAICompatWithoutChat proves serve refuses to start when
 // the OpenAI-compatible adapter is enabled but chat is off, since the adapter has
-// no agent to drive (.agents/spec/parity/openai-compat.md, acceptance 8).
+// no agent to drive.
 func TestServeFailsWhenOpenAICompatWithoutChat(t *testing.T) {
 	t.Parallel()
 

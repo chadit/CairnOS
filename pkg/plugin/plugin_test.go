@@ -33,6 +33,10 @@ const (
 	// heldCallParams makes the mock answer long after stopTimeout, so a drain
 	// that waited for it would fail the test.
 	heldCallParams = `{"delay_ms": 60000}`
+
+	// handoffBufferSize gives the Wait goroutine a slot for the exit status, so
+	// it can finish after the test has already failed on the timer.
+	handoffBufferSize = 1
 )
 
 // TestHelperPlugin is the plugin process, not a test of its own: it serves the
@@ -175,7 +179,7 @@ func requireServing(t *testing.T, conn *grpc.ClientConn) {
 func requireCleanExit(t *testing.T, proc *exec.Cmd, output *bytes.Buffer, stop string) {
 	t.Helper()
 
-	exited := make(chan error, 1)
+	exited := make(chan error, handoffBufferSize)
 
 	go func() { exited <- proc.Wait() }()
 

@@ -10,12 +10,11 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgSchedulesSchema is the spec's schedules table
-// (.agents/spec/11-deployment-and-config.md, "Scheduler (Phase 0b)") with
-// timestamptz, plus IF NOT EXISTS so opening an existing database is
-// idempotent across the nodes that share it. The table lives in the run
-// store's database, so a multi-node deployment shares one schedule list and
-// the advisory-lock coordinator picks which node fires it.
+// pgSchedulesSchema is the spec's schedules table with timestamptz, plus IF NOT
+// EXISTS so opening an existing database is idempotent across the nodes that
+// share it. The table lives in the run store's database, so a multi-node
+// deployment shares one schedule list and the advisory-lock coordinator picks
+// which node fires it.
 const pgSchedulesSchema = `
 CREATE TABLE IF NOT EXISTS schedules (
     id            TEXT PRIMARY KEY,

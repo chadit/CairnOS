@@ -269,7 +269,7 @@ func TestUsageReportsACancellationRatherThanATimeout(t *testing.T) {
 	}, builtins.UsageOptions{Lookup: pathEnv(dir)})
 
 	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
+	done := make(chan error, oneShotBufferSize)
 
 	go func() {
 		_, execErr := usage.Execute(ctx, usageTask(nil))

@@ -48,6 +48,17 @@ func (r *recordingQueueRunner) count() int {
 	return len(r.seen)
 }
 
+const (
+	// runSignalBufferSize holds every ItemRun signal a worker test produces, so
+	// the worker never blocks on a run nobody has read yet.
+	runSignalBufferSize = 128
+
+	// eventSignalBufferSize leaves room for more dead-letter, hold, and resume
+	// signals than a test expects, so a wrongly repeated one is observable
+	// rather than blocking the worker.
+	eventSignalBufferSize = 8
+)
+
 // signalMetrics turns the worker's metric callbacks into channel sends, so a
 // caller synchronizes on real worker progress (an ack, a dead-letter) instead of
 // polling with sleeps. The channels are buffered so the worker never blocks on a
@@ -61,10 +72,10 @@ type signalMetrics struct {
 
 func newSignalMetrics() *signalMetrics {
 	return &signalMetrics{
-		runs:       make(chan bool, 128),
-		deadLetter: make(chan struct{}, 8),
-		held:       make(chan struct{}, 8),
-		resumed:    make(chan struct{}, 8),
+		runs:       make(chan bool, runSignalBufferSize),
+		deadLetter: make(chan struct{}, eventSignalBufferSize),
+		held:       make(chan struct{}, eventSignalBufferSize),
+		resumed:    make(chan struct{}, eventSignalBufferSize),
 	}
 }
 
@@ -179,8 +190,7 @@ func TestWorkerDeadLettersAfterMaxDeliveries(t *testing.T) {
 
 // TestWorkerOnDeadLetterFiresOnlyOnDeadLetter proves OnDeadLetter fires on the
 // terminal dead-letter and not on the intermediate requeue nak, so the Discord
-// fan-out posts one dead_lettered line per item, not one per delivery
-// (.agents/spec/parity/messaging-bridge.md, decision 7).
+// fan-out posts one dead_lettered line per item, not one per delivery.
 func TestWorkerOnDeadLetterFiresOnlyOnDeadLetter(t *testing.T) {
 	t.Parallel()
 
@@ -193,7 +203,7 @@ func TestWorkerOnDeadLetterFiresOnlyOnDeadLetter(t *testing.T) {
 
 	// deadLettered carries the item each OnDeadLetter call saw. Buffered wide so a
 	// wrongly-repeated call would be observable rather than blocking.
-	deadLettered := make(chan string, 8)
+	deadLettered := make(chan string, eventSignalBufferSize)
 
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
@@ -255,7 +265,7 @@ func TestWorkerOnDeadLetterSkippedOnHold(t *testing.T) {
 
 	reauthErr := errors.New("needs reauth")
 	runner := &recordingQueueRunner{failWith: reauthErr}
-	deadLettered := make(chan string, 1)
+	deadLettered := make(chan string, oneShotChanSize)
 
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
@@ -304,7 +314,7 @@ func TestWorkerHoldsHoldableError(t *testing.T) {
 
 	// notified carries the item OnHold saw, so the test proves the worker calls
 	// the operator-alert hook after parking the job (D12 slice 3).
-	notified := make(chan string, 1)
+	notified := make(chan string, oneShotChanSize)
 
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
@@ -389,7 +399,7 @@ func TestWorkerFailsHoldableErrorWithoutHoldKey(t *testing.T) {
 
 	// heldNotice catches any OnHold call, so the test proves the worker never
 	// parked the item behind the operator's back.
-	heldNotice := make(chan string, 1)
+	heldNotice := make(chan string, oneShotChanSize)
 
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
@@ -656,7 +666,7 @@ func TestWorkerRenewsLeasesWhileRunning(t *testing.T) {
 		t.Fatalf("enqueue occurrence: %v", err)
 	}
 
-	runner := &blockingQueueRunner{started: make(chan struct{}, 1), release: make(chan struct{})}
+	runner := &blockingQueueRunner{started: make(chan struct{}, oneShotChanSize), release: make(chan struct{})}
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
 		Queue:         queue,
 		Runner:        runner,

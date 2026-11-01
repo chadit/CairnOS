@@ -10,7 +10,7 @@ import (
 
 // VaultQueryName is the registry name of the vault query built-in tool. It is
 // read-only: the chat agent reads the knowledge graph but never writes it
-// through this tool (.agents/spec/13-roadmap.md, Phase 9).
+// through this tool.
 const VaultQueryName = "vault_query"
 
 // Vault query tool params. paramTags and paramProject are shared with the
@@ -24,9 +24,8 @@ const (
 )
 
 // VaultQuery is the built-in agent-loop tool over the vault's typed graph query
-// (.agents/spec/15-agent-loop.md, "Tools"; the vault DSL in
-// .agents/spec/14-open-decisions.md, S1). It exposes only the read side:
-// keyword text match, tag and project filters, and bounded link traversal.
+// (S1). It exposes only the read side: keyword text match, tag and project
+// filters, and bounded link traversal.
 // There is no write op, so a chat turn cannot mutate the knowledge graph here.
 type VaultQuery struct {
 	store vault.Store

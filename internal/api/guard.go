@@ -27,10 +27,9 @@ const openServeWarning = "SERVING WITHOUT AUTHENTICATION ON A NETWORK INTERFACE:
 	"auth.enabled=false with auth.serve_without_auth_on_network=true means every " +
 	"workflow, memory entry, and admin operation is open to anyone who can reach this address"
 
-// BindPolicy is the Phase 4a network-bind decision input
-// (.agents/spec/08-auth-and-access.md): whether auth guards the listeners,
-// whether a TLS-terminating proxy fronts them, and whether the operator
-// explicitly accepted serving an open API.
+// BindPolicy is the Phase 4a network-bind decision input: whether auth guards
+// the listeners, whether a TLS-terminating proxy fronts them, and whether the
+// operator explicitly accepted serving an open API.
 type BindPolicy struct {
 	// AuthEnabled says the auth interceptor guards every method.
 	AuthEnabled bool

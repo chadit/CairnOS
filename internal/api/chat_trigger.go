@@ -15,16 +15,15 @@ const triggerChat = "chat"
 // correlates its run id.
 //
 // Depth-one holds structurally: the manager starts an ordinary workflow run,
-// whose own actions obey the existing one-level no-recursion rule
-// (.agents/spec/15-agent-loop.md), so nothing the spawned run does can start a
-// third loop. The chat exception is the one place a loop triggers a workflow,
-// and it is gated by the confirmation step before this adapter is ever called.
+// whose own actions obey the existing one-level no-recursion rule, so nothing
+// the spawned run does can start a third loop. The chat exception is the one
+// place a loop triggers a workflow, and it is gated by the confirmation step
+// before this adapter is ever called.
 
 // ChatWorkflowTrigger adapts the run manager and the workflow resolver to
 // chat.WorkflowTrigger, so a confirmed chat proposal fires a real run through
-// the same engine, breakers, and governance every other run uses
-// (.agents/spec/14-open-decisions.md, D9: the spawned run runs under Phase 5b
-// budgets and pause, at depth exactly one).
+// the same engine, breakers, and governance every other run uses (D9: the
+// spawned run runs under Phase 5b budgets and pause, at depth exactly one).
 type ChatWorkflowTrigger struct {
 	manager  *Manager
 	resolver *WorkflowResolver
@@ -52,7 +51,7 @@ func (t *ChatWorkflowTrigger) Run(ctx context.Context, name string, inputs map[s
 		return "", nil, fmt.Errorf("start workflow %q: %w", name, err)
 	}
 
-	done := make(chan chat.RunResult, 1)
+	done := make(chan chat.RunResult, resultBufferSize)
 
 	go forwardRunOutcome(handle, done)
 

@@ -25,7 +25,7 @@ var (
 
 // fakeStore is an in-memory store.Store. The engine writing against this
 // fake proves the interface seam: nothing in the engine may depend on the
-// SQLite implementation (.agents/spec/05-memory-and-knowledge.md).
+// SQLite implementation.
 type fakeStore struct {
 	runs        map[string]*store.Run
 	results     map[string]map[string]*store.ActionResult
@@ -717,10 +717,12 @@ func (r *recorder) order() []string {
 	return slices.Clone(r.names)
 }
 
-// paramSink captures the fully resolved params one action received.
+// paramSink captures the fully resolved params one action received, and the
+// definition its task carried.
 type paramSink struct {
-	params map[string]any
-	mu     sync.Mutex
+	params     map[string]any
+	definition []runner.DefinitionFile
+	mu         sync.Mutex
 }
 
 func (p *paramSink) capture(_ context.Context, task *runner.Task) (any, error) {
@@ -728,8 +730,16 @@ func (p *paramSink) capture(_ context.Context, task *runner.Task) (any, error) {
 	defer p.mu.Unlock()
 
 	p.params = maps.Clone(task.Params)
+	p.definition = task.Definition
 
 	return "captured", nil
+}
+
+func (p *paramSink) seenDefinition() []runner.DefinitionFile {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.definition
 }
 
 func (p *paramSink) snapshot() map[string]any {

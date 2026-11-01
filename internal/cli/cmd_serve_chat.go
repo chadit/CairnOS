@@ -45,6 +45,15 @@ func (a *App) prepareSources(ctx context.Context, cfg *config.Config, tel *telem
 	return specs, ExitOK, true
 }
 
+// reconcileSources runs workflow discovery once per source at start, after the
+// checkouts exist, so a workflow committed while serve was down is scheduled
+// before the first sync tick rather than after it.
+func reconcileSources(ctx context.Context, specs []sourcesync.Spec, reconcile builtins.SourceReconciler) {
+	for _, spec := range specs {
+		reconcile(ctx, spec.Name)
+	}
+}
+
 // attachChat builds the chat agent and, when chat is enabled, mounts it onto
 // the API config and logs its endpoint. It returns an exit code and false on a
 // wiring failure, so the serve flow stays under the complexity ceiling. With
@@ -64,12 +73,11 @@ func (a *App) attachChat(ctx context.Context, cfg *config.Config, tel *telemetry
 	return agent, personalities, ExitOK, true
 }
 
-// buildChatAgent wires the chat agent when [chat] is enabled
-// (.agents/spec/13-roadmap.md, Phase 9). It resolves the configured driver to a
-// runner.ToolCaller, builds the memory and vault read tools plus the gated
-// run_workflow descriptor, and hands it a workflow trigger over the run manager
-// so a confirmed proposal fires a run. A disabled [chat] returns a nil agent,
-// keeping ChatService unmounted.
+// buildChatAgent wires the chat agent when [chat] is enabled. It resolves the
+// configured driver to a runner.ToolCaller, builds the memory and vault read
+// tools plus the gated run_workflow descriptor, and hands it a workflow trigger
+// over the run manager so a confirmed proposal fires a run. A disabled [chat]
+// returns a nil agent, keeping ChatService unmounted.
 func buildChatAgent(cfg *config.Config, deps *chatDeps) (*chat.Agent, *chat.Personalities, error) {
 	if !cfg.Chat.Enabled {
 		// A nil agent is the documented "chat disabled" state, not an error.

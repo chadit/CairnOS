@@ -1,7 +1,6 @@
-// Package cli implements the cairnos subcommands over injected streams
-// (.agents/spec/11-deployment-and-config.md, "CLI surface"). The cmd/cairnos
-// binary is a thin shim over App so tests drive the full command surface
-// without a subprocess.
+// Package cli implements the cairnos subcommands over injected streams. The
+// cmd/cairnos binary is a thin shim over App so tests drive the full command
+// surface without a subprocess.
 package cli
 
 import (
@@ -36,6 +35,11 @@ const (
 	ExitBehind = 3
 )
 
+// oneShotChanSize buffers a channel that carries one value out of a goroutine,
+// so the send completes after the receiver has stopped waiting and the
+// goroutine exits instead of leaking.
+const oneShotChanSize = 1
+
 // usageText is the top-level help.
 const usageText = `CairnOS workflow engine.
 
@@ -46,10 +50,11 @@ Commands:
   run       Run a workflow file once, locally
   validate  Parse and validate a workflow file without running it
   runs      Inspect persisted runs: list, show <run-id>
-  memory    Manage memory entries: add, get <id>, rm <id>, search
+  memory    Manage memory entries: add, get <id>, rm <id>, search, export, import
   vault     Manage vault documents: put, get <id>, query
   rules     Language rules: set <lang> [<project>] <key> <value>, get <lang> [<project>], import <dir>
-  secrets   Encrypted secret store: set <name>, get <name>, rm <name>, ls, rotate, keygen
+  secrets   Encrypted secret store: set <name>, get <name>, rm <name>, ls, rotate,
+            install-bw, pull, keygen
   schedule  Manage scheduled workflows: add <file>, list, remove <id-or-name>, run
   webhook   Manage webhook triggers: add <file>, list, rotate <workflow>, remove <workflow>
   serve     Serve the gRPC and HTTP API with the scheduler daemon embedded
@@ -59,8 +64,8 @@ Commands:
   workspace Manage workspaces and members: create <name>, list, add-member, members
   auth      Token revocation: revoke --jti X | --key K
   a2a       Agent-to-Agent protocol: card (print this node's signed agent card)
-  mcp       MCP server: serve (run as a stdio MCP server for an external client)
-  hive      Hive network (Phase 6): subscribe (pull tips), publish <id> (gated), status
+  mcp       MCP server: serve (stdio, for an external client), publish, import
+  hive      Hive network: subscribe (pull tips), publish <id> (gated), status
   cost      Aggregate per-workflow usage and cost from run history
   suggestions  Tuning suggestions: scan, list, approve <id>, reject <id>, apply <id>, revert <workflow>
   pause     Pause a workflow: block new runs until resumed
@@ -160,10 +165,6 @@ type App struct {
 	// keyHashCost is the argon2id cost keys add mints under and the decoy the
 	// serve authenticator pays. The zero value is the production default.
 	keyHashCost auth.HashCost
-
-	// echoNoticed keeps the visible-input warning to one line per run. The
-	// prompts ask three times and the answer is the same every time.
-	echoNoticed bool
 }
 
 // New wires an App over the given streams, reading interactive input from
@@ -314,7 +315,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdKeys(ctx, rest)
 	case "workspace":
 		return a.cmdWorkspace(ctx, rest)
-	case subcmdAuth:
+	case "auth":
 		return a.cmdAuth(ctx, rest)
 	case "a2a":
 		return a.cmdA2A(rest)

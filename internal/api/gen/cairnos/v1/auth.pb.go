@@ -1,5 +1,4 @@
-// LoginService: access-key login and token revocation
-// (.agents/spec/08-auth-and-access.md, "Model"). A client exchanges its
+// LoginService: access-key login and token revocation. A client exchanges its
 // long-lived access key at /v1/login for a short-lived bearer token; the
 // revocation RPC feeds the jti/sub denylist that every verify consults, so
 // a token dies before its exp (Change 1 in the spec).
@@ -78,8 +77,8 @@ type LoginResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// token is the signed JWT to present as `Authorization: Bearer <token>`.
 	Token string `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
-	// expires_at is the token's exp; clients re-call Login with their access
-	// key for a fresh token (.agents/spec/08-auth-and-access.md, Change 2).
+	// expires_at is the token's exp; clients re-call Login with their access key
+	// for a fresh token.
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

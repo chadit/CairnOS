@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/chadit/CairnOS/internal/auth"
 	"github.com/chadit/CairnOS/internal/config"
 	"github.com/chadit/CairnOS/internal/credentials"
+	"github.com/chadit/CairnOS/internal/discover"
 	"github.com/chadit/CairnOS/internal/engine"
 	"github.com/chadit/CairnOS/internal/environ"
 	"github.com/chadit/CairnOS/internal/hostenv"
@@ -42,17 +44,14 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// backendPostgres is the [store] backend value that selects the Postgres
-// stores and the advisory-lock scheduler coordinator
-// (.agents/spec/11-deployment-and-config.md, "[store] backend"). Anything
-// else (the "sqlite" default) takes the sqlite path. The memory and auth
-// stores share the run store's database when postgres is selected: different
-// tables in one Postgres database, the same arrangement the sqlite backends
-// use within one file.
+// backendPostgres is the [store] backend value that selects the Postgres stores
+// and the advisory-lock scheduler coordinator. Anything else (the "sqlite"
+// default) takes the sqlite path. The memory and auth stores share the run
+// store's database when postgres is selected: different tables in one Postgres
+// database, the same arrangement the sqlite backends use within one file.
 const backendPostgres = "postgres"
 
-// Scaffold layout names (.agents/spec/11-deployment-and-config.md,
-// "cairnos init").
+// Scaffold layout names.
 const (
 	configFileName   = "config.toml"
 	dataDirName      = "data"
@@ -80,8 +79,8 @@ const (
 const triggerCLI = "cli"
 
 // Command words that more than one dispatch switch matches. A top-level
-// command can recur as another family's subcommand (schedule run, mcp serve,
-// secrets auth), so each word is spelled once.
+// command can recur as another family's subcommand (schedule run, mcp serve),
+// so each word is spelled once.
 const (
 	subcmdList      = "list"
 	subcmdAdd       = "add"
@@ -90,7 +89,6 @@ const (
 	subcmdStatus    = "status"
 	subcmdRun       = "run"
 	subcmdServe     = "serve"
-	subcmdAuth      = "auth"
 	subcmdPublish   = "publish"
 	subcmdRemove    = "remove"
 	subcmdRm        = "rm"
@@ -145,6 +143,32 @@ func resolveDir(flagValue string, lookup environ.Lookup) (string, error) {
 	return filepath.Join(home, ".cairnos"), nil
 }
 
+// homeEnvKey is the variable os.UserHomeDir reads on this platform. The
+// injected environment has to be asked the same question the process
+// environment would be.
+func homeEnvKey() string {
+	switch runtime.GOOS {
+	case goosWindows:
+		return "USERPROFILE"
+	case "plan9":
+		return "home"
+	default:
+		return "HOME"
+	}
+}
+
+// homeDir resolves the operator's home from the injected environment, so a case
+// can point one command at a staged home without moving the whole process.
+func homeDir(lookup environ.Lookup) (string, error) {
+	key := homeEnvKey()
+
+	if home := lookup.Get(key); home != "" {
+		return home, nil
+	}
+
+	return "", fmt.Errorf("%w: %s", errNoHomeDir, key)
+}
+
 // storePath turns the configured sqlite DSN into a filesystem path. Relative
 // paths resolve against the CairnOS home, not the process working directory,
 // so commands behave the same from anywhere. It is meaningless for the
@@ -182,11 +206,11 @@ type storeBackends[S any] struct {
 	require func(cfg *config.Config) error
 }
 
-// open picks the backend the config names (.agents/spec/11-deployment-and-config.md,
-// "[store] backend"). Every family shares the run store's DSN, and sqlite's
-// data directory comes first so a fresh home works without init. Only postgres
-// takes ctx, since sqlite schema setup is process-lifetime work; the secret
-// store's sqlite closure is the exception and carries its caller's ctx.
+// open picks the backend the config names. Every family shares the run store's
+// DSN, and sqlite's data directory comes first so a fresh home works without
+// init. Only postgres takes ctx, since sqlite schema setup is process-lifetime
+// work; the secret store's sqlite closure is the exception and carries its
+// caller's ctx.
 func (b storeBackends[S]) open(ctx context.Context, dir string, cfg *config.Config) (S, error) {
 	var zero S
 
@@ -567,10 +591,9 @@ func webhookBackends(scheds scheduleStore) storeBackends[webhook.Store] {
 }
 
 // newCoordinator builds the advisory-lock coordinator that lets exactly one node
-// own scheduling across a shared postgres database
-// (.agents/spec/14-open-decisions.md, S2). It is nil off postgres: leave
-// scheduler.Config.Coordinator unset then, and the daemon defaults to the
-// SoloCoordinator, rather than storing a typed nil there.
+// own scheduling across a shared postgres database (S2). It is nil off
+// postgres: leave scheduler.Config.Coordinator unset then, and the daemon
+// defaults to the SoloCoordinator, rather than storing a typed nil there.
 func newCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
 	pgScheds, ok := scheds.(*scheduler.Postgres)
 	if !ok {
@@ -588,9 +611,8 @@ func newCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
 const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
 
 // newHiveCoordinator builds the coordinator that elects the one node running the
-// hive loop (R3 in .agents/spec/14-open-decisions.md), on the hive key over the
-// schedule store's pool. It is nil off postgres, where serve already refuses
-// the hive.
+// hive loop (R3), on the hive key over the schedule store's pool. It is nil off
+// postgres, where serve already refuses the hive.
 func newHiveCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
 	pgScheds, ok := scheds.(*scheduler.Postgres)
 	if !ok {
@@ -765,13 +787,61 @@ func sourceSpecs(sources map[string]config.Source) []sourcesync.Spec {
 	return specs
 }
 
+// sourceWiring is what the registry needs from the [source.<name>] blocks: the
+// specs the source runner syncs, the trust the exec gate extends, and the two
+// hooks only serve fills.
+type sourceWiring struct {
+	observer  builtins.SourceObserver
+	reconcile builtins.SourceReconciler
+	trust     builtins.ExecTrust
+	specs     []sourcesync.Spec
+}
+
+// sourcesFor builds the wiring every entry point shares, so a local run and
+// serve agree on which names exist and which checkouts exec trusts.
+func sourcesFor(sources map[string]config.Source) *sourceWiring {
+	return &sourceWiring{specs: sourceSpecs(sources), trust: execTrust(sources)}
+}
+
+// execTrust collects the specs of the sources marked trusted, in name order.
+func execTrust(sources map[string]config.Source) builtins.ExecTrust {
+	var trusted []sourcesync.Spec
+
+	for _, spec := range sourceSpecs(sources) {
+		if sources[spec.Name].Trusted {
+			trusted = append(trusted, spec)
+		}
+	}
+
+	return builtins.ExecTrust{Git: sourcesync.GitCommand, Sources: trusted}
+}
+
+// sourceReconciler is serve's workflow discovery for one source by name. A
+// source with no workflows key is a no-op, and a failed pass is logged rather
+// than failing the sync, since the next sync retries it.
+func sourceReconciler(
+	sources map[string]config.Source, scheds scheduler.Schedules, logger *slog.Logger,
+) builtins.SourceReconciler {
+	return func(ctx context.Context, name string) {
+		block := sources[name]
+		if len(block.Workflows) == 0 {
+			return
+		}
+
+		tree := discover.Tree{Name: name, Dest: block.Dest, Ref: block.Ref, Globs: block.Workflows}
+		if err := discover.Reconcile(ctx, scheds, sourcesync.GitCommand, tree, logger); err != nil {
+			logger.Warn("workflow discovery failed", "source", name, "error", err)
+		}
+	}
+}
+
 // newServeRegistry builds serve's runner registry along with the source
 // notifier wired into it. The notifier comes back rather than staying inside
 // because serve only has a fan-out to give it later, once BuildFanout has run.
 func newServeRegistry(
 	ctx context.Context,
 	cfg *config.Config,
-	sources []sourcesync.Spec,
+	reconcile builtins.SourceReconciler,
 	env environ.Lookup,
 	mem memory.Store,
 	rulesSvc rules.Service,
@@ -783,8 +853,12 @@ func newServeRegistry(
 ) (*runner.Registry, *SourceDirtyNotifier, error) {
 	notifier := NewSourceDirtyNotifier(nil)
 
+	sources := sourcesFor(cfg.Sources)
+	sources.observer = notifier
+	sources.reconcile = reconcile
+
 	registry, err := newRegistry(ctx, cfg.Runners, sources, cfg.Hosts, env, mem,
-		rulesSvc, credLookup, msgSender, msgThreads, logger, notifier, runnerTransport)
+		rulesSvc, credLookup, msgSender, msgThreads, logger, runnerTransport)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -794,15 +868,15 @@ func newServeRegistry(
 
 // newRegistry wires every built-in runner, plus one runner under its own name
 // for each [runner.<name>] block whose type selects one (see
-// registerConfiguredRunners). BuildAll hands each factory its [runner.<name>]
-// block and spawns plugin child processes, so ctx bounds construction.
+// registerConfiguredRunners). BuildAll hands each factory its block and spawns
+// plugin child processes, so ctx bounds construction.
 //
-// msgSender, msgThreads, and sourceObs are seams only serve fills; with nil the
-// message runner refuses and the source runner only logs.
+// msgSender, msgThreads, and the source hooks are seams only serve fills; with
+// nil the message runner refuses and the source runner only logs.
 func newRegistry(
 	ctx context.Context,
 	runnerCfgs map[string]map[string]any,
-	sources []sourcesync.Spec,
+	sources *sourceWiring,
 	hosts map[string]config.Host,
 	env environ.Lookup,
 	mem memory.Store,
@@ -811,7 +885,6 @@ func newRegistry(
 	msgSender builtins.MessageSender,
 	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
-	sourceObs builtins.SourceObserver,
 	runnerTransport http.RoundTripper,
 ) (*runner.Registry, error) {
 	registry := runner.NewRegistry()
@@ -824,7 +897,7 @@ func newRegistry(
 	}
 
 	fixed := fixedBuiltins(sources, hosts, hostEnv, env, rulesSvc, credLookup,
-		msgSender, msgThreads, logger, sourceObs, runnerTransport)
+		msgSender, msgThreads, logger, runnerTransport)
 
 	for _, builtin := range fixed {
 		if err := registry.Register(builtin.name, builtin.factory); err != nil {
@@ -873,7 +946,7 @@ type builtinRunner struct {
 // rather than an if per runner, because the list grows with every built-in and a
 // per-runner branch pushed newRegistry past the complexity ceiling.
 func fixedBuiltins(
-	sources []sourcesync.Spec,
+	sources *sourceWiring,
 	hosts map[string]config.Host,
 	hostEnv []string,
 	env environ.Lookup,
@@ -882,7 +955,6 @@ func fixedBuiltins(
 	msgSender builtins.MessageSender,
 	msgThreads builtins.MessageThreads,
 	logger *slog.Logger,
-	sourceObs builtins.SourceObserver,
 	runnerTransport http.RoundTripper,
 ) []builtinRunner {
 	return []builtinRunner{
@@ -898,9 +970,9 @@ func fixedBuiltins(
 		{name: builtins.GitHubName, factory: builtins.GitHubFactory(env)},
 		{name: builtins.MCPClientName, factory: builtins.MCPClientFactoryWithCredentials(credLookup, runnerTransport)},
 		{name: builtins.SandboxExecName, factory: builtins.SandboxExecFactory()},
-		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ())},
+		{name: builtins.ExecName, factory: builtins.ExecFactoryWithHostEnv(hostEnv, os.Environ(), sources.trust)},
 		{name: builtins.MessageName, factory: builtins.MessageFactory(msgSender, msgThreads)},
-		{name: builtins.SourceName, factory: builtins.SourceFactory(sources, sourcesync.GitCommand, logger, sourceObs)},
+		{name: builtins.SourceName, factory: builtins.SourceFactory(sources.specs, sourcesync.GitCommand, logger, sources.observer, sources.reconcile)},
 		{name: builtins.UsageName, factory: builtins.UsageFactory(usageOptions(hosts, env, nil))},
 	}
 }

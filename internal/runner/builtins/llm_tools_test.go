@@ -74,7 +74,7 @@ const anthropicToolUseBody = `{
 func TestOpenAIExecuteWithToolsParsesToolCall(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -167,7 +167,7 @@ func TestOpenAIExecuteWithToolsReturnsFinalText(t *testing.T) {
 func TestAnthropicExecuteWithToolsParsesToolUse(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any

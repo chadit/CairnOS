@@ -47,7 +47,11 @@ func ServeGRPC(t *testing.T, listener net.Listener, register func(*grpc.Server))
 	server := grpc.NewServer()
 	register(server)
 
-	served := make(chan error, 1)
+	// servedBufferSize holds Serve's one return, so its goroutine never blocks
+	// on the cleanup's read.
+	const servedBufferSize = 1
+
+	served := make(chan error, servedBufferSize)
 
 	go func() { served <- server.Serve(listener) }()
 

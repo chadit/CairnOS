@@ -6,10 +6,9 @@
 #     --input region=austin-tx \
 #     --input notify_to=me@example.com
 #
-# Sourcing (S5 in .agents/spec/14-open-decisions.md): listings_url must be a
-# real-estate API you hold a key for, or a feed you run yourself. Never a
-# scraped listing site; scraping Zillow, Redfin, or similar violates their
-# terms of service.
+# Sourcing (S5): listings_url must be a real-estate API you hold a key for, or a
+# feed you run yourself. Never a scraped listing site; scraping Zillow, Redfin,
+# or similar violates their terms of service.
 
 [workflow]
 name        = "housing_monitor"

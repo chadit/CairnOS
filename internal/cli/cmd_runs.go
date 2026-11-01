@@ -142,8 +142,7 @@ func (a *App) cmdRunsShow(ctx context.Context, args []string) int {
 // succeeded actions keep their outputs and the rest re-execute. It resolves
 // the workflow by name from the workflows directory, refuses a changed
 // workflow file unless --force is given, and warns when a needed upstream
-// output was truncated by retention (.agents/spec/parity/workflow-language.md,
-// "Replay from failed action").
+// output was truncated by retention.
 func (a *App) cmdRunsReplay(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("runs replay", flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -301,8 +300,7 @@ type approveRequest struct {
 // cmdRunsApprove decides one human-approval gate and resumes the parked run.
 // With the action name given it decides that gate; omitted, it decides the
 // single pending gate or errors listing the pending action names when zero or
-// more than one wait (.agents/spec/parity/workflow-language.md, "Human
-// approval").
+// more than one wait.
 func (a *App) cmdRunsApprove(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet(approveLabel, flag.ContinueOnError)
 	flags.SetOutput(a.stderr)
@@ -368,7 +366,7 @@ func (a *App) executeApprove(ctx context.Context, cfg *config.Config, db store.S
 	// cancel beat the approval branch, the branch's detached write left the gate
 	// behind while the run finalized failed or canceled. Deciding that orphaned
 	// gate must not drive ResumeRun on a terminal run, so refuse before touching
-	// it (.agents/spec/parity/workflow-language.md, "Human approval").
+	// it.
 	if held.Status != store.RunHeld {
 		a.printErrf("%s: run %s is not awaiting approval (status %s)\n", approveLabel, req.runID, held.Status)
 

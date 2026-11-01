@@ -17,7 +17,7 @@ import (
 // index over to_tsvector(content) instead of a separate virtual table, since
 // Postgres full-text search runs against the base row. Semantic search is a
 // Phase 4c stub, so a semantic query falls back to keyword and flags it just as
-// the sqlite backend does (.agents/spec/05-memory-and-knowledge.md, "Backends").
+// the sqlite backend does.
 const pgMemorySchema = `
 CREATE TABLE IF NOT EXISTS memory_entries (
     id           TEXT PRIMARY KEY,
@@ -41,8 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_fts ON memory_entries
 // scanPGEntry order.
 const pgEntryColumns = "id, scope, content, importance, tags_json, token_cost, created_at, updated_at"
 
-// Postgres is the shared, multi-node Store backend
-// (.agents/spec/05-memory-and-knowledge.md, "Backends"): keyword search via
+// Postgres is the shared, multi-node Store backend: keyword search via
 // to_tsvector/plainto_tsquery, no vectors yet. Safe for concurrent use
 // through pgxpool. It shares the run store's database (different tables), the
 // same arrangement the sqlite backends use within one file.
@@ -120,8 +119,7 @@ func (s *Postgres) Add(ctx context.Context, entry *Entry) (string, error) {
 }
 
 // Get fetches one entry by id, scoped to the request workspace so an entry in
-// another workspace reads as not-found (.agents/spec/12-ui-and-governance.md,
-// "Multi-tenancy").
+// another workspace reads as not-found.
 func (s *Postgres) Get(ctx context.Context, id string) (Entry, error) {
 	row := s.pool.QueryRow(ctx,
 		"SELECT "+pgEntryColumns+" FROM memory_entries WHERE id = $1 AND workspace_id = $2",

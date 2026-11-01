@@ -568,7 +568,7 @@ func (d *daemon) lock(logger *slog.Logger) {
 }
 
 // stderrTail returns the end of what the child wrote, which is where a bind
-// refusal lands. Call it only once exited is closed.
+// refusal lands. It reads stderr, which is safe only once exited is closed.
 func (d *daemon) stderrTail() string {
 	text := strings.TrimSpace(d.stderr.String())
 	if len(text) <= stderrTail {

@@ -17,6 +17,11 @@ import (
 // parallel actions while a stream consumer catches up.
 const eventBufferSize = 256
 
+// resultBufferSize gives a channel carrying a goroutine's one result a slot for
+// it, so the goroutine exits once its work returns even when the receiver has
+// stopped waiting.
+const resultBufferSize = 1
+
 // triggerAPI marks runs started over the API in run history.
 const triggerAPI = "api"
 
@@ -123,8 +128,7 @@ func (m *Manager) StartWatched(ctx context.Context, flow *workflow.Workflow, inp
 // Watch hands off one watched run's retained handle to a single consumer,
 // reporting whether a live handle exists for the caller's workspace. A handle
 // from another workspace reads as a miss, so a tenant cannot attach to another
-// tenant's stream by id (.agents/spec/08-auth-and-access.md, "Run manager
-// workspace scoping"). A miss falls back to the stored record.
+// tenant's stream by id. A miss falls back to the stored record.
 func (m *Manager) Watch(ctx context.Context, runID string) (*RunHandle, bool) {
 	workspace := store.WorkspaceFromContext(ctx)
 
@@ -190,9 +194,8 @@ func (m *Manager) Dispatch(evt engine.Event) {
 
 // Cancel signals one active run to stop, reporting whether the run was active
 // here for the caller's workspace. A run from another workspace reads as not
-// active, so a tenant cannot cancel another tenant's run by id
-// (.agents/spec/08-auth-and-access.md, "Run manager workspace scoping"). The
-// run finalizes asynchronously as canceled.
+// active, so a tenant cannot cancel another tenant's run by id. The run
+// finalizes asynchronously as canceled.
 func (m *Manager) Cancel(ctx context.Context, runID string) bool {
 	workspace := store.WorkspaceFromContext(ctx)
 
@@ -255,9 +258,8 @@ func (m *Manager) StartRun(ctx context.Context, flow *workflow.Workflow, inputs 
 }
 
 // StartReplay replays a prior run on the bound engine: its succeeded actions
-// seed forward and the rest re-execute, watchable and cancelable like any run
-// (.agents/spec/parity/workflow-language.md, "Replay from failed action"). It
-// always watches, since the replay RPC streams the new run's events.
+// seed forward and the rest re-execute, watchable and cancelable like any run.
+// It always watches, since the replay RPC streams the new run's events.
 func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResults []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
 	return m.launchRun(ctx, true, func(runCtx context.Context, eng *engine.Engine) (*store.Run, error) {
 		return eng.ReplayRun(runCtx, prior, priorResults, flow)
@@ -267,8 +269,7 @@ func (m *Manager) StartReplay(ctx context.Context, prior *store.Run, priorResult
 // StartResume drives a held run forward after its approval was decided,
 // detached from ctx like every managed run. The run keeps its existing ID, so
 // routing registers under held.ID with no reservation. A run already active is
-// refused with ErrRunActive so two loops never drive one run
-// (.agents/spec/parity/workflow-language.md, "Human approval"), and any resume
+// refused with ErrRunActive so two loops never drive one run, and any resume
 // after Shutdown with ErrManagerShutdown.
 func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*store.ActionResult, flow *workflow.Workflow) (*RunHandle, error) {
 	eng := m.engine()
@@ -297,7 +298,7 @@ func (m *Manager) StartResume(ctx context.Context, held *store.Run, results []*s
 	m.cancels[held.ID] = &runState{cancel: cancel, released: make(chan struct{}), workspace: workspace}
 	m.mu.Unlock()
 
-	outcome := make(chan RunOutcome, 1)
+	outcome := make(chan RunOutcome, resultBufferSize)
 
 	go m.execute(runCtx, held.ID, eng, func(runCtx context.Context, eng *engine.Engine) (*store.Run, error) {
 		return eng.ResumeRun(runCtx, held, results, flow)
@@ -351,7 +352,7 @@ func (m *Manager) launchRun(ctx context.Context, watch bool, launch launcher) (*
 		return nil, err
 	}
 
-	outcome := make(chan RunOutcome, 1)
+	outcome := make(chan RunOutcome, resultBufferSize)
 
 	go m.execute(runCtx, res.id, eng, launch, outcome)
 

@@ -4,11 +4,20 @@ A self-hosted agent runtime in one static Go binary. Workflows are TOML files
 describing a DAG of actions; the engine runs them with retries and circuit
 breakers, under budget caps. On top of that sit a bounded agent loop for
 self-planning tasks, a durable schedule queue, memory and a document vault,
-chat with a confirmation gate, an MCP server and client, and a React web UI
-for building workflows and watching runs. gRPC is the API core, with a
-JSON/HTTP gateway generated from the same protos.
+chat with a confirmation gate, and an MCP server and client. gRPC is the API
+core, with a JSON/HTTP gateway generated from the same protos. The React web UI
+for building workflows and watching runs is not in the binary: it is a separate
+build in [`web/`](./web/README.md) that talks to that gateway.
 
 ## Install
+
+You need:
+
+- Go 1.27.2 or newer, the floor `go.mod` sets.
+- Node 22.22.2 or a later 22, 24.15.0 or a later 24, or 26 and up, only to
+  build the web UI in `web/`.
+- Docker or Podman, only for the integration tests (`make test-integration`)
+  and on a host that runs `sandbox_exec` actions.
 
 From a clone (also what `make build` wraps):
 
@@ -22,8 +31,13 @@ Or straight from the module path, no clone needed:
 go install github.com/chadit/CairnOS/cmd/cairnos@latest
 ```
 
-Either way you get the full binary: engine, CLI, serve, chat, MCP, web UI.
-Check it landed with `cairnos help`.
+The module path install works once the repository is public. Until then,
+install from a clone.
+
+Either way you get the full binary: engine, CLI, serve, chat, MCP. The web UI is
+not part of it. Build it from `web/` and serve the static bundle beside the
+gateway, as [web/README.md](./web/README.md) describes. Check the binary landed
+with `cairnos help`.
 
 ## Initialize and run your first prompt
 
@@ -40,12 +54,36 @@ line for `claude`, `omp`, or any other logged-in tool, see
 run prints a reply, your install, runner wiring, and tool auth all work.
 `cairnos init --dir <path>` picks a different home.
 
+`cairnos help` lists every command. These are the ones the rest of this README
+doesn't walk through; `cairnos <command> -h` gives each one's flags.
+
+| Command     | What it does                                                                                                                                                                |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory`    | Manage memory entries: `add`, `get <id>`, `rm <id>`, `search`, `export`, `import`.                                                                                          |
+| `vault`     | Manage vault documents: `put`, `get <id>`, `query`.                                                                                                                         |
+| `rules`     | Manage language rules: `set <lang> [<project>] <key> <value>`, `get <lang> [<project>]`, `import <dir>`.                                                                    |
+| `keys`      | Manage API access keys: `add`, `list`, `enable <id>`, `disable <id>`.                                                                                                       |
+| `workspace` | Manage workspaces and members: `create <name>`, `list`, `add-member`, `members`.                                                                                            |
+| `auth`      | Revoke one token with `revoke --jti X`, or every live token of a key with `revoke --key K`.                                                                                 |
+| `webhook`   | Manage webhook triggers: `add <file>`, `list`, `rotate <workflow>`, `remove <workflow>`.                                                                                    |
+| `a2a`       | Agent-to-Agent protocol: `card` prints this node's signed agent card.                                                                                                       |
+| `mcp`       | `serve` runs CairnOS as a stdio MCP server for an external client; `publish` and `import` work with an MCP registry.                                                        |
+| `hive`      | Hive network: `subscribe` pulls shared tips into the suggestion queue, `publish <id>` shares an approved suggestion when publishing is on, `status` prints the hive config. |
+| `cost`      | Aggregate per-workflow usage and cost from run history.                                                                                                                     |
+| `pause`     | Pause a workflow so it starts no new runs until resumed.                                                                                                                    |
+| `resume`    | Resume a paused workflow.                                                                                                                                                   |
+| `budget`    | Show a workflow's budget spend, limit, and pause state.                                                                                                                     |
+| `audit`     | List governance audit actions: pause, resume, terminate.                                                                                                                    |
+| `prune`     | Delete runs and outputs past the retention window.                                                                                                                          |
+| `health`    | Exit 0 when the config loads and the store answers.                                                                                                                         |
+
 ## Deploy it as a service, not an installed CLI
 
 Don't `go install` the binary onto your PATH and call that a deployment. The
 long-lived process is `cairnos serve`: it owns the scheduler and its work
-queue, the chat backend, the MCP server, the web UI, and the metrics endpoint.
-A bare CLI install gives you one-shot runs and nothing durable.
+queue, the chat backend, the MCP server, the gRPC API and the HTTP gateway the
+web UI talks to, and the metrics endpoint. A bare CLI install gives you one-shot
+runs and nothing durable.
 
 The same binary is also the client. Commands like `cairnos chat`,
 `cairnos schedule`, and `cairnos runs` talk to a running serve, so keep the
@@ -117,7 +155,10 @@ parts, and they move for different reasons.
 **Workflows move on their own.** A `[source.<name>]` checkout is fetched and
 reset by whatever schedule you gave the `source` runner, so a workflow file or a
 script living in that repository reaches the host without anyone logging in.
-Push it, wait for the next sync, and it is there.
+Push it, wait for the next sync, and it is there. When the source sets
+[`workflows`](#finding-workflows-in-a-source), a new workflow file with a
+`schedule` key is scheduled after the next sync, and one deleted from the
+repository is unscheduled, so nobody runs `cairnos schedule add` on the host.
 
 **CairnOS does not.** The binary the service runs is the one someone built from
 a clone on that host. It changes when someone runs `cairnos update` or deploys
@@ -341,6 +382,12 @@ git -C ~/src/cairnos rev-parse HEAD
 
 ### After you change a workflow's schedule
 
+A workflow a source [finds](#finding-workflows-in-a-source) follows its file's
+`schedule` key: push the edit, and the first sync that fetches it replaces the
+stored entry.
+Removing the key takes the workflow off the schedule. The steps below are for a
+schedule you added by hand.
+
 `cairnos schedule add` copies the `schedule` key into the store, so editing the
 file afterwards leaves the stored expression where it was. Replace the entry:
 
@@ -358,7 +405,8 @@ is read fresh at each fire.
 
 `config.toml` and the environment files are read once, at startup, so a change to
 either needs a restart before the service sees it. Workflow files are read at
-every fire, so an edited action, runner or timeout is live on the next one. A new
+every fire, so an edited action, runner or timeout is live on the next one. A
+workflow file a source finds needs no restart either, new or removed. A new
 binary needs the restart that `cairnos update` already does.
 
 ## Secrets from Bitwarden
@@ -380,7 +428,7 @@ an inferred field would set the same variable:
 
 ```toml
 [secrets.bitwarden]
-item = "chezmoi"
+item = "cairnos"
 
 [secrets.bitwarden.fields]
 CAIRNOS_BRIDGE_MATTERMOST_TOKEN = "mattermost bot token"
@@ -394,40 +442,14 @@ with no mapping per bot. A `CAIRNOS_`-named field or a `[secrets.bitwarden.field
 mapping for the same variable still wins, and a username field left empty counts
 as absent.
 
-`item` is optional here because the credentials file carries it as `BW_ITEM`;
-set it in the config when you want one host reading a different item, and the
-config value wins. `credentials_file` and `env_file` default to `bitwarden.env`
-and `secrets.env` under the CairnOS home, and both take an absolute path
-instead.
+`item` is optional here because the credentials file can name it too; set it in
+the config when you want one host reading a different item, and the config value
+wins. `credentials_file` and `env_file` default to `bitwarden.env` and
+`secrets.env` under the CairnOS home. Both take an absolute path or one starting
+with `~/` instead, and `~/` expands to your own home directory.
 
-Create the credentials file with:
-
-```sh
-cairnos secrets auth
-```
-
-It asks for the item name and the vault's API key and master password, and
-writes them at 0600. If your workstation runs chezmoi against the same vault,
-its `[data.secret]` values are offered as the defaults, so four Enters are the
-whole answer. Anything already in the process environment is taken from there
-without asking, which is what a host that injects one of these elsewhere should
-do. The three secrets are read with the terminal's echo turned off, and a
-terminal that will not allow that gets one line saying so before the first
-prompt. Run it again later and it checks instead of writing: it opens the
-vault, reports the item and how many fields a pull would take off it, and locks up
-again. A host running the system-mode unit keeps its config under
-`/var/lib/cairnos` and both environment files under `/etc/cairnos`, so both
-commands need to be told:
-
-```sh
-sudo cairnos secrets auth --system
-sudo cairnos secrets pull --system
-```
-
-`--system` reads the system install's config on its own, so there is no `--dir`
-to remember.
-
-Writing the file by hand does the same job:
+The credentials file holds the vault's API key and master password, and can name
+the item as well. Write it by hand as KEY=VALUE lines:
 
 ```sh
 install -m 600 /dev/null ~/.cairnos/bitwarden.env
@@ -439,14 +461,46 @@ BW_PASSWORD=<your master password>
 EOF
 ```
 
-CairnOS refuses a credentials file that anyone but its owner can read. Nothing
-you put there ever reaches a command line: the API key goes to the login child's
-environment and the master password travels in a request body to a loopback
-daemon, because arguments are readable from `/proc`.
+If a chezmoi config on the host already carries the same four values under
+`[data.secret]`, point `credentials_file` in config.toml at that file instead. A
+path ending in `.toml` is read as a chezmoi config, and every other key in it is
+ignored:
+
+```toml
+[secrets.bitwarden]
+credentials_file = "~/.config/chezmoi/chezmoi.toml"
+```
+
+```toml
+[data.secret]
+bw_item_name     = "<the item name>"
+bw_client_id     = "<client id from the vault API key>"
+bw_client_secret = "<client secret>"
+bw_master_key    = "<your master password>"
+```
+
+Either file has to be mode 0600 or stricter, because CairnOS refuses a
+credentials file that anyone but its owner can read. A value the file leaves out
+is read from the environment under its `BW_` name, which is what a host that
+injects one of these elsewhere should do. Nothing you put in the file ever
+reaches a command line: the API key goes to the login child's environment and the
+master password travels in a request body to a loopback daemon, because
+arguments are readable from `/proc`.
+
+A host running the system-mode unit keeps its config under `/var/lib/cairnos`
+and both environment files under `/etc/cairnos`, and looks for the credentials
+file at `/etc/cairnos/bitwarden.env` unless `credentials_file` names another
+path. The pull needs to be told:
+
+```sh
+sudo cairnos secrets pull --system
+```
+
+`--system` reads the system install's config on its own, so there is no `--dir`
+to remember.
 
 You need the standalone `bw` CLI, not the npm package, since the service user has
-no node toolchain. Every `cairnos secrets auth` and `cairnos secrets pull` looks
-for one in this order:
+no node toolchain. Every `cairnos secrets pull` looks for one in this order:
 
 1. The `bw` on the host's PATH, when `bw --version` reports a version that is
    not behind the release CairnOS pins. That binary is yours. CairnOS runs it
@@ -545,10 +599,9 @@ vault field reaches the service without waiting for a code change. When neither
 moved it leaves the running service alone.
 
 Warning: this host now holds Bitwarden API credentials and your master password
-on disk at 0600, which is the same trust you already place in a workstation
-running chezmoi. Anyone who can read files as the service user can open the
-vault. Use an API key scoped to this purpose, and treat losing the host as losing
-the vault.
+on disk at 0600, in whichever file `credentials_file` names. Anyone who can read
+files as the service user can open the vault. Use an API key scoped to this
+purpose, and treat losing the host as losing the vault.
 
 ## Working from a clone
 
@@ -720,6 +773,25 @@ stop a workflow:
 codex = ["qwen", "anthropic"]
 ```
 
+The other built-in runners, the ones no section below covers:
+
+| Runner                   | What it does                                                                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code`                   | Runs an inline Starlark `script`. `load()` fails and nothing outside Starlark is predeclared, so it has no file, OS, or network access.                                      |
+| `http`                   | Makes one HTTP request with any method, for GET feeds and JSON APIs.                                                                                                         |
+| `webhook`                | POSTs a payload to an HTTP endpoint, as a notification.                                                                                                                      |
+| `email`                  | Sends a message over SMTP from `host`, `port` (default 587), and `from`; the password comes from `CAIRNOS_RUNNER_EMAIL_PASSWORD`.                                            |
+| `github`                 | Reads releases and lists or creates issues through the GitHub REST API; `CAIRNOS_RUNNER_GITHUB_TOKEN` is optional for public reads.                                          |
+| `mcp_client`             | Calls one tool on a remote MCP server over streamable HTTP (`server_url`) or stdio (`command`).                                                                              |
+| `memory`                 | Searches, adds to, or loads the memory store, so an agent remembers across runs. Registered only when a memory store is configured.                                          |
+| `language_rules_service` | Returns the coding rules for a `language` and optional `project`, from the rules `cairnos rules` manages under serve, or from TOML files under the block's `dir`.            |
+| `sandbox_exec`           | Runs one shell command in a locked-down Podman or Docker container. Image, mounts, and network come only from the runner block, and only actions in its `allow_actions` run. |
+| `local_fn`               | Calls a Go function registered in-process at wiring time. The stock binary registers none.                                                                                   |
+| `mock`                   | Returns canned output or failures from its params, for tests.                                                                                                                |
+
+Chat also offers a read-only `vault_query` tool over the document vault, but it
+is not a workflow runner.
+
 ### Local model
 
 `cairnos model setup` gives a node its own model. It downloads a pinned
@@ -865,6 +937,54 @@ add.
 
 Warning: a command listed here runs on the host as the serve user, with that
 user's full environment and no isolation.
+
+A source marked `trusted = true` opens the gate a second way. An action passes,
+whether or not its name is in `allow_actions`, when every file it was read from
+sits under that source's `dest` and holds exactly the bytes origin had at that
+path at the tip of `ref` as of the last fetch, or at the tagged commit when
+`ref` is a tag. Those files are the workflow file and the action's `stdin_file`,
+if it has one. The comparison uses the bytes serve read when it loaded the
+workflow, not a second read of the disk:
+
+```toml
+[source.automation]
+repo     = "git@github.com:example/my-engine.git"
+dest     = "/home/agent/source_repos/github.com/example/my-engine"
+trusted  = true
+```
+
+The point of `allow_actions` is that an agent loop on the host cannot turn exec
+on for itself: the list lives in `config.toml`, which a workflow cannot edit,
+and serve reads it only at startup. A trusted source keeps that property. Its
+files change only through a push to `ref`, which the owner reviews. A file
+written into the checkout by anything on the host differs from origin's tip, so
+it never passes: a planted workflow, an in-place edit, and a commit made in the
+checkout and never pushed are all refused. Every fetch, the one at startup and
+the one in each sync, resets origin's remote-tracking ref to what origin holds.
+Paths are resolved through symlinks first, so a link in the checkout pointing
+elsewhere is judged by where it lands. With `trusted = true`, the
+`allow_actions` names that exist only for that source's workflows are
+redundant and can go.
+
+What the check does not cover:
+
+- A script the command runs by path, such as `command = "./deploy.sh"`, is read
+  from disk when it launches, so an edit made on the host runs.
+- Only exec actions are gated. A dirty working-tree edit to any other action in
+  a workflow runs from disk until a sync resets the tree, which with
+  `dirty_reset = false` never happens.
+- Anything that can write the checkout's `.git` directory can move origin's
+  remote-tracking ref, and that holds until the next fetch puts it back.
+- A repository using SHA-256 object names never matches, so its exec actions
+  are denied.
+
+The check runs a few `git` calls each time an exec action is validated, which
+is at load and again at launch. Nothing is cached, so a fetch that drops a file
+takes effect on the next check. A failed `git` call denies the action as a
+retryable error. With no `[runner.exec]` block at all, a trusted action gets a
+5-minute timeout, the engine's stock action timeout. An action an agent loop
+runs as a tool has no workflow file, so only `allow_actions` admits it.
+`sandbox_exec` keeps its own gate unchanged.
 
 ### Rate-limit windows
 
@@ -1181,6 +1301,11 @@ wins, so `v*` follows releases. Write it as `v[0-9]*.[0-9]*.[0-9]*` when the
 pattern should skip pre-release tags like `v2.0.0-rc1`. A name that is both a
 branch and a tag fails instead of picking one.
 
+At startup serve fetches each source once, after checking the tree on disk, so
+discovery and the trusted-source check start from origin's current tip. A host
+that cannot reach the remote still starts: the failed fetch is logged at warn
+level and the refs from the last fetch stand.
+
 The sync is an ordinary runner action, so you decide when it runs:
 
 ```toml
@@ -1210,11 +1335,66 @@ params = { source = "team" }
 runner     = "message"
 depends_on = ["sync"]
 condition  = "${{ sync.output }} != ''"
-params     = { identity = "ops", to = "#ops", text = "team-workflows moved ${{ sync.output }} on agent-box" }
+params     = { identity = "ops", to = "#ops", text = "team-workflows moved ${{ sync.output }} on my-host" }
 ```
 
 That file can live inside the tree it syncs. Point `cairnos schedule add` at its
-path there once the first boot has cloned it.
+path there once the first boot has cloned it, or let the source find it, as the
+next section describes.
+
+#### Finding workflows in a source
+
+`workflows` lists the workflow files a source carries, as patterns relative to
+`dest`. Serve keeps one schedule per matching file that has a `schedule` key:
+
+```toml
+[source.automation]
+repo      = "git@github.com:example/my-engine.git"
+dest      = "/home/agent/source_repos/github.com/example/my-engine"
+workflows = ["engines/*/cairnos/*.toml"]
+trusted   = true
+```
+
+Patterns use Go's `path.Match` syntax, where `*` stops at a `/`, so the pattern
+above matches `engines/garmin/cairnos/sync.toml` and not a file one directory
+deeper. Each pattern must be relative and not empty, and must not contain a
+`..` or `.` element, an empty element, or a trailing slash, since git never
+writes a path with one and such a pattern would match nothing. Leaving `workflows` out, or setting it to `[]`, turns finding
+off, which is how every source behaved before the key existed.
+
+Serve reconciles the schedule store against the source once at startup, after
+the checkout exists and the startup fetch, and again after every sync that
+succeeds, whether or not HEAD moved. A pass that failed heals on the next sync.
+Each pass:
+
+- lists the files at origin's tip of `ref` as last fetched, or at the tagged
+  commit for a tag, so a file that exists only in the checkout, or was
+  committed there and never pushed, is never scheduled, whoever wrote it;
+- loads each listed file from the checkout, which holds origin's bytes after
+  any sync that is not skipped;
+- schedules a matching file that has a `schedule` key, under its absolute path;
+- replaces the entry when the file's `schedule` or workflow name changed;
+- removes the entry when the file is gone from origin's tip or drops its
+  `schedule` key.
+
+A pass only touches entries whose path matches `workflows` now. Narrowing the
+patterns leaves the entries for files they no longer match in place, where
+they behave like hand-added schedules; remove them with
+`cairnos schedule remove`.
+
+A file that fails to load, or that `cairnos schedule add` would refuse (a
+required input with no default, a cron faster than the 10-second floor), is
+logged at warn level with the reason and skipped. Its existing entry, if any,
+stays, so one bad push cannot unschedule a working workflow, and the other
+files still register. A schedule you added by hand for the same path is adopted
+rather than doubled, including one added through a symlinked spelling of
+`dest`. Schedules for paths the patterns do not match are left
+alone, so a hand-added schedule elsewhere in the checkout keeps working as
+before. Every add, replace and remove is logged at info level with the source,
+workflow, path, and cron.
+
+Only scheduled workflows are found. A webhook-triggered workflow in a source
+still needs `cairnos webhook add`.
 
 A sync that can fast-forward does. When it cannot, because the tree carries
 uncommitted changes to tracked files, sits on another branch, has a detached
@@ -1459,11 +1639,19 @@ From a workflow, with the `message` runner. It needs no runner block:
 ```toml
 [action.announce]
 runner = "message"
-params = { identity = "ops", to = "#alerts", text = "run ${run.id} finished" }
+params = { identity = "ops", to = "#alerts", text = "deploy finished on ${{ system.hostname }}" }
 ```
 
-The action outputs the created post id, so a later action can answer in the
-same thread with `thread = "${action.announce.output}"`.
+There is no reference for the run id, so the text names the host instead. The
+action outputs the created post id, so a later action that lists it in
+`depends_on` can answer in the same thread:
+
+```toml
+[action.followup]
+runner     = "message"
+depends_on = ["announce"]
+params     = { identity = "ops", to = "#alerts", thread = "${{ announce.output }}", text = "smoke tests passed" }
+```
 
 A scheduled workflow that should keep posting into one thread sets `thread_key`
 instead. The first post under a key opens a new thread and CairnOS stores its

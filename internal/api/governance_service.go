@@ -13,8 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// Actor fallbacks when no authenticated subject is available
-// (.agents/spec/12-ui-and-governance.md, "Control actions"): a request that
+// Actor fallbacks when no authenticated subject is available: a request that
 // carried no bearer token is recorded as "local".
 const (
 	actorLocal = "local"
@@ -23,9 +22,8 @@ const (
 // governanceService implements cairnos.v1.GovernanceService over the store's
 // governance slice, the run manager (for terminate), and the workflow
 // resolver (for budget state read from the file). Budgets are file-defined,
-// so there is no SetBudget here: the service reads spend-versus-limit state
-// and runs the admin control actions, each one audit-logged
-// (.agents/spec/12-ui-and-governance.md, "Governance").
+// so there is no SetBudget here: the service reads spend-versus-limit state and
+// runs the admin control actions, each one audit-logged.
 type governanceService struct {
 	cairnosv1.UnimplementedGovernanceServiceServer
 

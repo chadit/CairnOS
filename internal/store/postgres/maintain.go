@@ -13,8 +13,7 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// interruptedCode is the canonical error code for work lost to a restart
-// (.agents/spec/04-execution-engine.md, "State persistence").
+// interruptedCode is the canonical error code for work lost to a restart.
 const interruptedCode = "engine.interrupted"
 
 // ReconcileInterrupted fails running actions and their running runs with
@@ -65,13 +64,11 @@ func (s *Store) ReconcileInterrupted(ctx context.Context) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
-// Prune enforces retention (.agents/spec/04-execution-engine.md, "Retention
-// and pruning"): runs older than RunsOlderThan are deleted, and output_json
-// older than OutputsOlderThan is nulled while the row stays. Agent transcripts
-// age under the outputs policy because they are the fastest-growing data
-// (.agents/spec/15-agent-loop.md), and their truncated rows count toward
-// OutputsTruncated. Age comes from the run's created_at so a run's rows age
-// together.
+// Prune enforces retention: runs older than RunsOlderThan are deleted, and
+// output_json older than OutputsOlderThan is nulled while the row stays. Agent
+// transcripts age under the outputs policy because they are the fastest-growing
+// data, and their truncated rows count toward OutputsTruncated. Age comes from
+// the run's created_at so a run's rows age together.
 func (s *Store) Prune(ctx context.Context, opts store.PruneOptions) (store.PruneStats, error) {
 	now := opts.Now
 	if now.IsZero() {

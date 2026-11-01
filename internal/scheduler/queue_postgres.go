@@ -11,10 +11,9 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgWorkItemSchema is the Postgres work-queue table (.agents/spec/14-open-decisions.md,
-// S8): JSONB payload, timestamptz, a unique dedup_key for exactly-once enqueue,
-// and the claim index over (state, available_at) the FOR UPDATE SKIP LOCKED scan
-// reads.
+// pgWorkItemSchema is the Postgres work-queue table (S8): JSONB payload,
+// timestamptz, a unique dedup_key for exactly-once enqueue, and the claim index
+// over (state, available_at) the FOR UPDATE SKIP LOCKED scan reads.
 const pgWorkItemSchema = `
 CREATE TABLE IF NOT EXISTS work_item (
     id           TEXT PRIMARY KEY,

@@ -15,8 +15,7 @@ const triggerReplay = "replay"
 
 // metaReplayedFrom stamps a replayed action's persisted row with the prior run
 // its output was carried from, so history shows which stage re-used an old
-// result instead of re-executing (.agents/spec/parity/workflow-language.md,
-// "Replay from failed action").
+// result instead of re-executing.
 const metaReplayedFrom = "replayed_from"
 
 // Seeding: every action the prior run finished successfully carries its output
@@ -27,11 +26,10 @@ const metaReplayedFrom = "replayed_from"
 // (already durable in runs.inputs_json) and upstream outputs (already durable in
 // action_results.output_json), which is exactly what re-resolution needs.
 
-// ReplayRun starts a fresh run seeded from a prior one
-// (.agents/spec/parity/workflow-language.md, "Replay from failed action"). The
-// returned run is terminal; its Status and Error carry the outcome, so a failed
-// replay returns a nil error here. A non-nil error means the replay was rejected
-// before any record was created.
+// ReplayRun starts a fresh run seeded from a prior one. The returned run is
+// terminal; its Status and Error carry the outcome, so a failed replay returns a
+// nil error here. A non-nil error means the replay was rejected before any
+// record was created.
 func (e *Engine) ReplayRun(ctx context.Context, prior *store.Run, priorResults []*store.ActionResult, flow *workflow.Workflow) (*store.Run, error) {
 	if flow == nil {
 		return nil, ErrNilWorkflow

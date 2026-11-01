@@ -6,9 +6,7 @@ watches them stream, and reviews tuning suggestions.
 
 It is a pure API client. It holds no private path into the engine. Everything
 it does goes through the same public gateway the CLI and agents use, so if the
-UI needs something, that something is a public API method. See
-`.agents/spec/12-ui-and-governance.md`, "the UI is a client, not a second
-engine."
+UI needs something, that something is a public API method.
 
 ## Develop
 
@@ -55,7 +53,7 @@ login screen.
 ### Token storage and the CSP (M2)
 
 The token lives in `localStorage`, not an httpOnly cookie. That was a deliberate
-call (decision M2 in `.agents/spec/14-open-decisions.md`): the access key stays
+call (decision M2): the access key stays
 the one credential to manage, the token rides a header so there is no CSRF
 surface, and it works on any topology with no server change. The trade is that a
 script running on the page could read the token, so two things cap the risk:
@@ -71,8 +69,11 @@ script running on the page could read the token, so two things cap the risk:
 
 Two operator notes follow from `connect-src 'self'`:
 
-- **Serve the SPA same-origin with the API** (the gateway serving `dist/`, or one
-  reverse proxy in front of both). The dev proxy already does this for `/v1`.
+- **Serve the SPA same-origin with the API.** The gateway does not serve the
+  UI, so put one reverse proxy in front of both: it serves the files in `dist/`
+  and forwards `/v1` to the gateway. The app routes in the browser, so the proxy
+  should answer any other unknown path with `dist/index.html`, or a reload on a
+  page like `/runs` returns 404. The dev proxy already does this for `/v1`.
 - A **cross-origin** deployment (SPA on a CDN, API elsewhere) must widen
   `connect-src` to name the API origin, and should add a
   `Content-Security-Policy: frame-ancestors 'none'` response header at the static
@@ -87,8 +88,7 @@ documented as the upgrade if it is ever needed.
 A workflow you build on the canvas exports to TOML the CLI runs, and re-imports
 with a **semantic** round-trip: same actions, same `depends_on` edges, same
 params, same agent settings, same behavior. Comments and exact formatting are
-**not** preserved. This matches the Phase 5a acceptance criterion in
-`.agents/spec/12-ui-and-governance.md`.
+**not** preserved. This matches the Phase 5a acceptance criterion.
 
 What this means in practice:
 

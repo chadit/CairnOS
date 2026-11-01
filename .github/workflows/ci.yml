@@ -1,14 +1,19 @@
 name: ci
 
-# Push only, every branch, no pull_request trigger: a fork cannot push here,
-# so nobody without write access can start a run. Your own branches still get
-# checks on each push, and branch protection reads those check runs.
-# The repository setting that holds fork pull request runs for approval is the
-# backstop should a pull_request trigger ever return. It is a setting, not a
-# file, and GitHub only accepts it once the repository is public.
+# Push on every branch, plus pull_request so a contributor's pull request from
+# a fork gets the same checks. A fork run gets a read-only token and no
+# repository secrets, and no job here reads a secret, so nothing needs a
+# fork guard. A branch in this repository with an open pull request runs once
+# per event.
+# Right after the repository goes public, the owner must turn on "Require
+# approval for all external contributors" (formerly "outside collaborators")
+# under Settings > Actions > General, so a fork's run waits for approval
+# before it starts. It is a setting, not a file, and GitHub only accepts it
+# once the repository is public.
 on:
   push:
     branches: ['**']
+  pull_request:
 
 permissions:
   contents: read

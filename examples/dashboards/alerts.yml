@@ -1,5 +1,4 @@
-# Example Prometheus alert rules over the cairnos_* metric catalog
-# (.agents/spec/06-observability-and-tuning.md). Load with:
+# Example Prometheus alert rules over the cairnos_* metric catalog. Load with:
 #
 #   rule_files:
 #     - alerts.yml

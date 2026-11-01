@@ -1,10 +1,9 @@
 // Package vault holds the Obsidian-style document store: documents with a
-// title, markdown body, tags, and outbound links to other documents
-// (.agents/spec/05-memory-and-knowledge.md, "Vault and Knowledge Graph").
-// It is a sibling of internal/memory, a superset store: memory entries are
-// small and prompt-bound, vault documents are full documents meant for query
-// through the typed graph DSL, not automatic prompt injection. Backlinks are
-// derived from the links table, so a document never stores its inbound edges.
+// title, markdown body, tags, and outbound links to other documents. It is a
+// sibling of internal/memory, a superset store: memory entries are small and
+// prompt-bound, vault documents are full documents meant for query through the
+// typed graph DSL, not automatic prompt injection. Backlinks are derived from
+// the links table, so a document never stores its inbound edges.
 package vault
 
 import (
@@ -47,7 +46,7 @@ type Retriever interface {
 
 	// Query runs the typed graph query: tag and project filtering, bounded
 	// link traversal, and keyword text match, returning documents with their
-	// bodies (.agents/spec/14-open-decisions.md, S1: a typed DSL, not GraphQL).
+	// bodies (S1: a typed DSL, not GraphQL).
 	Query(ctx context.Context, query Query) (QueryResult, error)
 }
 
@@ -65,10 +64,10 @@ type Document struct {
 	Backlinks []string // inbound document ids (derived, read-only)
 }
 
-// Query is the typed graph query DSL (.agents/spec/14-open-decisions.md, S1).
-// Every field is optional and AND-combined: a query with Tags and LinkedFrom
-// returns documents that both carry the tags and sit within Hops of the
-// source. The zero Query lists the workspace.
+// Query is the typed graph query DSL (S1). Every field is optional and
+// AND-combined: a query with Tags and LinkedFrom returns documents that both
+// carry the tags and sit within Hops of the source. The zero Query lists the
+// workspace.
 type Query struct {
 	// Project narrows to one project. Projects are a tag convention:
 	// "project:finance-app" is a tag, so a project filter is sugar over a tag
@@ -96,8 +95,8 @@ type Query struct {
 	Limit int
 
 	// Semantic asks for vector search when a backend is configured. No vector
-	// backend ships in Phase 7 (.agents/spec/14-open-decisions.md, D2), so a
-	// semantic query falls back to keyword and sets Fallback in the result.
+	// backend ships in Phase 7 (D2), so a semantic query falls back to keyword
+	// and sets Fallback in the result.
 	Semantic bool
 }
 

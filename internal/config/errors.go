@@ -30,3 +30,13 @@ var (
 	// expected result. Nothing is written when it fires.
 	ErrAllowActionsVerify = errors.New("the edited config did not decode to the expected allow_actions")
 )
+
+// errGlob* are the reasons validateWorkflowGlob gives, phrased to follow the
+// quoted glob in the load error.
+var (
+	errGlobEmpty    = errors.New("must not be empty")
+	errGlobAbsolute = errors.New("must be relative to dest")
+	errGlobParent   = errors.New("must not contain a .. element")
+	errGlobDot      = errors.New("must not contain a . element")
+	errGlobSlashes  = errors.New("must not contain an empty element or end in a slash")
+)

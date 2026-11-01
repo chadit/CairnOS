@@ -39,6 +39,10 @@ const (
 
 	// botDisplayName is the name a recipient sees on the standard identity.
 	botDisplayName = "Ops Agent"
+
+	// testInboxSize lets a case queue events before the identity connects and
+	// starts draining the fake connection.
+	testInboxSize = 16
 )
 
 // recordedPost is one CreatePost the fake server accepted.
@@ -82,7 +86,7 @@ type fakeConn struct {
 // newFakeConn builds a connection answering as one bot account.
 func newFakeConn(userID, username string) *fakeConn {
 	return &fakeConn{
-		inbox:    make(chan mattermost.Event, 16),
+		inbox:    make(chan mattermost.Event, testInboxSize),
 		users:    map[string]mattermost.User{},
 		channels: map[string]mattermost.Channel{},
 		me:       mattermost.User{ID: userID, Username: username},

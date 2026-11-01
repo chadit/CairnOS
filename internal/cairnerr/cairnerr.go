@@ -1,6 +1,5 @@
-// Package cairnerr is the one error shape used across the engine, the API,
-// and gRPC. Every failure maps to a canonical dotted code
-// (.agents/spec/04-execution-engine.md, "Error model").
+// Package cairnerr is the one error shape used across the engine, the API, and
+// gRPC. Every failure maps to a canonical dotted code.
 package cairnerr
 
 import (
@@ -34,10 +33,10 @@ func Newf(code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// Wrapf builds an Error that keeps its cause reachable. Use it whenever the
-// underlying error is something a caller might test for, such as a context
-// deadline or fs.ErrNotExist; the code stays the discriminator, and the chain
-// stops being lost at the package boundary.
+// Wrapf builds an Error that keeps its cause reachable, so a caller can still
+// match an underlying error such as a context deadline or fs.ErrNotExist.
+// The code stays the discriminator, and the chain is not lost at the package
+// boundary.
 func Wrapf(cause error, code, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...), cause: cause}
 }

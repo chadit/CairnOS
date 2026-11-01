@@ -13,8 +13,7 @@ import (
 )
 
 // defaultMaxBodyBytes caps a completions body when the config passes none, the
-// same 1 MiB default the gRPC gateway uses (.agents/spec/parity/openai-compat.md,
-// "Body cap").
+// same 1 MiB default the gRPC gateway uses.
 const defaultMaxBodyBytes = 1 << 20
 
 // bearerScheme is the accepted Authorization scheme, compared case-insensitively
@@ -111,10 +110,10 @@ func NewService(cfg *Config) (*Service, error) {
 }
 
 // authorize runs the same verify-then-scope path the gRPC interceptor and
-// internal/mcp run (.agents/spec/08-auth-and-access.md, "Scopes"): with auth
-// disabled it passes on the default workspace, otherwise the token must verify
-// and carry chat:session. Success stamps the caller's workspace on the returned
-// context, so the session and every seeded message land in the right tenant.
+// internal/mcp run: with auth disabled it passes on the default workspace,
+// otherwise the token must verify and carry chat:session. Success stamps the
+// caller's workspace on the returned context, so the session and every seeded
+// message land in the right tenant.
 func (s *Service) authorize(ctx context.Context, token string) (context.Context, error) {
 	if s.authenticator == nil {
 		return store.ContextWithWorkspace(ctx, store.DefaultWorkspace), nil

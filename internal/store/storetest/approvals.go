@@ -19,8 +19,7 @@ const (
 )
 
 // testApprovalRoundTrip proves a pending gate persists with its message, reads
-// back, and moves once to a decided state carrying the actor and comment
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// back, and moves once to a decided state carrying the actor and comment.
 func testApprovalRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -186,8 +185,8 @@ func testApprovalListPending[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 }
 
 // testApprovalIsolatesByWorkspace proves a gate created in one workspace is
-// invisible to another: a cross-tenant read, decision, or listing never
-// touches it (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// invisible to another: a cross-tenant read, decision, or listing never touches
+// it.
 func testApprovalIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -231,8 +230,7 @@ func testApprovalIsolatesByWorkspace[S store.Store](t *testing.T, openFn OpenFun
 
 // testApprovalHeldSurvivesReconcile proves a parked run is untouched by
 // ReconcileInterrupted: its held status, its waiting action row, and its pending
-// gate all survive a restart sweep, because a held run never looks running
-// (.agents/spec/parity/workflow-language.md, "Human approval").
+// gate all survive a restart sweep, because a held run never looks running.
 func testApprovalHeldSurvivesReconcile[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

@@ -31,8 +31,7 @@ const (
 	getArgsProject   = 2 // lang project
 )
 
-// cmdRules dispatches the rules subcommands (.agents/spec/05-memory-and-knowledge.md,
-// "Language Rules Service").
+// cmdRules dispatches the rules subcommands.
 func (a *App) cmdRules(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", rulesUsage)

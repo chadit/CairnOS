@@ -1,11 +1,10 @@
-// Package hive is the Phase 6 Hive client and privacy filter
-// (.agents/spec/09-a2a-and-hive.md, "The Hive Network"). Nodes subscribe to
-// content-free tips and, once a documented privacy review passes (R2 in
-// .agents/spec/14-open-decisions.md) and a host commits to running the service
-// (R3), publish their own. This package ships the mechanism: the allowlist
-// transform that strips a local suggestion down to a shareable Tip, an HTTP
-// client over a hive API, and the ingest path that lands received tips in the
-// standard review queue. Publish is gated; subscribe is always safe.
+// Package hive is the Phase 6 Hive client and privacy filter. Nodes subscribe
+// to content-free tips and, once a documented privacy review passes (R2) and a
+// host commits to running the service (R3), publish their own. This package
+// ships the mechanism: the allowlist transform that strips a local suggestion
+// down to a shareable Tip, an HTTP client over a hive API, and the ingest path
+// that lands received tips in the standard review queue. Publish is gated;
+// subscribe is always safe.
 //
 // The hard rule that runs through every type here: only allowlisted,
 // content-free fields leave the node. Raw prompt text, run inputs and outputs,
@@ -16,8 +15,7 @@ package hive
 
 import "github.com/chadit/CairnOS/internal/store"
 
-// Category is a coarse, content-free tag from a fixed set
-// (.agents/spec/09-a2a-and-hive.md, "What may be shared"). A node opts in per
+// Category is a coarse, content-free tag from a fixed set. A node opts in per
 // category, and only tips tagged with an opted-in category are published or
 // received. The set is fixed on purpose: a free-text category would be a
 // channel for content to leak, so an unrecognized tag is dropped, not passed
@@ -52,10 +50,9 @@ func ValidCategory(tag Category) bool {
 }
 
 // RunnerType is the coarse runner kind a tip names, an enum rather than a
-// runner instance name (.agents/spec/09-a2a-and-hive.md: "Runner type (e.g.
-// 'openai')" is shareable; the instance's configured endpoint and key are
-// not). The transform maps a local runner name onto one of these or refuses
-// the tip.
+// runner instance name ("Runner type (e.g. 'openai')" is shareable; the
+// instance's configured endpoint and key are not). The transform maps a local
+// runner name onto one of these or refuses the tip.
 type RunnerType string
 
 // The recognized runner types. An unrecognized local runner maps to
@@ -68,11 +65,9 @@ const (
 )
 
 // ParamShape describes the direction of a parameter change without any value
-// tied to content (.agents/spec/09-a2a-and-hive.md: "Param-change shape (e.g.
-// 'lowered temperature'), structured, no values tied to content"). It records
-// which parameter moved and which way, never the new value: "lowered
-// max_tokens" is shareable, "max_tokens = 512" is not, because the value can
-// be a fingerprint of one node's prompt.
+// tied to content. It records which parameter moved and which way, never the
+// new value: "lowered max_tokens" is shareable, "max_tokens = 512" is not,
+// because the value can be a fingerprint of one node's prompt.
 type ParamShape struct {
 	// Param is the parameter name that changed (e.g. "max_tokens",
 	// "temperature"). Parameter names are part of the runner's public schema,
@@ -95,11 +90,10 @@ const (
 // A tip says "for openai actions with stable outputs, lowering max_tokens cut
 // cost into the ~20% bucket", and nothing more.
 
-// Tip is a content-free recommendation built only from allowlisted fields
-// (.agents/spec/09-a2a-and-hive.md, "What may be shared"). Every field is an
-// enum, a coarse bucket, or a structured shape with no value tied to content.
-// There is deliberately no free-text field, no params map, no id, and no
-// target. The JSON tags are the wire contract with the hive API.
+// Tip is a content-free recommendation built only from allowlisted fields.
+// Every field is an enum, a coarse bucket, or a structured shape with no value
+// tied to content. There is deliberately no free-text field, no params map, no
+// id, and no target. The JSON tags are the wire contract with the hive API.
 type Tip struct {
 	// ParamShape carries the direction of a param change for param_tuning tips;
 	// nil for output-neutral kinds that change no parameter.

@@ -1,8 +1,7 @@
 // Package credentials mints outbound OAuth2 access tokens for the http and
 // mcp_client runners, so a workflow calls a SaaS API without hand-managed
-// tokens (.agents/spec/parity/secrets-credentials.md, "outbound OAuth2
-// credentials"). It is the outbound third-party counterpart to internal/oauth,
-// which is the inbound OIDC human-login path.
+// tokens. It is the outbound third-party counterpart to internal/oauth, which
+// is the inbound OIDC human-login path.
 //
 // One TokenSource is built per [credential.<name>] block over golang.org/x/oauth2:
 // the client_credentials grant uses clientcredentials.Config, the refresh_token

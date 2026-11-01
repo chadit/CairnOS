@@ -1,7 +1,6 @@
 // Package secrets resolves secret references from a configured source.
-// Phase 0 ships the environment-variable source; file, Vault, and cloud
-// sources implement the same shape later and are chosen by config
-// (.agents/spec/11-deployment-and-config.md, "Secrets").
+// Phase 0 ships the environment-variable source; file, Vault, and cloud sources
+// implement the same shape later and are chosen by config.
 //
 // The encrypted store adds AES-256-GCM at-rest sealing (Sealer) under a 32-byte
 // master key loaded from the environment (LoadKeys). A row binds its workspace,

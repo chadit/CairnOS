@@ -1,16 +1,15 @@
-// Package a2a implements the Phase 4b Agent-to-Agent protocol adapter
-// (.agents/spec/09-a2a-and-hive.md). It is a thin protocol shim over the
-// existing run lifecycle, not a second engine: an A2A "task" is a CairnOS
-// "run", so CreateTask starts a run, GetTask/ListTasks read run history,
-// CancelTask stops a run, and TaskUpdates streams a run's events. The package
-// also serves the signed agent card at /.well-known/agent.json and builds the
-// mTLS transport credentials when the operator configures them.
+// Package a2a implements the Phase 4b Agent-to-Agent protocol adapter. It is a
+// thin protocol shim over the existing run lifecycle, not a second engine: an
+// A2A "task" is a CairnOS "run", so CreateTask starts a run, GetTask/ListTasks
+// read run history, CancelTask stops a run, and TaskUpdates streams a run's
+// events. The package also serves the signed agent card at
+// /.well-known/agent.json and builds the mTLS transport credentials when the
+// operator configures them.
 //
-// Run/task vocabulary mapping (.agents/spec/09-a2a-and-hive.md, "Core
-// methods"): task == run, skill == workflow name, params == workflow inputs,
-// task state == run status, task update == run event. The adapter reuses
-// internal/api's run manager and workflow resolver, so an A2A task and a
-// native API run are the same persisted record.
+// Run/task vocabulary mapping: task == run, skill == workflow name,
+// params == workflow inputs, task state == run status, task update == run
+// event. The adapter reuses internal/api's run manager and workflow resolver, so
+// an A2A task and a native API run are the same persisted record.
 package a2a
 
 import (
@@ -20,19 +19,17 @@ import (
 	"fmt"
 )
 
-// ProtocolVersion is the A2A protocol identifier the card advertises
-// (.agents/spec/09-a2a-and-hive.md, "Agent card").
+// ProtocolVersion is the A2A protocol identifier the card advertises.
 const ProtocolVersion = "a2a/1"
 
 // SigningAlg names the card signature algorithm. EdDSA (ed25519) is the only
 // algorithm: the card carries the same asymmetric public key the cross-org
-// tokens verify under, so a consumer holding the public key can trust the
-// card without being able to forge one (.agents/spec/08-auth-and-access.md,
-// Change 3).
+// tokens verify under, so a consumer holding the public key can trust the card
+// without being able to forge one.
 const SigningAlg = "EdDSA"
 
 // AuthTypeJWT is the card's auth type: A2A reuses the bearer JWT exchanged at
-// the login endpoint (.agents/spec/09-a2a-and-hive.md, "Agent card").
+// the login endpoint.
 const AuthTypeJWT = "jwt"
 
 // Skill is one capability the node advertises on its card.
@@ -77,10 +74,9 @@ type SigningInfo struct {
 	Signature string `json:"signature,omitempty"`
 }
 
-// Card is the agent card published at /.well-known/agent.json
-// (.agents/spec/09-a2a-and-hive.md, "Agent card"): what the node is, where to
-// reach it, what it can do, how to authenticate, and the signature that lets a
-// consumer trust the card came from this node untampered.
+// Card is the agent card published at /.well-known/agent.json: what the node
+// is, where to reach it, what it can do, how to authenticate, and the signature
+// that lets a consumer trust the card came from this node untampered.
 type Card struct {
 	Signing  SigningInfo `json:"signing"`
 	Auth     AuthInfo    `json:"auth"`

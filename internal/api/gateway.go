@@ -21,8 +21,7 @@ import (
 // field exists so error bodies are self-describing in logs.
 const envelopeStatus = "error"
 
-// errorEnvelope is the canonical HTTP error shape
-// (.agents/spec/07-api-protocols.md, "HTTP response (error)").
+// errorEnvelope is the canonical HTTP error shape.
 type errorEnvelope struct {
 	Error  envelopeError `json:"error"`
 	Status string        `json:"status"`

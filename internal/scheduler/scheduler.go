@@ -1,9 +1,7 @@
-// Package scheduler runs workflows on cron schedules
-// (.agents/spec/11-deployment-and-config.md, "Scheduler (Phase 0b)").
-// Schedules persist in SQLite so they survive restarts, next-fire math goes
-// through robfig/cron, and the daemon is single-node but fires through a
-// Coordinator interface so the Phase 4 leader lock drops in without a
-// rewrite (.agents/spec/14-open-decisions.md, S2).
+// Package scheduler runs workflows on cron schedules. Schedules persist in
+// SQLite so they survive restarts, next-fire math goes through robfig/cron, and
+// the daemon is single-node but fires through a Coordinator interface so the
+// Phase 4 leader lock drops in without a rewrite (S2).
 package scheduler
 
 import (
@@ -61,8 +59,7 @@ type Runner interface {
 
 // Coordinator decides whether this node may fire schedules right now. Phase
 // 0b is single-node, so SoloCoordinator is the only implementation; the
-// Phase 4 Postgres advisory lock implements the same method
-// (.agents/spec/14-open-decisions.md, S2).
+// Phase 4 Postgres advisory lock implements the same method (S2).
 type Coordinator interface {
 	Leader(ctx context.Context) (bool, error)
 }
@@ -195,7 +192,7 @@ func (s *Scheduler) pass(ctx context.Context) (time.Duration, error) {
 // so the caller can sleep straight to it; a zero time means there is none to
 // wait on. A next_fire that fell behind does not fan out a burst at any
 // cadence: the backlog is logged and dropped, and next_fire recomputes from now
-// (.agents/spec/14-open-decisions.md, S8).
+// (S8).
 func (s *Scheduler) fire(ctx context.Context, sched *Schedule, now time.Time) time.Time {
 	leader, err := s.coord.Leader(ctx)
 	if err != nil {

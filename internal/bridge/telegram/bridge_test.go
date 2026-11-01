@@ -15,8 +15,7 @@ import (
 
 // TestBridgeMultiTurnPersistsAcrossRestart proves an allowlisted chat holds a
 // multi-turn conversation on one session and a fresh adapter over the same store
-// re-resolves that binding, because it lives in bridge_sessions, not memory
-// (.agents/spec/parity/messaging-bridge.md, acceptance 1).
+// re-resolves that binding, because it lives in bridge_sessions, not memory.
 func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 

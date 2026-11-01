@@ -44,6 +44,16 @@ const (
 // staleAge puts an inserted run past the default 90d retention window.
 const staleAge = 100 * 24 * time.Hour
 
+// oneShotChanSize buffers a channel that carries one value, such as a run's exit
+// code or the single interrupt a test sends, so the send never waits on the
+// receiver and a test that fails before reading leaks no goroutine.
+const oneShotChanSize = 1
+
+// postCaptureSize is how many posts a fake endpoint holds before its handler
+// blocks. The tests read a few at most, and the slack keeps an unread post from
+// stalling the server.
+const postCaptureSize = 8
+
 const failingWorkflow = `
 [workflow]
 name = "doomed"

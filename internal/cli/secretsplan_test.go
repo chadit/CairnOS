@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chadit/CairnOS/internal/bitwarden"
 	"github.com/chadit/CairnOS/internal/cli"
 )
 
@@ -49,6 +50,31 @@ func renderedLength(t *testing.T, rendered, name string) int {
 	t.Fatalf("the rendered file carries no %s", name)
 
 	return 0
+}
+
+// TestSecretsPullWithNoItemAnywhereNamesWhereToSetIt covers a config block and a
+// KEY=VALUE credentials file that both leave the item out, with an empty
+// environment. The message has to name every place the item can come from, with
+// BW_ITEM written where the sentence asks for a variable.
+func TestSecretsPullWithNoItemAnywhereNamesWhereToSetIt(t *testing.T) {
+	t.Parallel()
+
+	dir := writeBitwardenConfig(t, "[secrets.bitwarden]\n")
+
+	code, _, stderr := runEnvCLI(t, map[string]string{}, secretsCmd, "pull", flagDirArg, dir)
+	if code != cli.ExitFailure {
+		t.Fatalf("exit = %d, want failure\nstderr: %s", code, stderr)
+	}
+
+	for _, want := range []string{
+		"set [secrets.bitwarden] item,",
+		"bw_item_name under [data.secret] in a .toml credentials file,",
+		"or " + bitwarden.EnvItem + " in a KEY=VALUE credentials file or the environment\n",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr does not carry %q:\n%s", want, stderr)
+		}
+	}
 }
 
 // TestSecretsPullRendersAFieldNamedAfterABot is the case the fleet is in: the

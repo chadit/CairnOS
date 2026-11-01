@@ -70,8 +70,7 @@ func (st streamState) chunk(delta streamDelta, finish *string) streamChunk {
 // as its confirmation text, since this surface has no confirm route. A turn
 // error after the status line surfaces as an SSE error payload before [DONE],
 // since it can no longer become an HTTP status. A dropped client cancels the
-// turn through the request context
-// (.agents/spec/parity/openai-compat.md, "Streaming").
+// turn through the request context.
 func (s *Service) streamCompletion(ctx context.Context, w http.ResponseWriter, session *store.ChatSession, prompt string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -87,7 +86,7 @@ func (s *Service) streamCompletion(ctx context.Context, w http.ResponseWriter, s
 	s.writeSSE(w, flusher, state.chunk(streamDelta{Role: roleAssistant}, nil))
 
 	events := make(chan chat.Event, completionEventBuffer)
-	callDone := make(chan error, 1)
+	callDone := make(chan error, callDoneBufferSize)
 
 	go func() {
 		callDone <- s.agent.SendMessage(ctx, session.ID, prompt, events)

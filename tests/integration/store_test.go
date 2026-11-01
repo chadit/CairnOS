@@ -56,7 +56,7 @@ func TestStoreConformance(t *testing.T) {
 // TestOpenReAddsParentRunIDColumn proves the guarded ALTER upgrades a Postgres
 // database created before replay: dropping runs.parent_run_id and reopening
 // re-adds it (ADD COLUMN IF NOT EXISTS), and a child run with ParentRunID set
-// then round-trips (.agents/spec/parity/workflow-language.md).
+// then round-trips.
 func TestOpenReAddsParentRunIDColumn(t *testing.T) {
 	t.Parallel()
 

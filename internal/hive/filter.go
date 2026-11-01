@@ -12,7 +12,7 @@ import (
 // saving and a 27% saving both become "20%", so the exact figure (which can
 // fingerprint one node's spend) never leaves. Wider buckets leak less; this is
 // a starting width, not a researched optimum, and the privacy review (R2) may
-// widen it (.agents/spec/14-open-decisions.md).
+// widen it.
 const bucketWidth = 10
 
 // percentScale turns a fractional saving (0.23) into a percentage (23) before
@@ -20,10 +20,9 @@ const bucketWidth = 10
 const percentScale = 100
 
 // Transformer reduces a local suggestion to a content-free Tip by the
-// allowlist (.agents/spec/09-a2a-and-hive.md, "Privacy mechanisms": free text
-// is dropped, not scrubbed). It maps a node-local runner name onto a coarse
-// RunnerType and tags the tip with a category, both supplied by the node. It
-// holds no per-suggestion state, so one value serves the node.
+// allowlist (free text is dropped, not scrubbed). It maps a node-local runner
+// name onto a coarse RunnerType and tags the tip with a category, both supplied
+// by the node. It holds no per-suggestion state, so one value serves the node.
 type Transformer struct {
 	// runnerTypes maps a local runner name to its coarse type. A name absent
 	// here maps to RunnerTypeOther, so a node-specific runner name never rides
@@ -62,10 +61,9 @@ func defaultRunnerTypes() map[string]RunnerType {
 
 // Transform reduces suggestion to a Tip built only from allowlisted fields,
 // reporting ok=false otherwise: a published tip carries only allowlisted,
-// content-free fields (.agents/spec/09-a2a-and-hive.md, acceptance). It
-// strips, never scrubs: Rationale, Evidence, Proposed, Target, and ID only
-// derive enum and bucket values. A prompt_refactor suggestion always returns
-// ok=false.
+// content-free fields. It strips, never scrubs: Rationale, Evidence, Proposed,
+// Target, and ID only derive enum and bucket values. A prompt_refactor
+// suggestion always returns ok=false.
 //
 //nolint:gocritic // hugeParam: Suggestion is read by value so Transform cannot mutate it
 func (t *Transformer) Transform(suggestion store.Suggestion) (Tip, bool) {

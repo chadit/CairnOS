@@ -1,7 +1,0 @@
-# actionlint rejects a runs-on label it does not recognize, so the label has to
-# be declared here. The self-hosted runner label is configured outside this
-# repository; keep this file in step with it or the workflow queues against a
-# runner that never picks it up.
-self-hosted-runner:
-  labels:
-    - cairnos

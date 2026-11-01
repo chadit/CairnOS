@@ -28,6 +28,14 @@ const (
 	// fnDouble and fnBroken are the local functions the local_fn cases register.
 	fnDouble = "double"
 	fnBroken = "broken"
+
+	// oneShotBufferSize gives a fake server or goroutine a slot for the one value
+	// it sends, so it never blocks on a test that already stopped reading.
+	oneShotBufferSize = 1
+
+	// streamChunkBufferSize holds every chunk a streamed fixture reply emits,
+	// since the test drains the channel only after ExecuteStream returns.
+	streamChunkBufferSize = 16
 )
 
 func TestMockReturnsConfiguredOutputAndCost(t *testing.T) {

@@ -11,11 +11,9 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// schedulesSchema is the spec's schedules table
-// (.agents/spec/11-deployment-and-config.md, "Scheduler (Phase 0b)"), plus
-// IF NOT EXISTS so opening an existing database is idempotent. It shares
-// the run store's database file with disjoint tables, the same arrangement
-// internal/memory uses.
+// schedulesSchema is the spec's schedules table, plus IF NOT EXISTS so opening
+// an existing database is idempotent. It shares the run store's database file
+// with disjoint tables, the same arrangement internal/memory uses.
 const schedulesSchema = `
 CREATE TABLE IF NOT EXISTS schedules (
     id            TEXT PRIMARY KEY,

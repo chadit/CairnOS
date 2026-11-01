@@ -11,12 +11,11 @@ import { defineConfig, type Plugin } from 'vite';
 const gateway = process.env.CAIRNOS_GATEWAY ?? 'http://localhost:8080';
 
 // productionCSP injects a strict Content-Security-Policy meta tag into the
-// built index.html so injected script cannot exfiltrate the localStorage
-// bearer token (.agents/spec/14-open-decisions.md, M2). Build-only, because
-// the dev server needs inline script, eval, and an HMR websocket.
-// style-src keeps 'unsafe-inline' since React and reactflow set element
-// styles inline. frame-ancestors needs a real response header, so the static
-// host sends it (web/README.md).
+// built index.html so injected script cannot exfiltrate the localStorage bearer
+// token (M2). Build-only, because the dev server needs inline script, eval, and
+// an HMR websocket. style-src keeps 'unsafe-inline' since React and reactflow
+// set element styles inline. frame-ancestors needs a real response header, so
+// the static host sends it (web/README.md).
 function productionCSP(): Plugin {
   const policy = [
     "default-src 'self'",

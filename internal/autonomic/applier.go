@@ -1,17 +1,15 @@
-// Package autonomic is the Phase 6 gated auto-apply path
-// (.agents/spec/13-roadmap.md, Phase 6; .agents/spec/06-observability-and-tuning.md,
-// "Review flow"). It applies an approved, output-neutral suggestion to a
-// workflow file, recording the prior definition in the version store first so
-// the change is reversible, and writing an audit row so the action is on the
-// record. It is the narrow, reversible counterpart to the tuning engine, which
-// only ever proposes.
+// Package autonomic is the Phase 6 gated auto-apply path. It applies an
+// approved, output-neutral suggestion to a workflow file, recording the prior
+// definition in the version store first so the change is reversible, and
+// writing an audit row so the action is on the record. It is the narrow,
+// reversible counterpart to the tuning engine, which only ever proposes.
 //
 // The gates are the point of this package, not an afterthought:
 //
 //   - Auto-apply is default off (config [autonomic] auto_apply_enabled = false).
 //   - Only caching and batching apply. Param tuning and prompt refactor never
-//     do, because verifying they kept output quality is the open R1 problem
-//     (.agents/spec/14-open-decisions.md). Apply refuses any other kind.
+//     do, because verifying they kept output quality is the open R1 problem.
+//     Apply refuses any other kind.
 //   - A suggestion must be approved first. Apply never touches an open or
 //     rejected suggestion.
 //   - The prior file version is captured before the edit, so Revert can restore
@@ -68,9 +66,8 @@ type Store interface {
 	store.GovernanceStore
 }
 
-// Config gates the applier (.agents/spec/06-observability-and-tuning.md, Phase
-// 6 auto-apply). AutoApplyEnabled is the master switch and defaults off; even
-// on, the kind and approval gates still apply.
+// Config gates the applier. AutoApplyEnabled is the master switch and defaults
+// off; even on, the kind and approval gates still apply.
 type Config struct {
 	// Now anchors the version-snapshot and audit timestamps so a test can use a
 	// fixed clock. Nil means time.Now.
@@ -162,9 +159,9 @@ func (a *Applier) Apply(ctx context.Context, suggestionID string) (ApplyResult, 
 }
 
 // Revert restores a workflow file to its most recent captured version, the
-// rollback the version store exists for (.agents/spec/13-roadmap.md, Phase 6).
-// It writes the prior TOML back, reloads it for the hash it now has, and writes
-// an audit row. A workflow with no captured version cannot be reverted.
+// rollback the version store exists for. It writes the prior TOML back, reloads
+// it for the hash it now has, and writes an audit row. A workflow with no
+// captured version cannot be reverted.
 func (a *Applier) Revert(ctx context.Context, workflowName string) (RevertResult, error) {
 	versions, err := a.store.ListWorkflowVersions(ctx, workflowName)
 	if err != nil {

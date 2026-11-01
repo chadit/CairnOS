@@ -38,10 +38,8 @@ type RulesLookup interface {
 	GetRules(ctx context.Context, language, project string) (map[string]string, error)
 }
 
-// LanguageRules serves coding rules from the Rules Service or, with none
-// wired, from static files (.agents/spec/03-runner-interface.md;
-// .agents/spec/05-memory-and-knowledge.md, "Language Rules Service"). With
-// neither a service nor a dir, Validate fails.
+// LanguageRules serves coding rules from the Rules Service or, with none wired,
+// from static files. With neither a service nor a dir, Validate fails.
 //
 // Config: dir (optional with a service). Params: language (required) and
 // project (optional). Rule files are flat key = "value" TOML under dir:
@@ -260,8 +258,7 @@ func isStemChar(ch rune) bool {
 
 // readFlatRules parses one flat key = "value" rules file. A hand-rolled
 // reader keeps this Phase 1 stub on the standard library; the files are flat
-// string maps by contract, never nested TOML
-// (.agents/spec/05-memory-and-knowledge.md).
+// string maps by contract, never nested TOML.
 func readFlatRules(path string) (map[string]string, error) {
 	// #nosec G304 -- path is the operator-configured rules dir joined with
 	// params validated against a letters-digits-dash-underscore allowlist.

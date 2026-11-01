@@ -141,7 +141,7 @@ func assertLLMUsage(t *testing.T, usage runner.Usage) {
 func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -189,7 +189,7 @@ func TestOpenAISuccessReportsUsageAndCost(t *testing.T) {
 func TestOpenAIJSONOutputParsesObjectAndSetsResponseFormat(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -265,7 +265,7 @@ func TestOpenAIJSONOutputRejectsProse(t *testing.T) {
 func TestOpenAIDefaultOutputStaysPlainText(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -356,7 +356,7 @@ func TestOpenAIClassifiesStatusCodes(t *testing.T) {
 func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -374,7 +374,7 @@ func TestOpenAIStreamsChunksThenUsage(t *testing.T) {
 		t.Fatalf("new openai: %v", err)
 	}
 
-	out := make(chan runner.Chunk, 16)
+	out := make(chan runner.Chunk, streamChunkBufferSize)
 
 	result, err := llm.ExecuteStream(t.Context(), llmTask(map[string]any{promptKey: testPrompt}), out)
 	if err != nil {

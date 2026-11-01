@@ -31,8 +31,7 @@ type modelInfo struct {
 // handleModels is GET /v1/models: authorize under the same chat:session check as
 // completions (frontends send the key here too), then list every personality as
 // an OpenAI model. It ships in this cluster because several frontends query
-// models before allowing a first chat (.agents/spec/parity/openai-compat.md,
-// "GET /v1/models").
+// models before allowing a first chat.
 func (s *Service) handleModels(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.authorize(r.Context(), bearerFromHeader(r.Header)); err != nil {
 		s.writeError(w, err)

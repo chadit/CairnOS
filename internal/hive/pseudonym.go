@@ -11,8 +11,7 @@ import (
 // without carrying any node-identifying structure.
 const pseudonymBytes = 16
 
-// NewPseudonym mints the rotating id a node presents to the hive
-// (.agents/spec/09-a2a-and-hive.md, "No raw identifiers"). It comes from
+// NewPseudonym mints the rotating id a node presents to the hive. It comes from
 // crypto/rand alone, so it carries nothing about the host: no hostname, no
 // instance name, no MAC. Calling it once per publish window is what keeps two
 // publishes from linking back to one node.

@@ -36,8 +36,7 @@ const (
 // link-local, private, unspecified, and multicast addresses. The check sits in
 // the dialer's Control callback, after DNS, so a rebind to an internal IP is
 // still blocked. allowPrivate drops the IP guard for operators who call
-// internal endpoints deliberately, and keeps the redirect scheme guard
-// (.agents/spec/08-auth-and-access.md, "Runner egress guard").
+// internal endpoints deliberately, and keeps the redirect scheme guard.
 func safeHTTPClient(name string, timeout time.Duration, allowPrivate bool) *http.Client {
 	dialer := &net.Dialer{}
 

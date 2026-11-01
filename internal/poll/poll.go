@@ -3,8 +3,7 @@
 // Source what changed since the last observation and enqueues one run per new
 // event. This package holds the Source seam and the source registry, so the
 // next source is a small adapter; the fire path that wraps the scheduler runner
-// lives in internal/cli (.agents/spec/parity/triggers-webhooks.md, "Poll
-// triggers").
+// lives in internal/cli.
 package poll
 
 import (

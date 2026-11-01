@@ -1,6 +1,6 @@
 // Package workflow implements the CairnOS workflow file format: TOML parsing,
 // the depends_on DAG, interpolation references, the condition expression
-// grammar, and load-time validation (.agents/spec/02-workflow-schema.md).
+// grammar, and load-time validation.
 package workflow
 
 import (

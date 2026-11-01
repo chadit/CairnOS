@@ -45,7 +45,7 @@ const (
 // writeShim drops an executable script into dir and returns its path. Tests
 // point a runner's binary at it instead of any real CLI.
 //
-// Call it before t.Parallel: a fork racing an open write fd fails with ETXTBSY
+// Tests call it before t.Parallel: a fork racing an open write fd fails with ETXTBSY
 // (Go issue 22315), and top-level tests run serially until they go parallel,
 // so writing first closes it before any fork.
 func writeShim(t *testing.T, dir, name, script string) string {
@@ -73,7 +73,7 @@ func executeCanceledOnFirstLine(t *testing.T, streamer runner.Streamer, task *ru
 	defer cancel()
 
 	stream := make(chan runner.Chunk)
-	done := make(chan error, 1)
+	done := make(chan error, oneShotBufferSize)
 
 	go func() {
 		_, err := streamer.ExecuteStream(ctx, task, stream)
@@ -394,7 +394,7 @@ echo "line two"`)
 		t.Fatalf("new cli: %v", err)
 	}
 
-	out := make(chan runner.Chunk, 16)
+	out := make(chan runner.Chunk, streamChunkBufferSize)
 
 	result, err := cli.ExecuteStream(t.Context(), cliTask(), out)
 	if err != nil {

@@ -18,8 +18,7 @@ const gatewayMarker = "gateway-stub"
 // alongside a "/" catch-all standing in for the gRPC gateway, the same way the
 // api server's root mux does, and proves the explicit method pattern wins on its
 // own path while every other path still reaches the gateway. This locks the mux
-// specificity the design leans on (.agents/spec/parity/openai-compat.md,
-// "Routing safety").
+// specificity the design leans on.
 func TestExtensionRouteBeatsGatewayCatchAll(t *testing.T) {
 	t.Parallel()
 

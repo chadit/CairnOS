@@ -126,7 +126,7 @@ func TestServeSmoke(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	exit := make(chan int, 1)
+	exit := make(chan int, oneShotChanSize)
 	network := nettest.NewNetwork()
 
 	go func() {
@@ -332,7 +332,7 @@ func serveUntilReadyOn(
 
 	stdout := newSignalWriter()
 	stderr := &bytes.Buffer{}
-	exit := make(chan int, 1)
+	exit := make(chan int, oneShotChanSize)
 
 	go func() {
 		app := cli.New(stdout, stderr).WithEnv(environ.Map(env)).

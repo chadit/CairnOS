@@ -11,11 +11,10 @@ import (
 )
 
 // BindBridgeSession upserts the (transport, chatKey) -> sessionID binding in
-// the request workspace (.agents/spec/parity/messaging-bridge.md, decision 1).
-// ON CONFLICT makes a rebind (the bridge's /new path) overwrite the prior
-// session id in one statement, so switching a chat to a fresh conversation
-// never fails on the primary key. The workspace stamp keeps a chat bound in one
-// tenant invisible from another.
+// the request workspace. ON CONFLICT makes a rebind (the bridge's /new path)
+// overwrite the prior session id in one statement, so switching a chat to a
+// fresh conversation never fails on the primary key. The workspace stamp keeps
+// a chat bound in one tenant invisible from another.
 func (s *Store) BindBridgeSession(ctx context.Context, transport, chatKey, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO bridge_sessions (workspace_id, transport, chat_key, session_id, updated_at)

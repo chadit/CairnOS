@@ -18,7 +18,7 @@ import (
 
 const gatedWorkflow = `
 [workflow]
-name     = "prflow_app"
+name     = "sample_app"
 schedule = "* * * * *"
 
 [workflow.requires]
@@ -30,12 +30,12 @@ runner = "mock"
 `
 
 const (
-	gatedName = "prflow_app"
+	gatedName = "sample_app"
 	gatedID   = "sched"
 )
 
 var (
-	errRunFailed = errors.New("run prflow_app: exit 1")
+	errRunFailed = errors.New("run sample_app: exit 1")
 	errNoRoute   = errors.New("connect: connection refused")
 )
 
@@ -104,7 +104,7 @@ func (noCursors) SetCursor(_ context.Context, _, _ string) error {
 func writeGatedWorkflow(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "prflow.toml")
+	path := filepath.Join(t.TempDir(), "sample.toml")
 	if err := os.WriteFile(path, []byte(gatedWorkflow), 0o600); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}

@@ -8,10 +8,9 @@ import (
 )
 
 // EvidenceSource marks a suggestion's origin in its evidence, and SourceHive
-// flags one that arrived from the network rather than from local analysis
-// (.agents/spec/09-a2a-and-hive.md). The marker is for the reviewer, not a
-// bypass: a hive suggestion still goes through the same review queue and
-// replay guardrail as a local one.
+// flags one that arrived from the network rather than from local analysis. The
+// marker is for the reviewer, not a bypass: a hive suggestion still goes
+// through the same review queue and replay guardrail as a local one.
 const (
 	EvidenceSource = "source"
 	SourceHive     = "hive"
@@ -49,9 +48,8 @@ func NewIngester(suggestions store.SuggestionStore, newID func() string) (*Inges
 
 // Ingest converts each tip to an open local suggestion and saves it, so a
 // received tip flows through the same review queue and replay guardrail as a
-// local one (.agents/spec/09-a2a-and-hive.md, acceptance). Nothing is ever
-// marked applied or approved here: a tip from the network waits for a human.
-// It returns the count saved.
+// local one. Nothing is ever marked applied or approved here: a tip from the
+// network waits for a human. It returns the count saved.
 func (i *Ingester) Ingest(ctx context.Context, tips []Tip) (int, error) {
 	var saved int
 

@@ -1,9 +1,8 @@
 // Package reliability implements the retry, backoff, and circuit-breaker
-// machinery the execution engine wraps around runner calls
-// (.agents/spec/04-execution-engine.md, "Retry and backoff" and "Circuit
-// breaker"). It deliberately does not import internal/workflow: the engine
-// maps workflow.RetryPolicy onto Policy, keeping this package free of the
-// schema types so other callers can produce policies too.
+// machinery the execution engine wraps around runner calls. It deliberately
+// does not import internal/workflow: the engine maps workflow.RetryPolicy onto
+// Policy, keeping this package free of the schema types so other callers can
+// produce policies too.
 package reliability
 
 import (

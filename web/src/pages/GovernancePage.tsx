@@ -1,9 +1,8 @@
 /**
  * GovernancePage is a placeholder. Budgets and pause/resume/terminate are
- * Phase 5b: they need engine enforcement that does not exist yet
- * (.agents/spec/12-ui-and-governance.md, "Governance"). This page is honest
- * about that. It does not fake a budget cap or a working pause control. The
- * one control that is real today is CancelRun, surfaced on the run detail
+ * Phase 5b: they need engine enforcement that does not exist yet. This page is
+ * honest about that. It does not fake a budget cap or a working pause control.
+ * The one control that is real today is CancelRun, surfaced on the run detail
  * page, so it is linked rather than duplicated here.
  */
 export function GovernancePage() {

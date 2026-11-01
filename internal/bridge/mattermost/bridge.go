@@ -30,6 +30,10 @@ const (
 	// eventBuffer decouples the socket reader from the gate, so a slow lookup on
 	// one post does not stall the read that would have delivered the next.
 	eventBuffer = 32
+
+	// resultBufferSize gives Listen's terminal error a slot, so its goroutine
+	// exits even after pump has returned on a canceled context.
+	resultBufferSize = 1
 )
 
 // Identity is one configured agent as serve resolved it: the config block, the
@@ -307,7 +311,7 @@ func (b *Bridge) pump(ctx context.Context, agent *identity) bool {
 	defer stop()
 
 	events := make(chan Event, eventBuffer)
-	closed := make(chan error, 1)
+	closed := make(chan error, resultBufferSize)
 
 	go func() { closed <- agent.client.Listen(listenCtx, events) }()
 

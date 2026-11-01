@@ -10,8 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Signing algorithm names accepted by signing_algorithm
-// (.agents/spec/08-auth-and-access.md, Change 3): HS256 for the
+// Signing algorithm names accepted by signing_algorithm: HS256 for the
 // self-issued single instance, EdDSA (ed25519) for the asymmetric tier
 // where verifiers must not be able to mint.
 const (
@@ -19,10 +18,9 @@ const (
 	AlgEdDSA = "EdDSA"
 )
 
-// Environment variable names for the signing material. Secrets come only
-// from the environment or a secret source, never the config file
-// (.agents/spec/08-auth-and-access.md, "Configuration"). The constants
-// name variables, not credential values.
+// Environment variable names for the signing material. Secrets come only from
+// the environment or a secret source, never the config file. The constants name
+// variables, not credential values.
 const (
 	hs256SecretEnv    = "CAIRNOS_AUTH_HS256_SECRET" // #nosec G101 -- environment variable name, not a credential
 	privateKeyFileEnv = "CAIRNOS_AUTH_PRIVATE_KEY_FILE"
@@ -67,9 +65,9 @@ func (m *Material) Alg() string {
 
 // EdDSAKeys returns the ed25519 key pair when the configured tier is EdDSA,
 // reporting false otherwise. The A2A card signer reuses these when the auth
-// layer already runs asymmetric (.agents/spec/09-a2a-and-hive.md: the agent
-// card carries the same EdDSA public key the cross-org tokens verify under),
-// so the card and the tokens share one trust anchor.
+// layer already runs asymmetric (the agent card carries the same EdDSA public
+// key the cross-org tokens verify under), so the card and the tokens share one
+// trust anchor.
 func (m *Material) EdDSAKeys() (ed25519.PrivateKey, ed25519.PublicKey, bool) {
 	if m.alg != AlgEdDSA {
 		return nil, nil, false

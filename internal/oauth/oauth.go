@@ -1,8 +1,7 @@
-// Package oauth implements the Phase 5b human-login path
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy"): a browser user
-// signs in at an OIDC identity provider, and CairnOS mints its own JWT
-// carrying the user's workspace and the role's scopes. It sits alongside the
-// access-key model, not in place of it.
+// Package oauth implements the Phase 5b human-login path: a browser user signs
+// in at an OIDC identity provider, and CairnOS mints its own JWT carrying the
+// user's workspace and the role's scopes. It sits alongside the access-key
+// model, not in place of it.
 //
 // Two browser-facing routes drive the flow. GET /v1/oauth/login redirects to
 // the IdP's authorization URL with state and PKCE. GET /v1/oauth/callback

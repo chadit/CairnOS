@@ -2,8 +2,7 @@
 // implementations. RunConformance is one suite every backend runs against a
 // fresh store: the sqlite backend calls it, and the postgres backend calls it
 // when a test DSN is configured. One spec, two backends, so a workspace or
-// membership difference between them fails a test instead of going unnoticed
-// (.agents/spec/12-ui-and-governance.md, "Multi-tenancy").
+// membership difference between them fails a test instead of going unnoticed.
 package tenancytest
 
 import (

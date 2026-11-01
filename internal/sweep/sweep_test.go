@@ -19,6 +19,11 @@ const (
 
 var errPruneBroken = errors.New("prune broke")
 
+// oneShotChanSize gives fakePruner a slot for a prune the disabled sweep must
+// never make, so a wrong call completes and the test's select catches it
+// instead of Run blocking on the send.
+const oneShotChanSize = 1
+
 // fakePruner reports each call's options over a channel so the test syncs
 // on real activity instead of a clock.
 type fakePruner struct {
@@ -173,7 +178,7 @@ func (h *recordingHandler) errors() []string { return h.errorMessages }
 func TestRunDisabledWithoutInterval(t *testing.T) {
 	t.Parallel()
 
-	pruner := &fakePruner{calls: make(chan store.PruneOptions, 1)}
+	pruner := &fakePruner{calls: make(chan store.PruneOptions, oneShotChanSize)}
 
 	sweep.Run(t.Context(), &sweep.Config{
 		Store:  pruner,

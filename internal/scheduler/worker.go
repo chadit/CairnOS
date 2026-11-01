@@ -8,8 +8,7 @@ import (
 )
 
 // Worker defaults, used when a WorkerConfig leaves a knob zero. They favor a
-// small, calm footprint; an operator tunes them per deployment
-// (.agents/spec/14-open-decisions.md, S8).
+// small, calm footprint; an operator tunes them per deployment (S8).
 const (
 	defaultConcurrency   = 4
 	defaultPrefetch      = 8
@@ -57,8 +56,8 @@ type SweepMetrics interface {
 }
 
 // QueueMetrics receives the worker's counters so a telemetry adapter can export
-// them to the dashboard (.agents/spec/06-observability-and-tuning.md). A nil
-// metrics value disables reporting; the worker never calls a nil.
+// them to the dashboard. A nil metrics value disables reporting; the worker
+// never calls a nil.
 type QueueMetrics interface {
 	ItemMetrics
 	SweepMetrics
@@ -83,7 +82,7 @@ type WorkerConfig struct {
 	// WorkDead, so the CLI can fan a dead_lettered line out to Discord. It fires
 	// only on the terminal dead-letter, never on an intermediate requeue. nil
 	// disables the notification; the item is still logged and counted the same
-	// way (.agents/spec/parity/messaging-bridge.md, decision 7).
+	// way.
 	OnDeadLetter func(ctx context.Context, item *WorkItem, runErr error)
 
 	// OnHold runs after a job is parked for re-auth, so the CLI can alert an
@@ -118,8 +117,7 @@ type WorkerConfig struct {
 // Worker drains the queue: it claims ready items up to its free capacity, runs
 // each through the QueueRunner, and acks or naks the result. A separate sweep
 // loop reclaims leases abandoned by crashed workers and dead-letters items past
-// their delivery limit, so no fire is silently lost
-// (.agents/spec/14-open-decisions.md, S8).
+// their delivery limit, so no fire is silently lost (S8).
 type Worker struct {
 	runner        QueueRunner
 	queue         WorkQueue
@@ -335,9 +333,9 @@ func (w *Worker) process(ctx context.Context, item *WorkItem) {
 
 // holdItem parks an item whose run failed on an expired credential, so a human
 // can re-authenticate and resume it rather than the queue burning its deliveries
-// and dead-lettering a job that was never going to succeed without re-auth (D12,
-// .agents/spec/14-open-decisions.md). A failed hold falls back to a normal nak,
-// so the item is never silently stuck leased.
+// and dead-lettering a job that was never going to succeed without re-auth
+// (D12). A failed hold falls back to a normal nak, so the item is never
+// silently stuck leased.
 func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 	var holdKey string
 	if w.holdKey != nil {
@@ -378,8 +376,7 @@ func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 }
 
 // settleFailure naks a failed item and logs whether it was requeued or
-// dead-lettered, so a deferral is visible on the dashboard and in the log
-// (.agents/spec/14-open-decisions.md, S8).
+// dead-lettered, so a deferral is visible on the dashboard and in the log (S8).
 func (w *Worker) settleFailure(ctx context.Context, item *WorkItem, runErr error) {
 	state, err := w.queue.Nak(ctx, item.ID, w.clock(), w.backoff, w.maxDeliveries)
 	if err != nil {

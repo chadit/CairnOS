@@ -1,9 +1,8 @@
-// Package sqlite is the default store.Store backend
-// (.agents/spec/04-execution-engine.md, "State persistence"). It uses the
-// pure-Go modernc.org/sqlite driver so CairnOS builds without CGo, opens the
-// database in WAL mode with a busy timeout so the engine's many goroutines
-// can write concurrently, and creates the schema on Open so a fresh path is
-// immediately usable.
+// Package sqlite is the default store.Store backend. It uses the pure-Go
+// modernc.org/sqlite driver so CairnOS builds without CGo, opens the database
+// in WAL mode with a busy timeout so the engine's many goroutines can write
+// concurrently, and creates the schema on Open so a fresh path is immediately
+// usable.
 package sqlite
 
 import (
@@ -237,7 +236,7 @@ func Open(path string) (*Store, error) {
 	// runs.parent_run_id rides a guarded ALTER because the schema has no
 	// migration framework: CREATE TABLE IF NOT EXISTS never adds a column to a
 	// database an older binary already created, and sqlite lacks ADD COLUMN IF
-	// NOT EXISTS, so this probes first (.agents/spec/parity/workflow-language.md).
+	// NOT EXISTS, so this probes first.
 	if alterErr := addRunsParentColumn(setupCtx, db); alterErr != nil {
 		return nil, fmt.Errorf("upgrade runs schema: %w", errors.Join(alterErr, db.Close()))
 	}

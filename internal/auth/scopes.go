@@ -6,10 +6,9 @@ import (
 	"strings"
 )
 
-// Scopes from the spec's table (.agents/spec/08-auth-and-access.md,
-// "Scopes"). Phase 4a wires the first six; the vault pair and a2a:task are
-// accepted on keys now so Phase 4b/7 keys need no migration, and admin
-// implies all of them.
+// Scopes from the spec's table. Phase 4a wires the first six; the vault pair
+// and a2a:task are accepted on keys now so Phase 4b/7 keys need no migration,
+// and admin implies all of them.
 const (
 	ScopeReadMemory    = "read:memory"
 	ScopeWriteMemory   = "write:memory"
@@ -21,9 +20,7 @@ const (
 	ScopeA2ATask       = "a2a:task"
 	// ScopeChatSession gates the Phase 9 chat surface: creating sessions,
 	// sending messages, and reading conversations. Triggering a workflow from
-	// chat also needs ScopeWriteWorkflow, checked at confirm time
-	// (.agents/spec/13-roadmap.md, Phase 9; .agents/spec/14-open-decisions.md,
-	// D9).
+	// chat also needs ScopeWriteWorkflow, checked at confirm time (D9).
 	ScopeChatSession = "chat:session"
 	// ScopeMessageSend gates the outbound send surface: posting a message as a
 	// configured identity and listing the identities a caller may send as.

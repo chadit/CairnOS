@@ -15,8 +15,7 @@ var (
 	ErrUnknownRunner = errors.New("unknown runner")
 )
 
-// ErrorClass tells the engine whether retrying can help
-// (.agents/spec/03-runner-interface.md, "Errors and retry classification").
+// ErrorClass tells the engine whether retrying can help.
 type ErrorClass int
 
 const (
@@ -35,7 +34,7 @@ const (
 	// as a dead OAuth refresh token on a subscription CLI tool. The engine cannot
 	// fix it by retrying and a human must sign in again, so it is non-retryable
 	// like permanent; the scheduler queue holds the job until re-auth instead of
-	// dead-lettering it. See D12 in .agents/spec/14-open-decisions.md.
+	// dead-lettering it. See D12.
 	ClassNeedsReauth
 )
 
@@ -55,10 +54,10 @@ func NewError(class ErrorClass, code, message string) *Error {
 }
 
 // Wrapf builds a classified runner error that keeps cause reachable through
-// errors.Is and errors.As. Use it whenever the failure came from another error,
-// such as a context deadline or a missing file, so the chain does not end at
-// the runner boundary. Error() never appends the cause, so the wire message is
-// exactly what format says.
+// errors.Is and errors.As, so a failure that came from another error, such as a
+// context deadline or a missing file, does not end its chain at the runner
+// boundary. Error() never appends the cause, so the wire message is exactly
+// what format says.
 func Wrapf(cause error, class ErrorClass, code, format string, args ...any) *Error {
 	return &Error{Class: class, Code: code, Message: fmt.Sprintf(format, args...), Cause: cause}
 }

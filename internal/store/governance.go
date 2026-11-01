@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// Governance audit actions (.agents/spec/12-ui-and-governance.md, "Control
-// actions"). Every admin-scoped control writes one audit row naming the
-// action it performed.
+// Governance audit actions. Every admin-scoped control writes one audit row
+// naming the action it performed.
 const (
 	AuditActionPause     = "pause"
 	AuditActionResume    = "resume"
@@ -16,8 +15,7 @@ const (
 
 // AuditEntry is one append-only governance audit row: who did what to which
 // target, when, with optional structured detail. Audit rows outlive the runs
-// they reference; the retention sweep leaves them alone
-// (.agents/spec/12-ui-and-governance.md, "Control actions").
+// they reference; the retention sweep leaves them alone.
 type AuditEntry struct {
 	CreatedAt time.Time
 	ID        string
@@ -34,8 +32,7 @@ type AuditFilter struct {
 }
 
 // WorkflowPause is the persisted pause flag for one workflow name. Presence
-// means paused; PausedAt, Actor, and Reason record who paused it and why
-// (.agents/spec/12-ui-and-governance.md, "Control actions").
+// means paused; PausedAt, Actor, and Reason record who paused it and why.
 type WorkflowPause struct {
 	PausedAt     time.Time
 	WorkflowName string
@@ -43,8 +40,7 @@ type WorkflowPause struct {
 	Reason       string
 }
 
-// GovernanceStore is the governance slice of the store
-// (.agents/spec/12-ui-and-governance.md, "Governance"): the append-only audit
+// GovernanceStore is the governance slice of the store: the append-only audit
 // log, the per-workflow pause flag, and the per-period spend query budgets
 // read. Split out so the engine and the governance API depend on this narrow
 // surface instead of all of Store.
@@ -90,6 +86,6 @@ type SpendLedger interface {
 	// SpendSince sums the estimated cost_usd of every action result of the
 	// named workflow's runs created at or after since. It is the budget
 	// accumulator: a soft ceiling on the estimated cost runners report, not a
-	// billed total (.agents/spec/12-ui-and-governance.md, "Budgets").
+	// billed total.
 	SpendSince(ctx context.Context, workflowName string, since time.Time) (float64, error)
 }

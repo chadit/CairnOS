@@ -81,7 +81,7 @@ data: {"type":"message_stop"}
 func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -131,7 +131,7 @@ func TestAnthropicSuccessReportsUsageAndCost(t *testing.T) {
 func TestAnthropicJSONOutputParsesObjectAndInstructsModel(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -207,7 +207,7 @@ func TestAnthropicJSONOutputRejectsProse(t *testing.T) {
 func TestAnthropicDefaultOutputStaysPlainText(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -300,7 +300,7 @@ func TestAnthropicClassifiesStatusCodes(t *testing.T) {
 func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 	t.Parallel()
 
-	requests := make(chan map[string]any, 1)
+	requests := make(chan map[string]any, oneShotBufferSize)
 
 	server := nettest.New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var decoded map[string]any
@@ -318,7 +318,7 @@ func TestAnthropicStreamsChunksThenUsage(t *testing.T) {
 		t.Fatalf("new anthropic: %v", err)
 	}
 
-	out := make(chan runner.Chunk, 16)
+	out := make(chan runner.Chunk, streamChunkBufferSize)
 
 	result, err := llm.ExecuteStream(t.Context(), llmTask(map[string]any{promptKey: testPrompt}), out)
 	if err != nil {

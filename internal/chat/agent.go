@@ -10,10 +10,9 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// maxTurnIterations bounds the driver turns inside one chat turn, the same
-// wall an agent action carries (.agents/spec/15-agent-loop.md, "Loop
-// mechanics"). A turn that has not answered or proposed within the cap fails
-// rather than looping forever.
+// maxTurnIterations bounds the driver turns inside one chat turn, the same wall
+// an agent action carries. A turn that has not answered or proposed within the
+// cap fails rather than looping forever.
 const maxTurnIterations = 12
 
 // maxToolResultChars caps how much of one tool result feeds back into the next
@@ -30,9 +29,8 @@ const (
 // WorkflowTrigger fires a confirmed workflow under normal engine governance
 // and streams its terminal status back. The narrow surface keeps internal/chat
 // free of an import cycle with internal/api. The serve wiring satisfies it
-// with an adapter over the run manager and resolver
-// (.agents/spec/14-open-decisions.md, D9: the spawned run obeys Phase 5b
-// budgets and pause, at depth exactly one).
+// with an adapter over the run manager and resolver (D9: the spawned run obeys
+// Phase 5b budgets and pause, at depth exactly one).
 type WorkflowTrigger interface {
 	// Run resolves the named workflow, starts it under engine governance, and
 	// returns the started run id with a channel that delivers the terminal run
@@ -101,14 +99,13 @@ type Config struct {
 
 	// TurnBudgetUSD caps one chat turn's driver-and-tool spend. A turn whose
 	// estimated cost reaches the cap ends with a budget error, so a runaway
-	// conversation cannot bill without bound (.agents/spec/13-roadmap.md,
-	// Phase 9 guardrail). Zero leaves the turn uncapped.
+	// conversation cannot bill without bound. Zero leaves the turn uncapped.
 	TurnBudgetUSD float64
 }
 
-// Agent runs conversation turns over the agent-loop driver contract
-// (.agents/spec/13-roadmap.md, Phase 9). It is safe for concurrent use across
-// sessions; per-session pending-proposal state is guarded by a mutex.
+// Agent runs conversation turns over the agent-loop driver contract. It is safe
+// for concurrent use across sessions; per-session pending-proposal state is
+// guarded by a mutex.
 type Agent struct {
 	pending map[string]*pendingProposal // sessionID -> the gate awaiting confirmation
 	cfg     Config
@@ -172,7 +169,7 @@ func (a *Agent) ListSessions(ctx context.Context, limit int) ([]*store.ChatSessi
 }
 
 // ListMessages returns one session's full transcript, the persisted context
-// that replays into the next turn (.agents/spec/13-roadmap.md, Phase 9).
+// that replays into the next turn.
 func (a *Agent) ListMessages(ctx context.Context, sessionID string) ([]*store.ChatMessage, error) {
 	messages, err := a.cfg.Store.ListMessages(ctx, sessionID)
 	if err != nil {
@@ -222,8 +219,7 @@ const (
 )
 
 // joinHistory renders the persisted messages into the prompt's conversation
-// section, so the next turn sees the whole thread (.agents/spec/13-roadmap.md,
-// Phase 9: context persisted across turns).
+// section, so the next turn sees the whole thread.
 func joinHistory(messages []*store.ChatMessage) string {
 	var total int
 
