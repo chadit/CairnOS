@@ -54,7 +54,7 @@ Commands:
   vault     Manage vault documents: put, get <id>, query
   rules     Language rules: set <lang> [<project>] <key> <value>, get <lang> [<project>], import <dir>
   secrets   Encrypted secret store: set <name>, get <name>, rm <name>, ls, rotate,
-            install-bw, pull, keygen
+            install-bw, auth, pull, keygen
   schedule  Manage scheduled workflows: add <file>, list, remove <id-or-name>, run
   webhook   Manage webhook triggers: add <file>, list, rotate <workflow>, remove <workflow>
   serve     Serve the gRPC and HTTP API with the scheduler daemon embedded
@@ -165,6 +165,10 @@ type App struct {
 	// keyHashCost is the argon2id cost keys add mints under and the decoy the
 	// serve authenticator pays. The zero value is the production default.
 	keyHashCost auth.HashCost
+
+	// echoNoticed keeps the visible-input warning to one line per run. The
+	// prompts ask three times and the answer is the same every time.
+	echoNoticed bool
 }
 
 // New wires an App over the given streams, reading interactive input from
@@ -315,7 +319,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.cmdKeys(ctx, rest)
 	case "workspace":
 		return a.cmdWorkspace(ctx, rest)
-	case "auth":
+	case subcmdAuth:
 		return a.cmdAuth(ctx, rest)
 	case "a2a":
 		return a.cmdA2A(rest)

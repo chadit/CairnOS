@@ -156,7 +156,7 @@ func verifyAllowEdit(before allowList, edited []byte, name string) error {
 // insertAllowAction finds the [runner.exec] section and either rewrites its
 // allow_actions array or, when the key is absent, adds one under the header.
 func insertAllowAction(text, name string, listed bool) (string, error) {
-	bodyStart, bodyEnd, found := execSection(text)
+	bodyStart, bodyEnd, found := tableSection(text, keyRunner+"."+keyExec)
 	if !found {
 		return "", fmt.Errorf("%w: [runner.exec] is not written as a plain table header", ErrAllowActionsShape)
 	}
@@ -170,14 +170,7 @@ func insertAllowAction(text, name string, listed bool) (string, error) {
 	eol := lineEnding(text)
 
 	if loc == nil {
-		line := keyAllowActions + " = [" + quoted + "]" + eol
-
-		// A header on the last line with no newline needs one before the key.
-		if bodyStart == len(text) && !strings.HasSuffix(text, "\n") {
-			line = eol + line
-		}
-
-		return text[:bodyStart] + line + text[bodyStart:], nil
+		return insertAfterHeader(text, bodyStart, keyAllowActions+" = ["+quoted+"]"), nil
 	}
 
 	return appendToArray(text, bodyStart+loc[1], quoted, eol)
@@ -193,9 +186,24 @@ func lineEnding(text string) string {
 	return "\n"
 }
 
-// execSection locates the lines under the [runner.exec] header: bodyStart is
-// just past the header line and bodyEnd is the next header or the end.
-func execSection(text string) (int, int, bool) {
+// insertAfterHeader puts line first under the header that ends at bodyStart,
+// ended the way the file ends its lines. A header on the last line with no
+// newline needs one before the key.
+func insertAfterHeader(text string, bodyStart int, line string) string {
+	eol := lineEnding(text)
+	line += eol
+
+	if bodyStart == len(text) && !strings.HasSuffix(text, "\n") {
+		line = eol + line
+	}
+
+	return text[:bodyStart] + line + text[bodyStart:]
+}
+
+// tableSection locates the lines under the plain header for table, a dotted
+// name such as runner.exec: bodyStart is just past the header line and bodyEnd
+// is the next header or the end.
+func tableSection(text, table string) (int, int, bool) {
 	bodyStart := -1
 
 	var offset int
@@ -210,7 +218,7 @@ func execSection(text string) (int, int, bool) {
 			return bodyStart, offset, true
 		}
 
-		if isHeader && name == keyRunner+"."+keyExec {
+		if isHeader && name == table {
 			bodyStart = next
 		}
 
@@ -339,7 +347,7 @@ func (s *arrayScan) step() (bool, error) {
 	case '#':
 		_, s.pos = lineAt(s.text, s.pos)
 	case '"', '\'':
-		return false, s.skipString(char)
+		return false, s.skipString()
 	case ' ', '\t', '\r', '\n':
 		s.pos++
 	default:
@@ -352,27 +360,45 @@ func (s *arrayScan) step() (bool, error) {
 
 // skipString moves past one single-line string. Multi-line strings are
 // refused rather than scanned, since no action name needs one.
-func (s *arrayScan) skipString(quote byte) error {
-	rest := s.text[s.pos:]
-	if strings.HasPrefix(rest, `"""`) || strings.HasPrefix(rest, "'''") {
+func (s *arrayScan) skipString() error {
+	if isMultiLineString(s.text[s.pos:]) {
 		return fmt.Errorf("%w: allow_actions holds a multi-line string", ErrAllowActionsShape)
 	}
 
-	end := s.pos + 1
-	for end < len(s.text) && s.text[end] != quote && s.text[end] != '\n' {
-		if quote == '"' && s.text[end] == '\\' {
+	end, closed := stringEnd(s.text, s.pos)
+	if !closed {
+		return fmt.Errorf("%w: allow_actions holds an unterminated string", ErrAllowActionsShape)
+	}
+
+	s.pos = end
+	s.lastValueEnd = end
+
+	return nil
+}
+
+// isMultiLineString reports whether text opens with a triple-quoted string.
+func isMultiLineString(text string) bool {
+	return strings.HasPrefix(text, `"""`) || strings.HasPrefix(text, "'''")
+}
+
+// stringEnd returns the offset just past the single-line string whose opening
+// quote sits at start, and false when the line ends first. Only a basic string
+// escapes its quote with a backslash.
+func stringEnd(text string, start int) (int, bool) {
+	quote := text[start]
+
+	end := start + 1
+	for end < len(text) && text[end] != quote && text[end] != '\n' {
+		if quote == '"' && text[end] == '\\' {
 			end++
 		}
 
 		end++
 	}
 
-	if end >= len(s.text) || s.text[end] != quote {
-		return fmt.Errorf("%w: allow_actions holds an unterminated string", ErrAllowActionsShape)
+	if end >= len(text) || text[end] != quote {
+		return 0, false
 	}
 
-	s.pos = end + 1
-	s.lastValueEnd = s.pos
-
-	return nil
+	return end + 1, true
 }

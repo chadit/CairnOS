@@ -26,6 +26,35 @@ var (
 	errNoFieldsOnItem = errors.New("no field on the vault item is named like a " +
 		"CAIRNOS_ variable, and [secrets.bitwarden.fields] maps none; item")
 
+	// errNotATerminal reports a stdin that is a pipe or a file, where there is
+	// no echo to turn off and nothing on screen to hide.
+	errNotATerminal = errors.New("stdin is not a terminal")
+
+	// errNoValueForPrompt reports a prompt that had nothing to answer it: no
+	// environment value, no default, and a stdin that is done. Failing here beats
+	// blocking a deploy on a terminal that will never arrive.
+	errNoValueForPrompt = errors.New("no value was given and there is no default; " +
+		"set it in the environment or run this on a terminal")
+
+	// errInterrupted reports a prompt that Ctrl+C or a canceled run ended before
+	// it was answered. Nothing is written after it.
+	errInterrupted = errors.New("interrupted")
+
+	// errDanglingCredentials reports a credentials path that is a symlink to
+	// nothing. Creating the file would replace the link the operator put there.
+	errDanglingCredentials = errors.New("the credentials file is a symlink whose target does not exist; " +
+		"fix or remove the link")
+
+	// errCredentialLineBreak reports an answer holding a line break, which the
+	// line-based credentials file cannot carry.
+	errCredentialLineBreak = errors.New("a value contains a line break, which the credentials file cannot hold")
+
+	// errNoChezmoiFile reports a credentials_file naming a chezmoi config that is
+	// not there. KEY=VALUE lines written at that path would be read as an empty
+	// chezmoi config, so `secrets auth` refuses rather than write them.
+	errNoChezmoiFile = errors.New("credentials_file names a chezmoi config that does not exist; " +
+		"create it with chezmoi or point credentials_file at a KEY=VALUE file")
+
 	// errForeignOwner reports an atomic replace that would hand another user's
 	// file to the caller, which only root can avoid with a chown.
 	errForeignOwner = errors.New("the file belongs to another user")

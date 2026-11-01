@@ -449,7 +449,23 @@ wins. `credentials_file` and `env_file` default to `bitwarden.env` and
 with `~/` instead, and `~/` expands to your own home directory.
 
 The credentials file holds the vault's API key and master password, and can name
-the item as well. Write it by hand as KEY=VALUE lines:
+the item as well. Set it up with:
+
+```sh
+cairnos secrets auth
+```
+
+When the credentials file already exists, the command checks its mode and values
+and opens the vault once to prove they work, and it never rewrites the file. When
+there is no file but a chezmoi config at `~/.config/chezmoi/chezmoi.toml`, or
+under `$XDG_CONFIG_HOME`, holds the API key and master password under
+`[data.secret]`, it points `credentials_file` in config.toml at that config
+instead of copying the values, so they stay in one file. Otherwise it asks for the
+item name, the API key, and the master password, hides the three secrets as you
+type them, and writes the file at 0600. A value already set in the environment
+stays there and is left out of the file.
+
+To write the file by hand instead, use KEY=VALUE lines:
 
 ```sh
 install -m 600 /dev/null ~/.cairnos/bitwarden.env
@@ -490,17 +506,22 @@ arguments are readable from `/proc`.
 A host running the system-mode unit keeps its config under `/var/lib/cairnos`
 and both environment files under `/etc/cairnos`, and looks for the credentials
 file at `/etc/cairnos/bitwarden.env` unless `credentials_file` names another
-path. The pull needs to be told:
+path. Both commands need to be told:
 
 ```sh
+sudo cairnos secrets auth --system
 sudo cairnos secrets pull --system
 ```
+
+In system mode, auth never points at a chezmoi config, because the one it would
+find belongs to whoever ran sudo, not to the service user.
 
 `--system` reads the system install's config on its own, so there is no `--dir`
 to remember.
 
 You need the standalone `bw` CLI, not the npm package, since the service user has
-no node toolchain. Every `cairnos secrets pull` looks for one in this order:
+no node toolchain. Every `cairnos secrets pull`, and every `cairnos secrets auth`
+that checks an existing file, looks for one in this order:
 
 1. The `bw` on the host's PATH, when `bw --version` reports a version that is
    not behind the release CairnOS pins. That binary is yours. CairnOS runs it

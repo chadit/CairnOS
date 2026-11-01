@@ -20,7 +20,7 @@ const envShadowMarker = "shadowed_by_env"
 // must come from a CSPRNG, so the hazards are visible before anything runs
 // (security council amendment 3).
 func (a *App) cmdSecrets(ctx context.Context, args []string) int {
-	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen|install-bw|pull> [flags]
+	const usage = `usage: cairnos secrets <set|get|rm|ls|rotate|keygen|install-bw|auth|pull> [flags]
 
   set <name>   Read a value from stdin (never argv, which leaks into shell
                history and ps) and seal it. One trailing newline is trimmed.
@@ -41,6 +41,15 @@ func (a *App) cmdSecrets(ctx context.Context, args []string) int {
                commands do not need this: they use the bw the host has when it
                is not older than the pin, and otherwise install the pinned
                release into a directory of their own, off PATH.
+  auth         Set up the Bitwarden credentials that pull reads. When the
+               credentials file exists, open the vault once, report the item
+               and how many variables a pull would write, and lock it again.
+               Otherwise, outside --system, when a chezmoi config holds the API
+               key and master password under [data.secret], point
+               credentials_file in config.toml at it rather than copying them.
+               Otherwise prompt for the item name and the API credentials and
+               write the file at 0600, leaving out any value the environment
+               already sets.
   pull         Render the [secrets.bitwarden] fields into the service's second
                environment file. Runs at deployment, not at run time, because
                most credentials here are read by bare os.Getenv. --dry-run
@@ -72,6 +81,8 @@ Only set, get, rm, ls, and rotate need [secrets] backend = "store".
 		return a.cmdSecretsRotate(ctx, args[1:])
 	case "install-bw":
 		return a.cmdSecretsInstallBW(ctx, args[1:])
+	case subcmdAuth:
+		return a.cmdSecretsAuth(ctx, args[1:])
 	case "pull":
 		return a.cmdSecretsPull(ctx, args[1:])
 	case "keygen":

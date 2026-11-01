@@ -120,20 +120,59 @@ func checkComplete(creds Credentials, path string) error {
 		return nil
 	}
 
-	if isChezmoiConfig(path) {
-		return vaultError(CodeCredentials, "%s has no [data.secret] %s, and the environment has no %s",
+	if IsChezmoiConfig(path) {
+		return cairnerr.Wrapf(ErrMissingCredentials, CodeCredentials,
+			"%s has no [data.secret] %s, and the environment has no %s",
 			path, strings.Join(missingKeys, ", "), strings.Join(missingEnv, ", "))
 	}
 
-	return vaultError(CodeCredentials, "%s is missing from %s and the environment",
+	return cairnerr.Wrapf(ErrMissingCredentials, CodeCredentials, "%s is missing from %s and the environment",
 		strings.Join(missingEnv, ", "), path)
 }
 
-// isChezmoiConfig reports whether path names a chezmoi config. The comparison
+// IsChezmoiConfig reports whether path names a chezmoi config. The comparison
 // ignores case because a file named chezmoi.TOML sent to the KEY=VALUE parser
 // would have every line dropped without a word.
-func isChezmoiConfig(path string) bool {
+func IsChezmoiConfig(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), chezmoiExt)
+}
+
+// HoldsChezmoiCredentials reports whether the chezmoi config at path carries
+// all three values that open the vault. A caller points at such a file rather
+// than copying it, because a host keeps its credentials in one file. It must
+// also pass the loader's mode check, or the pointer only moves the failure.
+func HoldsChezmoiCredentials(path string) (bool, error) {
+	file, err := os.Open(path) // #nosec G304 -- the operator's own chezmoi config path
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, cairnerr.Wrapf(err, CodeCredentials, "open %s: %v", path, err)
+	}
+
+	defer func() { _ = file.Close() }()
+
+	values, err := parseChezmoiConfig(file, path)
+	if err != nil {
+		return false, err
+	}
+
+	held := Credentials{
+		ClientID:     values[EnvClientID],
+		ClientSecret: values[EnvClientSecret],
+		MasterKey:    values[EnvMasterKey],
+	}
+
+	if err := checkComplete(held, path); err != nil {
+		if errors.Is(err, ErrMissingCredentials) {
+			return false, nil
+		}
+
+		return false, err
+	}
+
+	return true, checkOwnerOnly(file, path)
 }
 
 // readCredentialsFile parses the credentials file in the format its extension
@@ -155,22 +194,31 @@ func readCredentialsFile(path string) (map[string]string, error) {
 
 	defer func() { _ = file.Close() }()
 
-	info, err := file.Stat()
-	if err != nil {
-		return nil, cairnerr.Wrapf(err, CodeCredentials, "read %s: %v", path, err)
+	if err := checkOwnerOnly(file, path); err != nil {
+		return nil, err
 	}
 
-	if perm := info.Mode().Perm(); perm&^credentialsPerm != 0 {
-		return nil, vaultError(CodeCredentials,
-			"%s is mode %04o; it opens a vault and must be %04o or stricter",
-			path, perm, credentialsPerm)
-	}
-
-	if isChezmoiConfig(path) {
+	if IsChezmoiConfig(path) {
 		return parseChezmoiConfig(file, path)
 	}
 
 	return parseCredentialsFile(file, path)
+}
+
+// checkOwnerOnly refuses a file anybody but its owner can read.
+func checkOwnerOnly(file *os.File, path string) error {
+	info, err := file.Stat()
+	if err != nil {
+		return cairnerr.Wrapf(err, CodeCredentials, "read %s: %v", path, err)
+	}
+
+	if perm := info.Mode().Perm(); perm&^credentialsPerm != 0 {
+		return vaultError(CodeCredentials,
+			"%s is mode %04o; it opens a vault and must be %04o or stricter",
+			path, perm, credentialsPerm)
+	}
+
+	return nil
 }
 
 // chezmoiConfig mirrors the one table of a chezmoi config this package reads.

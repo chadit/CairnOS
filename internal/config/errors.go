@@ -31,6 +31,11 @@ var (
 	ErrAllowActionsVerify = errors.New("the edited config did not decode to the expected allow_actions")
 )
 
+// ErrCredentialsFileVerify reports a credentials_file edit whose re-parse is not
+// the original document with that one key set. Nothing is written when it fires.
+var ErrCredentialsFileVerify = errors.New("the edited config did not decode to the expected " +
+	"[secrets.bitwarden] credentials_file")
+
 // errGlob* are the reasons validateWorkflowGlob gives, phrased to follow the
 // quoted glob in the load error.
 var (

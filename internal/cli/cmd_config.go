@@ -163,6 +163,11 @@ func (a *App) readConfigFile(dirFlag string) (string, []byte, os.FileMode, error
 		return "", nil, 0, err
 	}
 
+	return readConfigIn(dir)
+}
+
+// readConfigIn is readConfigFile for a home already resolved.
+func readConfigIn(dir string) (string, []byte, os.FileMode, error) {
 	path, err := filepath.EvalSymlinks(filepath.Join(dir, configFileName))
 	if err != nil {
 		return "", nil, 0, fmt.Errorf("find config: %w", err)

@@ -6,6 +6,11 @@ import (
 	"github.com/chadit/CairnOS/internal/cairnerr"
 )
 
+// ErrMissingCredentials matches the error LoadCredentials returns when the file
+// and the environment together still lack a value that opens the vault, so a
+// caller can tell the operator how to supply them.
+var ErrMissingCredentials = errors.New("vault credentials are missing")
+
 // errServeExited marks a child that died before it answered, which on a busy
 // host means it lost the port between this process releasing it and the child
 // binding it.

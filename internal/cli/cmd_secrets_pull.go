@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -69,12 +70,15 @@ func (a *App) cmdSecretsPull(ctx context.Context, args []string) int {
 		return a.reportNoVault(label, configPath)
 	}
 
-	opts := pullOptions{dir: dir, cfg: &cfg, lookup: a.envLookup(), system: *system, dryRun: *dryRun}
+	opts := pullOptions{
+		dir: dir, dirFlag: *dirFlag, cfg: &cfg, lookup: a.envLookup(), system: *system, dryRun: *dryRun,
+	}
 
 	return a.pullBitwarden(ctx, label, cfg.Secrets.Bitwarden, opts)
 }
 
-// resolveSecretsDir picks the home `secrets pull` reads its config from.
+// resolveSecretsDir picks the home `secrets auth` and `secrets pull` read their
+// config from.
 // With --system and no --dir that is the system install's data directory, not
 // the invoking user's: the documented `sudo cairnos secrets pull --system` would
 // otherwise read /root/.cairnos/config.toml, find no block, and report success
@@ -110,9 +114,29 @@ type pullOptions struct {
 	// when a configured path starts with ~/.
 	lookup environ.Lookup
 
+	// dirFlag is the --dir the operator typed, empty when none, carried so a
+	// command this one suggests reaches the same home.
+	dirFlag string
+
 	dir    string
 	system bool
 	dryRun bool
+}
+
+// commandFlags renders the --dir and --system this run was given, for a
+// command it suggests next.
+func (o pullOptions) commandFlags() string {
+	var flags string
+
+	if o.dirFlag != "" {
+		flags += " --dir " + shellquote.Word(o.dirFlag)
+	}
+
+	if o.system {
+		flags += " --system"
+	}
+
+	return flags
 }
 
 // pullBitwarden resolves the fields and renders the file, keeping cmdSecretsPull
@@ -129,7 +153,7 @@ func (a *App) pullBitwarden(
 
 	creds, err := bitwarden.LoadCredentials(credsPath, a.envLookup().Get)
 	if err != nil {
-		a.printErrf("%s: %v\n", label, err)
+		a.printErrf("%s: %v%s\n", label, err, authHint(err, credsPath, opts))
 
 		return ExitFailure
 	}
@@ -165,6 +189,23 @@ func (a *App) pullBitwarden(
 	}
 
 	return a.renderEnvFile(label, target, values, opts.dryRun)
+}
+
+// authHint names the command that creates the credentials file when the pull
+// found none, with this run's --dir and --system so it sets up the same file.
+// An existing file gets no hint, since auth checks it rather than rewriting it
+// and would repeat this error. Nor does an absent chezmoi config, which auth
+// refuses to create.
+func authHint(err error, credsPath string, opts pullOptions) string {
+	if !errors.Is(err, bitwarden.ErrMissingCredentials) || bitwarden.IsChezmoiConfig(credsPath) {
+		return ""
+	}
+
+	if _, statErr := os.Lstat(credsPath); !errors.Is(statErr, fs.ErrNotExist) {
+		return ""
+	}
+
+	return "; run cairnos secrets auth" + opts.commandFlags() + " to set them up"
 }
 
 // warnMissingImplied reports credentials this configuration will want that the
@@ -260,7 +301,7 @@ func checkRenderable(names []string, values map[string]string) error {
 	var offenders []string
 
 	for _, name := range names {
-		if strings.ContainsAny(values[name], "\n\r") {
+		if hasLineBreak(values[name]) {
 			offenders = append(offenders, name)
 		}
 	}
@@ -270,6 +311,12 @@ func checkRenderable(names []string, values map[string]string) error {
 	}
 
 	return fmt.Errorf("%w: %s", errValueHasNewline, strings.Join(offenders, ", "))
+}
+
+// hasLineBreak reports a value a line-based file cannot carry: the reader would
+// end the assignment at the break and read the rest as a line of its own.
+func hasLineBreak(value string) bool {
+	return strings.ContainsAny(value, "\n\r")
 }
 
 // sortedKeys lists the mapping's variable names in order.
@@ -320,15 +367,9 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 
 	dir := filepath.Dir(path)
 
-	temp, err := os.CreateTemp(dir, filepath.Base(path)+".*")
+	tempPath, err := stageTemp(dir, filepath.Base(path), content, perm)
 	if err != nil {
-		return fmt.Errorf("create a temp file in %s: %w", dir, err)
-	}
-
-	tempPath := temp.Name()
-
-	if err := finishTempFile(temp, content, perm); err != nil {
-		return errors.Join(err, removeLeftover(tempPath))
+		return err
 	}
 
 	if chown {
@@ -347,6 +388,50 @@ func (a *App) writeFileAtomic(path string, content []byte, perm os.FileMode) err
 	}
 
 	return nil
+}
+
+// createFileAtomic publishes content at path only when nothing is there yet.
+// The hard link fails on an existing name, so a file that appeared since the
+// caller looked is kept rather than replaced, and the content is whole before
+// the name exists.
+func (a *App) createFileAtomic(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+
+	tempPath, err := stageTemp(dir, filepath.Base(path), content, perm)
+	if err != nil {
+		return err
+	}
+
+	var linkErr error
+
+	if err := os.Link(tempPath, path); err != nil {
+		linkErr = fmt.Errorf("create %s: %w", path, err)
+	}
+
+	if err := errors.Join(linkErr, removeLeftover(tempPath)); err != nil {
+		return err
+	}
+
+	if err := syncDir(dir); err != nil {
+		a.logger.Warn("the file landed but the directory was not flushed", "dir", dir, "error", err)
+	}
+
+	return nil
+}
+
+// stageTemp writes content to a fresh temp file in dir at perm and returns its
+// path, removing it again when the write fails.
+func stageTemp(dir, base string, content []byte, perm os.FileMode) (string, error) {
+	temp, err := os.CreateTemp(dir, base+".*")
+	if err != nil {
+		return "", fmt.Errorf("create a temp file in %s: %w", dir, err)
+	}
+
+	if err := finishTempFile(temp, content, perm); err != nil {
+		return "", errors.Join(err, removeLeftover(temp.Name()))
+	}
+
+	return temp.Name(), nil
 }
 
 // ownerToKeep returns the owner a replace of path must restore, and whether a

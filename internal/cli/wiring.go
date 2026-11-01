@@ -89,6 +89,7 @@ const (
 	subcmdStatus    = "status"
 	subcmdRun       = "run"
 	subcmdServe     = "serve"
+	subcmdAuth      = "auth"
 	subcmdPublish   = "publish"
 	subcmdRemove    = "remove"
 	subcmdRm        = "rm"

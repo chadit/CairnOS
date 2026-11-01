@@ -33,6 +33,16 @@ const (
 // pullPerm is the mode the credentials file and the rendered file both carry.
 const pullPerm = 0o600
 
+// The pull subcommand and the flag that points it at the system-mode paths.
+const (
+	pullSubcmd    = "pull"
+	flagSystemArg = "--system"
+)
+
+// modeRefusal is the part of the loader's error that names the mode rule, which
+// both commands report for a credentials file others can read.
+const modeRefusal = "must be 0600"
+
 // bwFakeName is the symlink to this test binary that stands in for the CLI, and
 // also the dispatch signal: `secrets pull` resolves it through LookPath, so the
 // child arrives with this as its argv[0]. The signal cannot be an environment
@@ -673,14 +683,14 @@ func TestSecretsPullTargetsWhereTheUnitReads(t *testing.T) {
 		args []string
 	}{
 		{name: "user mode writes into the home", want: filepath.Join(dir, "secrets.env")},
-		{name: "system mode writes under /etc", want: "/etc/cairnos/secrets.env", args: []string{"--system"}},
+		{name: "system mode writes under /etc", want: "/etc/cairnos/secrets.env", args: []string{flagSystemArg}},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			argv := append([]string{secretsCmd, "pull", flagDirArg, dir, flagDryRunArg}, testCase.args...)
+			argv := append([]string{secretsCmd, pullSubcmd, flagDirArg, dir, flagDryRunArg}, testCase.args...)
 
 			code, stdout, stderr := runEnvCLI(t, pathEnv(binDir), argv...)
 			if code != cli.ExitOK {
@@ -1139,3 +1149,126 @@ func TestSecretsPullReportsATargetItCannotWrite(t *testing.T) {
 // systemConfigPath is where a system install keeps its config, which is what the
 // documented `sudo cairnos secrets pull --system` has to read.
 const systemConfigPath = "/var/lib/cairnos/config.toml"
+
+// TestSecretsPullNamesTheAuthCommandWhenCredentialsAreMissing covers the cold
+// start: a pull that finds no credentials file says which command creates one,
+// with the --dir and --system the pull ran with. A file that exists gets no such
+// hint, whether it lacks values or is refused, since `secrets auth` checks an
+// existing file rather than rewriting it and would only repeat the error.
+func TestSecretsPullNamesTheAuthCommandWhenCredentialsAreMissing(t *testing.T) {
+	t.Parallel()
+
+	const (
+		missingFrom  = "is missing from"
+		noSecretKeys = "has no [data.secret]"
+	)
+
+	cases := []struct {
+		// stage writes the credentials file, if any, and returns the
+		// credentials_file line config.toml carries.
+		stage    func(t *testing.T, dir string) string
+		name     string
+		wantText string
+		args     []string
+		wantHint bool
+	}{
+		{
+			name:     "no KEY=VALUE file and nothing in the environment",
+			stage:    func(*testing.T, string) string { return "" },
+			wantText: missingFrom,
+			wantHint: true,
+		},
+		{
+			name: "a system-mode pull names the system-mode command",
+			stage: func(_ *testing.T, dir string) string {
+				return "credentials_file = \"" + filepath.Join(dir, "absent.env") + "\"\n"
+			},
+			args:     []string{flagSystemArg},
+			wantText: missingFrom,
+			wantHint: true,
+		},
+		{
+			name: "a chezmoi config without the keys gets no hint",
+			stage: func(t *testing.T, dir string) string {
+				t.Helper()
+
+				path := filepath.Join(dir, "chezmoi.toml")
+				writePullFile(t, path, "[data.secret]\nbw_item_name = \""+pullItem+"\"\n")
+
+				return "credentials_file = \"" + path + "\"\n"
+			},
+			wantText: noSecretKeys,
+		},
+		{
+			name: "an absent chezmoi config gets no hint",
+			stage: func(_ *testing.T, dir string) string {
+				return "credentials_file = \"" + filepath.Join(dir, "absent.toml") + "\"\n"
+			},
+			wantText: noSecretKeys,
+		},
+		{
+			name: "a KEY=VALUE file missing a value gets no hint",
+			stage: func(t *testing.T, dir string) string {
+				t.Helper()
+
+				writePullFile(t, filepath.Join(dir, "bitwarden.env"), bitwarden.EnvClientID+"=id-1\n")
+
+				return ""
+			},
+			wantText: missingFrom,
+		},
+		{
+			name: "a file others can read gets no hint",
+			stage: func(t *testing.T, dir string) string {
+				t.Helper()
+
+				path := filepath.Join(dir, "bitwarden.env")
+				writePullFile(t, path, credentialsFixture())
+
+				if err := os.Chmod(path, 0o644); err != nil { // #nosec G302 -- the loose mode is the case
+					t.Fatalf("loosen the credentials file: %v", err)
+				}
+
+				return ""
+			},
+			wantText: modeRefusal,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			pointer := testCase.stage(t, dir)
+
+			writePullFile(t, filepath.Join(dir, "config.toml"),
+				"[secrets.bitwarden]\nitem = \""+pullItem+"\"\n"+pointer)
+
+			args := append([]string{secretsCmd, pullSubcmd, flagDirArg, dir}, testCase.args...)
+
+			code, _, stderr := runEnvCLI(t, map[string]string{}, args...)
+			if code != cli.ExitFailure {
+				t.Fatalf("exit = %d, want failure", code)
+			}
+
+			if !strings.Contains(stderr, testCase.wantText) {
+				t.Fatalf("stderr does not carry %q:\n%s", testCase.wantText, stderr)
+			}
+
+			if !testCase.wantHint {
+				if strings.Contains(stderr, "secrets auth") {
+					t.Fatalf("stderr points at secrets auth for a failure it cannot fix:\n%s", stderr)
+				}
+
+				return
+			}
+
+			flags := append([]string{flagDirArg, "'" + dir + "'"}, testCase.args...)
+
+			if hint := "; run cairnos secrets auth " + strings.Join(flags, " ") + " to set them up"; !strings.Contains(stderr, hint) {
+				t.Fatalf("stderr does not carry %q:\n%s", hint, stderr)
+			}
+		})
+	}
+}

@@ -3,9 +3,13 @@ package config
 import (
 	"fmt"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // [secrets.bitwarden] keys. The parser matches against these and rejects
@@ -16,6 +20,13 @@ const (
 	bitwardenKeyCredentialsFile = "credentials_file"
 	bitwardenKeyEnvFile         = "env_file"
 	bitwardenKeyFields          = "fields"
+)
+
+// The dotted path to the block, split the way a decoded document nests it.
+const (
+	keySecrets     = "secrets"
+	keyBitwarden   = "bitwarden"
+	bitwardenTable = keySecrets + "." + keyBitwarden
 )
 
 // File names the block falls back to, both relative to the CairnOS home. The
@@ -30,6 +41,10 @@ const (
 	// DefaultBitwardenEnvFile is the generated file `secrets pull` writes.
 	DefaultBitwardenEnvFile = "secrets.env"
 )
+
+// credentialsFileLine matches a plain credentials_file key line, capturing its
+// indent so a replacement keeps it.
+var credentialsFileLine = regexp.MustCompile(`(?m)^([ \t]*)` + bitwardenKeyCredentialsFile + `[ \t]*=`)
 
 // envNamePattern is the grammar for a rendered variable name. It is the shell's
 // own, because the generated file is read by systemd's EnvironmentFile and by a
@@ -191,4 +206,129 @@ func validateBitwardenFields(fields map[string]string) error {
 	}
 
 	return nil
+}
+
+// SetBitwardenCredentialsFile returns src with [secrets.bitwarden]
+// credentials_file set to path. It edits text rather than re-encoding because
+// go-toml cannot write a document back with its comments: the key's line is
+// replaced, added under the header, or the table is appended, and every other
+// line stays as written. Both versions are decoded, and any difference beyond
+// that one key is an error.
+func SetBitwardenCredentialsFile(src []byte, path string) ([]byte, error) {
+	var before map[string]any
+
+	if err := toml.Unmarshal(src, &before); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+	}
+
+	edited := writeCredentialsFileKey(string(src), path)
+
+	if err := verifyCredentialsFileEdit(before, []byte(edited), path); err != nil {
+		return nil, err
+	}
+
+	return []byte(edited), nil
+}
+
+// writeCredentialsFileKey places the key in the text. A form the patterns miss,
+// such as a quoted key or a block written as dotted keys under [secrets],
+// yields text that fails to decode, which the verify step reports.
+func writeCredentialsFileKey(text, path string) string {
+	assignment := bitwardenKeyCredentialsFile + " = " + strconv.Quote(path)
+
+	bodyStart, bodyEnd, found := tableSection(text, bitwardenTable)
+	if !found {
+		return appendBitwardenTable(text, assignment)
+	}
+
+	match := credentialsFileLine.FindStringSubmatchIndex(text[bodyStart:bodyEnd])
+	if match == nil {
+		return insertAfterHeader(text, bodyStart, assignment)
+	}
+
+	lineStart := bodyStart + match[0]
+	indent := text[bodyStart+match[2] : bodyStart+match[3]]
+	line, next := lineAt(text, lineStart)
+	tail := valueTail(strings.TrimSuffix(line, "\r")[match[1]-match[0]:])
+
+	return text[:lineStart] + indent + assignment + tail + lineEnding(text) + text[next:]
+}
+
+// valueTail returns what follows the old value on its line, such as a
+// comment, so the replacement keeps it. Only a single-line quoted value is
+// measured; for anything else the tail is dropped, and the verify step refuses
+// an edit that broke the line.
+func valueTail(afterEquals string) string {
+	value := strings.TrimLeft(afterEquals, " \t")
+	if value == "" || (value[0] != '"' && value[0] != '\'') || isMultiLineString(value) {
+		return ""
+	}
+
+	end, closed := stringEnd(value, 0)
+	if !closed {
+		return ""
+	}
+
+	return value[end:]
+}
+
+// appendBitwardenTable adds the block at the end, a blank line after whatever
+// came before it.
+func appendBitwardenTable(text, assignment string) string {
+	eol := lineEnding(text)
+
+	var out strings.Builder
+
+	out.WriteString(text)
+
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		out.WriteString(eol)
+	}
+
+	if text != "" {
+		out.WriteString(eol)
+	}
+
+	out.WriteString("[" + bitwardenTable + "]")
+	out.WriteString(eol)
+	out.WriteString(assignment)
+	out.WriteString(eol)
+
+	return out.String()
+}
+
+// verifyCredentialsFileEdit decodes the edited text and requires it to equal
+// the original document with only credentials_file set, which catches an edit
+// that landed in the wrong span or produced invalid TOML.
+func verifyCredentialsFileEdit(before map[string]any, edited []byte, path string) error {
+	var after map[string]any
+
+	if err := toml.Unmarshal(edited, &after); err != nil {
+		return fmt.Errorf("%w: %w", ErrCredentialsFileVerify, err)
+	}
+
+	if before == nil {
+		before = map[string]any{}
+	}
+
+	childTable(childTable(before, keySecrets), keyBitwarden)[bitwardenKeyCredentialsFile] = path
+
+	if !reflect.DeepEqual(before, after) {
+		return fmt.Errorf("%w: a key other than %s changed", ErrCredentialsFileVerify, bitwardenKeyCredentialsFile)
+	}
+
+	return nil
+}
+
+// childTable returns parent[key] as a table, adding an empty one when it is
+// absent so the expected document can be built for a block the edit created.
+func childTable(parent map[string]any, key string) map[string]any {
+	if table, isTable := parent[key].(map[string]any); isTable {
+		return table
+	}
+
+	table := map[string]any{}
+	parent[key] = table
+
+	return table
 }
