@@ -22,6 +22,11 @@ examples/plugins/echo/echo
 /bwpin
 tools/bwpin/bwpin
 
+# Release assets. cmd/go stamps a binary dirty when the tree has untracked
+# files, so the release build's own output must be ignored or every binary
+# after the first fails the stamp check.
+/dist/
+
 # Test binary, built with `go test -c`
 *.test
 

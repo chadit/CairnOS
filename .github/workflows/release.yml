@@ -1,16 +1,33 @@
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
+  # The same checks a push runs, so a release never ships code CI would reject.
+  validate:
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] actionlint rejects the $/ form until rhysd/actionlint#711 lands
+    permissions:
+      contents: read
+
   release:
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       # Publishing goes through gh with GH_TOKEN, so the checkout keeps no
       # token in .git/config where the build steps could read it.
@@ -19,16 +36,50 @@ jobs:
           persist-credentials: false
           # cmd/go stamps the commit it built from into every binary, and
           # `cairnos update` refuses an asset whose stamp is missing or does not
-          # match the tag. A shallow clone leaves it unstamped.
+          # match the tag. A shallow clone leaves it unstamped, and the version
+          # step needs every tag to find the latest one.
           fetch-depth: 0
       # go.mod decides the toolchain, so a release is built with the same Go
       # that `make` resolves locally instead of whatever the runner image ships.
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # A tag build that publishes binaries must not restore a cache another
-          # run could have poisoned.
+          # A release build that publishes binaries must not restore a cache
+          # another run could have poisoned.
           cache: false
+      - name: compute the next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          latest="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "$latest" =~ $semver ]]; then
+            echo "::error::latest tag ${latest} is not vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *)
+              echo "::error::bump must be patch, minor, or major, got '${BUMP}'"
+              exit 1
+              ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          echo "tag=${next}" >> "$GITHUB_OUTPUT"
+          echo "::notice::${latest} -> ${next} (${BUMP} bump)"
+      # The tag stays local so cmd/go stamps the release version into the
+      # binaries. GitHub creates the remote tag when publish runs, so a build
+      # or stamp failure leaves no tag and no release behind.
+      - name: tag the release locally
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: git tag "$TAG"
       # No `buf generate` here on purpose. internal/api/gen is committed, so the
       # build has everything it needs, and regenerating would risk leaving the
       # tree dirty, which stamps every asset "+dirty" and makes the update
@@ -74,9 +125,12 @@ jobs:
               exit 1
             fi
           done
+      # --target makes GitHub create the tag at the commit that was built, which
+      # is the commit `cairnos update` compares each asset's stamp against.
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           command -v gh >/dev/null 2>&1 || { echo "::error::gh is not on PATH"; exit 1; }
-          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+          gh release create "$TAG" --target "$GITHUB_SHA" dist/* --generate-notes
