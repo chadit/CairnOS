@@ -277,7 +277,7 @@ func destPresent(dest string) (bool, error) {
 // cloneInto clones the repository and leaves the configured ref checked out.
 // The clone itself runs from the parent directory, which dest does not exist
 // inside yet. A parent that cannot be created takes CodeGit, not CodeClone:
-// FR10 makes source.clone retryable and a permissions problem is not. The clone
+// source.clone is retryable and a permissions problem is not. The clone
 // passes -- so a repo value cannot read as an option.
 func cloneInto(ctx context.Context, git Git, spec Spec) error {
 	parent := filepath.Dir(spec.Dest)
@@ -295,7 +295,7 @@ func cloneInto(ctx context.Context, git Git, spec Spec) error {
 
 // verifyExisting proves an existing dest is the tree this spec describes, and
 // that it is sitting where the block says. It reads only refs already on disk,
-// so an offline host with a tree still finishes serve startup (FR5).
+// so an offline host with a tree still finishes serve startup.
 func verifyExisting(ctx context.Context, git Git, spec Spec, logger *slog.Logger) error {
 	if err := verifyOrigin(ctx, git, spec); err != nil {
 		return err
@@ -721,7 +721,7 @@ func shortHead(ctx context.Context, git Git, dir string) (string, error) {
 // logReady records what a source is sitting on after Ensure. A HEAD that will
 // not resolve is reported rather than raised: Ensure already passed, so the
 // startup line is worth more than a second failure path. Ensure has canceled its
-// own deadline by now, so the bound FR11 asks for comes from here.
+// own deadline by now, so the time bound on git comes from here.
 func logReady(ctx context.Context, git Git, spec Spec, logger *slog.Logger) {
 	if logger == nil {
 		return

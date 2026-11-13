@@ -12,14 +12,11 @@ back in through `depends_on`.
   params to follow the projects you actually care about.
 - `suggest` uses `anthropic`: turns the three feeds plus your `goals` input
   into two or three concrete study suggestions.
-- `log_progress` is a `kind = "agent"` action with the `memory` tool. It is
-  schema-valid today but does nothing yet: agent actions execute once the
-  agent loop lands in Phase 1c. Until then the run ends at `suggest`, and
-  you read the result from `cairnos runs`.
+- `log_progress` is a `kind = "agent"` action with the `memory` tool. The
+  agent loop runs it after `suggest`.
 
-Progress logging is the point of that last action. Once Phase 1c ships, the
-agent stores each week's suggestion in memory so later runs stop repeating
-material. Today the workflow has no memory of past weeks.
+Progress logging is the point of that last action. The agent stores each
+week's suggestion in memory so later runs stop repeating material.
 
 ## Config
 

@@ -66,7 +66,7 @@ func (st streamState) chunk(delta streamDelta, finish *string) streamChunk {
 	}
 }
 
-// streamCompletion writes one turn as an OpenAI SSE stream; a D9 gate renders
+// streamCompletion writes one turn as an OpenAI SSE stream; a confirmation gate renders
 // as its confirmation text, since this surface has no confirm route. A turn
 // error after the status line surfaces as an SSE error payload before [DONE],
 // since it can no longer become an HTTP status. A dropped client cancels the
@@ -99,7 +99,7 @@ func (s *Service) streamCompletion(ctx context.Context, w http.ResponseWriter, s
 		case chat.EventConfirmationRequired:
 			s.writeSSE(w, flusher, state.chunk(streamDelta{Content: renderConfirmation(event.Proposal, session.ID)}, nil))
 		case chat.EventTurnDone, chat.EventToolCall, chat.EventRunStarted, chat.EventRunFinished:
-			// The stream carries only assistant text and the D9 gate. Turn-done is
+			// The stream carries only assistant text and the confirmation gate. Turn-done is
 			// the range's own terminator, and the tool/run events belong to the
 			// native surface, so they pass without a frame.
 		}

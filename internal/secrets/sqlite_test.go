@@ -148,8 +148,8 @@ func TestSQLiteRefusesAFileThatIsNotADatabase(t *testing.T) {
 	}
 }
 
-// TestSQLiteRolledBackCiphertextFailsOpen is the security-council amendment 6
-// case at the store level: a DB-write attacker who advances a row's recency
+// TestSQLiteRolledBackCiphertextFailsOpen is the rollback case at the store
+// level: a DB-write attacker who advances a row's recency
 // stamp past the ciphertext it was sealed under cannot open it, because
 // updated_at is bound into the AAD. The value opens cleanly before the tamper
 // and collapses to ErrOpenSealed after, and the error leaks no plaintext.

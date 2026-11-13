@@ -13,7 +13,7 @@ type scopesCtxKey struct{}
 // contextWithScopes returns a copy of ctx carrying the verified token's granted
 // scopes, so a handler can make a second, finer check the method table cannot
 // express. SendMessage takes chat:session, but a confirmed workflow trigger also
-// needs write:workflow, and that check happens inside ConfirmAction (D9). With
+// needs write:workflow, and that check happens inside ConfirmAction. With
 // auth off no scopes ride the context and the reader reports an open set.
 func contextWithScopes(ctx context.Context, scopes []string) context.Context {
 	return context.WithValue(ctx, scopesCtxKey{}, scopes)
@@ -48,7 +48,7 @@ type subjectCtxKey struct{}
 // contextWithSubject returns a copy of ctx carrying the verified token's
 // subject: the key id for an access-key token, the IdP subject for an OAuth
 // login. A handler telling one caller from another within a tenant needs it,
-// since the A2A path matches a proposal against the peer that opened it (FR37).
+// since the A2A path matches a proposal against the peer that opened it.
 // With auth off nothing is stamped.
 func contextWithSubject(ctx context.Context, subject string) context.Context {
 	return context.WithValue(ctx, subjectCtxKey{}, subject)

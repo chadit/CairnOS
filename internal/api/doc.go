@@ -10,7 +10,7 @@
 // unimplemented admin calls) use the api.* prefix, since the engine error
 // families do not cover transport concerns.
 //
-// Phase 4a adds authentication: with auth enabled, an interceptor pair verifies
+// Authentication: with auth enabled, an interceptor pair verifies
 // the bearer token (algorithm, signature, exp, jti, denylist) and the method's
 // scope before any handler runs; Health and Login stay public. Non-loopback
 // binds need either auth plus a TLS-terminating proxy (auth.tls_terminated,

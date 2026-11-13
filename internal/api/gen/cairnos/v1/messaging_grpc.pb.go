@@ -1,5 +1,5 @@
 // MessagingService: the outbound send surface over the configured chat
-// identities (FR26-FR30). A caller names an identity, a target, and the text;
+// identities. A caller names an identity, a target, and the text;
 // the service resolves the target against that identity's transport and posts.
 // ListIdentities answers what a caller may send as, so a CLI or workflow does
 // not have to guess an identity name from config.

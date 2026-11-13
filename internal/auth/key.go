@@ -223,7 +223,7 @@ func redactHash(encoded string) string {
 // verifyDecoy burns an argon2id derivation against a fixed salt so the
 // unknown-key login path costs the same as a real comparison. Login passes the
 // cost its Authenticator mints under, so raising the defaults raises both
-// costs and keeps the timing oracle closed (spec L6).
+// costs and keeps the timing oracle closed.
 func verifyDecoy(secret string, cost HashCost) {
 	salt := make([]byte, argonSaltLen)
 

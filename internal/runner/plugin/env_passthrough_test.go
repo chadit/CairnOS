@@ -8,7 +8,7 @@ import (
 	"github.com/chadit/CairnOS/internal/runner/plugin"
 )
 
-// Host env names the L2 least-privilege tests drive. The secret stands in for a
+// Host env names the least-privilege tests drive. The secret stands in for a
 // real token or signing key the host process holds.
 const (
 	hostSecretName  = "CAIRNOS_TEST_HOST_SECRET"
@@ -58,7 +58,7 @@ func echoEnvValue(t *testing.T, passthrough []string) string {
 	return value
 }
 
-// TestPluginDoesNotInheritHostSecret proves the L2 least-privilege default: a
+// TestPluginDoesNotInheritHostSecret proves the least-privilege default: a
 // host secret variable does not reach the plugin child unless it is
 // allowlisted, and does reach it when env_passthrough names it.
 func TestPluginDoesNotInheritHostSecret(t *testing.T) {

@@ -188,7 +188,7 @@ func TestFieldsReportsALoginFailure(t *testing.T) {
 	}
 }
 
-// TestFieldsNamesEveryMissingField covers FR6: one run tells the operator
+// TestFieldsNamesEveryMissingField proves one run tells the operator
 // everything to add to the item rather than one field per attempt.
 func TestFieldsNamesEveryMissingField(t *testing.T) {
 	t.Parallel()

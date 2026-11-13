@@ -1,7 +1,7 @@
 // Package store defines the durable state contract for runs and action results.
 // The engine depends only on this interface; SQLite implements it in the sqlite
-// subpackage, Postgres arrives in Phase 4c, and tests use an in-memory fake.
-// That seam is the Phase 0 acceptance criterion.
+// subpackage, Postgres in the postgres subpackage, and tests use an in-memory
+// fake.
 package store
 
 import (
@@ -57,7 +57,7 @@ type Run struct {
 	ID           string
 	WorkflowName string
 	WorkflowHash string
-	WorkspaceID  string // reserved for multi-tenancy; "default" until Phase 5
+	WorkspaceID  string // tenant scope; "default" when the request carries none
 	Status       RunStatus
 	Trigger      string // cli|schedule|api|a2a|webhook|webhook_test|poll|replay|error|workflow
 
@@ -111,14 +111,14 @@ type AgentStep struct {
 // SuggestionStatus is the review state of a tuning suggestion.
 type SuggestionStatus string
 
-// Suggestion review states. Phase 3 stops at approved/rejected: approval prints
-// an annotated diff for the human to apply by hand, and "applied" only arrives
-// with Phase 6 auto-apply.
+// Suggestion review states. Manual review stops at approved/rejected: approval
+// prints an annotated diff for the human to apply by hand, and "applied" comes
+// only from auto-apply.
 const (
 	SuggestionOpen     SuggestionStatus = "open"
 	SuggestionApproved SuggestionStatus = "approved"
 	SuggestionRejected SuggestionStatus = "rejected"
-	// SuggestionApplied marks a suggestion the Phase 6 autonomic applier wrote
+	// SuggestionApplied marks a suggestion the autonomic applier wrote
 	// to a workflow file. It only ever follows approved, and only for the
 	// output-neutral kinds; the version store holds the rollback point.
 	SuggestionApplied SuggestionStatus = "applied"
@@ -127,8 +127,8 @@ const (
 // SuggestionKind names what a tuning suggestion proposes.
 type SuggestionKind string
 
-// Phase 3 suggestion kinds. Prompt refactoring is deliberately absent: it is
-// the open research problem and is held back until R1 resolves.
+// Suggestion kinds. Prompt refactoring is deliberately absent: it is
+// the open research problem and is held back until output equivalence can be verified.
 const (
 	SuggestionCaching     SuggestionKind = "caching"
 	SuggestionBatching    SuggestionKind = "batching"
@@ -136,7 +136,7 @@ const (
 )
 
 // Confidence bands for estimated savings. Output-changing kinds never rise
-// above low in Phase 3 because verifying output quality is unsolved (R1).
+// above low because verifying output quality is unsolved.
 const (
 	ConfidenceLow    = "low"
 	ConfidenceMedium = "medium"
@@ -151,7 +151,7 @@ type Savings struct {
 	LatencyDelta  time.Duration
 }
 
-// Suggestion is one evidence-backed tuning proposal. Nothing in Phase 3
+// Suggestion is one evidence-backed tuning proposal. Review never
 // applies it: a human approves or rejects, and approval only renders the
 // proposed change for manual application.
 type Suggestion struct {
@@ -483,7 +483,7 @@ type Store interface {
 	// SuggestionStore carries the tuning-suggestion review methods.
 	SuggestionStore
 
-	// WorkflowVersionStore carries the rollback-snapshot methods Phase 6
+	// WorkflowVersionStore carries the rollback-snapshot methods
 	// auto-apply records before it edits a workflow file.
 	WorkflowVersionStore
 
@@ -491,7 +491,7 @@ type Store interface {
 	// methods.
 	GovernanceStore
 
-	// ChatStore carries the conversation-session and message methods Phase 9
+	// ChatStore carries the conversation-session and message methods
 	// chat persists.
 	ChatStore
 

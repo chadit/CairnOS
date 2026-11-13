@@ -42,8 +42,8 @@ func appendHostBlocks(t *testing.T, dir string) {
 	appendConfig(t, dir, block)
 }
 
-// TestRunPassesTheHostTableToAnExecAction is the end-to-end case for FR5 and
-// FR7: `cairnos run` renders the same table serve does, so a job started by hand
+// TestRunPassesTheHostTableToAnExecAction is the end-to-end case for the host
+// table: `cairnos run` renders the same table serve does, so a job started by hand
 // sees the tool paths a scheduled one would.
 func TestRunPassesTheHostTableToAnExecAction(t *testing.T) {
 	t.Parallel()

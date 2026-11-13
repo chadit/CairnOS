@@ -126,7 +126,7 @@ func TestEnsureRejectsNonWorkTree(t *testing.T) {
 	wantCode(t, err, source.CodeNotWorktree)
 }
 
-// TestEnsureReportsUnreachableRepoAsRetryable covers FR10's transient half: a
+// TestEnsureReportsUnreachableRepoAsRetryable covers the transient half: a
 // clone that failed gets another attempt rather than a dead run.
 func TestEnsureReportsUnreachableRepoAsRetryable(t *testing.T) {
 	t.Parallel()
@@ -182,18 +182,18 @@ func TestSyncReportsNoMovementWhenCurrent(t *testing.T) {
 }
 
 // untrackedFile is the file every blocked-tree case drops in the checkout. The
-// fixture repository tracks nothing at this path, which is the case FR3 protects:
+// fixture repository tracks nothing at this path, which is the case to protect:
 // it has to survive the reset and the skip alike. A forced checkout does replace
 // an untracked file whose path the incoming ref tracks, so the name matters.
 const untrackedFile = "scratch.local"
 
-// dirtyReason is the line FR5 promises for a tree carrying tracked edits. It is
+// dirtyReason is the reason a skip reports for a tree carrying tracked edits. It is
 // asserted against both a branch ref and a tag ref, which is the only reason
 // they can be blocked at all.
 const dirtyReason = "uncommitted changes"
 
 // blockedCase is one tree state a plain fast-forward cannot move. The reset
-// cases and the skip cases walk the same list, so the two halves of FR4 and FR5
+// cases and the skip cases walk the same list, so the reset and skip halves
 // cannot drift apart. keeps is the tracked content a skip has to preserve.
 type blockedCase struct {
 	setUp func(t *testing.T, spec source.Spec)
@@ -202,7 +202,7 @@ type blockedCase struct {
 	keeps string
 }
 
-// blockedCases enumerates the four states FR5 names a reason for. Every case
+// blockedCases enumerates the four states a skip names a reason for. Every case
 // runs against an origin that has already moved ahead, since a branch the remote
 // is not ahead of fast-forwards without complaint.
 func blockedCases() []blockedCase {
@@ -270,7 +270,7 @@ func blockTree(t *testing.T, repo origin, spec source.Spec, setUp func(*testing.
 	return scratch
 }
 
-// TestSyncResetsBlockedTreeOntoBranch covers FR4 for every state a plain
+// TestSyncResetsBlockedTreeOntoBranch covers the reset for every state a plain
 // fast-forward cannot move: the tree lands on the fetched tip through one forced
 // checkout, and the untracked file is still there afterwards.
 func TestSyncResetsBlockedTreeOntoBranch(t *testing.T) {
@@ -308,7 +308,7 @@ func TestSyncResetsBlockedTreeOntoBranch(t *testing.T) {
 	}
 }
 
-// TestSyncSkipsBlockedTreeWhenResetIsOff covers FR5: the sync succeeds, writes
+// TestSyncSkipsBlockedTreeWhenResetIsOff proves the sync succeeds, writes
 // nothing, and hands back the reason, so the action reports no failure and the
 // five-minute run_failed line stops. Divergence is found by an ancestry probe
 // that writes nothing, so HEAD and the two files are what prove the tree was
@@ -387,7 +387,7 @@ func TestSyncReportsAProbeFailureRatherThanForcing(t *testing.T) {
 	}
 }
 
-// TestSyncResetsDirtyTreeOntoTag is the tag half of FR4. A pinned source has no
+// TestSyncResetsDirtyTreeOntoTag is the tag half of the reset. A pinned source has no
 // branch to recreate, so the forced checkout is detached and leaves the tree in
 // the shape an ordinary tag sync does.
 func TestSyncResetsDirtyTreeOntoTag(t *testing.T) {
@@ -437,7 +437,7 @@ func TestSyncResetsDirtyTreeOntoTag(t *testing.T) {
 	}
 }
 
-// TestSyncSkipsDirtyTagWhenResetIsOff is the tag half of FR5: the pin does not
+// TestSyncSkipsDirtyTagWhenResetIsOff is the tag half of the skip: the pin does not
 // outrank an edit an operator left behind when they asked it not to.
 func TestSyncSkipsDirtyTagWhenResetIsOff(t *testing.T) {
 	t.Parallel()
@@ -641,7 +641,7 @@ func TestEnsureRepositionsTreeAtAnotherTag(t *testing.T) {
 	}
 }
 
-// TestEnsureLeavesADirtyTreeAlone covers FR7. Stopping serve here left an
+// TestEnsureLeavesADirtyTreeAlone proves startup leaves a dirty tree alone. Stopping serve here left an
 // unattended host down until someone logged in, so boot now finishes and leaves
 // the repair or the skip to the first sync, with the operator's edit still there.
 func TestEnsureLeavesADirtyTreeAlone(t *testing.T) {
@@ -698,7 +698,7 @@ func TestEnsureAllowsRefNotYetOnDisk(t *testing.T) {
 	}
 }
 
-// TestEnsureStartsWithAnUnreachableRemote covers FR5. Deleting the origin is the
+// TestEnsureStartsWithAnUnreachableRemote proves startup survives an unreachable remote. Deleting the origin is the
 // offline host: a tree already on disk has to finish serve startup, which it can
 // only do by reading local refs and never reaching for the remote.
 func TestEnsureStartsWithAnUnreachableRemote(t *testing.T) {

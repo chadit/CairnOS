@@ -15,10 +15,10 @@ import (
 
 // tokenShift estimates tokens from bytes: divide by 4 via shift. A crude
 // heuristic (roughly four bytes of English text per token), good enough for
-// Phase 0 budget math until a real tokenizer measures Content.
+// budget math until a real tokenizer measures Content.
 const tokenShift = 2
 
-// memorySchema mirrors the spec schema, plus IF NOT EXISTS so opening an
+// memorySchema is the memory table, plus IF NOT EXISTS so opening an
 // existing database is idempotent. External-content FTS5 does not update
 // itself, so the standard INSERT/UPDATE/DELETE triggers keep memory_fts in
 // sync with memory_entries.
@@ -204,7 +204,7 @@ func requireRow(result sql.Result, id string) error {
 	return nil
 }
 
-// Search runs keyword (FTS5/bm25) search over content and tags. Phase 0 has
+// Search runs keyword (FTS5/bm25) search over content and tags. There is
 // no vector backend, so a Semantic query falls back to keyword search with
 // SearchResult.Fallback set. A query with no text and no tags lists the
 // scope by importance instead.

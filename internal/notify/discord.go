@@ -16,7 +16,7 @@ const notifyTimeout = 10 * time.Second
 
 // ReauthAlert is the operator-facing summary of a held job: which CLI tool's
 // credential expired, which account it was, and the command that fixes it.
-// Account is best-effort and may be empty until the resume probe (D12 slice 4b)
+// Account is best-effort and may be empty until the resume probe
 // reads it from the tool's credential file.
 type ReauthAlert struct {
 	Tool        string
@@ -27,7 +27,7 @@ type ReauthAlert struct {
 
 // DiscordNotifier posts re-auth alerts to a Discord channel webhook. The webhook
 // URL grants posting rights, so it is sourced from the environment, never a
-// config file (D12).
+// config file.
 type DiscordNotifier struct {
 	http       *http.Client
 	webhookURL string
@@ -100,7 +100,7 @@ func (d *DiscordNotifier) Notify(ctx context.Context, alert ReauthAlert) error {
 // and the fix so the line is actionable straight from a phone notification.
 // Exported so the serve fan-out can post a held alert as one line through the
 // same webhook, keeping the default ["held"] set byte-identical to the direct
-// Notify path (decision 7).
+// Notify path.
 func (a ReauthAlert) Message() string {
 	var builder strings.Builder
 

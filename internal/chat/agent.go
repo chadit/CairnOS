@@ -29,8 +29,8 @@ const (
 // WorkflowTrigger fires a confirmed workflow under normal engine governance
 // and streams its terminal status back. The narrow surface keeps internal/chat
 // free of an import cycle with internal/api. The serve wiring satisfies it
-// with an adapter over the run manager and resolver (D9: the spawned run obeys
-// Phase 5b budgets and pause, at depth exactly one).
+// with an adapter over the run manager and resolver (the spawned run obeys
+// engine budgets and pause, at depth exactly one).
 type WorkflowTrigger interface {
 	// Run resolves the named workflow, starts it under engine governance, and
 	// returns the started run id with a channel that delivers the terminal run
@@ -57,7 +57,7 @@ type Config struct {
 	// Skills lists and loads operator-authored skills a turn can invoke. Nil
 	// disables skill invocation, so a node without a skills directory runs chat
 	// unchanged. A loaded skill influences the driver prompt only: it adds no
-	// tool, raises no budget, and cannot move the D9 confirmation gate.
+	// tool, raises no budget, and cannot move the confirmation gate.
 	Skills SkillSource
 
 	// Trigger fires a confirmed workflow. Nil disables the gate: a run_workflow

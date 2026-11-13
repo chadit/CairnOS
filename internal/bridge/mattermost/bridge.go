@@ -19,7 +19,7 @@ const (
 	transportName = "mattermost"
 
 	// chatKeySep joins the parts of a conversation key: identity and channel for
-	// a DM, plus the thread root for a channel mention (FR8, FR11). It is stored
+	// a DM, plus the thread root for a channel mention. It is stored
 	// in bridge_sessions, so it is part of the on-disk shape.
 	chatKeySep = ":"
 
@@ -89,8 +89,8 @@ type Bridge struct {
 
 	// selfIDs holds every identity's own Mattermost user id on this serve. The
 	// own-post filter spans all of them, not just the one that received the
-	// event, so two agents in one channel never answer each other's replies
-	// (FR13). Each identity's loop writes its id at connect while the others
+	// event, so two agents in one channel never answer each other's replies.
+	// Each identity's loop writes its id at connect while the others
 	// read, so the set is guarded.
 	selfIDs map[string]struct{}
 
@@ -110,7 +110,7 @@ type identity struct {
 	client Conn
 	out    *outbound
 
-	// limiter is the bot-to-bot window, keyed by conversation (FR15).
+	// limiter is the bot-to-bot window, keyed by conversation.
 	limiter *LoopLimiter
 
 	// approvers holds the usernames allowed to resolve a proposal, folded to
@@ -220,7 +220,7 @@ func newIdentity(declared *Identity, cfg *Config) *identity {
 
 // Run connects every identity and holds its event socket until ctx ends. Each
 // identity owns one goroutine, so a refused token or a panic in one gate leaves
-// the others answering (NFR3). Draining the core is the caller's job: two
+// the others answering. Draining the core is the caller's job: two
 // transports share one core, and the first Run to return would otherwise drain
 // the other transport's conversation workers.
 func (b *Bridge) Run(ctx context.Context) {
@@ -235,7 +235,7 @@ func (b *Bridge) Run(ctx context.Context) {
 
 // runIdentity reconnects one identity for as long as ctx lives, doubling the
 // delay after each failed cycle up to the one-minute ceiling and resetting it
-// once the event socket actually ran (FR7).
+// once the event socket actually ran.
 func (b *Bridge) runIdentity(ctx context.Context, agent *identity) {
 	delay := b.backoffBase
 
@@ -265,7 +265,7 @@ func (b *Bridge) cycle(ctx context.Context, agent *identity) bool {
 }
 
 // guard runs one identity's work with a panic recovered and logged, so one
-// malformed post cannot take the identity, or its siblings, down (NFR3).
+// malformed post cannot take the identity, or its siblings, down.
 func (b *Bridge) guard(ctx context.Context, agent *identity, work func()) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -278,7 +278,7 @@ func (b *Bridge) guard(ctx context.Context, agent *identity, work func()) {
 }
 
 // connectAndListen learns the identity, cross-checks the username against the
-// account the token really belongs to (FR5), then pumps posted events through
+// account the token really belongs to, then pumps posted events through
 // the gate until the socket fails or ctx ends. A mismatch reports not-connected
 // so the caller backs off instead of answering as the wrong account.
 func (b *Bridge) connectAndListen(ctx context.Context, agent *identity) bool {
@@ -323,7 +323,7 @@ func (b *Bridge) pump(ctx context.Context, agent *identity) bool {
 			b.noteSocketClosed(ctx, agent, cause)
 
 			// A refused upgrade means the socket carried nothing, so the caller
-			// keeps escalating instead of redialing once a second forever (FR7).
+			// keeps escalating instead of redialing once a second forever.
 			return !errors.Is(cause, ErrSocketDial)
 		case event := <-events:
 			b.dispatch(ctx, agent, &event)
@@ -374,7 +374,7 @@ func (b *Bridge) dispatch(ctx context.Context, agent *identity, event *Event) {
 }
 
 // routed is one post the DM and mention checks already accepted, plus the
-// addressing the core needs. ChatKey and Thread are the FR8 and FR11 mapping: a
+// addressing the core needs. ChatKey and Thread map conversations: a
 // DM is one conversation per channel, a channel mention is one per thread root.
 type routed struct {
 	event   *Event
@@ -388,7 +388,7 @@ type routed struct {
 
 // newRouted resolves a post's conversation key and reply root. A DM answers in
 // the channel with no thread; a channel mention answers on the post's thread
-// root, which is the post itself when it opens the thread (FR9, FR11).
+// root, which is the post itself when it opens the thread.
 func newRouted(identityName string, event *Event, direct bool) *routed {
 	post := event.Post
 
@@ -410,7 +410,7 @@ func newRouted(identityName string, event *Event, direct bool) *routed {
 
 // addressed reports whether a channel post names this identity. The server's
 // own mention list says it was mentioned; the text check says the mention is
-// prose rather than a username quoted in a code sample (FR9, FR10).
+// prose rather than a username quoted in a code sample.
 func addressed(agent *identity, event *Event) bool {
 	account := agent.client.Me()
 	if !slices.Contains(event.Mentions, account.ID) {
@@ -423,7 +423,7 @@ func addressed(agent *identity, event *Event) bool {
 // admit applies the two loop defenses to a post already addressed to the
 // identity: provenance decides whether an automated poster may speak here at
 // all, and the window catches the bot-to-bot traffic allow_bots_in deliberately
-// lets through (design D6). A human post clears both untouched.
+// lets through. A human post clears both untouched.
 func (b *Bridge) admit(ctx context.Context, agent *identity, turn *routed) bool {
 	if !turn.automated {
 		return true
@@ -451,7 +451,7 @@ func (b *Bridge) admit(ctx context.Context, agent *identity, turn *routed) bool 
 // refuse counts and logs one post the bot gate turned away. It is counted
 // unauthorized because the post was addressed to this identity and the operator
 // set the rule that declined it, which is the same shape as a Telegram sender
-// off the allowlist (FR14).
+// off the allowlist.
 func (b *Bridge) refuse(ctx context.Context, agent *identity, reason, key string) {
 	b.metrics.Update(transportName, agent.name, bridge.OutcomeUnauthorized)
 	b.log.DebugContext(ctx, "mattermost post refused",
@@ -460,13 +460,13 @@ func (b *Bridge) refuse(ctx context.Context, agent *identity, reason, key string
 
 // handle turns an admitted post into the core's inbound, reacting to it and
 // raising the typing indicator on the way, so the conversation shows the agent
-// picked the post up before the turn finishes (FR17).
+// picked the post up before the turn finishes.
 func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 	post := turn.event.Post
 
 	// dispatch's blank-message guard runs on the raw message. Someone typing
 	// "@cairn" alone to get attention leaves nothing behind once the mention is
-	// stripped, and an empty turn still bills a driver call (edge case 9).
+	// stripped, and an empty turn still bills a driver call.
 	text := StripMention(post.Message, agent.client.Me().Username)
 	if strings.TrimSpace(text) == "" {
 		return
@@ -486,7 +486,7 @@ func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 
 	// The indicator costs a POST bounded only by the client timeout, and pump is
 	// the socket's only consumer, so raising it inline stalls the read that would
-	// have delivered the next post. It is decoration either way (FR17, NFR2).
+	// have delivered the next post. It is decoration either way.
 	go b.typing(ctx, agent, post.ChannelID, turn.thread)
 
 	b.core.Handle(ctx, &bridge.Inbound{
@@ -504,7 +504,7 @@ func (b *Bridge) handle(ctx context.Context, agent *identity, turn *routed) {
 }
 
 // acknowledge reacts to an accepted post off the socket's consumer, like typing,
-// so a slow POST never stalls the read (NFR2); a failure is logged, never fatal.
+// so a slow POST never stalls the read; a failure is logged, never fatal.
 func (b *Bridge) acknowledge(ctx context.Context, agent *identity, postID string) {
 	if agent.ackReaction == "" {
 		return
@@ -518,7 +518,7 @@ func (b *Bridge) acknowledge(ctx context.Context, agent *identity, postID string
 
 // typing raises the typing indicator for one turn off the socket's consumer,
 // like acknowledge. A turn that runs without the indicator is still a turn, so a
-// failure is logged at debug and never costs the reply (FR17).
+// failure is logged at debug and never costs the reply.
 func (b *Bridge) typing(ctx context.Context, agent *identity, channelID, threadID string) {
 	if err := agent.client.Typing(ctx, channelID, threadID); err != nil {
 		b.log.DebugContext(ctx, "mattermost typing indicator failed",
@@ -529,7 +529,7 @@ func (b *Bridge) typing(ctx context.Context, agent *identity, channelID, threadI
 // automated reports whether a post came from something other than a person
 // typing. The props answer without a round trip for every bot account and every
 // integration the server stamps, so only a post carrying none of them consults
-// the author cache at all (FR14).
+// the author cache at all.
 func (b *Bridge) automated(ctx context.Context, agent *identity, post *Post) bool {
 	if IsAutomated(post, nil) {
 		return true
@@ -561,8 +561,8 @@ func (b *Bridge) senderName(ctx context.Context, agent *identity, post *Post, ca
 
 // author reads a post's author out of the client's is_bot cache. pump is the
 // event socket's only consumer, so a round trip here stalls the read that would
-// have delivered the next post and eventually makes the server close the socket
-// (NFR2). A miss warms the cache elsewhere and answers unknown for this post.
+// have delivered the next post and eventually makes the server close the socket.
+// A miss warms the cache elsewhere and answers unknown for this post.
 func (b *Bridge) author(ctx context.Context, agent *identity, userID string) (User, bool) {
 	if cached, known := agent.client.CachedUser(userID); known {
 		return cached, true
@@ -584,7 +584,7 @@ func (b *Bridge) warmAuthor(ctx context.Context, agent *identity, userID string)
 }
 
 // noteSelf records one identity's own user id so every identity's gate drops
-// this serve's posts, not only the ones it wrote itself (FR13).
+// this serve's posts, not only the ones it wrote itself.
 func (b *Bridge) noteSelf(userID string) {
 	b.selfMu.Lock()
 	defer b.selfMu.Unlock()
@@ -661,7 +661,7 @@ func (i *identity) approves(username string) bool {
 
 // noteLoopTrip logs the first refusal of a cooldown and stays quiet for the
 // rest of it, so a conversation that keeps posting writes one line rather than
-// one per post (FR15).
+// one per post.
 func (i *identity) noteLoopTrip(ctx context.Context, log *slog.Logger, key string) {
 	if i.tripped[key] {
 		return

@@ -19,7 +19,7 @@ import (
 // uses a GIN index over to_tsvector(title||body) because Postgres full-text
 // search runs against the base row, not a separate virtual table.
 //
-// The pgvector path stays a stub (D2): a semantic Query falls back to keyword
+// The pgvector path stays a stub: a semantic Query falls back to keyword
 // and flags it.
 const pgVaultSchema = `
 CREATE TABLE IF NOT EXISTS documents (

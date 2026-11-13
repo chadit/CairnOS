@@ -6,7 +6,7 @@ verifies it, logs in for a bearer token, creates a task, and streams the task
 updates to completion.
 
 It talks to the node through the HTTP gateway only, no gRPC stack. That's the
-fallback path from spec 09: an agent that speaks just HTTP gets the same
+fallback path: an agent that speaks just HTTP gets the same
 surface as a native gRPC client, because the gateway bridges every A2A method.
 
 ## What it does, step by step

@@ -8,8 +8,8 @@ import { parseWorkflow } from './parse';
 
 // The round-trip contract: a workflow parsed from TOML, then emitted and
 // re-parsed, must normalize to the same form. Behavior (actions, edges,
-// params, agent settings) survives; comments and formatting do not. This is
-// the Phase 5a acceptance criterion proven mechanically.
+// params, agent settings) survives; comments and formatting do not. This test
+// proves that contract mechanically.
 describe('TOML semantic round-trip', () => {
   it.each(roundTripFixtures)('preserves behavior for $name', ({ toml }) => {
     const original = parseWorkflow(toml);

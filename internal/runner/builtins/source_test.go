@@ -263,7 +263,7 @@ func TestSourceReportsEmptyOutputWhenNothingMoved(t *testing.T) {
 	}
 }
 
-// TestSourceReportsSkipAsSuccess covers the mapping FR5 asks of the runner: a
+// TestSourceReportsSkipAsSuccess covers how the runner maps a skip: a
 // tree left alone is not a failed run, so the action succeeds with empty output,
 // the reason rides in Meta, and the observer hears about it once.
 func TestSourceReportsSkipAsSuccess(t *testing.T) {
@@ -298,7 +298,7 @@ func TestSourceReportsSkipAsSuccess(t *testing.T) {
 	}
 }
 
-// TestSourceReportsResetAsMovement covers FR4 and FR8 at the runner: a repaired
+// TestSourceReportsResetAsMovement covers a reset at the runner: a repaired
 // tree reads as an ordinary move to a workflow, and the observer hears the
 // source is healthy again so a pending cooldown clears.
 func TestSourceReportsResetAsMovement(t *testing.T) {
@@ -327,7 +327,7 @@ func TestSourceReportsResetAsMovement(t *testing.T) {
 	}
 }
 
-// TestSourceSerializesConcurrentSyncs covers FR12: two tasks for one source in
+// TestSourceSerializesConcurrentSyncs proves two tasks for one source in
 // one process never have git running in that tree at the same time.
 func TestSourceSerializesConcurrentSyncs(t *testing.T) {
 	t.Parallel()

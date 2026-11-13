@@ -611,8 +611,8 @@ func testListRunsFiltersAndOrdersNewestFirst[S store.Store](t *testing.T, openFn
 	}
 }
 
-// testWorkspaceIsolatesRunsAndActions is the multi-tenancy invariant the spec
-// rests on: a run created in one workspace is invisible to a context scoped to
+// testWorkspaceIsolatesRunsAndActions is the multi-tenancy invariant: a run
+// created in one workspace is invisible to a context scoped to
 // another, for GetRun, ListRuns, and ListActionResults. The context carries the
 // workspace; the store filters by it.
 func testWorkspaceIsolatesRunsAndActions[S store.Store](t *testing.T, openFn OpenFunc[S]) {

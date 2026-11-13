@@ -1,6 +1,6 @@
-// Package hive is the Phase 6 Hive client and privacy filter. Nodes subscribe
-// to content-free tips and, once a documented privacy review passes (R2) and a
-// host commits to running the service (R3), publish their own. This package
+// Package hive is the Hive client and privacy filter. Nodes subscribe
+// to content-free tips and, once a documented privacy review passes and a
+// host commits to running the service, publish their own. This package
 // ships the mechanism: the allowlist transform that strips a local suggestion
 // down to a shareable Tip, an HTTP client over a hive API, and the ingest path
 // that lands received tips in the standard review queue. Publish is gated;

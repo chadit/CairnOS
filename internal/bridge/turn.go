@@ -12,12 +12,12 @@ import (
 
 const (
 	// silentMarker is the reply the agent uses to say it has nothing to post. The
-	// turn still counts ok and stays in the session transcript (FR16).
+	// turn still counts ok and stays in the session transcript.
 	silentMarker = "[SILENT]"
 
 	// verbApprove and verbDeny are the typed decisions a conversation can carry
 	// instead of chat text, the only way to answer a proposal on a transport with
-	// no buttons to tap (FR22).
+	// no buttons to tap.
 	verbApprove = "approve"
 	verbDeny    = "deny"
 )
@@ -62,7 +62,7 @@ func (c *Core) handleMessage(ctx context.Context, inbound *Inbound) {
 // runOrDecide answers a bare approve or deny as a decision on the conversation's
 // live proposal and treats everything else as a chat turn. The typed verbs are
 // checked only while a proposal is pending, so an ordinary message that happens
-// to read "approve" still reaches the agent (FR22, FR24).
+// to read "approve" still reaches the agent.
 func (c *Core) runOrDecide(ctx context.Context, inbound *Inbound) {
 	sessionID, err := c.ensureSession(ctx, inbound)
 	if err != nil {
@@ -129,7 +129,7 @@ func (c *Core) newSession(ctx context.Context, inbound *Inbound) (string, error)
 
 // startNewSession rebinds the conversation to a fresh session and confirms it, so
 // /new starts a clean conversation while the prior transcript stays readable by
-// its own session id (FR19).
+// its own session id.
 func (c *Core) startNewSession(ctx context.Context, inbound *Inbound) {
 	sessionID, err := c.newSession(ctx, inbound)
 	if err != nil {
@@ -198,7 +198,7 @@ func (c *Core) runTurn(ctx context.Context, inbound *Inbound, sessionID string) 
 
 // deliverReply posts a completed turn's assistant text. A reply of exactly
 // [SILENT] posts nothing: the turn already counted ok and stays in the session
-// transcript, which is what the marker asks for (FR16).
+// transcript, which is what the marker asks for.
 func (c *Core) deliverReply(ctx context.Context, active *turn) {
 	text := active.reply.String()
 	if text == "" || strings.TrimSpace(text) == silentMarker {
@@ -210,7 +210,7 @@ func (c *Core) deliverReply(ctx context.Context, active *turn) {
 
 // consume folds one turn event toward the outbound reply: assistant text buffers
 // into one message, a tool call is relayed as a status line only in verbose mode,
-// and a workflow proposal renders the D9 confirmation the transport asks for.
+// and a workflow proposal renders the confirmation the transport asks for.
 // Run-lifecycle and turn-done events carry nothing new to send here.
 func (c *Core) consume(ctx context.Context, active *turn, event *chat.Event) {
 	switch event.Type {
@@ -228,7 +228,7 @@ func (c *Core) consume(ctx context.Context, active *turn, event *chat.Event) {
 
 // deliver sends one turn's reply, splitting anything over the transport's
 // per-message cap on paragraph boundaries so a long answer arrives as ordered
-// messages rather than a rejected one (FR18).
+// messages rather than a rejected one.
 func (c *Core) deliver(ctx context.Context, out Outbound, addr *Address, text string) {
 	for _, part := range splitMessage(text, out.MaxChars()) {
 		c.send(ctx, out, addr, part)

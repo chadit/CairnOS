@@ -51,7 +51,7 @@ const (
 	waitTick = time.Millisecond
 )
 
-// Proposal builds the D9 proposal a raised turn emits and a confirm test renders.
+// Proposal builds the workflow proposal a raised turn emits and a confirm test renders.
 func Proposal() *chat.Proposal {
 	return &chat.Proposal{
 		WorkflowName:       WorkflowName,

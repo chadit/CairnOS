@@ -363,7 +363,7 @@ func TestLoadAuthM1M4L2EnvOverrides(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsInvalidAuthWhenEnabled is the L1 fail-fast: auth.enabled with
+// TestLoadRejectsInvalidAuthWhenEnabled proves the auth fail-fast: auth.enabled with
 // a missing issuer or audience, a non-positive TTL, or an unknown signing
 // algorithm is config.invalid at load, before anything tries to mint a token.
 func TestLoadRejectsInvalidAuthWhenEnabled(t *testing.T) {
@@ -1141,7 +1141,7 @@ func TestLoadSecretsBackendRejectsUnknown(t *testing.T) {
 	}
 }
 
-// TestLoadNotifyAcceptsSourceDirty covers FR2 from the operator's side: the
+// TestLoadNotifyAcceptsSourceDirty covers the source_dirty event from the operator's side: the
 // sixth event name has to clear validation, and a typo of it still has to fail
 // the load rather than selecting nothing at runtime.
 func TestLoadNotifyAcceptsSourceDirty(t *testing.T) {

@@ -32,13 +32,13 @@ type loginService struct {
 	authenticator Authenticator
 
 	// limiter caps unauthenticated login cost: a bounded derivation pool and
-	// a per-peer rate limit, both guarding only this RPC (spec M1). Nil keeps
+	// a per-peer rate limit, both guarding only this RPC. Nil keeps
 	// the login path unbounded, which is the auth-disabled case anyway.
 	limiter *auth.LoginLimiter
 
 	// logger records the real login-failure detail server-side; the wire
 	// answer stays a single opaque message so a caller cannot tell a wrong
-	// secret from a malformed stored hash (spec L3). Nil means slog.Default.
+	// secret from a malformed stored hash. Nil means slog.Default.
 	logger *slog.Logger
 }
 
@@ -52,7 +52,7 @@ func (s *loginService) Login(ctx context.Context, req *cairnosv1.LoginRequest) (
 			cairnerr.New(codeAuthDisabled, "auth is disabled on this server; there is nothing to log in to"))
 	}
 
-	// Admit through the M1 guard before the argon2id work runs, so a flood is
+	// Admit through the login limiter before the argon2id work runs, so a flood is
 	// refused cheaply instead of pinning ~64 MiB per concurrent derivation.
 	release, err := s.limiter.Acquire(ctx, peerIP(ctx))
 	if err != nil {
@@ -72,7 +72,7 @@ func (s *loginService) Login(ctx context.Context, req *cairnosv1.LoginRequest) (
 }
 
 // peerIP pulls the caller's IP from the gRPC peer for the per-peer login rate
-// limit (spec M1). The gateway dials the backend over loopback, so HTTP callers
+// limit. The gateway dials the backend over loopback, so HTTP callers
 // share one bucket. That's fine: the gateway is the trusted local front and the
 // concurrency cap bounds cost. An unknown peer falls back to a shared key rather
 // than failing the call.
@@ -122,7 +122,7 @@ func (s *loginService) Revoke(ctx context.Context, req *cairnosv1.RevokeRequest)
 
 // loginStatus maps a login failure onto the wire: every credential problem
 // collapses into one UNAUTHENTICATED so a caller learns nothing about which
-// check tripped (spec L3). A login flood is RESOURCE_EXHAUSTED (M1). Anything
+// check tripped. A login flood is RESOURCE_EXHAUSTED. Anything
 // else is INTERNAL. The real error is logged server-side, never on the wire, so
 // the opaque message cannot leak a stored-hash format problem.
 func (s *loginService) loginStatus(err error) error {
@@ -156,7 +156,7 @@ func (s *loginService) resolveLogger() *slog.Logger {
 // isCredentialFailure reports the login errors that must look identical on
 // the wire: a malformed key, an unknown or disabled key, a wrong secret, and
 // a malformed stored hash, which the timing-decoy path already hides and the
-// L3 fix now routes here too so it is indistinguishable from a wrong secret.
+// login path now routes here too so it is indistinguishable from a wrong secret.
 func isCredentialFailure(err error) bool {
 	return errors.Is(err, auth.ErrKeyMalformed) ||
 		errors.Is(err, auth.ErrKeyNotFound) ||

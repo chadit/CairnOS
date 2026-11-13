@@ -106,7 +106,7 @@ params = { output = "hello yourself" }
 `
 
 // fixtureCard is the channel list the fixture's card advertises, so every card
-// assertion runs against a card that actually carries the FR35 block rather
+// assertion runs against a card that actually carries the channels block rather
 // than the empty case only.
 func fixtureChannels() []a2a.Channel {
 	return []a2a.Channel{{

@@ -238,7 +238,7 @@ func testListMembers[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {
 	}
 }
 
-// testMembersIsolatedByWorkspace is the tenancy invariant the spec rests on: a
+// testMembersIsolatedByWorkspace is the tenancy invariant: a
 // member of one workspace is not a member of another, so ListMembers never
 // leaks across the boundary.
 func testMembersIsolatedByWorkspace[S tenancy.Store](t *testing.T, openFn OpenFunc[S]) {

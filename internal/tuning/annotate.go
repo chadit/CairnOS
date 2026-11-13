@@ -11,7 +11,7 @@ import (
 
 // Annotation renders an approved suggestion as the change for the operator
 // to apply by hand: a kind-specific preamble, the proposed keys and values,
-// and the standing Phase 3 reminder that CairnOS writes nothing itself. The
+// and the standing reminder that CairnOS writes nothing itself. The
 // CLI prints it on approve and the API returns it in the approve response,
 // so both surfaces hand the human the same text.
 func Annotation(suggestion *store.Suggestion) string {

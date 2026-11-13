@@ -27,13 +27,13 @@ var (
 	ErrRoleUnknown = errors.New("workspace role is not a known role")
 
 	// ErrAutoProvisionDisabled reports a first-time login refused because
-	// auto-provisioning is off (spec H1). An admin must pre-create the
+	// auto-provisioning is off. An admin must pre-create the
 	// membership before the subject can log in.
 	ErrAutoProvisionDisabled = errors.New("oauth auto-provisioning is disabled")
 
 	// ErrSubjectNotAllowed reports a first-time login refused because the
 	// subject's email domain or subject id is outside the auto-provision
-	// allowlist (spec H1).
+	// allowlist.
 	ErrSubjectNotAllowed = errors.New("oauth subject is not allowed to auto-provision")
 )
 

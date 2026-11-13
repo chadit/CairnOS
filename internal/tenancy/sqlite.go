@@ -16,7 +16,7 @@ import (
 // tenancySchema holds the workspaces and their members, plus IF NOT EXISTS so
 // opening an existing database is idempotent. It shares the run store's
 // database file with disjoint tables, the same arrangement internal/auth and
-// internal/memory use. The unique name index enforces the spec's
+// internal/memory use. The unique name index enforces the
 // unique-workspace-name invariant.
 const tenancySchema = `
 CREATE TABLE IF NOT EXISTS workspaces (

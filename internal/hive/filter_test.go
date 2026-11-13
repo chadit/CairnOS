@@ -67,8 +67,8 @@ func realisticSuggestion() store.Suggestion {
 	}
 }
 
-// TestTransformLeaksNoRawContent is the spec's "find raw input in an outbound
-// tip and fail" test. It builds a suggestion carrying raw prompt text, a
+// TestTransformLeaksNoRawContent proves no raw input reaches an outbound
+// tip. It builds a suggestion carrying raw prompt text, a
 // credential, a path, an endpoint, the workflow name, and the output, marshals
 // the tip to the bytes that would leave the node, and fails if any raw string
 // survives.

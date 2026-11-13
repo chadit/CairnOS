@@ -9,14 +9,14 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// dashedPromptKey and the dashed prompt value the M3 arg-injection tests drive.
+// dashedPromptKey and the dashed prompt value the arg-injection tests drive.
 const (
 	allowDashedKey   = "allow_dashed_prompt"
 	dashedPromptText = "--output=/etc/passwd"
 )
 
 // dashedPromptTask builds a CLI task whose prompt begins with a dash, the
-// arg-injection vector M3 guards against.
+// arg-injection vector the dashed-prompt guard blocks.
 func dashedPromptTask() *runner.Task {
 	return &runner.Task{
 		RunID:      testRunID,
@@ -45,7 +45,7 @@ func assertUnsafePrompt(t *testing.T, err error) {
 	}
 }
 
-// TestCLIRefusesDashedPromptOnBarePositional proves the M3 guard: a prompt that
+// TestCLIRefusesDashedPromptOnBarePositional proves the dashed-prompt guard: a prompt that
 // begins with a dash is refused by default when the argv template feeds it as a
 // bare positional, since the wrapped binary would read it as a flag.
 func TestCLIRefusesDashedPromptOnBarePositional(t *testing.T) {

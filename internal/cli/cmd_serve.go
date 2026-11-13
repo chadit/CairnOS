@@ -38,7 +38,7 @@ const serveUsage = "usage: cairnos serve [--dir D]\n"
 // before the hard stop fires.
 const serveShutdownTimeout = 10 * time.Second
 
-// cmdServe is the Phase 1a long-lived process: the gRPC and HTTP API plus
+// cmdServe is the long-lived process: the gRPC and HTTP API plus
 // the scheduler daemon in one process, stopping cleanly on interrupt, SIGTERM,
 // or SIGHUP. The auth store opens only with auth on, and the tenancy store only
 // with OAuth login on, so a nil store keeps that whole path out of the process.
@@ -156,7 +156,7 @@ type serveStores struct {
 
 // runServe wires telemetry, the manager, the engine, the API server, the
 // retention sweep, and the scheduler daemon, then blocks until ctx cancels
-// and drains everything. A non-nil authStore turns on Phase 4a token
+// and drains everything. A non-nil authStore turns on token
 // enforcement; signing material loads from the environment before anything
 // heavier starts, so a missing secret fails fast.
 func (a *App) runServe(ctx context.Context, cfg *config.Config, dir string, stores *serveStores) int {
@@ -718,7 +718,7 @@ func startSweep(ctx context.Context, cfg *config.Config, db store.Store, keyStor
 	return done
 }
 
-// buildAuthenticator wires the Phase 4a authenticator from the config and
+// buildAuthenticator wires the authenticator from the config and
 // the signing material in the environment, with cost as the decoy's. A nil store
 // (auth disabled) yields a nil authenticator, which keeps the API serving
 // without token checks.
@@ -751,7 +751,7 @@ func buildAuthenticator(cfg *config.Config, keyStore authStore, lookup environ.L
 // on cancellation. The daemon enqueues each due fire and the worker drains the
 // queue through the manager fire runner. The coordinator is the advisory-lock PostgresCoordinator on a
 // Postgres backend, so only one serving node fires schedules, and the
-// SoloCoordinator on sqlite (S2).
+// SoloCoordinator on sqlite.
 func (a *App) serveUntilCanceled(ctx context.Context, server *api.Server, sched *serveSchedulerDeps) int {
 	monitor := newReachMonitor(sched.fanout, a.logger)
 

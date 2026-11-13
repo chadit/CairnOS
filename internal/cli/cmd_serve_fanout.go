@@ -16,7 +16,7 @@ import (
 
 // BuildFanout builds the event fan-out over every configured destination: a
 // Discord sink when the webhook env is set, a Mattermost sink when
-// [notify.mattermost] names an identity (FR34). Neither gives a nil fan-out,
+// [notify.mattermost] names an identity. Neither gives a nil fan-out,
 // which disables every producer. A nil registry is the standalone `schedule
 // run` worker, which holds no identities. webhookTransport carries the Discord
 // client; nil means the default.
@@ -79,7 +79,7 @@ func appendMattermostSink(
 // returned channel when it exits so shutdown can wait for an in-flight post. A
 // nil fan-out (no destination configured) makes Run return at once, so the
 // goroutine closes the channel immediately, the same supervised shape as
-// startSweep (decision 7).
+// startSweep.
 func StartFanout(ctx context.Context, fanout *notify.Fanout) <-chan struct{} {
 	done := make(chan struct{})
 
@@ -115,8 +115,8 @@ func WrapRunFailedFanout(ctx context.Context, dispatch func(engine.Event), fanou
 
 // runFailedLine renders a failed run as one fan-out line. engine.Event carries no
 // workflow name, so the line names the run ID plus the error code and message
-// rather than doing a cross-context store lookup off the request path (the
-// accepted trade-off in the spec).
+// rather than doing a cross-context store lookup off the request path (an
+// accepted trade-off).
 func runFailedLine(evt *engine.Event) string {
 	if evt.Err != nil {
 		return fmt.Sprintf("CairnOS: run %s failed: %s: %s", evt.RunID, evt.Err.Code, evt.Err.Message)

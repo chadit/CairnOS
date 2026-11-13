@@ -94,7 +94,7 @@ func TestSenderDescribesIdentity(t *testing.T) {
 
 // TestSenderResolvesEveryTargetForm proves each of the four accepted target
 // forms reaches the right channel: an id posts with no lookup, a name resolves
-// against the team, and both user forms post into the DM channel (FR27, FR28).
+// against the team, and both user forms post into the DM channel.
 func TestSenderResolvesEveryTargetForm(t *testing.T) {
 	t.Parallel()
 

@@ -538,7 +538,7 @@ func TestChatScannerErrorExitsNonZero(t *testing.T) {
 	}
 }
 
-// TestChatTurnErrorKeepsREPLAlive pins the spec's exit contract: the process
+// TestChatTurnErrorKeepsREPLAlive pins the exit contract: the process
 // only exits on /quit, /exit, stdin EOF, or a scanner error, so a failed turn
 // prints the error and offers the next prompt instead of killing the REPL.
 func TestChatTurnErrorKeepsREPLAlive(t *testing.T) {

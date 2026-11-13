@@ -20,8 +20,7 @@ const (
 
 // flakyCall builds a call that fails the first failures invocations with
 // failErr and then succeeds, counting invocations through the returned
-// pointer. It models the flaky-service-that-recovers shape the spec's retry
-// acceptance test describes.
+// pointer. It models a flaky service that recovers.
 func flakyCall(failures int, failErr error) (func(context.Context) (runner.Result, error), *int) {
 	var calls int
 

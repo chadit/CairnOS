@@ -105,7 +105,7 @@ func TestLoadWithoutBitwardenLeavesTheBlockNil(t *testing.T) {
 	}
 }
 
-// TestLoadBitwardenAcceptsABareBlock covers FR18 and FR19 together. A host whose
+// TestLoadBitwardenAcceptsABareBlock covers the credentials-file item and field inference together. A host whose
 // item name lives in the credentials file, and whose fields are named after the
 // variables they fill, has nothing left to write here, so the header alone has
 // to load. An absent block means something else: the pull does nothing at all.
@@ -132,7 +132,7 @@ func TestLoadBitwardenAcceptsABareBlock(t *testing.T) {
 	}
 }
 
-// TestLoadBitwardenAcceptsFieldsWithoutAnItem covers the other half of FR18: the
+// TestLoadBitwardenAcceptsFieldsWithoutAnItem covers the other half of the credentials-file item: the
 // mappings are in config and the item name comes from the credentials file.
 func TestLoadBitwardenAcceptsFieldsWithoutAnItem(t *testing.T) {
 	t.Parallel()

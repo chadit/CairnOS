@@ -299,7 +299,7 @@ func (s *Service) seedHistory(ctx context.Context, sessionID string, seed []seed
 // runTurn runs one conversation turn and collects its result, mirroring the
 // streamTurn pattern in internal/api/chat_service.go: SendMessage runs on a
 // goroutine, the handler ranges the event channel the agent closes, and the
-// terminal error arrives on a one-slot done channel afterward. A D9
+// terminal error arrives on a one-slot done channel afterward. A
 // confirmation-required event renders as the turn's assistant text, since this
 // surface has no confirm route.
 func (s *Service) runTurn(ctx context.Context, sessionID, prompt string) (string, runner.Usage, error) {
@@ -354,7 +354,7 @@ func createSessionError(err error) error {
 	return err
 }
 
-// confirmationTemplate is the assistant text a D9 gate renders as. It names the
+// confirmationTemplate is the assistant text a confirmation gate renders as. It names the
 // pending proposal in full and points at the native surfaces that can approve
 // it, since this endpoint has no confirm route. The session id appears in the
 // header, the CLI hint, and the confirm URL.
@@ -368,7 +368,7 @@ const confirmationTemplate = "I want to run a workflow, but this OpenAI-compatib
 	"or POST /v1/chat/sessions/%s/confirm with {\"approve\": true} using a token that carries write:workflow. " +
 	"Nothing runs until then."
 
-// renderConfirmation turns a D9 proposal into assistant text naming the pending
+// renderConfirmation turns a workflow proposal into assistant text naming the pending
 // proposal in full, so a human can act on a native surface. This endpoint has no
 // confirm route by design, so a foreign client can never fire the proposal.
 func renderConfirmation(proposal *chat.Proposal, sessionID string) string {

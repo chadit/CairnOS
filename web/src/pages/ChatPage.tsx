@@ -9,7 +9,7 @@ import { Transcript } from '@/chat/Transcript';
 import { useChatStream } from '@/chat/useChatStream';
 
 /**
- * ChatPage is the D9 conversational view. The sidebar lists sessions and starts
+ * ChatPage is the conversational view. The sidebar lists sessions and starts
  * new ones with a personality; the main column shows the transcript and a
  * composer. Stored messages seed the transcript and live SendMessage events
  * fold on top of them.

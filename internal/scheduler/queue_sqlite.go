@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// workItemSchema is the durable work-queue table (S8) with IF NOT EXISTS so
+// workItemSchema is the durable work-queue table with IF NOT EXISTS so
 // reopening is idempotent. The claim index covers the hot path: ready items
 // ordered by when they became available. dedup_key is unique so an enqueue
 // several nodes attempt lands exactly one row.
@@ -39,7 +39,7 @@ const workItemColumns = "id, dedup_key, payload, state, available_at, lease_unti
 
 // SQLiteQueue is the single-node WorkQueue backend. The SQLite write lock
 // serializes claims, so it needs no SKIP LOCKED; the design pairs it with one
-// worker (S8).
+// worker.
 type SQLiteQueue struct {
 	db *sql.DB
 }
@@ -304,7 +304,7 @@ func (q *SQLiteQueue) Resume(ctx context.Context, id string) error {
 }
 
 // ListHeld returns every held item with its hold key, so a resume probe can
-// check the credential each one is waiting on (D12).
+// check the credential each one is waiting on.
 func (q *SQLiteQueue) ListHeld(ctx context.Context) ([]WorkItem, error) {
 	rows, err := q.db.QueryContext(ctx,
 		"SELECT "+workItemColumns+" FROM work_item WHERE state = ? ORDER BY id ASC", string(WorkHeld))

@@ -53,8 +53,7 @@ func TestConfirmProposalRendersKeyboard(t *testing.T) {
 }
 
 // TestConfirmApproveGrantedRunsAndRelays proves an Approve tap from a granted
-// opener invokes ConfirmAction(true) and relays run-started/run-finished
-// (acceptance 2).
+// opener invokes ConfirmAction(true) and relays run-started/run-finished.
 func TestConfirmApproveGrantedRunsAndRelays(t *testing.T) {
 	t.Parallel()
 
@@ -88,7 +87,7 @@ func TestConfirmApproveGrantedRunsAndRelays(t *testing.T) {
 }
 
 // TestConfirmDenyCallsConfirmActionFalse proves a Deny tap invokes
-// ConfirmAction(false) and runs nothing (acceptance 2).
+// ConfirmAction(false) and runs nothing.
 func TestConfirmDenyCallsConfirmActionFalse(t *testing.T) {
 	t.Parallel()
 
@@ -119,8 +118,7 @@ func TestConfirmDenyCallsConfirmActionFalse(t *testing.T) {
 // TestConfirmApproveWithoutGrantRefused proves a chat-only user's Approve tap is
 // refused: ConfirmAction is never called on it, confirms_total{refused}
 // increments, and the proposal stays pending, which a follow-up Deny then
-// resolves (acceptance 2; security amendment: allow_confirm gates who may
-// approve).
+// resolves (allow_confirm gates who may approve).
 func TestConfirmApproveWithoutGrantRefused(t *testing.T) {
 	t.Parallel()
 
@@ -161,7 +159,7 @@ func TestConfirmApproveWithoutGrantRefused(t *testing.T) {
 
 // TestConfirmNonOpenerRefused proves a tap from any user other than the session
 // opener is refused even with allow_confirm, the proposal stays pending, and the
-// opener's own Deny then resolves it (acceptance 2).
+// opener's own Deny then resolves it.
 func TestConfirmNonOpenerRefused(t *testing.T) {
 	t.Parallel()
 
@@ -198,8 +196,8 @@ func TestConfirmNonOpenerRefused(t *testing.T) {
 }
 
 // TestConfirmTTLExpiresAsDeny proves an unanswered proposal denies after
-// confirm_ttl and the keyboard message is edited in place (acceptance 2;
-// security amendment: confirmations expire as deny).
+// confirm_ttl and the keyboard message is edited in place (confirmations
+// expire as deny).
 func TestConfirmTTLExpiresAsDeny(t *testing.T) {
 	t.Parallel()
 
@@ -231,8 +229,7 @@ func TestConfirmTTLExpiresAsDeny(t *testing.T) {
 }
 
 // TestConfirmStaleTapReplies proves a tap for a proposal with no live routing
-// entry answers "this proposal expired" and calls ConfirmAction for nothing
-// (acceptance 2).
+// entry answers "this proposal expired" and calls ConfirmAction for nothing.
 func TestConfirmStaleTapReplies(t *testing.T) {
 	t.Parallel()
 
@@ -251,8 +248,8 @@ func TestConfirmStaleTapReplies(t *testing.T) {
 }
 
 // TestConfirmTapAfterGateClearedRepliesExpired proves the CodeNoPendingAction
-// path: a routed tap whose D9 gate was already cleared (a lost tap-vs-expiry
-// race) is answered as expired and does not count approved (acceptance 2).
+// path: a routed tap whose confirmation gate was already cleared (a lost tap-vs-expiry
+// race) is answered as expired and does not count approved.
 func TestConfirmTapAfterGateClearedRepliesExpired(t *testing.T) {
 	t.Parallel()
 
@@ -292,7 +289,7 @@ func TestConfirmTapAfterGateClearedRepliesExpired(t *testing.T) {
 // one proposal so the race detector proves the shared routing map is safe. The
 // timer's expiry and the worker's tap both take the map under the core's mutex;
 // however the interleaving settles, exactly one path wins the gate (approved or
-// expired) and nothing is refused (acceptance 2, decision 2).
+// expired) and nothing is refused.
 func TestConfirmExpiryTapRaceUnderRace(t *testing.T) {
 	t.Parallel()
 

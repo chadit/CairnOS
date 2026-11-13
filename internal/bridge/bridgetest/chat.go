@@ -27,7 +27,7 @@ type Confirm struct {
 // Chat is a bridge.ChatService stand-in: it mints sessions, records turns and the
 // workspace each session was created under, can gate one message on a release
 // channel to prove per-conversation serialization, can fail a named message, and
-// can raise a D9 proposal on a named message so the confirm flow runs end to end.
+// can raise a workflow proposal on a named message so the confirm flow runs end to end.
 type Chat struct {
 	sessions map[string]*store.ChatSession
 
@@ -44,7 +44,7 @@ type Chat struct {
 
 	// proposeOn names the inbound text that makes a turn raise a proposal; armGate
 	// says whether raising it also arms the pending gate. A raised proposal with an
-	// unarmed gate models a proposal whose D9 gate a concurrent path already
+	// unarmed gate models a proposal whose confirmation gate a concurrent path already
 	// cleared, so ConfirmAction reports CodeNoPendingAction.
 	proposeOn string
 
@@ -76,7 +76,7 @@ func (c *Chat) SetReply(reply string) {
 	c.reply = reply
 }
 
-// ProposeOn makes the named inbound text raise a D9 proposal instead of replying.
+// ProposeOn makes the named inbound text raise a workflow proposal instead of replying.
 func (c *Chat) ProposeOn(message string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -109,7 +109,7 @@ func (c *Chat) FailOn(message string) {
 	c.failOn = message
 }
 
-// DisarmGate makes a raised proposal leave the D9 gate clear, standing in for an
+// DisarmGate makes a raised proposal leave the confirmation gate clear, standing in for an
 // expiry that cleared it before a decision arrived.
 func (c *Chat) DisarmGate() {
 	c.mu.Lock()
@@ -195,7 +195,7 @@ func (c *Chat) SendMessage(ctx context.Context, sessionID, userMessage string, o
 	return nil
 }
 
-// ConfirmAction models the D9 gate: it records the call, clears the pending flag
+// ConfirmAction models the confirmation gate: it records the call, clears the pending flag
 // under the lock, and either streams run events (approve) or a denial line (deny).
 // An unarmed session reports CodeNoPendingAction, so a concurrent decision and
 // expiry race exactly as chat.Agent does and the loser gets that code.
@@ -301,7 +301,7 @@ func (c *Chat) recordTurn(sessionID, userMessage string) script {
 	}
 }
 
-// streamProposal arms the D9 gate when configured and emits the proposal event a
+// streamProposal arms the confirmation gate when configured and emits the proposal event a
 // confirmation turn ends on.
 func (c *Chat) streamProposal(sessionID string, armGate bool, out chan<- chat.Event) {
 	if armGate {

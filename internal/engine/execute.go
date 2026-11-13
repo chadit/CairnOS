@@ -161,7 +161,7 @@ func (e *Engine) runResolvedParams(ctx context.Context, runID string, action *wo
 }
 
 // fallbackChain is the ordered provider list for an action: its own runner
-// first, then its fallback providers (D12). A per-action fallback list replaces
+// first, then its fallback providers. A per-action fallback list replaces
 // the engine's [engine.fallback] default for that runner; with neither set the
 // chain is just the runner, so a single-provider action runs as it did before.
 func (e *Engine) fallbackChain(action *workflow.Action) []string {
@@ -197,7 +197,7 @@ func (e *Engine) runProvider(actCtx context.Context, action *workflow.Action, pr
 	}
 
 	// Retry invokes the closure sequentially, so the bare counter is safe;
-	// it starts at -1 because the spec's trace numbers attempts from zero.
+	// it starts at -1 because the trace numbers attempts from zero.
 	attemptIndex := -1
 
 	result, attempts, execErr := reliability.Retry(actCtx, e.retryPolicy(action), action.Idempotent,

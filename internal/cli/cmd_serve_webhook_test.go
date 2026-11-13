@@ -178,8 +178,8 @@ func waitForRun(t *testing.T, dir, runID string) *store.Run {
 	}
 }
 
-// TestServeWebhookRunsUnderDefaultWorkspace is the scope-bypass invariant test
-// (security amendment 5). With auth on, a webhook POST carrying only its path
+// TestServeWebhookRunsUnderDefaultWorkspace is the scope-bypass invariant test.
+// With auth on, a webhook POST carrying only its path
 // token starts a run, that run is stamped store.DefaultWorkspace with trigger
 // "webhook", and an unauthenticated gRPC RunWorkflow is still rejected
 // Unauthenticated, proving the ingress route did not weaken scope enforcement.

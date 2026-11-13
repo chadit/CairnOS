@@ -252,7 +252,7 @@ func TestLoadAcceptsEveryNotifyEvent(t *testing.T) {
 }
 
 // TestLoadBridgeTokenIsNotAConfigKey documents the env-only posture: the bot
-// token and a base_url are never config keys (decision 3), so a file carrying
+// token and a base_url are never config keys, so a file carrying
 // them still loads with unknown keys ignored rather than binding a credential or
 // an exfiltration-capable base URL into the config tree.
 func TestLoadBridgeTokenIsNotAConfigKey(t *testing.T) {

@@ -164,8 +164,7 @@ func mustFail(t *testing.T, eng *engine.Engine, flow *workflow.Workflow) *store.
 }
 
 // assertNoSecretPersisted marshals a run and its action rows and fails if the
-// secret plaintext appears anywhere, the grep-shaped leak check the spec asks
-// for.
+// secret plaintext appears anywhere, a grep-shaped leak check.
 func assertNoSecretPersisted(t *testing.T, db *fakeStore, runID, secret string) {
 	t.Helper()
 

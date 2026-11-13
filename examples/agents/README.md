@@ -3,12 +3,12 @@
 Start with [quickstart](./quickstart/README.md): one prompt through a
 logged-in CLI tool, the fastest proof that a fresh install works.
 
-Eight more workflows ship with Phase 1. They aren't finished products;
+Nine more workflows ship alongside it. They aren't finished products;
 each one exists to show how actions compose, how data passes between them,
 and which runner fits which job. Every directory holds one workflow TOML
 and a README with its config block, env keys, and run commands.
 
-Sourcing stance (S5): Career Scout and Housing Monitor fetch only from
+Sourcing stance: Career Scout and Housing Monitor fetch only from
 sources you own or hold API keys for; no sample scrapes LinkedIn, Indeed,
 or any listing site.
 
@@ -49,8 +49,8 @@ Env keys below are all prefixed `CAIRNOS_RUNNER_`; runner config blocks
 - `skill_gap_analyzer` and `housing_monitor` call Go functions through
   `local_fn`. Code can't live in config, so the operator registers those
   functions at build time; each README documents the contract.
-- `learning_coach` ends with a `kind = "agent"` action. It validates today
-  and starts executing when the agent loop lands in Phase 1c.
+- `learning_coach` ends with a `kind = "agent"` action that the agent loop
+  runs, using the `memory` tool to remember past weeks.
 - `browser_snapshot` drives a containerized Playwright MCP server through a
   named `mcp_client` runner. Its `[runner.browser_nav]` block goes in
   `config.toml` (see that sample's README) and needs the `mcp_client`

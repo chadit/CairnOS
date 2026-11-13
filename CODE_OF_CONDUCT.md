@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through [GitHub private vulnerability reporting](https://github.com/chadit/CairnOS/security/advisories/new), which keeps the report private, or through a [GitHub issue](https://github.com/chadit/CairnOS/issues/new/choose) for a conduct matter that does not need privacy. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through [GitHub private vulnerability reporting](https://github.com/chadit/CairnOS/security/advisories/new), which keeps the report private. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

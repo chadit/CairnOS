@@ -26,7 +26,7 @@ const (
 	propFromOAuthApp = "from_oauth_app"
 )
 
-// Loop-limiter defaults (FR15).
+// Loop-limiter defaults.
 const (
 	defaultLoopMaxEvents = 20
 	defaultLoopWindow    = 5 * time.Minute
@@ -46,7 +46,7 @@ const (
 // MentionsInText reports whether message addresses username outside of code.
 // The server's own mention list says the bot was mentioned but not where, so
 // this is the check that keeps a username quoted in a code sample from waking
-// the bot (FR10).
+// the bot.
 func MentionsInText(message, username string) bool {
 	if username == "" {
 		return false
@@ -104,7 +104,7 @@ func IsAutomated(post *Post, user *User) bool {
 }
 
 // ActivateAI reports the prop an automated poster sets to address the bot on
-// purpose, which admits it outside the channels allow_bots_in names (FR14).
+// purpose, which admits it outside the channels allow_bots_in names.
 func ActivateAI(post *Post) bool {
 	return post != nil && post.Props[PropActivateAI] == propTrue
 }
@@ -155,7 +155,7 @@ func closesOnLine(buf []byte, start int) bool {
 }
 
 // blankIndented blanks the four-space and tab indented code lines, which
-// Mattermost renders as code just as a fence does (FR10). A line opens a block
+// Mattermost renders as code just as a fence does. A line opens a block
 // only when the line before it is blank or is itself indented code, which is
 // what keeps a wrapped list item from reading as code.
 func blankIndented(buf []byte) {
@@ -268,7 +268,7 @@ func continues(rest string) bool {
 
 // isWordByte reports whether b continues a username. Mattermost usernames match
 // ^[a-z0-9.\-_]+$, so "." and "-" belong: without them "@ops" matches inside
-// "@ops-team", which names a different user (FR10).
+// "@ops-team", which names a different user.
 func isWordByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
@@ -278,7 +278,7 @@ func isWordByte(b byte) bool {
 	}
 }
 
-// LoopLimitConfig tunes the loop guard; zero fields take the FR15 defaults.
+// LoopLimitConfig tunes the loop guard; zero fields take the loop-limiter defaults.
 type LoopLimitConfig struct {
 	// Window is how far back an admission counts.
 	Window time.Duration
@@ -294,7 +294,7 @@ type LoopLimitConfig struct {
 // LoopLimiter caps how many automated posts one conversation may turn into chat
 // turns. Provenance keeps most loops from starting, but the channels
 // allow_bots_in names are exactly the ones where two bots can answer each other
-// forever, so the window is the second half of that guard (design D6).
+// forever, so the window is the second half of that guard.
 // Safe for concurrent use.
 type LoopLimiter struct {
 	windows map[string]*loopWindow
@@ -313,7 +313,7 @@ type loopWindow struct {
 	admits []time.Time
 }
 
-// NewLoopLimiter builds a limiter, applying the FR15 defaults to unset fields.
+// NewLoopLimiter builds a limiter, applying the loop-limiter defaults to unset fields.
 func NewLoopLimiter(cfg LoopLimitConfig) *LoopLimiter {
 	maxEvents := cfg.MaxEvents
 	if maxEvents <= 0 {

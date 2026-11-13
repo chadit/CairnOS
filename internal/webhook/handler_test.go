@@ -669,7 +669,7 @@ func TestProductionReturns202(t *testing.T) {
 
 // TestWebhookRunStampsDefaultWorkspace proves the scope-bypass invariant: a
 // webhook run executes under store.DefaultWorkspace regardless of the request
-// context (security amendment 5).
+// context.
 func TestWebhookRunStampsDefaultWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -786,8 +786,8 @@ func assertNoTokenLeak(t *testing.T, logs, token, path string) {
 }
 
 // TestHandlerNeverLogsTokenOrPath drives every listed status (404, 429, 401,
-// 503, 400, 409, 202) and proves no log line carries the raw path or token
-// (security amendment 6). Known-registration statuses also carry the
+// 503, 400, 409, 202) and proves no log line carries the raw path or token.
+// Known-registration statuses also carry the
 // registration ID.
 func TestHandlerNeverLogsTokenOrPath(t *testing.T) {
 	t.Parallel()

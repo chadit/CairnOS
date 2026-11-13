@@ -35,7 +35,7 @@ const fileRefSigil = '@'
 // configuration under the CairnOS home, the same trust class as workflow TOML
 // and chat personalities. Nothing here fetches over the network. Both features
 // influence prompt text only: a context doc or an inlined file adds no tool,
-// raises no budget, and cannot move the D9 confirmation gate. Two walls guard
+// raises no budget, and cannot move the confirmation gate. Two walls guard
 // the reads all the same, because a request-supplied workspace id and a
 // user-typed path are attacker-influenced even when the files are not: the
 // workspace id is charset-checked before any context path is built, and an

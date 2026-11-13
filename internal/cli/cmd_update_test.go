@@ -474,7 +474,7 @@ func TestUpdateCheckSeesTheRemote(t *testing.T) {
 	}
 }
 
-// TestUpdateRunsSecretsPullBeforeRestart covers FR11. The service reads both
+// TestUpdateRunsSecretsPullBeforeRestart pins the pull before the restart. The service reads both
 // environment files once, at startup, so a pull after the restart would leave
 // the new process on the previous values.
 func TestUpdateRunsSecretsPullBeforeRestart(t *testing.T) {
@@ -523,7 +523,7 @@ func TestUpdateRunsSecretsPullBeforeRestart(t *testing.T) {
 	}
 }
 
-// TestUpdateStopsWhenTheSecretsPullFails is the other half of FR11. A pull that
+// TestUpdateStopsWhenTheSecretsPullFails is the other half of that ordering. A pull that
 // failed left the generated file at whatever it was, so restarting would put
 // the service on values nobody checked and the link would advertise the build
 // that runs them. The failure has to reach the operator instead.

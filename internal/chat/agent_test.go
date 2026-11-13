@@ -116,7 +116,7 @@ func engineConfig() engine.Config {
 }
 
 // engineTrigger satisfies chat.WorkflowTrigger by running a parsed workflow
-// through a real engine and reporting its terminal status. It proves the D9
+// through a real engine and reporting its terminal status. It proves the
 // confirmed path fires a real run under engine governance, not a stub.
 type engineTrigger struct {
 	eng *engine.Engine
@@ -290,7 +290,7 @@ func TestToolCallThenAnswer(t *testing.T) {
 	assertMessageRoles(t, db, sessionID, []string{store.ChatRoleUser, store.ChatRoleTool, store.ChatRoleAssistant})
 }
 
-// TestRunWorkflowProposalGatesUntilApproved is the D9 core: a run_workflow call
+// TestRunWorkflowProposalGatesUntilApproved is the confirmation gate's core: a run_workflow call
 // raises a confirmation gate, no run starts, and only ConfirmAction(approve)
 // fires the real workflow.
 func TestRunWorkflowProposalGatesUntilApproved(t *testing.T) {

@@ -21,11 +21,10 @@ const mattermostStage = "mattermost bridge"
 
 // buildMattermostBridge builds the bridge from the declared identities and
 // registers each send surface, so the send service, CLI, message runner, and
-// notify sink post through the client the bridge answers on (FR33).
+// notify sink post through the client the bridge answers on.
 //
 // A nil bridge with ExitOK means nothing to run: no identity, or none with a
-// token (FR2). An identity with [chat] off fails with config.ErrInvalidConfig
-// (FR4).
+// token. An identity with [chat] off fails with config.ErrInvalidConfig.
 func (a *App) buildMattermostBridge(
 	ctx context.Context,
 	cfg *config.Config,
@@ -74,9 +73,9 @@ func (a *App) buildMattermostBridge(
 }
 
 // mattermostIdentities builds one client per identity whose token env is set,
-// each over transport, logging one info line for each it skips (FR2). Every
+// each over transport, logging one info line for each it skips. Every
 // client shares one rate bucket because Mattermost keys its own limit by source
-// IP (decision D5). Name order makes the log lines and any failure reproducible
+// IP. Name order makes the log lines and any failure reproducible
 // across starts.
 func mattermostIdentities(
 	settings *config.Mattermost, lookup environ.Lookup, transport http.RoundTripper, logger *slog.Logger,

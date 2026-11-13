@@ -1,5 +1,5 @@
 // MessagingService: the outbound send surface over the configured chat
-// identities (FR26-FR30). A caller names an identity, a target, and the text;
+// identities. A caller names an identity, a target, and the text;
 // the service resolves the target against that identity's transport and posts.
 // ListIdentities answers what a caller may send as, so a CLI or workflow does
 // not have to guess an identity name from config.
@@ -48,11 +48,11 @@ message MessagingServiceSendMessageRequest {
   string identity = 1;
 
   // to is the target in one of four forms: "#channel-name", "@username",
-  // "channel:<id>", or "user:<id>". A bare id is InvalidArgument (FR27).
+  // "channel:<id>", or "user:<id>". A bare id is InvalidArgument.
   string to = 2;
 
   // text is the message body, sent unmodified so Mattermost renders any
-  // mentions it contains (FR29). Empty is InvalidArgument.
+  // mentions it contains. Empty is InvalidArgument.
   string text = 3;
 
   // thread_id optionally roots the post in an existing thread.

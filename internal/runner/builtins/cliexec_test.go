@@ -14,7 +14,7 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Shared fixture names for the Phase 1a runner tests.
+// Shared fixture names for the runner tests.
 const (
 	promptKey  = "prompt"
 	binaryKey  = "binary"

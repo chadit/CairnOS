@@ -80,7 +80,7 @@ func TestLoadSourceDefaultsRef(t *testing.T) {
 	}
 }
 
-// TestLoadSourceDefaultsDirtyReset covers the half of FR1 a raw map cannot
+// TestLoadSourceDefaultsDirtyReset covers the half of the source defaults a raw map cannot
 // recover later: an absent key has to arrive as true, not as the zero value.
 func TestLoadSourceDefaultsDirtyReset(t *testing.T) {
 	t.Parallel()
@@ -373,7 +373,7 @@ func TestLoadSourceRejectsBadBlocks(t *testing.T) {
 	}
 }
 
-// TestLoadSourceRequiresGitOnPath proves FR3 against an empty PATH: a host with
+// TestLoadSourceRequiresGitOnPath proves the git check against an empty PATH: a host with
 // no git binary fails config load with an error naming it, instead of clearing
 // startup and failing on the first sync.
 // emptyPath answers a PATH with nothing on it, which is how these cases stage a

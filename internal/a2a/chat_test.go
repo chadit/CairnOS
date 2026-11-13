@@ -24,7 +24,7 @@ const (
 	contextTwo = "ctx-beta"
 
 	// msgHello drives an ordinary turn, msgPropose makes the fake agent raise a
-	// D9 proposal, and msgSlow blocks until its context is canceled.
+	// workflow proposal, and msgSlow blocks until its context is canceled.
 	msgHello   = "hello there"
 	msgPropose = "propose"
 	msgSlow    = "take your time"
@@ -70,7 +70,7 @@ func send(t *testing.T, fix *fixture, token, contextID, text string) *a2av1.Send
 }
 
 // TestSendMessageKeepsOneSessionPerContext proves context_id is the
-// conversation handle FR36 asks for: two calls under one id continue the same
+// conversation handle: two calls under one id continue the same
 // chat session, and a different id starts its own.
 func TestSendMessageKeepsOneSessionPerContext(t *testing.T) {
 	t.Parallel()
@@ -113,7 +113,7 @@ func TestSendMessageKeepsOneSessionPerContext(t *testing.T) {
 	}
 }
 
-// TestSendMessageProposalRoundTrip proves FR37 end to end: a turn that ends on
+// TestSendMessageProposalRoundTrip proves the proposal flow end to end: a turn that ends on
 // a proposal answers input-required with the proposal filled, and a follow-up
 // approve on the same context id resolves it.
 func TestSendMessageProposalRoundTrip(t *testing.T) {
@@ -168,7 +168,7 @@ func TestSendMessageProposalRoundTrip(t *testing.T) {
 }
 
 // TestSendMessageApproveNeedsWriteWorkflow proves the second, finer scope check
-// FR37 asks for: a2a:task alone reaches the conversation but cannot approve a
+// at approval time: a2a:task alone reaches the conversation but cannot approve a
 // workflow, and the proposal stays pending rather than resolving.
 func TestSendMessageApproveNeedsWriteWorkflow(t *testing.T) {
 	t.Parallel()
@@ -306,7 +306,7 @@ func TestSendMessageRequiresA2AScope(t *testing.T) {
 // TestSendMessageScopesTheConversationToItsPeer proves two keys in one workspace
 // holding the same context_id hold two conversations. The chat key used to be
 // the peer's own context_id, so a second key could resume the first's session by
-// naming an id as ordinary as "ops" and read the transcript back (FR36).
+// naming an id as ordinary as "ops" and read the transcript back.
 func TestSendMessageScopesTheConversationToItsPeer(t *testing.T) {
 	t.Parallel()
 

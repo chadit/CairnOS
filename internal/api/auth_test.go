@@ -395,7 +395,7 @@ func TestLoginRejectsBadKeys(t *testing.T) {
 	}
 }
 
-// TestMalformedHashLoginIsIndistinguishable is the L3 fix: a key whose stored
+// TestMalformedHashLoginIsIndistinguishable proves a key whose stored
 // hash does not parse must answer the same opaque UNAUTHENTICATED /
 // auth.unauthenticated as a wrong secret, never leaking that the stored hash
 // is the problem. The real detail goes to the server log, not the wire.
@@ -405,7 +405,7 @@ func TestMalformedHashLoginIsIndistinguishable(t *testing.T) {
 	fix := startAuthServer(t)
 
 	// A key with a syntactically broken stored hash: VerifyKey returns
-	// ErrHashMalformed, which L3 routes into the credential-failure path.
+	// ErrHashMalformed, which login routes into the credential-failure path.
 	broken := &auth.Key{
 		ID:        "01HASHBROKEN0000000000000",
 		Label:     "broken-hash",
@@ -483,8 +483,8 @@ func TestHealthNeedsNoTokenWithAuthOn(t *testing.T) {
 	}
 }
 
-// TestReadMemoryTokenCannotRunWorkflow is the spec's acceptance bullet
-// verbatim: a read:memory-only token must not start a workflow, while the
+// TestReadMemoryTokenCannotRunWorkflow proves a read:memory-only token must
+// not start a workflow, while the
 // scope it does hold keeps working.
 func TestReadMemoryTokenCannotRunWorkflow(t *testing.T) {
 	t.Parallel()
@@ -661,7 +661,7 @@ func TestExpiredTokenRejectedWithItsOwnCode(t *testing.T) {
 	}
 }
 
-// TestLoginRunRevokeFlow is the full Phase 4a integration: login, run a
+// TestLoginRunRevokeFlow is the full auth integration: login, run a
 // workflow with the token, revoke it, and watch the very next call fail before
 // exp.
 func TestLoginRunRevokeFlow(t *testing.T) {

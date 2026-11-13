@@ -64,8 +64,7 @@ type Call struct {
 	// BreakerState is the runner's circuit position when the call launched.
 	BreakerState string
 
-	// Attempt is zero-based, so retries show as attempt 1 and up, matching
-	// the spec's example trace.
+	// Attempt is zero-based, so retries show as attempt 1 and up.
 	Attempt int
 }
 

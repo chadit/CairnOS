@@ -1,5 +1,5 @@
 // Package service installs and manages cairnos serve under the host's process
-// supervisor (D14). Planners are pure: they turn Options and a Host snapshot
+// supervisor. Planners are pure: they turn Options and a Host snapshot
 // into a Plan of files and commands, so tests and --dry-run inspect exactly
 // what setup would do before anything touches the system. This round ships
 // systemd (Linux, user and system units) and the launchd LaunchAgent (macOS,

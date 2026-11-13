@@ -4,8 +4,8 @@
 // sample agent.
 //
 // Storage choice: a dedicated rules table keyed (workspace, language, project,
-// key), not the vault. The spec calls the service "a typed view over the
-// vault", but a flat key/value rule is a poor fit for a document store, and a
+// key), not the vault. The service could be a typed view over the
+// vault, but a flat key/value rule is a poor fit for a document store, and a
 // dedicated table makes the merge a two-query union instead of a graph walk
 // over tagged documents. The vault still holds prose rule documents; this
 // service holds the typed key/value rules the runner merges. Both are

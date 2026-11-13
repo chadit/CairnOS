@@ -510,12 +510,12 @@ func doneEvent(usage runner.Usage) chat.Event {
 	return chat.Event{Type: chat.EventTurnDone, Usage: usage}
 }
 
-// confirmEvent scripts a D9 confirmation-required event.
+// confirmEvent scripts a confirmation-required event.
 func confirmEvent(proposal *chat.Proposal) chat.Event {
 	return chat.Event{Type: chat.EventConfirmationRequired, Proposal: proposal}
 }
 
-// Shared D9-confirmation fixtures. The confirmation tests (non-streaming,
+// Shared confirmation fixtures. The confirmation tests (non-streaming,
 // streaming, and the real-agent path) assert the same proposal, so its inputs
 // and the rendered substrings live in one place for goconst and DRY.
 const (
@@ -538,7 +538,7 @@ func stagingProposal() *chat.Proposal {
 	}
 }
 
-// confirmationWants lists the substrings a rendered D9 confirmation must carry:
+// confirmationWants lists the substrings a rendered confirmation must carry:
 // the workflow, its inputs as compact JSON, the budget, the session id, and the
 // native write:workflow scope a human needs to approve.
 func confirmationWants(sessionID string) []string {

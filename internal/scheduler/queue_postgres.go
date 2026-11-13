@@ -11,7 +11,7 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgWorkItemSchema is the Postgres work-queue table (S8): JSONB payload,
+// pgWorkItemSchema is the Postgres work-queue table: JSONB payload,
 // timestamptz, a unique dedup_key for exactly-once enqueue, and the claim index
 // over (state, available_at) the FOR UPDATE SKIP LOCKED scan reads.
 const pgWorkItemSchema = `
@@ -213,7 +213,7 @@ func (q *PostgresQueue) Resume(ctx context.Context, id string) error {
 }
 
 // ListHeld returns every held item with its hold key, so a resume probe can
-// check the credential each one is waiting on (D12).
+// check the credential each one is waiting on.
 func (q *PostgresQueue) ListHeld(ctx context.Context) ([]WorkItem, error) {
 	rows, err := q.pool.Query(ctx,
 		"SELECT "+pgWorkItemColumns+" FROM work_item WHERE state = $1 ORDER BY id ASC", string(WorkHeld))

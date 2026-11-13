@@ -134,7 +134,7 @@ func (s *Store) ListSuggestions(ctx context.Context, filter store.SuggestionFilt
 
 // UpdateSuggestionStatus moves a suggestion through its review states, scoped
 // to the request workspace so one tenant cannot flip the status of another's
-// suggestion by id; a cross-tenant id reads as not-found. The Phase 3 flow only
+// suggestion by id; a cross-tenant id reads as not-found. The review flow only
 // ever sets approved or rejected; nothing is auto-applied.
 func (s *Store) UpdateSuggestionStatus(ctx context.Context, id string, status store.SuggestionStatus) error {
 	result, err := s.db.ExecContext(ctx,

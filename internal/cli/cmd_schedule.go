@@ -211,9 +211,9 @@ func (a *App) reconcileInterrupted(ctx context.Context, label string, db store.S
 	return true
 }
 
-// cmdScheduleRun is the foreground Phase 0b daemon: the daemon enqueues each
+// cmdScheduleRun is the foreground scheduler daemon: the daemon enqueues each
 // due fire and the worker drains the queue through the engine fire runner, until
-// the context is canceled, which exits clean. Phase 1a's serve embeds the same
+// the context is canceled, which exits clean. Serve embeds the same
 // loop.
 //
 // It fans held and dead_lettered alerts the way serve does, so running the

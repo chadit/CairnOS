@@ -147,7 +147,7 @@ type Source struct {
 type Engine struct {
 	// Fallback is the mixed-model chain, keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
-	// order before the action fails (D12). An absent or empty entry means the
+	// order before the action fails. An absent or empty entry means the
 	// action's runner has no fallback.
 	Fallback map[string][]string
 
@@ -234,25 +234,24 @@ type Telemetry struct {
 	Enabled      bool
 }
 
-// API configures the gRPC and HTTP listeners (off until Phase 1a serves).
+// API configures the gRPC and HTTP listeners that serve starts.
 type API struct {
 	GRPC string
 	HTTP string
 
 	// CORSOrigins is the explicit CORS allowlist for the gateway. Empty (the
 	// default) sends no CORS headers, so the browser enforces same-origin. A
-	// wildcard with credentials is never emitted; only listed origins echo back
-	// (spec M1).
+	// wildcard with credentials is never emitted; only listed origins echo back.
 	CORSOrigins []string
 
 	// MaxBodyBytes caps a gateway request body, wrapping each handler in an
 	// http.MaxBytesReader so an over-limit POST is rejected with 413 instead of
-	// buffering unbounded input (spec M4). Zero falls back to the default.
+	// buffering unbounded input. Zero falls back to the default.
 	MaxBodyBytes int64
 
 	// MaxRecvMsgBytes caps a single gRPC message, set explicitly on the server
 	// so the transport rejects an over-limit frame rather than relying on the
-	// library default (spec M4). Zero falls back to the default.
+	// library default. Zero falls back to the default.
 	MaxRecvMsgBytes int
 
 	Enabled bool
@@ -263,7 +262,7 @@ type API struct {
 // and CAIRNOS_AUTH_PRIVATE_KEY_FILE / CAIRNOS_AUTH_PUBLIC_KEY_FILE.
 type Auth struct {
 	// SigningAlgorithm picks the token tier: HS256 (self-issued, shared
-	// secret) or EdDSA (asymmetric, cross-org-ready; spec Change 3).
+	// secret) or EdDSA (asymmetric, cross-org-ready).
 	SigningAlgorithm string
 
 	// Issuer and Audience fill and check the iss/aud token claims.
@@ -272,25 +271,25 @@ type Auth struct {
 
 	// MaxConcurrentLogins bounds simultaneous credential derivations, since
 	// each unauthenticated argon2id login costs ~64 MiB; excess logins get
-	// RESOURCE_EXHAUSTED rather than pinning memory (spec M1).
+	// RESOURCE_EXHAUSTED rather than pinning memory.
 	MaxConcurrentLogins int
 
 	// AccessTokenTTL bounds each token; refresh is re-login with the
-	// access key (spec Change 2), so the default stays short at 1h.
+	// access key, so the default stays short at 1h.
 	AccessTokenTTL time.Duration
 
 	// LoginRatePerMinute bounds one peer's logins per minute (also its
-	// burst), throttling a single source on top of the global cap (spec M1).
+	// burst), throttling a single source on top of the global cap.
 	LoginRatePerMinute int
 
 	// StreamRecheck is how often an open stream re-verifies its token's
 	// expiry and denylist state, so a long-lived stream stops after a
-	// mid-stream revoke or expiry (spec M4).
+	// mid-stream revoke or expiry.
 	StreamRecheck time.Duration
 
 	// ClockSkew is the leeway the cross-instance EdDSA verifier allows on the
 	// time claims, absorbing small clock differences between issuer and
-	// verifier (spec L2).
+	// verifier.
 	ClockSkew time.Duration
 
 	// RequireExp and RequireJTI reject tokens missing those claims. Both
@@ -312,7 +311,7 @@ type Auth struct {
 	Enabled bool
 }
 
-// OAuth configures the Phase 5b OIDC human-login path: browser users sign in at
+// OAuth configures the OIDC human-login path: browser users sign in at
 // an identity provider, and CairnOS mints its own JWT carrying the workspace
 // and the role's scopes. It sits alongside the access-key model, not in place
 // of it. Off by default; the client secret never lives in the config file, only
@@ -355,13 +354,13 @@ type OAuth struct {
 	// AutoProvision gates first-login auto-provisioning. Default false: an
 	// IdP-authenticated subject with no pre-existing membership is refused
 	// rather than silently added to DefaultWorkspace, closing the open-door
-	// provisioning hole (spec H1). With it true, AllowedEmailDomains and
+	// provisioning hole. With it true, AllowedEmailDomains and
 	// AllowedSubjects still gate which subjects may self-provision when either
 	// list is set.
 	AutoProvision bool
 }
 
-// A2A configures the Phase 4b Agent-to-Agent protocol adapter. Off by default;
+// A2A configures the Agent-to-Agent protocol adapter. Off by default;
 // when enabled, the serve process registers the A2A service, serves the signed
 // agent card at the well-known path, and optionally fronts the gRPC listener
 // with mTLS.
@@ -388,7 +387,7 @@ type A2A struct {
 	Enabled bool
 }
 
-// MCP configures the Phase 7a MCP server. Off by default; with the http
+// MCP configures the MCP server. Off by default; with the http
 // transport the serve process mounts the streamable handler on the API mux at
 // Path, and an external client presents the same bearer token, under the same
 // scopes. The stdio transport is the `cairnos mcp serve` subcommand, where auth
@@ -442,9 +441,9 @@ const (
 // config sets no path.
 const defaultMCPPath = "/mcp"
 
-// Hive gates network tip sharing (Phase 6). Subscribing is always safe;
-// publishing is gated and off by default, pending the privacy review (R2) and
-// the hosting decision (R3).
+// Hive gates network tip sharing. Subscribing is always safe;
+// publishing is gated and off by default, pending the privacy review and
+// the hosting decision.
 type Hive struct {
 	// Endpoint is the hive API base URL.
 	Endpoint string
@@ -455,7 +454,7 @@ type Hive struct {
 	NodePseudonym string
 
 	// KeyRef is the secret name of the shared cluster key, resolved through the
-	// SecretSource seam (R2/R3). Empty means no key: the client keeps the
+	// SecretSource seam. Empty means no key: the client keeps the
 	// plaintext wire format, the no-key mode for SQLite or an unconfigured
 	// cluster. When set, published tips are sealed and received envelopes opened
 	// under the resolved 32-byte key.
@@ -464,7 +463,7 @@ type Hive struct {
 	// PrevKeyRef is the secret name of the previous shared key, still accepted
 	// during a key rotation so opening keeps working. Empty when no rotation is
 	// in flight. A node seals under KeyRef and opens under KeyRef or PrevKeyRef,
-	// so a cluster rotates keys without a flag day (R2/R3).
+	// so a cluster rotates keys without a flag day.
 	PrevKeyRef string
 
 	// Categories are the opted-in categories. Sharing is per-category, off
@@ -490,7 +489,7 @@ type Hive struct {
 
 // hiveBackend is the only store backend that can run the hive: it is a private
 // cluster over shared state, so the elected primary and the sealed multi-node
-// model need Postgres (R2/R3).
+// model need Postgres.
 const hiveBackend = "postgres"
 
 // HiveNeedsPostgres reports a hive that is enabled but configured on a store
@@ -500,7 +499,7 @@ func (c *Config) HiveNeedsPostgres() bool {
 	return c.Hive.Enabled && c.Store.Backend != hiveBackend
 }
 
-// Autonomic gates the Phase 6 auto-apply path. Default off: nothing
+// Autonomic gates the auto-apply path. Default off: nothing
 // auto-applies until the operator opts in, and even then only the
 // output-neutral kinds (caching, batching) ever apply.
 type Autonomic struct {
@@ -508,10 +507,10 @@ type Autonomic struct {
 	AutoApplyEnabled bool
 }
 
-// Tuning bounds the Phase 3 suggestion scan.
+// Tuning bounds the suggestion scan.
 type Tuning struct {
-	// EmbeddingModel opts the replay guardrail into similarity comparison
-	// (R1): when set, an output-changing suggestion's replay judges
+	// EmbeddingModel opts the replay guardrail into similarity comparison:
+	// when set, an output-changing suggestion's replay judges
 	// equivalence by the cosine similarity of OpenAI embeddings instead of
 	// exact byte match, so harmless rephrasing no longer reads as divergence.
 	// Empty keeps the exact-match default, so similarity comparison is opt-in.
@@ -528,7 +527,7 @@ type Tuning struct {
 }
 
 // Scheduler tunes the durable work-queue the scheduler enqueues into and the
-// worker drains (S8). A cron fire enqueues a work item; a worker claims and
+// worker drains. A cron fire enqueues a work item; a worker claims and
 // runs it. A fire no worker can take right away is not dropped, it waits in the
 // queue for the next free worker.
 type Scheduler struct {
@@ -561,7 +560,7 @@ type Scheduler struct {
 }
 
 // Scheduler work-queue defaults, chosen for a small calm node; an operator tunes
-// them per deployment (S8).
+// them per deployment.
 const (
 	defaultSchedulerAckWait       = 5 * time.Minute
 	defaultSchedulerBackoff       = 30 * time.Second
@@ -571,7 +570,7 @@ const (
 	defaultSchedulerSweepInterval = time.Minute
 )
 
-// Chat configures the Phase 9 conversational interface. Off by default; when
+// Chat configures the conversational interface. Off by default; when
 // enabled the serve process mounts ChatService and the chat agent over the same
 // engine the workflows run on.
 type Chat struct {
@@ -596,7 +595,7 @@ type Chat struct {
 	FileAllowlist []string
 
 	// TurnBudgetUSD caps one chat turn's estimated driver-and-tool spend, the
-	// Phase 9 guardrail against a runaway conversation. Zero leaves turns
+	// guardrail against a runaway conversation. Zero leaves turns
 	// uncapped.
 	TurnBudgetUSD float64
 
@@ -639,12 +638,12 @@ type Webhook struct {
 
 	// SignatureSkew is the freshness window for the native signature: a
 	// timestamp further than this from now is rejected, and the nonce cache
-	// retains entries for this long, so a captured request cannot replay past it
-	// (security amendment 1). Below 1 falls back to the handler default.
+	// retains entries for this long, so a captured request cannot replay past it.
+	// Below 1 falls back to the handler default.
 	SignatureSkew time.Duration
 }
 
-// Bridge configures the Phase 9b messaging bridge. Off by default; a second
+// Bridge configures the messaging bridge. Off by default; a second
 // transport beyond Telegram is additive.
 type Bridge struct {
 	Telegram   Telegram
@@ -668,7 +667,7 @@ type Telegram struct {
 	// SendTimeout bounds each outbound Bot API call.
 	SendTimeout time.Duration
 
-	// ConfirmTTL is how long an unanswered D9 proposal stays pending before it
+	// ConfirmTTL is how long an unanswered workflow proposal stays pending before it
 	// expires as a deny.
 	ConfirmTTL time.Duration
 
@@ -683,7 +682,7 @@ type Telegram struct {
 
 // TelegramUser maps one allowlisted Telegram sender to a workspace and its
 // grants. The bridge is an in-process trusted surface with no token to carry
-// scopes, so approving a D9 workflow is a distinct operator-set grant
+// scopes, so approving a workflow is a distinct operator-set grant
 // (AllowConfirm) rather than a scope check.
 type TelegramUser struct {
 	// Workspace is the workspace every turn from this sender is stamped with,
@@ -695,7 +694,7 @@ type TelegramUser struct {
 	// Empty falls back to [chat] default_personality.
 	Personality string
 
-	// AllowConfirm grants this sender the right to Approve a D9 proposal. Default
+	// AllowConfirm grants this sender the right to Approve a workflow proposal. Default
 	// false: chat access does not imply workflow-approval authority, so a
 	// chat-only sender's Approve tap is refused.
 	AllowConfirm bool
@@ -834,7 +833,7 @@ const (
 	defaultWebhookRatePerMinute = 60
 	defaultWebhookTestWait      = 30 * time.Second
 	// defaultWebhookSignatureSkew is the native-signature freshness window and
-	// the nonce-cache retention (security amendment 1). Five minutes tolerates
+	// the nonce-cache retention. Five minutes tolerates
 	// clock drift between a sender and this node while keeping the replay window
 	// short.
 	defaultWebhookSignatureSkew = 5 * time.Minute
@@ -938,12 +937,12 @@ const (
 	defaultOAuthRole      = "viewer"
 )
 
-// defaultMinSavingsUSD is the spec's suggestion savings floor: a penny per
+// defaultMinSavingsUSD is the suggestion savings floor: a penny per
 // run, low enough to surface real waste and high enough to keep noise out of
 // the review queue.
 const defaultMinSavingsUSD = 0.01
 
-// API request-size defaults (M4). The gateway body cap and the gRPC message cap
+// API request-size defaults. The gateway body cap and the gRPC message cap
 // both land at 1 MiB, enough for the JSON and proto payloads CairnOS exchanges
 // and small enough that an over-limit request is rejected before it buffers.
 // 1 << 20 is shift form for 1 MiB per the house power-of-two rule.
@@ -952,10 +951,10 @@ const (
 	defaultMaxRecvMsgBytes = 1 << 20
 )
 
-// Login DoS and verification defaults (M1/M4/L2). The login pool is small
+// Login DoS and verification defaults. The login pool is small
 // because each argon2id derivation costs ~64 MiB; the per-peer rate is one
 // login per second on average; the stream recheck and the cross-instance clock
-// skew are the spec's stated defaults.
+// skew are the stated defaults.
 const (
 	defaultMaxConcurrentLogins = 4
 	defaultLoginRatePerMinute  = 60
@@ -1071,7 +1070,7 @@ func validateSecrets(secrets *Secrets) error {
 // validateAuth fails fast when auth is enabled with an unusable identity:
 // an empty issuer or audience, a non-positive TTL, or an unknown signing
 // algorithm would all break token issue or verification at runtime, so they
-// are rejected at load with config.invalid (spec L1). Auth-off configs skip
+// are rejected at load with config.invalid. Auth-off configs skip
 // this; the token path never runs.
 func validateAuth(auth *Auth) error {
 	if !auth.Enabled {
@@ -1339,7 +1338,7 @@ type fileConfig struct {
 	// Credential holds each [credential.<name>] block verbatim so parsing can
 	// reject unknown keys itself: go-toml drops unknown struct fields silently,
 	// which would let a plaintext client_secret or a typo'd secret key sit in the
-	// file unnoticed (security amendment 4).
+	// file unnoticed.
 	Credential map[string]map[string]any `toml:"credential"`
 
 	// Host holds each [host.<name>] block verbatim, nested tool blocks included:
@@ -1377,7 +1376,7 @@ type fileConfig struct {
 // fileBridgeUser mirrors one [bridge.telegram.users.<id>] table. Each entry
 // replaces wholesale (there is no per-user default to merge with), so plain
 // values stand in for the pointer-optional pattern used elsewhere. There is no
-// token field here: the token is env-only (decision 3).
+// token field here: the token is env-only.
 type fileBridgeUser struct {
 	Workspace    string `toml:"workspace"`
 	Personality  string `toml:"personality"`

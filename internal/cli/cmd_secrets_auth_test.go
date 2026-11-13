@@ -135,7 +135,7 @@ func assertAbsent(t *testing.T, path, what string) {
 	}
 }
 
-// TestSecretsAuthWritesWhatWasTyped covers FR14: a host with no credentials file
+// TestSecretsAuthWritesWhatWasTyped proves a host with no credentials file
 // gets one from four answers, at the mode the loader insists on. The three
 // credentials are not operator-visible, so no transcript may carry them, and a
 // redirected stdin skips the visible-typing warning. The next step it names
@@ -558,7 +558,8 @@ func TestSecretsAuthRefusesAChezmoiConfigOthersCanRead(t *testing.T) {
 	assertAbsent(t, filepath.Join(dir, "config.toml"), "a config.toml")
 }
 
-// TestSecretsAuthFailsOnAClosedStdin covers FR17. A deploy script that reaches
+// TestSecretsAuthFailsOnAClosedStdin proves a closed stdin ends the run. A
+// deploy script that reaches
 // this command has no terminal behind it, so the run has to end rather than wait
 // for a line that cannot arrive. With no item in the config there is no default
 // to fall back on, so the first prompt is the one that fails.
@@ -675,7 +676,7 @@ func TestSecretsAuthRefusesALineBreakInAnAnswer(t *testing.T) {
 // stagedFieldValue fills a vault field the status check counts but never reads.
 const stagedFieldValue = "one"
 
-// TestSecretsAuthChecksAnExistingFileWithoutRewritingIt covers FR16: the
+// TestSecretsAuthChecksAnExistingFileWithoutRewritingIt proves the
 // credentials already on the host are proven against the vault here, rather
 // than at the next deploy, and every problem is reported without the file
 // being touched. The count is the one the pull would write.

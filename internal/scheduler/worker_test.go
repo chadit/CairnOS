@@ -313,7 +313,7 @@ func TestWorkerHoldsHoldableError(t *testing.T) {
 	runner := &recordingQueueRunner{failWith: reauthErr}
 
 	// notified carries the item OnHold saw, so the test proves the worker calls
-	// the operator-alert hook after parking the job (D12 slice 3).
+	// the operator-alert hook after parking the job.
 	notified := make(chan string, oneShotChanSize)
 
 	worker := scheduler.NewWorker(&scheduler.WorkerConfig{
@@ -364,7 +364,7 @@ func TestWorkerHoldsHoldableError(t *testing.T) {
 	}
 
 	// The worker stored the HoldKey predicate's result on the held item, so a
-	// resume probe can later read which credential it waits on (D12).
+	// resume probe can later read which credential it waits on.
 	listed, err := queue.ListHeld(t.Context())
 	if err != nil {
 		t.Fatalf("list held: %v", err)

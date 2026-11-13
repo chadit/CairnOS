@@ -32,7 +32,7 @@ func (a *Authenticator) issue(ctx context.Context, key *Key) (string, time.Time,
 // scopes. It trusts that grant as handed, so the caller resolves it first,
 // membership included for an IdP subject. jti/sub/exp are recorded before the
 // token leaves, so RevokeToken denies it until its real exp even after
-// access_token_ttl drops (spec M2).
+// access_token_ttl drops.
 func (a *Authenticator) MintForSubject(ctx context.Context, subject, workspace string, scopes []string) (string, time.Time, error) {
 	now := a.cfg.Now()
 	expiresAt := now.Add(a.cfg.TTL)
@@ -78,7 +78,7 @@ func (a *Authenticator) parse(token string) (*Claims, error) {
 
 	// Leeway absorbs small clock differences between a cross-instance issuer
 	// and this verifier, so a token whose iat or nbf sits a few seconds in
-	// the future still passes (spec L2). Zero skew keeps the strict behavior.
+	// the future still passes. Zero skew keeps the strict behavior.
 	if a.cfg.ClockSkew > 0 {
 		options = append(options, jwt.WithLeeway(a.cfg.ClockSkew))
 	}

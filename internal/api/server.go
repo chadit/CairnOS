@@ -72,11 +72,11 @@ type Config struct {
 	// leaves the rules methods answering UNIMPLEMENTED.
 	Rules rules.Service
 
-	// Chat is the Phase 9 chat agent backing ChatService. Nil leaves the chat
+	// Chat is the chat agent backing ChatService. Nil leaves the chat
 	// methods answering UNIMPLEMENTED, for nodes that run with chat disabled.
 	Chat ChatAgent
 
-	// Auth turns on Phase 4a token enforcement: a unary and stream interceptor
+	// Auth turns on token enforcement: a unary and stream interceptor
 	// verify the bearer token and its scope on every method except Health and
 	// Login. Nil means auth is disabled and every call passes unchecked.
 	Auth Authenticator
@@ -92,7 +92,7 @@ type Config struct {
 	// Registry lists the built runners for AdminService.
 	Registry *runner.Registry
 
-	// LoginLimiter caps unauthenticated login cost (spec M1): a bounded
+	// LoginLimiter caps unauthenticated login cost: a bounded
 	// derivation pool plus a per-peer rate limit on the Login RPC. Nil leaves
 	// the login path unbounded, which is the auth-disabled case.
 	LoginLimiter *auth.LoginLimiter
@@ -104,8 +104,9 @@ type Config struct {
 	// the cadence deterministically without sleeping. Nil means time.Now.
 	StreamClock func() time.Time
 
-	// GRPCAddr and HTTPAddr are the bind addresses. Both pass the Phase 1a
-	// localhost guard: loopback or unix only (see normalizeBind).
+	// GRPCAddr and HTTPAddr are the bind addresses. Both pass the bind guard
+	// in normalizeBind: loopback and unix always bind, and a network address
+	// binds only when the auth policy allows it.
 	GRPCAddr string
 	HTTPAddr string
 
@@ -113,25 +114,25 @@ type Config struct {
 	WorkflowsDir string
 
 	// Extensions register extra gRPC services, gateway handlers, and HTTP
-	// endpoints onto this one server (the A2A adapter, Phase 4b). They are
+	// endpoints onto this one server (the A2A adapter). They are
 	// injected as closures rather than imported directly so a service package
 	// can depend on this one without a cycle. Nil entries are skipped.
 	Extensions []*Extension
 
-	// CORSOrigins is the explicit CORS allowlist for the gateway (spec M1).
+	// CORSOrigins is the explicit CORS allowlist for the gateway.
 	// Empty sends no CORS headers, so the browser enforces same-origin.
 	CORSOrigins []string
 
-	// MaxRecvMsgBytes caps a single gRPC message (spec M4). Zero leaves the
+	// MaxRecvMsgBytes caps a single gRPC message. Zero leaves the
 	// library default in place.
 	MaxRecvMsgBytes int
 
-	// MaxBodyBytes caps a gateway request body (spec M4); an over-limit POST is
+	// MaxBodyBytes caps a gateway request body; an over-limit POST is
 	// rejected with 413. Zero leaves the body uncapped.
 	MaxBodyBytes int64
 
 	// StreamRecheck is how often an open stream re-verifies its token's
-	// expiry and denylist state (spec M4); zero falls back to the default.
+	// expiry and denylist state; zero falls back to the default.
 	StreamRecheck time.Duration
 
 	// BindPolicy decides which non-loopback binds the guard accepts; the
@@ -167,7 +168,7 @@ type Extension struct {
 	Name string
 }
 
-// Server is the Phase 1a API process: one gRPC server (with reflection) and
+// Server is the API process: one gRPC server (with reflection) and
 // one HTTP listener carrying the generated gateway plus /openapi.json and
 // /routes.
 type Server struct {
@@ -320,7 +321,7 @@ func (s *Server) listenFunc() func(context.Context, string, string) (net.Listene
 func (s *Server) startGRPC() {
 	var options []grpc.ServerOption
 
-	// Cap one received message explicitly (spec M4) so an over-limit frame is
+	// Cap one received message explicitly so an over-limit frame is
 	// rejected by the transport rather than relying on the library default.
 	if s.cfg.MaxRecvMsgBytes > 0 {
 		options = append(options, grpc.MaxRecvMsgSize(s.cfg.MaxRecvMsgBytes))
@@ -452,7 +453,7 @@ func (s *Server) startGateway(ctx context.Context) error {
 		return err
 	}
 
-	// Deliberate inconsistency (spec L4): /openapi.json and /routes stay public
+	// Deliberate inconsistency: /openapi.json and /routes stay public
 	// so tooling can discover them, while gRPC server reflection sits behind
 	// the auth interceptor's fail-closed default (admin-scoped). The HTTP
 	// discovery docs expose only method shapes, never data, so gating them is
@@ -465,7 +466,7 @@ func (s *Server) startGateway(ctx context.Context) error {
 
 	// Security headers and the CORS allowlist wrap the whole mux, so every
 	// response (gateway, discovery, and extension routes) carries the hardening
-	// headers and only allowlisted origins get CORS (spec M1).
+	// headers and only allowlisted origins get CORS.
 	handler := securityHeaders(corsAllowlist(s.cfg.CORSOrigins, root))
 
 	s.httpServer = &http.Server{Handler: handler, ReadHeaderTimeout: readHeaderTimeout}

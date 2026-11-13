@@ -20,7 +20,7 @@ import (
 // Links live in their own table so backlink derivation is a reverse lookup
 // over an indexed target_id rather than a JSON scan.
 //
-// The sqlite-vec path stays a stub (D2): a semantic Query falls back to
+// The sqlite-vec path stays a stub: a semantic Query falls back to
 // keyword and flags it.
 const vaultSchema = `
 CREATE TABLE IF NOT EXISTS documents (

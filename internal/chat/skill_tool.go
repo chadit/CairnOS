@@ -12,7 +12,7 @@ import (
 // description-match invocation path alongside the slash grammar. The driver
 // calls it to load one operator-authored skill by name. A load influences
 // prompt text only: it adds no capability, raises no budget, and cannot move
-// the D9 confirmation gate.
+// the confirmation gate.
 const SkillToolName = "skill"
 
 // skill tool argument and output keys. name is both the required argument and

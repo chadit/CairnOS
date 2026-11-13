@@ -52,7 +52,7 @@ type Describer interface {
 
 // ToolCaller marks an LLM runner that supports its provider's native tool-use
 // mode, making it eligible as an agent-loop driver. There is no JSON-in-text
-// fallback (D8): a driver that does not implement ToolCaller fails agent
+// fallback: a driver that does not implement ToolCaller fails agent
 // validation with agent.driver_incapable.
 type ToolCaller interface {
 	// ExecuteWithTools runs one driver turn with tools offered. A tool call

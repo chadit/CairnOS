@@ -28,8 +28,7 @@ const (
 
 // tokenHexLen is the exact character length of a valid hex path token: 32 bytes
 // of entropy render to 64 hex chars. The handler rejects any other length
-// before a lookup or a body read, so garbage floods never reach the store
-// (security amendment 3).
+// before a lookup or a body read, so garbage floods never reach the store.
 const tokenHexLen = tokenBytes * 2
 
 // Trigger labels stamped on webhook-started runs; store.Run.Trigger records
@@ -41,8 +40,8 @@ const (
 
 // HMAC header forms. GitHub sends X-Hub-Signature-256 (sha256=<hex>) over the
 // body alone; the native sender uses X-Cairnos-Signature-256 (bare hex) over
-// timestamp + nonce + body so the signature itself carries freshness (security
-// amendment 1). Header lookups canonicalize, so the exact casing here is
+// timestamp + nonce + body so the signature itself carries freshness. Header
+// lookups canonicalize, so the exact casing here is
 // cosmetic.
 const (
 	headerGitHubSig      = "X-Hub-Signature-256"
@@ -131,8 +130,7 @@ type HandlerConfig struct {
 	// may override it.
 	RatePerMinute int
 
-	// UnknownRatePerMinute caps unknown-token requests process-wide (security
-	// amendment 3).
+	// UnknownRatePerMinute caps unknown-token requests process-wide.
 	UnknownRatePerMinute int
 
 	// TestWait bounds how long the test endpoint holds a connection for the
@@ -140,7 +138,7 @@ type HandlerConfig struct {
 	TestWait time.Duration
 
 	// SignatureSkew is the native-signature timestamp window and the replay-cache
-	// retention (security amendment 1).
+	// retention.
 	SignatureSkew time.Duration
 }
 
@@ -205,7 +203,7 @@ func NewHandler(cfg *HandlerConfig) *Handler {
 // the gRPC interceptor. A webhook POST starts a run with no scope check and no
 // tenant claim, so the path token is a write:workflow-equivalent capability for
 // one workflow and the run executes under store.DefaultWorkspace. The ingress
-// path provides no tenant isolation (security amendment 5).
+// path provides no tenant isolation.
 func (h *Handler) Routes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		prodRoute: func(w http.ResponseWriter, r *http.Request) { h.serve(w, r, EndpointProd) },
@@ -222,7 +220,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, endpoint Endpoin
 
 	// Shape gate before any lookup or body read: a token that is not exactly 64
 	// hex chars matches nothing, so it is unknown by definition and never touches
-	// the store (security amendment 3).
+	// the store.
 	if !validTokenShape(token) {
 		h.rejectUnknown(w, r, "")
 
@@ -261,7 +259,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, endpoint Endpoin
 
 	// HMAC verifies before the execution bucket is charged, so a leaked path
 	// token without the signing secret cannot drain a registration's bucket with
-	// bad signatures and starve real deliveries (security amendment 4).
+	// bad signatures and starve real deliveries.
 	if reg.HMACSecretRef != "" && !h.verifyHMAC(w, r, reg, body) {
 		return
 	}
@@ -376,8 +374,7 @@ func (h *Handler) paused(r *http.Request, reg *Registration) bool {
 // production or test response path. Stamping DefaultWorkspace makes the
 // scope-bypass invariant explicit: the ingress path is outside the gRPC scope
 // interceptor and claims no tenant, so the run executes under the default
-// workspace by construction, not by a context that merely happens to carry none
-// (security amendment 5).
+// workspace by construction, not by a context that merely happens to carry none.
 func (h *Handler) start(w http.ResponseWriter, r *http.Request, reg *Registration, endpoint Endpoint, inputs map[string]any) {
 	trigger := triggerWebhook
 	if endpoint == EndpointTest {
@@ -488,7 +485,7 @@ func (h *Handler) drain(reg *Registration, started StartedRun) {
 }
 
 // verifyHMAC resolves the registration's secret and verifies the request
-// signature, folding replay resistance in (security amendment 1). An unresolvable
+// signature, folding replay resistance in. An unresolvable
 // secret ref fails closed with a 503 and a loud log naming the ref. It reports
 // whether the request may proceed; a false result has already written the
 // response.
@@ -594,9 +591,9 @@ func (h *Handler) verifyNative(w http.ResponseWriter, r *http.Request, reg *Regi
 }
 
 // validMAC reports whether hexSig is the HMAC-SHA256 of message under secret.
-// The compare is hmac.Equal over the decoded digests, constant-time, and the
-// checkable requirement the acceptance criteria pin: no ==/bytes.Equal on MAC
-// values anywhere in this package.
+// The compare is hmac.Equal over the decoded digests, so it runs in constant
+// time. No == or bytes.Equal on MAC values anywhere in this package, since
+// either leaks timing.
 func validMAC(secret string, message []byte, hexSig string) bool {
 	want, err := hex.DecodeString(hexSig)
 	if err != nil {
@@ -620,7 +617,7 @@ func absDuration(d time.Duration) time.Duration {
 }
 
 // rejectUnknown answers an unknown-token request. It charges the process-wide
-// unknown-token bucket first (security amendment 3): an empty bucket is a
+// unknown-token bucket first: an empty bucket is a
 // generic 429, otherwise a 404. No body is read and no run starts. hash is ""
 // when the token failed the shape gate, so the log never carries the token or
 // path, only an 8-char prefix when one exists.

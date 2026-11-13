@@ -10,9 +10,9 @@ import (
 )
 
 // TestPhase1aFactoriesBuildWithEmptyConfig mirrors the CLI wiring: every
-// Phase 1a factory must register and build with no config block at all,
-// because the registry constructs all built-ins at startup whether or not
-// the operator configured them.
+// built-in runner factory, the CLI runners included, must register and build
+// with no config block at all, because the registry constructs all built-ins
+// at startup whether or not the operator configured them.
 func TestPhase1aFactoriesBuildWithEmptyConfig(t *testing.T) {
 	t.Parallel()
 

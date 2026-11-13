@@ -12,7 +12,7 @@ const authUsage = `usage: cairnos auth revoke (--jti X | --key K) [--dir D]
   revoke --key K   Denylist every live token minted from access key K
 `
 
-// cmdAuth dispatches the Phase 4a revocation subcommand. Revocation writes the
+// cmdAuth dispatches the revocation subcommand. Revocation writes the
 // shared denylist directly, so it works while the serve daemon holds the
 // database open (WAL) and takes effect on the daemon's next verify.
 func (a *App) cmdAuth(ctx context.Context, args []string) int {
@@ -77,7 +77,7 @@ func (a *App) cmdAuthRevoke(ctx context.Context, args []string) int {
 	}
 
 	// DenyKeySince denies only tokens minted at or before now, so the
-	// still-enabled key keeps issuing usable tokens (spec M3).
+	// still-enabled key keeps issuing usable tokens.
 	if err := authStore.DenyKeySince(ctx, *keyFlag, now, until); err != nil {
 		a.printErrf("auth revoke: %v\n", err)
 
@@ -91,7 +91,7 @@ func (a *App) cmdAuthRevoke(ctx context.Context, args []string) int {
 
 // revokeCeiling caps the CLI deny window for tokens whose exp this command
 // cannot look up: long enough that a shortened access_token_ttl cannot
-// resurrect a still-live token (spec M2), and bounded so the row prunes.
+// resurrect a still-live token, and bounded so the row prunes.
 const revokeCeiling = 24 * time.Hour
 
 // revokeWindow is the CLI's deny-window bound: the larger of the configured

@@ -11,8 +11,8 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// triggerA2A marks runs started over A2A in run history, the value spec 04
-// reserves for this protocol (store.Run.Trigger: cli|schedule|api|a2a|webhook).
+// triggerA2A marks runs started over A2A in run history, the value reserved
+// for this protocol (store.Run.Trigger: cli|schedule|api|a2a|webhook).
 const triggerA2A = "a2a"
 
 // defaultListLimit caps ListTasks when the request sets no limit, matching the

@@ -35,7 +35,7 @@ type envelopeError struct {
 }
 
 // newGatewayMux builds the HTTP mux that grpc-gateway routes through, with
-// snake_case field names (matching the protos and the spec examples) and the
+// snake_case field names (matching the protos) and the
 // canonical error envelope on both error paths: WithErrorHandler covers
 // unary failures, and envelopeMarshaler rewrites the stream error chunk,
 // since a streaming RPC that fails before its first message bypasses the

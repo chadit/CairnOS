@@ -17,7 +17,7 @@ import (
 // user home (~/.codex, ~/.qwen, ~/.claude).
 type Provider string
 
-// Known providers, the subscription CLI tools D12 sanctions (S5/D12).
+// Known providers, the subscription CLI tools the re-auth hold supports.
 const (
 	ProviderCodex  Provider = "codex"
 	ProviderQwen   Provider = "qwen"
@@ -28,7 +28,7 @@ const (
 const jwtSegments = 3
 
 // Known reports whether provider is one this package can probe, so a caller can
-// reject an unrecognized tool before storing it as a hold key (D12).
+// reject an unrecognized tool before storing it as a hold key.
 func Known(provider Provider) bool {
 	switch provider {
 	case ProviderCodex, ProviderQwen, ProviderClaude:

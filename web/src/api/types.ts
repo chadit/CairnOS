@@ -207,7 +207,7 @@ export interface RejectSuggestionResponse {
 }
 
 // ---------------------------------------------------------------------------
-// ChatService (D9 conversational surface).
+// ChatService (the conversational surface).
 //
 // SendMessage and ConfirmAction stream ChatEvents as NDJSON, one
 // {result|error} StreamEnvelope per line, the same wire shape as RunWorkflow.
@@ -251,7 +251,7 @@ export interface ListMessagesResponse {
 }
 
 /**
- * WorkflowProposal is the D9 confirmation payload: the workflow the agent
+ * WorkflowProposal is the chat confirmation payload: the workflow the agent
  * wants to run, its inputs, and the estimated spend. It rides on a
  * CONFIRMATION_REQUIRED event so the user approves from full information. A
  * proposal never runs on its own; the user must confirm through ConfirmAction.

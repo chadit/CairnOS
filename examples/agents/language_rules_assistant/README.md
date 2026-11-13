@@ -2,15 +2,14 @@
 
 Asks the rules service for the coding rules of one language, with optional
 per-project overrides. A single root action and no schedule: the smallest
-real workflow in this directory, and the second sample from the original
-vision doc.
+real workflow in this directory.
 
 ## Runners
 
 - `get_rules` uses `language_rules_service`: looks up `language` (and the
   optional `project` overlay) and returns the merged rule set.
 
-As of Phase 7b this runner is backed by the real Language Rules Service when
+This runner is backed by the real Language Rules Service when
 you run it under `cairnos serve` or `cairnos mcp serve`, which stores rules in
 the node's database. Set rules with `cairnos rules set`, or seed the old
 static-file dir in with `cairnos rules import <dir>`. The workflow did not

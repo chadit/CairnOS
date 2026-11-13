@@ -9,7 +9,7 @@ var (
 	ErrNetworkBind = errors.New("refusing to bind a non-loopback address with auth disabled: enable [auth] or set auth.serve_without_auth_on_network = true to serve an open API deliberately")
 
 	// ErrPlaintextNetworkBind reports a non-loopback bind with auth on but
-	// no TLS in front: /login carries the long-lived access key, and the spec
+	// no TLS in front: /login carries the long-lived access key, and serve
 	// refuses to put it on a network in plaintext. A TLS-terminating proxy
 	// satisfies the requirement via auth.tls_terminated = true.
 	ErrPlaintextNetworkBind = errors.New("refusing a plaintext non-loopback bind: /login carries access keys and requires TLS; front CairnOS with a TLS-terminating proxy and set auth.tls_terminated = true")

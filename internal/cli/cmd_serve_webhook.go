@@ -82,7 +82,7 @@ func buildWebhookExtension(ctx context.Context, cfg *config.Config, dir string, 
 		Pauses: &webhookPauseChecker{store: deps.pauses},
 		// HMAC secrets resolve through the same chain the engine uses (env, then
 		// the encrypted store when configured), so a store-managed HMAC secret is
-		// not hidden from ingress (security council amendment 7).
+		// not hidden from ingress.
 		Secrets:       deps.secrets,
 		MaxBodyBytes:  cfg.API.MaxBodyBytes,
 		RatePerMinute: cfg.Webhook.RatePerMinute,

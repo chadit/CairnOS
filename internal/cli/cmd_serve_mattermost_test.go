@@ -55,7 +55,7 @@ workspace = "default"
 
 // TestServeSkipsMattermostWhenNoIdentity proves the default posture: a config
 // with no [bridge.mattermost.identity] block opens no connection and says so,
-// while serve runs normally (FR2).
+// while serve runs normally.
 func TestServeSkipsMattermostWhenNoIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -80,7 +80,7 @@ func TestServeSkipsMattermostWhenNoIdentity(t *testing.T) {
 
 // TestServeSkipsMattermostIdentityWithoutToken proves a declared identity whose
 // token env is unset starts nothing, logs one line naming the env an operator
-// has to set, and leaves serve running (FR2).
+// has to set, and leaves serve running.
 func TestServeSkipsMattermostIdentityWithoutToken(t *testing.T) {
 	t.Parallel()
 
@@ -105,7 +105,7 @@ func TestServeSkipsMattermostIdentityWithoutToken(t *testing.T) {
 
 // TestServeFailsWhenMattermostWithoutChat proves the cross-check: a declared
 // identity with chat off fails serve startup with config.ErrInvalidConfig,
-// because the bridge has no agent to drive (FR4).
+// because the bridge has no agent to drive.
 func TestServeFailsWhenMattermostWithoutChat(t *testing.T) {
 	t.Parallel()
 

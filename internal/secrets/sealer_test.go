@@ -152,7 +152,7 @@ func TestOpenRejectsSwappedWorkspaceOrName(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsRolledBackVersion is the security-council amendment 6 case: an
+// TestOpenRejectsRolledBackVersion is the rollback case: an
 // attacker who restores an older ciphertext row for the same workspace and name,
 // while the row's recency stamp has moved on, cannot open it. Opening under the
 // version it was sealed at still works, proving the binding is version-exact and

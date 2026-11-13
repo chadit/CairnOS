@@ -20,17 +20,21 @@ RUN go mod download
 COPY . .
 
 # CGO_ENABLED=0 keeps the binary static so the runtime stage stays on
-# distroless static.
-RUN CGO_ENABLED=0 go build -o /out/cairnos ./cmd/cairnos
+# distroless static. The image ships third-party code, and MIT, BSD, and
+# Apache-2.0 require their license and NOTICE texts to travel with it, so they
+# are generated from the versions go.mod pins for the platform this stage builds.
+RUN CGO_ENABLED=0 go build -o /out/cairnos ./cmd/cairnos \
+    && sh scripts/third-party-notices.sh > /out/THIRD_PARTY_NOTICES.txt
 
-# digest-pin: skip Phase 0 dev image; digests pinned at first release
+# digest-pin: skip dev image; digests pinned at first release
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /out/cairnos /usr/local/bin/cairnos
+COPY --from=builder /src/LICENSE /out/THIRD_PARTY_NOTICES.txt /usr/share/doc/cairnos/
 
 USER 65532:65532
 
-# gRPC, HTTP API, and Prometheus metrics per the spec's port assignments.
+# 7777 serves gRPC, 8080 the HTTP API, and 9090 Prometheus metrics.
 EXPOSE 7777 8080 9090
 
 VOLUME ["/data"]

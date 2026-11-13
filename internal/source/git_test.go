@@ -110,7 +110,7 @@ func TestGitCommandKeepsOperatorSSHCommand(t *testing.T) {
 	}
 }
 
-// TestGitCommandReturnsAfterKillWithOrphanHoldingPipes proves FR11's bound
+// TestGitCommandReturnsAfterKillWithOrphanHoldingPipes proves the git time bound
 // survives a grandchild. Killing git does not close the stdout it handed down,
 // so without a WaitDelay the call never returns and the runner's per-source lock
 // stays held for the life of the process.

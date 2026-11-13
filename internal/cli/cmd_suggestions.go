@@ -22,7 +22,7 @@ const suggestionsUsage = "usage: cairnos suggestions <scan|list|approve|reject|a
 // when reconstructing recorded inputs for one suggestion.
 const replayRunWindow = 20
 
-// cmdSuggestions dispatches the Phase 3 review-flow subcommands.
+// cmdSuggestions dispatches the review-flow subcommands.
 func (a *App) cmdSuggestions(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", suggestionsUsage)
@@ -152,7 +152,7 @@ func (a *App) replayRegistry(ctx context.Context, cfg *config.Config) (*runner.R
 
 // replayComparator builds the output-equivalence comparator for replay. An
 // empty embedding model returns nil, so the tuning engine keeps its exact-match
-// default; a configured model returns the embedding-similarity comparator (R1),
+// default; a configured model returns the embedding-similarity comparator,
 // reusing the openai runner's base URL and API key.
 func replayComparator(
 	model string,
@@ -344,7 +344,7 @@ func (a *App) cmdSuggestionsList(ctx context.Context, args []string) int {
 
 // cmdSuggestionsApprove marks a suggestion approved and prints the annotated
 // change for the human to apply by hand. Nothing writes workflow or config
-// files; that is the Phase 3 contract.
+// files; that is the review contract.
 func (a *App) cmdSuggestionsApprove(ctx context.Context, args []string) int {
 	return a.reviewSuggestion(ctx, "suggestions approve", store.SuggestionApproved, args)
 }

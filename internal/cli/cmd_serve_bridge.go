@@ -121,7 +121,7 @@ func (a *App) buildTelegramBridge(
 
 	// The bridge drives the chat agent, so an enabled bridge with chat off has
 	// nothing to run. The cross-check lives here, where both blocks are visible,
-	// rather than in config.Validate (decision 6). A typed-nil *chat.Agent never
+	// rather than in config.Validate. A typed-nil *chat.Agent never
 	// reaches the core's interface field, so its own nil check stays meaningful.
 	if deps.chat == nil {
 		return nil, a.failServe(ctx, tel, bridgeStage,
@@ -264,7 +264,7 @@ func runBridgeLoops(ctx context.Context, logger *slog.Logger, loops []func(conte
 }
 
 // runBridgeLoop runs one transport with a panic recovered and logged, so a
-// bridge crash never takes serve down (decision 6). Each loop already retries
+// bridge crash never takes serve down. Each loop already retries
 // its own connection failures with capped backoff and returns only when ctx is
 // canceled.
 func runBridgeLoop(ctx context.Context, logger *slog.Logger, loop func(context.Context)) {
@@ -295,7 +295,7 @@ func (m *bridgeMetricsAdapter) Turn(transport, identity string, ok bool) {
 	m.rec.BridgeTurn(context.Background(), transport, identity, ok)
 }
 
-// Confirm records one resolved D9 confirmation by outcome: approved, denied,
+// Confirm records one resolved confirmation by outcome: approved, denied,
 // expired, or refused.
 func (m *bridgeMetricsAdapter) Confirm(transport, identity, outcome string) {
 	m.rec.BridgeConfirm(context.Background(), transport, identity, outcome)

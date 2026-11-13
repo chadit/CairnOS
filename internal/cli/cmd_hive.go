@@ -21,7 +21,7 @@ const hiveUsage = `usage: cairnos hive <subscribe|publish|status> [flags]
               the publish gate state.
 `
 
-// cmdHive dispatches the Phase 6 hive subcommands.
+// cmdHive dispatches the hive subcommands.
 func (a *App) cmdHive(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", hiveUsage)

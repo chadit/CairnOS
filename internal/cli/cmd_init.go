@@ -39,7 +39,7 @@ max_delay    = "%s"
 jitter       = %t
 
 [store]
-backend = "%s"                  # sqlite (postgres arrives in a later phase)
+backend = "%s"                  # sqlite | postgres
 dsn     = "%s"                  # relative paths resolve against this directory
 
 [secrets]
@@ -67,7 +67,7 @@ enabled    = %t
 prometheus = "%s"               # /metrics bind, empty to disable
 
 [api]
-enabled = %t                    # cairnos serve turns this on (Phase 1)
+enabled = %t                    # cairnos serve turns this on
 grpc    = "%s"
 http    = "%s"
 
@@ -221,7 +221,7 @@ func renderConfig() string {
 	)
 }
 
-// formatDuration renders a duration the way the spec's config examples do:
+// formatDuration renders a duration the way config files write one:
 // whole days as "90d", which time.Duration.String cannot produce, otherwise
 // the standard form with trailing zero units trimmed ("10m", not "10m0s").
 func formatDuration(dur time.Duration) string {

@@ -6,9 +6,7 @@ import (
 	"strings"
 )
 
-// Scopes from the spec's table. Phase 4a wires the first six; the vault pair
-// and a2a:task are accepted on keys now so Phase 4b/7 keys need no migration,
-// and admin implies all of them.
+// Scopes an access key can carry. Admin implies all of them.
 const (
 	ScopeReadMemory    = "read:memory"
 	ScopeWriteMemory   = "write:memory"
@@ -18,20 +16,20 @@ const (
 	ScopeReadVault     = "read:vault"
 	ScopeWriteVault    = "write:vault"
 	ScopeA2ATask       = "a2a:task"
-	// ScopeChatSession gates the Phase 9 chat surface: creating sessions,
+	// ScopeChatSession gates the chat surface: creating sessions,
 	// sending messages, and reading conversations. Triggering a workflow from
-	// chat also needs ScopeWriteWorkflow, checked at confirm time (D9).
+	// chat also needs ScopeWriteWorkflow, checked at confirm time.
 	ScopeChatSession = "chat:session"
 	// ScopeMessageSend gates the outbound send surface: posting a message as a
 	// configured identity and listing the identities a caller may send as.
 	// Sending is separable from chat because a workflow or an operator script
 	// posts without ever holding a conversation, and a key scoped to send
-	// should not also read transcripts (FR30).
+	// should not also read transcripts.
 	ScopeMessageSend = "message:send"
 	ScopeAdmin       = "admin"
 )
 
-// ValidScope reports whether name is in the spec's scope table.
+// ValidScope reports whether name is a known scope.
 func ValidScope(name string) bool {
 	switch name {
 	case ScopeReadMemory, ScopeWriteMemory,
@@ -49,13 +47,13 @@ func ValidScope(name string) bool {
 }
 
 // HasScope reports whether the granted set covers the required scope. The
-// admin scope grants everything per the spec's table ("all of the above").
+// admin scope grants everything.
 func HasScope(granted []string, required string) bool {
 	return slices.Contains(granted, ScopeAdmin) || slices.Contains(granted, required)
 }
 
 // ParseScopes splits a comma-separated scope list and validates every
-// entry against the spec table, so a typo'd scope fails at key creation
+// entry against the known scopes, so a typo'd scope fails at key creation
 // instead of silently never matching.
 func ParseScopes(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")

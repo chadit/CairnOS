@@ -59,14 +59,14 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.WorkflowService/ReplayRun", "/cairnos.v1.WorkflowService/SaveWorkflow",
 		"/cairnos.v1.WorkflowService/ApproveRun":
 		// ApproveRun sits with the other run mutations: deciding a gate
-		// changes what the run executes, per the D9 pattern of enforcing
+		// changes what the run executes, following the chat confirm path's pattern of enforcing
 		// write:workflow at decision time.
 		return auth.ScopeWriteWorkflow, false
 	case "/cairnos.v1.WorkflowService/ValidateWorkflow", "/cairnos.v1.AdminService/ListRunners":
 		return auth.ScopeReadWorkflow, false
 	case "/cairnos.v1.WorkflowService/GetRun", "/cairnos.v1.WorkflowService/ListRuns",
 		"/cairnos.v1.SuggestionService/ListSuggestions":
-		// SuggestionService postdates the 07 tables. Listing reads run-derived
+		// Listing suggestions reads run-derived
 		// history, so it sits with GetRun; approve and reject change operator
 		// state and sit under admin below.
 		return auth.ScopeReadRun, false
@@ -79,7 +79,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		"/cairnos.v1.LanguageRulesService/GetRules", "/cairnos.v1.LanguageRulesService/ListLanguages":
 		// Reading documents and rules takes read:vault. The rules service is a
 		// typed view over the vault, so its reads sit under the vault read
-		// scope rather than a separate rules scope (S1 note).
+		// scope rather than a separate rules scope.
 		return auth.ScopeReadVault, false
 	case "/cairnos.v1.VaultService/PutDocument", "/cairnos.v1.VaultService/DeleteDocument",
 		"/cairnos.v1.LanguageRulesService/PutRule":
@@ -92,7 +92,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		// Every chat method takes chat:session. Approving a workflow trigger
 		// also needs write:workflow, which ConfirmAction checks in-handler from
 		// the stamped scopes, since the method table grants one scope per
-		// method (D9).
+		// method.
 		return auth.ScopeChatSession, false
 	case "/cairnos.v1.AdminService/ResetBreaker", "/cairnos.v1.AdminService/RequestRestart",
 		"/cairnos.v1.SuggestionService/ApproveSuggestion", "/cairnos.v1.SuggestionService/RejectSuggestion",
@@ -106,7 +106,7 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 		// run history.
 		return auth.ScopeAdmin, false
 	case "/cairnos.v1.MessagingService/SendMessage", "/cairnos.v1.MessagingService/ListIdentities":
-		// Both messaging methods take the single message:send scope (FR30).
+		// Both messaging methods take the single message:send scope.
 		// ListIdentities sits with the send because its answer is the argument
 		// list for a send. The method names are literals rather than package
 		// constants, matching the A2A entries below, since internal/messaging
@@ -127,10 +127,10 @@ func ScopeForMethod(fullMethod string) (string, bool) {
 }
 
 // defaultStreamRecheck is the fallback re-verify cadence for open streams
-// when Config.StreamRecheck is unset (spec M4).
+// when Config.StreamRecheck is unset.
 const defaultStreamRecheck = 15 * time.Second
 
-// authGuard enforces the Phase 4a token check on every RPC: validate the bearer
+// authGuard enforces the token check on every RPC: validate the bearer
 // token, consult the denylist, and require the method's scope before the
 // handler runs.
 type authGuard struct {
@@ -139,8 +139,8 @@ type authGuard struct {
 	// now injects the clock so tests drive the stream recheck without sleeping.
 	now func() time.Time
 
-	// streamRecheck bounds how often an open stream re-verifies its token
-	// (spec M4): a long-lived stream must not keep delivering after the token
+	// streamRecheck bounds how often an open stream re-verifies its token:
+	// a long-lived stream must not keep delivering after the token
 	// expires or is revoked.
 	streamRecheck time.Duration
 }
@@ -174,7 +174,7 @@ func (g *authGuard) unary(ctx context.Context, req any, info *grpc.UnaryServerIn
 // stream is the grpc.StreamServerInterceptor face of the guard: the scope
 // check runs once before the stream opens, then a wrapper re-verifies the
 // token's expiry and denylist state on each send, throttled to streamRecheck,
-// so revoking or expiring a token ends a long-lived stream (spec M4). Public
+// so revoking or expiring a token ends a long-lived stream. Public
 // methods skip the wrapper since they carried no token to re-check.
 func (g *authGuard) stream(srv any, serverStream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	caller, err := g.authorize(serverStream.Context(), info.FullMethod)
@@ -307,7 +307,7 @@ func bearerToken(ctx context.Context) (string, error) {
 }
 
 // recheckStream wraps a server stream so each send re-verifies the bearer
-// token, throttled to interval (spec M4). gRPC serializes SendMsg on one
+// token, throttled to interval. gRPC serializes SendMsg on one
 // stream, so the throttle state needs no lock. Once a recheck fails the
 // stream ends with the auth error, so a token revoked or expired mid-stream
 // stops further delivery.

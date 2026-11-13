@@ -8,8 +8,8 @@ import (
 )
 
 // maxHops caps link traversal depth so a dense graph cannot run the BFS
-// unbounded. Five hops covers the spec's "documents linked from this, two hops
-// out" intent with room to spare; a request for more is clamped, not rejected,
+// unbounded. Five hops covers a two-hop linked-documents query with room to
+// spare; a request for more is clamped, not rejected,
 // since a clamp degrades gracefully where a rejection would surprise a caller.
 const maxHops = 5
 
@@ -17,10 +17,10 @@ const maxHops = 5
 // never true, so it matches no row where "IN ()" would be a syntax error.
 const emptyInList = "NULL"
 
-// Query runs the typed graph query against sqlite (S1): tag and project
+// Query runs the typed graph query against sqlite: tag and project
 // filtering, bounded link traversal from LinkedFrom out to Hops, and FTS5
 // keyword match. A traversal, when present, produces the candidate id set the
-// other filters narrow. Semantic falls back to keyword (D2).
+// other filters narrow. Semantic falls back to keyword.
 //
 //nolint:gocritic // Store.Query fixes the by-value signature; helpers take *Query
 func (s *SQLite) Query(ctx context.Context, query Query) (QueryResult, error) {

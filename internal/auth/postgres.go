@@ -223,8 +223,8 @@ func (s *Postgres) DenyToken(ctx context.Context, jti string, until time.Time) e
 }
 
 // DenyKeySince records the revoked-at instant for one key's deny-by-sub
-// row; IsDenied then denies only the key's tokens minted at or before it
-// (spec M3). until bounds when the row may be pruned. A re-revocation keeps
+// row; IsDenied then denies only the key's tokens minted at or before it.
+// until bounds when the row may be pruned. A re-revocation keeps
 // the later expiry and the later revoked-at, so it never narrows the deny.
 func (s *Postgres) DenyKeySince(ctx context.Context, keyID string, revokedAt, until time.Time) error {
 	return s.deny(ctx, denyKindSub, keyID, until, revokedAt)
@@ -246,7 +246,7 @@ func (s *Postgres) RemoveKeyDenials(ctx context.Context, keyID string) error {
 // IsDenied reports whether the token is denied at the given instant. A live
 // jti row denies outright; a live sub row denies only the key's tokens
 // minted at or before its revoked-at instant, so fresh tokens of a
-// key-revoked subject still pass (spec M3). Both lookups hit the primary key
+// key-revoked subject still pass. Both lookups hit the primary key
 // index.
 func (s *Postgres) IsDenied(ctx context.Context, jti, sub string, iat, now time.Time) (bool, error) {
 	var count int

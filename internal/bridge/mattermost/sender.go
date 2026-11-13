@@ -24,7 +24,7 @@ const defaultChannelCacheTTL = 10 * time.Minute
 // Senders pairs each identity name with its send surface, so serve registers the
 // whole set in the messaging registry in one pass. Every outbound path (bridge
 // reply, send service, CLI, workflow runner, notify sink) then posts through the
-// same client and the same shared rate bucket (FR33).
+// same client and the same shared rate bucket.
 func (b *Bridge) Senders() map[string]messaging.Sender {
 	senders := make(map[string]messaging.Sender, len(b.identities))
 	for _, agent := range b.identities {
@@ -78,7 +78,7 @@ func isNotFound(err error) bool {
 
 // resolveTarget turns one parsed target into the channel to post in. An id form
 // needs no call at all; a name form needs one lookup, and a user form needs the
-// DM channel between that user and this identity (FR28).
+// DM channel between that user and this identity.
 func (i *identity) resolveTarget(ctx context.Context, target messaging.Target) (string, error) {
 	if target.Kind == messaging.KindChannelID {
 		return target.Value, nil

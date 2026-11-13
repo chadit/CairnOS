@@ -15,14 +15,20 @@ inbox.
 
 ## The compare function
 
-`local_fn` calls Go functions by name, and code can't live in config, so
-the operator registers `skill_gap_compare` at build time when wiring the
-engine. The contract: read `required` (the model's JSON array, as text) and
+The stock `cairnos` binary registers no `local_fn` functions, so this example
+needs a modified build. Code outside the CairnOS module cannot import
+`internal/runner/builtins`, so the function goes in a fork or checkout of this
+repository: add it to the empty map that `fixedBuiltins` passes to
+`builtins.LocalFnFactory` in `internal/cli/wiring.go`, then rebuild with
+`go build ./cmd/cairnos`.
+
+The contract: read `required` (the model's JSON array, as text) and
 `profile` (comma-separated skills) from the task params, return a
 human-readable gap report string. A reference shape:
 
 ```go
-funcs := map[string]builtins.Func{
+// internal/cli/wiring.go, in fixedBuiltins
+{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{
     "skill_gap_compare": func(
         _ context.Context, task *runner.Task,
     ) (any, error) {
@@ -31,8 +37,7 @@ funcs := map[string]builtins.Func{
         // parse required as JSON, diff against profile, format the report
         return report(required, profile), nil
     },
-}
-registry.Register(builtins.LocalFnName, builtins.LocalFnFactory(funcs))
+})},
 ```
 
 Until you register it, validation passes but a run fails at the `compare`

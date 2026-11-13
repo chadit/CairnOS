@@ -14,8 +14,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// maxStrikes is the consecutive bad-driver-output limit from the spec's
-// termination table: "twice in a row".
+// maxStrikes is the consecutive bad-driver-output limit: twice in a row ends
+// the action.
 const maxStrikes = 2
 
 // memoryTokenBudget caps the tokens of memory entries loaded into each
@@ -97,7 +97,7 @@ func (r *loopRun) run(ctx context.Context) (runner.Result, error) {
 }
 
 // callDriver runs one driver turn over the assembled prompt. Memory reloads
-// every iteration per the spec's prompt-assembly order, so notes the agent
+// every iteration, so notes the agent
 // wrote are visible next turn. Usage counts toward the budget even when the
 // turn errors, since the provider may have billed it. A driver failure ends the
 // action unretried, classified by the engine like any runner failure.
@@ -175,8 +175,7 @@ func (r *loopRun) finish(ctx context.Context, dec *decision) runner.Result {
 
 // strike records one rejected driver turn: the bad turn persists as a
 // driver_call step, the rejection lands in the transcript so the driver
-// can correct course, and the second consecutive strike ends the action
-// per the spec's termination table.
+// can correct course, and the second consecutive strike ends the action.
 func (r *loopRun) strike(ctx context.Context, dec *decision, reason string) error {
 	r.strikes++
 

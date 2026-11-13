@@ -127,7 +127,7 @@ func cacheSuggestion(group *cacheGroup) *store.Suggestion {
 		EstSavings: store.Savings{
 			CostUSDPerRun: costPerRepeat * avoidable,
 			LatencyDelta:  time.Duration(float64(group.totalLatency) / repeats * avoidable),
-			// A cache hit is verifiable and output-neutral, the spec's reason
+			// A cache hit is verifiable and output-neutral, which is why
 			// caching leads the suggestion kinds.
 			Confidence: store.ConfidenceHigh,
 		},

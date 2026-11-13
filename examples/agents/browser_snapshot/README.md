@@ -17,8 +17,7 @@ through the same runner, so both honor the same operator config.
 2. `summarize` feeds that snapshot to `anthropic` with the `question` input and
    gets back a plain-text answer.
 3. `investigate` is the agent-driven equivalent. It runs after `summarize` and
-   plans its own `browser_nav` call to answer the same question. It validates
-   today and executes once the Phase 1c agent loop is wired.
+   plans its own `browser_nav` call to answer the same question.
 
 ## The browser_nav runner (paste into config.toml)
 

@@ -11,7 +11,7 @@ import (
 const keySep = "\x00"
 
 // replayCache rejects repeated native nonces and GitHub delivery ids per
-// registration, the freshness half of HMAC verification (security amendment 1).
+// registration, the freshness half of HMAC verification.
 // HMAC over the body proves origin but not freshness: a captured signed request
 // replays forever unless the receiver remembers what it accepted. Entries
 // expire after the retention window so both maps stay bounded. Safe for

@@ -378,7 +378,7 @@ func TestSandboxArgvHardenOptOut(t *testing.T) {
 		}
 	}
 
-	// Resource caps ship regardless of the hardening opt-out (amendment 2).
+	// Resource caps ship regardless of the hardening opt-out.
 	if !slices.Contains(argv, "--pids-limit=128") {
 		t.Fatalf("harden=false dropped the pids cap: %v", argv)
 	}

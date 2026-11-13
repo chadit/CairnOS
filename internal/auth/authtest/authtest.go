@@ -243,7 +243,7 @@ func testIsDeniedWindow[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	}
 
 	// iat at or before the revoked-at instant is denied by a sub row; iat
-	// strictly after it (a fresh token) passes (spec M3).
+	// strictly after it (a fresh token) passes.
 	preRevoke := revokedAt
 	postRevoke := revokedAt.Add(time.Second)
 
@@ -390,7 +390,7 @@ func testPruneDenylistDropsExpiredRows[S auth.Store](t *testing.T, openFn OpenFu
 }
 
 // testIssuedExpRoundTrip records one token's exp and reads it back, and
-// confirms an unknown jti reports not-found rather than an error (spec M2).
+// confirms an unknown jti reports not-found rather than an error.
 func testIssuedExpRoundTrip[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 
@@ -467,7 +467,7 @@ func testMaxIssuedExp[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	}
 }
 
-// testDenyKeySinceSparesFreshTokens is the M3 store invariant: a key
+// testDenyKeySinceSparesFreshTokens is the revoke-by-key store invariant: a key
 // revoked at an instant denies tokens minted at or before it but spares
 // tokens minted after, so a still-enabled key keeps issuing usable tokens.
 func testDenyKeySinceSparesFreshTokens[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
@@ -503,7 +503,7 @@ func testDenyKeySinceSparesFreshTokens[S auth.Store](t *testing.T, openFn OpenFu
 }
 
 // testPruneDropsExpiredIssuedRows confirms PruneDenylist also clears expired
-// issued-token records, so the M2 lookup table does not grow without bound.
+// issued-token records, so the issued-token lookup table does not grow without bound.
 func testPruneDropsExpiredIssuedRows[S auth.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

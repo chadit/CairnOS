@@ -17,8 +17,7 @@ const (
 
 	// approveInstruction opens the line that tells a reader how to decide. The
 	// shared proposal body ends by asking for a decision without saying how, and
-	// a button-less transport has to spell out the two words and the deadline
-	// (FR21).
+	// a button-less transport has to spell out the two words and the deadline.
 	approveInstruction = "Reply `approve` or `deny` within "
 )
 
@@ -102,7 +101,7 @@ type Conn interface {
 type outbound struct {
 	// Embedding promotes the server's own post ceiling, read at connect, as
 	// bridge.Outbound's MaxChars, so a reply splits at the width this server
-	// enforces rather than a compiled-in guess (FR18).
+	// enforces rather than a compiled-in guess.
 	Conn
 
 	// confirmTTL is named in the proposal's instruction line, so a reader sees
@@ -128,7 +127,7 @@ func (o *outbound) Send(ctx context.Context, addr *bridge.Address, text string) 
 // SendProposal posts the shared proposal body plus the line that names the two
 // words and the deadline a reader answers with. Mattermost has no button
 // affordance, so the typed approve or deny the core already understands is the
-// whole decision path here (design D4).
+// whole decision path here.
 func (o *outbound) SendProposal(
 	ctx context.Context,
 	addr *bridge.Address,

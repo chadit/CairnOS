@@ -20,13 +20,13 @@ type Embedder interface {
 // defaultEquivalenceThreshold is the conservative starting cosine threshold:
 // high enough that only near-paraphrases pass, because a false "equivalent" is
 // the dangerous direction (it could let a real quality regression through). It
-// is a starting point to calibrate from, not a validated constant (R1).
+// is a starting point to calibrate from, not a validated constant.
 const defaultEquivalenceThreshold = 0.95
 
 // EmbeddingComparator judges equivalence by cosine similarity of the two
-// outputs' embeddings: at or above the threshold is equivalent. It answers R1
+// outputs' embeddings: at or above the threshold is equivalent. It answers the equivalence question
 // for free-text outputs that exact match calls divergent on harmless
-// rephrasing. The threshold is a knob because the right value depends on the
+// rephrasing. The threshold is a setting because the right value depends on the
 // embedding model and the workflow's domain.
 type EmbeddingComparator struct {
 	// embedder produces the vectors.
@@ -38,8 +38,8 @@ type EmbeddingComparator struct {
 }
 
 // NewEmbeddingComparator builds an embedding comparator. A threshold outside
-// (0, 1] falls back to defaultEquivalenceThreshold, so a misconfigured knob
-// fails safe (stricter) rather than letting everything pass.
+// (0, 1] falls back to defaultEquivalenceThreshold, so a misconfigured
+// threshold fails safe (stricter) rather than letting everything pass.
 func NewEmbeddingComparator(embedder Embedder, threshold float64) *EmbeddingComparator {
 	if threshold <= 0 || threshold > 1 {
 		threshold = defaultEquivalenceThreshold

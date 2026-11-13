@@ -9,15 +9,15 @@ import (
 )
 
 // The exports below are the surface internal/a2a and internal/messaging build
-// on. Both are protocol adapters over behavior this package fronts (FR26), so
-// they reuse this one error-mapping path rather than duplicating the 04 status
+// on. Both are protocol adapters over behavior this package fronts, so
+// they reuse this one error-mapping path rather than duplicating the status
 // table, and the canonical code strings stay in status.go where the gRPC
 // mapping reads them. Keeping the export list small and in one file documents
 // the seam. The names carry a Wire suffix to stay clear of the package-private
 // helpers they delegate to.
 
 // WireStatus classifies any error into the canonical gRPC shape, mapping
-// cairnerr values through the 04 table and everything else to INTERNAL. The
+// cairnerr values through the code table and everything else to INTERNAL. The
 // A2A adapter funnels its store and manager errors through here so an A2A
 // client sees the same codes a native API client does.
 func WireStatus(err error) error {
@@ -48,7 +48,7 @@ func WireRunNotManaged(runID string) error {
 
 // WireInvalidArgument builds the InvalidArgument error for a request the
 // messaging service rejects before any transport call: an unparseable target
-// or an empty body (FR27). Callers get the same api.invalid_argument code a
+// or an empty body. Callers get the same api.invalid_argument code a
 // native handler produces for a malformed field.
 func WireInvalidArgument(format string, args ...any) error {
 	return errorStatus(codes.InvalidArgument, cairnerr.Newf(codeInvalidArgument, format, args...))
@@ -71,9 +71,9 @@ func WireChatDisabled() error {
 }
 
 // ContextHasScope reports whether the handler context carries a granted scope,
-// the exported face of the chat confirm path's own check (D9). The A2A handler
+// the exported face of the chat confirm path's own check. The A2A handler
 // needs it too: the method table grants one scope per method, so write:workflow
-// at approval time is a second, finer check (FR37). With auth off no scopes
+// at approval time is a second, finer check. With auth off no scopes
 // ride the context and the answer is true.
 func ContextHasScope(ctx context.Context, required string) bool {
 	return hasScope(ctx, required)
@@ -82,7 +82,7 @@ func ContextHasScope(ctx context.Context, required string) bool {
 // ContextSubject reports the verified token's subject: the access-key id for a
 // key token, the IdP subject for an OAuth login. The A2A handler names a
 // proposal's opener with it, since the workspace cannot separate two keys in
-// one tenant (FR37). The second result is false when no token rode the call, so
+// one tenant. The second result is false when no token rode the call, so
 // callers fall back instead of failing.
 func ContextSubject(ctx context.Context) (string, bool) {
 	return subjectFromContext(ctx)

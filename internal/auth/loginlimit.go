@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// Login DoS defaults (M1). A small derivation pool bounds how many
+// Login DoS defaults. A small derivation pool bounds how many
 // unauthenticated argon2id derivations run at once, since each costs ~64 MiB;
 // the per-peer bucket throttles a single source so it cannot monopolize even
 // the bounded pool.
@@ -26,7 +26,7 @@ const bucketIdleTTL = 10 * time.Minute
 // over the whole process limits concurrent credential derivations, and a
 // per-peer token bucket rate-limits any single source. Both guard only the
 // Login RPC; a refused call answers ErrTooManyLogins rather than queuing
-// behind the argon2id work (spec M1). Safe for concurrent use.
+// behind the argon2id work. Safe for concurrent use.
 type LoginLimiter struct {
 	sem           *semaphore.Weighted
 	now           func() time.Time
@@ -43,7 +43,7 @@ type tokenBucket struct {
 }
 
 // LoginLimitConfig tunes the limiter; zero or negative values fall back to the
-// M1 defaults so a partially filled config still protects the login path.
+// login DoS defaults so a partially filled config still protects the login path.
 type LoginLimitConfig struct {
 	// Now injects the clock for tests; nil means time.Now.
 	Now func() time.Time
@@ -55,7 +55,7 @@ type LoginLimitConfig struct {
 	RatePerMinute int
 }
 
-// NewLoginLimiter builds a limiter from the config, applying the M1 defaults
+// NewLoginLimiter builds a limiter from the config, applying the login DoS defaults
 // for any unset field.
 func NewLoginLimiter(cfg LoginLimitConfig) *LoginLimiter {
 	maxConcurrent := cfg.MaxConcurrent
@@ -84,7 +84,7 @@ func NewLoginLimiter(cfg LoginLimitConfig) *LoginLimiter {
 // Acquire admits one login from peer, returning a release to call when the
 // derivation finishes. It charges the peer's bucket first (cheap, no slot
 // held) and then tries the derivation pool without blocking; either refusal is
-// ErrTooManyLogins. A nil limiter admits every call so auth without the M1
+// ErrTooManyLogins. A nil limiter admits every call so auth without the login
 // guard still works.
 func (l *LoginLimiter) Acquire(ctx context.Context, peer string) (func(), error) {
 	if l == nil {

@@ -56,14 +56,14 @@ func Retry(ctx context.Context, policy Policy, idempotent bool, call func(contex
 		}
 
 		// delayFor takes the zero-based attempt index so the first wait uses
-		// the spec's base_delay * 2^0.
+		// base_delay * 2^0.
 		if waitErr := wait(ctx, delayFor(policy, attempt-1, err)); waitErr != nil {
 			return result, attempt, waitErr
 		}
 	}
 }
 
-// retryable applies the spec's safety property: a Transient failure runs
+// retryable applies the retry safety property: a Transient failure runs
 // again only on an idempotent action, since the call may have landed before it
 // failed. RateLimited skips that gate: a usage-limit refusal means the account
 // would not run the call, and a CLI wrapper picks its account per launch, so
@@ -121,7 +121,7 @@ func exponentialCeiling(base, maxDelay time.Duration, attempt int) time.Duration
 	ceiling := base
 
 	for range attempt {
-		ceiling <<= 1 // double, per the spec's base * 2^attempt; the shift keeps overflow detectable below
+		ceiling <<= 1 // double, for base * 2^attempt; the shift keeps overflow detectable below
 		if ceiling <= 0 || (maxDelay > 0 && ceiling >= maxDelay) {
 			return maxDelay
 		}

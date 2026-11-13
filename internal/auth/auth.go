@@ -1,4 +1,4 @@
-// Package auth implements the Phase 4a access model: admin-managed access keys
+// Package auth implements the access model: admin-managed access keys
 // stored argon2id-hashed, short-lived JWTs minted at login with the key's
 // scopes, and a jti/sub denylist checked on every verify so revocation is real
 // before exp. Signing is two-tier by configuration: HS256 with a shared
@@ -29,7 +29,7 @@ type KeyStore interface {
 
 // TokenLedger records each minted token's exp so revocation can deny a token
 // until its real expiry even after access_token_ttl drops between mint and
-// revoke (spec Change 1, M2).
+// revoke.
 type TokenLedger interface {
 	// RecordIssued persists one freshly minted token's jti, subject, and exp
 	// so a later RevokeToken can deny it until its real exp, and RevokeKey can
@@ -56,8 +56,8 @@ type DenyRecorder interface {
 
 	// DenyKeySince records a revoked-at instant for one key (deny-by-sub):
 	// only tokens minted at or before revokedAt are denied, so the key stays
-	// enabled and fresh tokens (iat > revokedAt) pass, matching auth.proto
-	// (spec M3). until bounds when the row may be pruned.
+	// enabled and fresh tokens (iat > revokedAt) pass, matching auth.proto.
+	// until bounds when the row may be pruned.
 	DenyKeySince(ctx context.Context, keyID string, revokedAt, until time.Time) error
 
 	// RemoveKeyDenials deletes one key's deny-by-sub rows, the re-enable
@@ -70,7 +70,7 @@ type DenyRecorder interface {
 type DenyChecker interface {
 	// IsDenied reports whether the token is denylisted at the given instant:
 	// a live jti row denies outright, and a live sub row denies only when
-	// the token's iat is at or before the recorded revoked-at instant (M3).
+	// the token's iat is at or before the recorded revoked-at instant.
 	IsDenied(ctx context.Context, jti, sub string, iat, now time.Time) (bool, error)
 
 	// PruneDenylist deletes denylist and issued-token rows whose expiry has
@@ -110,13 +110,13 @@ type Config struct {
 	Issuer   string
 	Audience string
 
-	// TTL bounds each access token; the spec default is one hour, with
-	// refresh by re-login (Change 2).
+	// TTL bounds each access token; the default is one hour, with
+	// refresh by re-login.
 	TTL time.Duration
 
 	// ClockSkew is the leeway the cross-instance EdDSA parser allows on the
 	// time claims, so a token minted on a peer whose clock runs slightly
-	// ahead still verifies (spec L2). Zero applies no leeway.
+	// ahead still verifies. Zero applies no leeway.
 	ClockSkew time.Duration
 
 	// RequireExp and RequireJTI reject tokens missing those claims; both
@@ -207,7 +207,7 @@ func (a *Authenticator) Verify(ctx context.Context, token string) (*Claims, erro
 // RevokeToken denylists one token id until its real exp. The mint-time
 // record (RecordIssued) carries that exp, so lowering access_token_ttl
 // between mint and revoke cannot shorten the deny window below the token's
-// actual life (spec M2). A bare jti with no record falls back to a ceiling
+// actual life. A bare jti with no record falls back to a ceiling
 // that outlasts any default-deployment token.
 func (a *Authenticator) RevokeToken(ctx context.Context, jti string) error {
 	until, err := a.revokeWindow(ctx, jti)
@@ -224,7 +224,7 @@ func (a *Authenticator) RevokeToken(ctx context.Context, jti string) error {
 
 // RevokeKey denies the access key's tokens minted at or before now
 // (deny-by-sub keyed on a revoked-at instant). The key stays enabled and
-// fresh tokens minted afterward pass, matching auth.proto (spec M3). The
+// fresh tokens minted afterward pass, matching auth.proto. The
 // deny row is held until the key's longest-lived recorded token could
 // expire, falling back to the TTL/ceiling bound when no record survives.
 func (a *Authenticator) RevokeKey(ctx context.Context, keyID string) error {

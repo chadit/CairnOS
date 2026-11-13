@@ -31,7 +31,7 @@ const (
 const (
 	// inboxSize bounds a per-conversation worker's backlog. A full inbox drops the
 	// inbound rather than blocking the transport's reader and stalling every other
-	// conversation (FR20).
+	// conversation.
 	inboxSize = 16
 
 	// turnEventBuffer bounds the per-turn event channel the agent streams into.
@@ -92,7 +92,7 @@ type Grant struct {
 	// Personality is the chat personality a session created for this sender gets.
 	Personality string
 
-	// AllowConfirm lets this sender approve a D9 proposal. Denying never needs it.
+	// AllowConfirm lets this sender approve a workflow proposal. Denying never needs it.
 	AllowConfirm bool
 }
 
@@ -136,7 +136,7 @@ type Outbound interface {
 	// may be empty when the transport has nothing to edit later.
 	Send(ctx context.Context, addr *Address, text string) (string, error)
 
-	// SendProposal renders a D9 proposal however the transport asks for a
+	// SendProposal renders a workflow proposal however the transport asks for a
 	// decision, returning the reference an Expirer is later called with.
 	SendProposal(ctx context.Context, addr *Address, sessionID string, proposal *chat.Proposal) (string, error)
 
@@ -186,7 +186,7 @@ type ChatService interface {
 // Metrics is the telemetry surface the bridge records through, kept an interface
 // so the package stays telemetry-free; the cli wiring adapts telemetry.Recorder
 // the way queueMetricsAdapter does. Every method carries the transport and the
-// identity so one dashboard splits Telegram from each Mattermost bot (FR42).
+// identity so one dashboard splits Telegram from each Mattermost bot.
 type Metrics interface {
 	// Update counts one inbound by outcome: handled, unauthorized, or error. The
 	// transport records what it refuses before the core sees it; the core records
@@ -194,7 +194,7 @@ type Metrics interface {
 	Update(transport, identity, outcome string)
 	// Turn counts one delivered chat turn, ok false on a turn failure.
 	Turn(transport, identity string, ok bool)
-	// Confirm counts one resolved D9 confirmation by outcome. The confirm slice
+	// Confirm counts one resolved confirmation by outcome. The confirm slice
 	// (confirm.go) drives it.
 	Confirm(transport, identity, outcome string)
 	// SendFailure counts one outbound send that failed after the turn completed.
@@ -217,7 +217,7 @@ type CoreConfig struct {
 	// default.
 	Logger *slog.Logger
 
-	// ConfirmTTL is how long an unanswered D9 proposal stays pending; the confirm
+	// ConfirmTTL is how long an unanswered workflow proposal stays pending; the confirm
 	// slice (confirm.go) arms the timer.
 	ConfirmTTL time.Duration
 
@@ -226,7 +226,7 @@ type CoreConfig struct {
 }
 
 // Core is the transport-neutral half of the bridge: session binding, one worker
-// per conversation, the turn fold, and the D9 confirmation gate. Every transport
+// per conversation, the turn fold, and the confirmation gate. Every transport
 // hands it Inbound values and gets its replies back through that inbound's
 // Outbound, so the core never touches a wire format.
 type Core struct {
@@ -237,7 +237,7 @@ type Core struct {
 
 	// pending is the confirm routing map: session id -> the address, send surface,
 	// message reference, and opener of a live proposal, plus its expiry timer. The
-	// D9 gate state itself stays inside chat.Agent; this holds only what the core
+	// confirmation gate state itself stays inside chat.Agent; this holds only what the core
 	// needs to route a decision and mark the message on expiry (confirm.go).
 	pending map[string]*route
 
@@ -313,13 +313,13 @@ const (
 	// queueDrained means Drain already closed the workers, so nothing will run it.
 	queueDrained
 
-	// queueFull means the conversation's backlog is at inboxSize (FR20).
+	// queueFull means the conversation's backlog is at inboxSize.
 	queueFull
 )
 
 // Handle routes one inbound to its conversation worker, starting that worker on
 // first contact. A full inbox drops the newest inbound and counts it rather than
-// blocking the caller's reader (FR20). It is the only entry point for every
+// blocking the caller's reader. It is the only entry point for every
 // transport and is safe to call concurrently, Drain included: enqueue queues
 // under the same lock Drain closes the inboxes with.
 func (c *Core) Handle(ctx context.Context, inbound *Inbound) {
@@ -420,7 +420,7 @@ func (c *Core) runWorker(active *worker) {
 
 // runJob runs one queued turn under a recover, so a panic in a driver call, a
 // formatter, or a transport send costs that one conversation its turn instead of
-// taking serve, the API server, and every other identity down with it (NFR3).
+// taking serve, the API server, and every other identity down with it.
 // process defers the completion signal, so a request-scoped caller is released
 // during the unwind rather than left waiting.
 func (c *Core) runJob(queued *job) {

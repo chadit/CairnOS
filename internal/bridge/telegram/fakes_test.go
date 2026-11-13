@@ -47,7 +47,7 @@ const (
 	wsDefault = "default"
 	wsAcme    = "acme"
 
-	// msgPropose makes the fake agent raise a D9 proposal, msgGo drives a plain
+	// msgPropose makes the fake agent raise a workflow proposal, msgGo drives a plain
 	// turn.
 	msgPropose = "propose"
 	msgGo      = "go"

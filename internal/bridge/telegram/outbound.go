@@ -66,7 +66,7 @@ func (o outbound) Send(ctx context.Context, addr *bridge.Address, text string) (
 	return strconv.FormatInt(messageID, idBase), nil
 }
 
-// SendProposal renders a D9 proposal as an Approve/Deny inline keyboard whose
+// SendProposal renders a workflow proposal as an Approve/Deny inline keyboard whose
 // callback_data carries the session id, so a tap comes back as a decision the
 // core can route without re-reading the conversation.
 func (o outbound) SendProposal(

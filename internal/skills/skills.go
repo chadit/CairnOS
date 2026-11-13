@@ -10,7 +10,7 @@
 // home, the same trust class as workflow TOML and chat personalities. They are
 // never remote content; nothing here fetches, syncs, or accepts a skill over
 // the network. A skill body influences prompt text only: it cannot add tools,
-// raise budgets, widen memory scopes, or move the D9 confirmation gate. A
+// raise budgets, widen memory scopes, or move the confirmation gate. A
 // hostile skill file means a compromised operator machine, which sits outside
 // the threat model, exactly like a hostile workflow file.
 package skills

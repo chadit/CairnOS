@@ -3,7 +3,7 @@
 // CairnOS "run", so CreateTask starts a run, GetTask reads one, ListTasks lists
 // them, CancelTask stops one, and TaskUpdates streams a run's events.
 // SendMessage adds the conversational half: a peer holds a multi-turn chat with
-// this node over the same bridge core the chat transports drive (FR36). Every
+// this node over the same bridge core the chat transports drive. Every
 // method needs the a2a:task scope; the gateway gives HTTP-only agents the same
 // surface over JSON.
 
@@ -64,7 +64,7 @@ type A2AServiceClient interface {
 	// SendMessage runs one conversational turn with this node and returns the
 	// reply. context_id names the conversation: the same id on a later call
 	// continues the same chat session, so a peer holds a multi-turn exchange
-	// rather than a series of unrelated questions (FR36). A turn that ends on a
+	// rather than a series of unrelated questions. A turn that ends on a
 	// workflow proposal answers with state "input-required" and the proposal
 	// filled; the peer approves or denies it by sending "approve" or "deny" on
 	// the same context_id.
@@ -176,7 +176,7 @@ type A2AServiceServer interface {
 	// SendMessage runs one conversational turn with this node and returns the
 	// reply. context_id names the conversation: the same id on a later call
 	// continues the same chat session, so a peer holds a multi-turn exchange
-	// rather than a series of unrelated questions (FR36). A turn that ends on a
+	// rather than a series of unrelated questions. A turn that ends on a
 	// workflow proposal answers with state "input-required" and the proposal
 	// filled; the peer approves or denies it by sending "approve" or "deny" on
 	// the same context_id.

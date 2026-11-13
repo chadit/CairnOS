@@ -185,8 +185,8 @@ func TestSecretsPullResolvesABotTokenMostSpecificFirst(t *testing.T) {
 	}
 }
 
-// TestSecretsPullIsQuietWhenOnlyTheUsernameFieldCarriesTheToken covers the FR20
-// half: an identity the item covers under the bot's name needs no change, so
+// TestSecretsPullIsQuietWhenOnlyTheUsernameFieldCarriesTheToken covers the quiet
+// half of the implied-variable warning: an identity the item covers under the bot's name needs no change, so
 // warning would send the operator to add a second copy of a token they have.
 func TestSecretsPullIsQuietWhenOnlyTheUsernameFieldCarriesTheToken(t *testing.T) {
 	t.Parallel()

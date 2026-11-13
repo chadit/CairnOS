@@ -2,7 +2,7 @@ package bridgetest
 
 import "sync"
 
-// Label is the transport and identity pair every bridge counter carries (FR42).
+// Label is the transport and identity pair every bridge counter carries.
 type Label struct {
 	Transport string
 	Identity  string

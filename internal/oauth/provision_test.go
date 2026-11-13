@@ -36,7 +36,7 @@ func runCallback(t *testing.T, handler *oauth.Handler) *httptest.ResponseRecorde
 	return rec
 }
 
-// TestCallbackRefusesProvisionWhenDisabled proves the H1 fail-closed default: a
+// TestCallbackRefusesProvisionWhenDisabled proves the fail-closed default: a
 // first-time subject with no membership is refused when auto-provisioning is
 // off, and no member row is created.
 func TestCallbackRefusesProvisionWhenDisabled(t *testing.T) {
@@ -146,7 +146,7 @@ func TestCallbackMalformedEmailClaimFailsTheDomainGate(t *testing.T) {
 	}
 }
 
-// TestCallbackTokenResponseIsNoStore proves the M1 cache headers on the token
+// TestCallbackTokenResponseIsNoStore proves the cache headers on the token
 // response: the minted bearer token must never be cached, so Cache-Control
 // no-store and the Pragma no-cache backstop ride the successful callback.
 func TestCallbackTokenResponseIsNoStore(t *testing.T) {

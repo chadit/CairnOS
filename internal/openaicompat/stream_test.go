@@ -116,7 +116,7 @@ func TestStreamMultiChunkDeltas(t *testing.T) {
 	}
 }
 
-// TestStreamConfirmationRendersAsDelta proves the D9 gate surfaces over a stream
+// TestStreamConfirmationRendersAsDelta proves the confirmation gate surfaces over a stream
 // as a content delta naming the pending proposal, and that this surface still
 // exposes no confirm route, so a foreign client can never fire the workflow.
 func TestStreamConfirmationRendersAsDelta(t *testing.T) {

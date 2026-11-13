@@ -26,7 +26,7 @@ const serviceUsage = `usage: cairnos service <setup|status|uninstall> [flags]
 Supported today: systemd (Linux, user or system) and launchd (macOS, user).
 `
 
-// cmdService dispatches the host-service subcommands (D14).
+// cmdService dispatches the host-service subcommands.
 func (a *App) cmdService(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", serviceUsage)

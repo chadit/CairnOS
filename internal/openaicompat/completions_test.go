@@ -96,7 +96,7 @@ func TestMultiChunkAnswerConcatenates(t *testing.T) {
 	}
 }
 
-// TestConfirmationRendersAsAssistantText proves a D9 gate surfaces as assistant
+// TestConfirmationRendersAsAssistantText proves a confirmation gate surfaces as assistant
 // text naming the pending proposal, and that this surface exposes no confirm
 // route, so a foreign client can never fire the workflow.
 func TestConfirmationRendersAsAssistantText(t *testing.T) {
@@ -430,7 +430,7 @@ func TestRealAgentSeedsPromptAndGatesWorkflow(t *testing.T) {
 }
 
 // gateDriver is an in-test runner.ToolCaller that records the prompt it saw and
-// answers with one run_workflow tool call, the D9 gate the chat agent
+// answers with one run_workflow tool call, the confirmation gate the chat agent
 // intercepts.
 type gateDriver struct {
 	inputs   map[string]any

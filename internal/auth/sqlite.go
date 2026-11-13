@@ -48,8 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_issued_sub ON auth_issued(sub);
 `
 
 // Denylist row kinds: one revoked token id, or one access key whose every
-// token is dead (deny-by-sub, the spec's recommended default for disabled
-// keys).
+// token is dead (deny-by-sub, the default for disabled keys).
 const (
 	denyKindJTI = "jti"
 	denyKindSub = "sub"
@@ -63,7 +62,7 @@ const keyColumns = "id, label, scopes_json, workspace_id, hash, enabled, created
 // chronological order across every table in the shared file.
 const authTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
-// SQLite is the Phase 4a Store backend. Safe for concurrent use through
+// SQLite is a Store backend. Safe for concurrent use through
 // WAL mode and busy_timeout, which also lets the CLI manage keys and
 // revocations while the serve daemon holds the file open.
 type SQLite struct {
@@ -251,8 +250,8 @@ func (s *SQLite) DenyToken(ctx context.Context, jti string, until time.Time) err
 }
 
 // DenyKeySince records the revoked-at instant for one key's deny-by-sub
-// row; IsDenied then denies only the key's tokens minted at or before it
-// (spec M3). until bounds when the row may be pruned. A re-revocation keeps
+// row; IsDenied then denies only the key's tokens minted at or before it.
+// until bounds when the row may be pruned. A re-revocation keeps
 // the later expiry and the later revoked-at, so it never narrows the deny.
 func (s *SQLite) DenyKeySince(ctx context.Context, keyID string, revokedAt, until time.Time) error {
 	return s.deny(ctx, denyKindSub, keyID, until, revokedAt)
@@ -274,7 +273,7 @@ func (s *SQLite) RemoveKeyDenials(ctx context.Context, keyID string) error {
 // IsDenied reports whether the token is denied at the given instant. A live
 // jti row denies outright; a live sub row denies only the key's tokens
 // minted at or before its revoked-at instant, so fresh tokens of a
-// key-revoked subject still pass (spec M3). Both lookups hit the primary
+// key-revoked subject still pass. Both lookups hit the primary
 // key index.
 func (s *SQLite) IsDenied(ctx context.Context, jti, sub string, iat, now time.Time) (bool, error) {
 	var count int

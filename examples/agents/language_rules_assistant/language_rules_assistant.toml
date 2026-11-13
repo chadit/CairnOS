@@ -7,8 +7,8 @@
 #
 # Trigger-only, single action. The runner reads flat TOML rule files from a
 # configured directory; see the README for the config block and a sample
-# rules file. Phase 1 serves static files; Phase 7b replaces the stub with
-# the real Rules Service.
+# rules file. Under cairnos serve or cairnos mcp serve the runner asks the
+# Language Rules Service first and falls back to these files.
 
 [workflow]
 name        = "language_rules_assistant"

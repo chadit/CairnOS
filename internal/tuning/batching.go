@@ -35,8 +35,8 @@ type batchGroup struct {
 }
 
 // detectBatching finds runs that fired BatchMinCalls or more calls at the
-// same runner inside the sliding window, the spec's "many small same-runner
-// calls in a window" signal. The smallest call in the burst stands in for
+// same runner inside the sliding window: many small calls to one runner in
+// a short span. The smallest call in the burst stands in for
 // the fixed per-call overhead: whatever that call spent is a floor on what
 // every other call in the burst also paid just to exist.
 func (e *Engine) detectBatching(corpus []*runRecord) []*store.Suggestion {

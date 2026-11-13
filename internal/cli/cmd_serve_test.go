@@ -363,7 +363,7 @@ func silentBridgeHost() http.RoundTripper {
 
 // TestServeStartsBridgeWhenEnabled proves the bridge wiring end to end: enabled
 // with a token and chat prints the running banner, and serve exits cleanly on
-// interrupt after draining the poll loop (acceptance 5, the started case).
+// interrupt after draining the poll loop.
 func TestServeStartsBridgeWhenEnabled(t *testing.T) {
 	t.Parallel()
 
@@ -433,7 +433,7 @@ func TestServeSkipsBridgeWhenTokenUnset(t *testing.T) {
 
 // TestServeFailsWhenBridgeWithoutChat proves the cross-check: an enabled bridge
 // with a token but chat off fails serve startup with config.ErrInvalidConfig,
-// since the bridge has no agent to drive (acceptance 5).
+// since the bridge has no agent to drive.
 func TestServeFailsWhenBridgeWithoutChat(t *testing.T) {
 	t.Parallel()
 

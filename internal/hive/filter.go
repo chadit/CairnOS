@@ -11,7 +11,7 @@ import (
 // bucketWidth is the percentage band coarse savings round down into: a 23%
 // saving and a 27% saving both become "20%", so the exact figure (which can
 // fingerprint one node's spend) never leaves. Wider buckets leak less; this is
-// a starting width, not a researched optimum, and the privacy review (R2) may
+// a starting width, not a researched optimum, and the privacy review may
 // widen it.
 const bucketWidth = 10
 

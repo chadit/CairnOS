@@ -245,8 +245,8 @@ func (c *Code) Execute(ctx context.Context, task *runner.Task) (runner.Result, e
 }
 
 // classifyExecError maps a Starlark eval error onto a stable code. It compares
-// the step counter against the cap first and the ctx state second, per the
-// order in the spec, rather than matching Starlark's cancellation text: both
+// the step counter against the cap first and the ctx state second, rather
+// than matching Starlark's cancellation text: both
 // cap paths surface the same cancellation message from the library, and that
 // string is not ours to depend on across upgrades.
 func (c *Code) classifyExecError(ctx context.Context, thread *starlark.Thread, execErr error) *runner.Error {

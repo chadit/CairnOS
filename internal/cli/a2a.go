@@ -129,7 +129,7 @@ func buildA2ABundle(
 }
 
 // a2aChannels renders the registry's identities as card channels, so a peer
-// reading the card learns which chat accounts this node answers on (FR35). An
+// reading the card learns which chat accounts this node answers on. An
 // empty or nil registry yields nothing, which the card omits.
 func a2aChannels(registry *messaging.Registry) []a2a.Channel {
 	if registry == nil {

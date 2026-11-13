@@ -78,8 +78,7 @@ func buildOAuthExtension(ctx context.Context, cfg *config.Config, authn *auth.Au
 			AllowedSubjects:     cfg.OAuth.AllowedSubjects,
 		},
 		// The unauthenticated login route reuses the auth login-rate budget so
-		// one knob bounds both the access-key Login RPC and the OIDC login route
-		// (spec L1).
+		// one setting bounds both the access-key Login RPC and the OIDC login route.
 		LoginRatePerMinute: cfg.Auth.LoginRatePerMinute,
 		Logger:             logger,
 	})

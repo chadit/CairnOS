@@ -49,7 +49,7 @@ const (
 	// means the scope filter failed rather than the importance order.
 	outOfScopeImp = 99
 
-	// bytesPerToken is the Phase 0 estimate both backends apply to a zero
+	// bytesPerToken is the estimate both backends apply to a zero
 	// TokenCost on Add.
 	bytesPerToken = 4
 )
@@ -177,7 +177,7 @@ func testAddGetRoundTrip[S memory.Store](t *testing.T, openFn OpenFunc[S]) {
 	}
 
 	// A zero TokenCost on Add is estimated as content bytes divided by four,
-	// the documented Phase 0 heuristic both backends share.
+	// the documented heuristic both backends share.
 	if want := len(content) / bytesPerToken; got.TokenCost != want {
 		t.Errorf("token cost = %d, want estimated %d", got.TokenCost, want)
 	}

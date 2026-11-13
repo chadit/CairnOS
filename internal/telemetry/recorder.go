@@ -71,8 +71,8 @@ const (
 	keyIdentity  = "identity"
 )
 
-// Span names and span-only attribute keys, mirroring the spec's example
-// trace: one run root, action children named after the action, one
+// Span names and span-only attribute keys. The trace shape is one run
+// root, action children named after the action, one
 // runner.call per attempt, and driver_call/tool_call under agent actions.
 const (
 	spanRun          = "run"
@@ -115,7 +115,7 @@ const (
 	bridgeOutcomeError = "error"
 )
 
-// Circuit state values and labels. The spec fixes the gauge encoding (0
+// Circuit state values and labels. The gauge encoding is fixed (0
 // closed, 1 half-open, 2 open), which differs from reliability's iota
 // order, so the mapping here is explicit.
 const (
@@ -134,7 +134,7 @@ const (
 type workflowKey struct{}
 
 // Recorder implements engine.Instrumentation and agentloop.Instrumentation
-// over one tracer and one meter: spans follow the spec's trace tree, and
+// over one tracer and one meter: spans follow the run's trace tree, and
 // every hook feeds the metric catalog. Safe for concurrent use; all state
 // is write-once at construction.
 type Recorder struct {
@@ -264,7 +264,7 @@ func (r *Recorder) BridgeTurn(ctx context.Context, transport, identity string, o
 	))
 }
 
-// BridgeConfirm counts one D9 confirmation the bridge resolved on
+// BridgeConfirm counts one confirmation the bridge resolved on
 // cairnos_bridge_confirms_total, labeled approved, denied, expired, or refused.
 // refused covers a decision from someone other than the session opener or an
 // allow_confirm miss, the confirm-time grant the bridge enforces, so a spike in
@@ -683,7 +683,7 @@ func actionRunner(action *workflow.Action) string {
 }
 
 // endSpan stamps the usage attributes and outcome onto a finishing span;
-// the spec wants every call-level span to carry tokens, cost, and latency.
+// every call-level span carries tokens, cost, and latency.
 func endSpan(span trace.Span, usage runner.Usage, err error) {
 	span.SetAttributes(
 		attribute.Int64(attrInputTokens, usage.InputTokens),
@@ -746,7 +746,7 @@ func bridgeTurnOutcome(ok bool) string {
 	return bridgeOutcomeError
 }
 
-// stateValue renders a breaker state as the spec's gauge encoding.
+// stateValue renders a breaker state as its gauge encoding.
 func stateValue(state reliability.State) int64 {
 	switch state {
 	case reliability.StateClosed:

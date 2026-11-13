@@ -14,7 +14,7 @@ const maxTranscriptValue = 4096
 
 // systemPrompt picks the action's framing: its own system_prompt or the
 // loop default. References in system_prompt do not interpolate; only the
-// goal carries interpolation per the spec's field table.
+// goal carries interpolation.
 func (r *loopRun) systemPrompt() string {
 	if r.action.SystemPrompt != "" {
 		return r.action.SystemPrompt

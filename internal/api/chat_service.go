@@ -135,10 +135,10 @@ func (s *chatService) SendMessage(req *cairnosv1.SendMessageRequest, stream cair
 	})
 }
 
-// ConfirmAction resolves a pending workflow proposal. An approval is the D9
+// ConfirmAction resolves a pending workflow proposal. An approval is the gated
 // trigger, so it also requires write:workflow on the token, checked
 // here from the stamped scopes since the method table grants one scope per
-// method (D9). A denial needs only chat:session, since nothing runs.
+// method. A denial needs only chat:session, since nothing runs.
 func (s *chatService) ConfirmAction(req *cairnosv1.ConfirmActionRequest, stream cairnosv1.ChatService_ConfirmActionServer) error {
 	if req.GetApprove() && !hasScope(stream.Context(), auth.ScopeWriteWorkflow) {
 		return errorStatus(codes.PermissionDenied, cairnerr.Newf(codeAuthForbidden,

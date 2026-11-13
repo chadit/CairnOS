@@ -39,7 +39,7 @@ var (
 	// ErrSocketDial marks a Listen failure that never got past the WebSocket
 	// upgrade. The reconnect loop resets its backoff only when the socket carried
 	// something: a proxy that passes REST but refuses the upgrade would otherwise
-	// reset the delay on every cycle and redial once a second forever (FR7).
+	// reset the delay on every cycle and redial once a second forever.
 	ErrSocketDial = errors.New("mattermost: websocket upgrade failed")
 )
 
@@ -79,8 +79,7 @@ const (
 
 // APIError is a classified Mattermost API failure. It names the client method
 // that failed and never the request: headers carry the bearer token, so keeping
-// them out of the message keeps the token out of every log that prints it
-// (FR43).
+// them out of the message keeps the token out of every log that prints it.
 type APIError struct {
 	Cause      error
 	Method     string

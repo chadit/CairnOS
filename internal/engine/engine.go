@@ -33,8 +33,8 @@ const (
 	CodeRunTimeout = "engine.run_timeout"
 	// CodeCanceled marks an operator- or caller-initiated stop.
 	CodeCanceled = "engine.canceled"
-	// CodeAgentNotAvailable marks an agent action executed before Phase 1c
-	// ships the agent loop.
+	// CodeAgentNotAvailable marks an agent action executed with no
+	// AgentExecutor wired.
 	CodeAgentNotAvailable = "engine.agent_not_available"
 	// CodeWorkflowSourceMissing marks a workflow-call action reached with no
 	// WorkflowSource configured on the engine, so no child can be resolved.
@@ -70,11 +70,11 @@ const (
 
 const (
 	// defaultMaxConcurrent caps in-flight runner calls when the config does
-	// not say otherwise, per the spec's engine.max_concurrent_actions default.
+	// not say otherwise, the engine.max_concurrent_actions default.
 	defaultMaxConcurrent = 4
 
 	// defaultMaxCallDepth caps workflow-call nesting when the config does not
-	// say otherwise, per the spec's engine.max_call_depth default.
+	// say otherwise, the engine.max_call_depth default.
 	defaultMaxCallDepth = 3
 
 	// idRandomBytes sizes the random suffix of fallback run IDs.
@@ -97,9 +97,9 @@ type WorkflowSource interface {
 	Resolve(name string) (*workflow.Workflow, error)
 }
 
-// AgentExecutor runs agent-kind actions: the Phase 1c loop, injected as an
-// interface so the engine never imports the loop package. Nil keeps the pre-1c
-// behavior where agent actions fail with engine.agent_not_available.
+// AgentExecutor runs agent-kind actions: the agent loop, injected as an
+// interface so the engine never imports the loop package. Nil makes agent
+// actions fail with engine.agent_not_available.
 type AgentExecutor interface {
 	// ValidateAction applies the run-start half of agent validation: the
 	// driver must be a registered runner implementing runner.ToolCaller, and
@@ -141,7 +141,7 @@ type Config struct {
 	// reference fails with config.missing_secret.
 	Secrets SecretSource
 
-	// AgentExecutor runs agent-kind actions (the Phase 1c loop). Nil makes
+	// AgentExecutor runs agent-kind actions (the agent loop). Nil makes
 	// every agent action fail with engine.agent_not_available.
 	AgentExecutor AgentExecutor
 
@@ -151,7 +151,7 @@ type Config struct {
 
 	// Fallback is the mixed-model chain keyed by primary runner name: when an
 	// action's runner fails terminally, the engine tries the listed runners in
-	// order before failing the action (D12). An absent entry means the action's
+	// order before failing the action. An absent entry means the action's
 	// runner runs alone, exactly as before.
 	Fallback map[string][]string
 
@@ -186,7 +186,7 @@ type Config struct {
 
 	// MaxConcurrentActions caps in-flight runner calls across the engine so
 	// a burst of ready actions cannot exhaust rate limits or local CPU.
-	// Values below one fall back to the spec default of four.
+	// Values below one fall back to the default of four.
 	MaxConcurrentActions int
 
 	// DefaultTimeout bounds actions that declare no timeout of their own.
@@ -194,7 +194,7 @@ type Config struct {
 	DefaultTimeout time.Duration
 
 	// MaxCallDepth caps workflow-call nesting; nesting past it fails with
-	// engine.call_depth_exceeded. Values below one fall back to the spec
+	// engine.call_depth_exceeded. Values below one fall back to the
 	// default of three.
 	MaxCallDepth int
 }
@@ -372,7 +372,7 @@ func (e *Engine) checkRunners(flow *workflow.Workflow, inputs map[string]any) er
 // checkAgentAction delegates an agent action's run-start checks to the
 // configured executor, normalizing whatever error shape it returns into the
 // run-rejection list. Nil executor means no checks here: the action fails
-// at execution time with engine.agent_not_available, the pre-1c behavior.
+// at execution time with engine.agent_not_available.
 func (e *Engine) checkAgentAction(action *workflow.Action) cairnerr.Errors {
 	if e.cfg.AgentExecutor == nil {
 		return nil

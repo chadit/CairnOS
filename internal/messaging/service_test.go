@@ -68,8 +68,8 @@ func TestSendMessagePostsThroughTheSender(t *testing.T) {
 		threadID: threadRootID,
 	}
 
-	// The mention has to arrive unmodified; Mattermost is what renders it
-	// (FR29), so any rewriting here would silently break notifications.
+	// The mention has to arrive unmodified; Mattermost is what renders it,
+	// so any rewriting here would silently break notifications.
 	if got != want {
 		t.Fatalf("sender saw %+v, want %+v", got, want)
 	}

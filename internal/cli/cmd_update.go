@@ -139,8 +139,9 @@ type updateOptions struct {
 
 // UpdateSteps holds the side-effecting halves of the update. They are function
 // values so a test can pin the order they run in without a toolchain, a vault,
-// or a service unit, which is the guarantee FR11 rests on. Build belongs to the
-// source path and Install to the release path; every run uses one of the two.
+// or a service unit, which keeps the secrets pull ahead of the restart. Build
+// belongs to the source path and Install to the release path; every run uses
+// one of the two.
 type UpdateSteps struct {
 	Build   func(ctx context.Context, dir string) error
 	Install func(target, staged string) error
@@ -357,7 +358,7 @@ func (a *App) installRelease(ctx context.Context, build *releaseBuild, opts *upd
 // applyUpdate builds, pulls, restarts, and relinks, keeping runUpdate to the
 // two steps --check shares with it. The pull sits before the restart because
 // the service reads both environment files once, at startup: pulling after
-// would leave the new process running on the previous values (FR11).
+// would leave the new process running on the previous values.
 func applyUpdate(ctx context.Context, dir string, opts *updateOptions, steps UpdateSteps) error {
 	wanted, err := wantedRevision(ctx, dir)
 	if err != nil {

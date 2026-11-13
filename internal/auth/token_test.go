@@ -1,6 +1,6 @@
-// Token tests: the login exchange, the verify path with every rejection
-// the spec demands (expiry, missing claims, wrong algorithm including the
-// classic confusion tricks, garbage), revocation, and both signing tiers.
+// Token tests: the login exchange, the verify path and every rejection it
+// applies (expiry, missing claims, wrong algorithm including the classic
+// confusion tricks, garbage), revocation, and both signing tiers.
 // Expiry tests advance an injected clock; nothing here sleeps.
 package auth_test
 
@@ -39,7 +39,7 @@ const (
 	testAudience = "cairnos"
 )
 
-// testTTL keeps expiry math obvious: one hour, like the spec default.
+// testTTL keeps expiry math obvious: one hour, like the default.
 const testTTL = time.Hour
 
 // fakeClock is an advanceable clock injected as Config.Now.
@@ -444,7 +444,7 @@ func TestEdDSARejectsHS256ConfusionToken(t *testing.T) {
 	}
 }
 
-// TestClockSkewLeewayAcceptsFutureIAT is the L2 fix: a cross-instance token
+// TestClockSkewLeewayAcceptsFutureIAT proves the clock-skew leeway: a cross-instance token
 // whose iat sits a few seconds in the future (a peer whose clock runs ahead)
 // verifies when clock_skew leeway is configured. The issuer signs with a
 // clock 5s ahead; the verifier's clock is 5s behind but allows 30s of skew.
@@ -571,7 +571,7 @@ func newAuthenticatorWithTTL(t *testing.T, store *auth.SQLite, clock *fakeClock,
 	return auth.New(store, material, cfg)
 }
 
-// TestRevokeHonorsRealExpAfterTTLDrop is the M2 fix: a token minted under a
+// TestRevokeHonorsRealExpAfterTTLDrop proves revocation honors the real exp: a token minted under a
 // 24h TTL must stay denied past the old 1h window once the operator drops
 // access_token_ttl to 1h, because the recorded exp, not the live TTL, sets
 // the deny window.
@@ -612,7 +612,7 @@ func TestRevokeHonorsRealExpAfterTTLDrop(t *testing.T) {
 	}
 }
 
-// TestRevokeKeyKeepsKeyMinting is the M3 fix: revoking by key kills the
+// TestRevokeKeyKeepsKeyMinting proves revoking by key kills the
 // pre-revoke token but the still-enabled key mints a fresh, working token.
 func TestRevokeKeyKeepsKeyMinting(t *testing.T) {
 	t.Parallel()
@@ -747,7 +747,7 @@ func TestLoadMaterialFailures(t *testing.T) {
 	}
 }
 
-// TestLoadMaterialRejectsMismatchedKeyPair is the L5 fix: a public key from a
+// TestLoadMaterialRejectsMismatchedKeyPair proves a public key from a
 // different pair than the private key is refused, since this node would sign
 // tokens its own verifier rejects.
 func TestLoadMaterialRejectsMismatchedKeyPair(t *testing.T) {
@@ -765,7 +765,7 @@ func TestLoadMaterialRejectsMismatchedKeyPair(t *testing.T) {
 	}
 }
 
-// TestLoadMaterialRejectsWorldReadablePrivateKey is the other half of L5: a
+// TestLoadMaterialRejectsWorldReadablePrivateKey is the other half of the key-material check: a
 // group- or world-readable private key file is refused so a leaked-permission
 // signing key never loads.
 func TestLoadMaterialRejectsWorldReadablePrivateKey(t *testing.T) {

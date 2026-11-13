@@ -37,7 +37,7 @@ const (
 )
 
 // testChatSessionRoundTrip proves a session and its ordered messages persist
-// and read back, the conversation-context-persisted contract Phase 9 rests on.
+// and read back, the conversation-context-persisted contract chat rests on.
 func testChatSessionRoundTrip[S store.Store](t *testing.T, openFn OpenFunc[S]) {
 	t.Helper()
 

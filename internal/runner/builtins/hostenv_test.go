@@ -39,7 +39,7 @@ func echoShim(t *testing.T, name string) string {
 	return writeShim(t, t.TempDir(), name, `printf '%s' "$`+harnessVar+`"`)
 }
 
-// TestExecPassesHostTableToChild covers FR6 for the exec runner: a script the
+// TestExecPassesHostTableToChild covers the host table for the exec runner: a script the
 // engine launches can read another machine's tool paths without being told them
 // in its own argv.
 func TestExecPassesHostTableToChild(t *testing.T) {
@@ -84,7 +84,7 @@ func TestExecWithoutHostTableLeavesTheChildAlone(t *testing.T) {
 	}
 }
 
-// TestExecRejectsAReservedEnvKey covers FR4. Two writers for one variable would
+// TestExecRejectsAReservedEnvKey proves a reserved key is refused. Two writers for one variable would
 // make the winner depend on append order, so the config table is refused the
 // prefix outright rather than being quietly overridden.
 func TestExecRejectsAReservedEnvKey(t *testing.T) {
@@ -105,7 +105,7 @@ func TestExecRejectsAReservedEnvKey(t *testing.T) {
 	}
 }
 
-// TestCLIPassesHostTableToChild covers FR6 for the wrapped CLI runners, which
+// TestCLIPassesHostTableToChild covers the host table for the wrapped CLI runners, which
 // set no environment at all before this.
 func TestCLIPassesHostTableToChild(t *testing.T) {
 	shim := echoShim(t, "printhost")
@@ -177,7 +177,7 @@ func TestCLIWithHostTableKeepsInheritedEnvironment(t *testing.T) {
 	}
 }
 
-// TestSandboxArgvCarriesNoHostTable covers the FR6 exclusion. sandbox_exec hands
+// TestSandboxArgvCarriesNoHostTable covers the host table's one exclusion. sandbox_exec hands
 // the container no environment by design, and the host table does not get to be
 // the exception: nothing the runner builds passes a variable across that
 // boundary.

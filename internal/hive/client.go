@@ -24,7 +24,7 @@ const defaultMinObservations = 5
 // Client is the node's side of the hive API. Subscribe is always safe: the node
 // receives tips and sends nothing. Publish is gated and off by default, because
 // publishing is the part that risks a content leak and waits on the privacy
-// review (R2) and the hosting decision (R3).
+// review and the hosting decision.
 type Client interface {
 	// Subscribe pulls tips for the given categories. It is receive-only, so it
 	// is safe regardless of the publish gate. A category outside the fixed set
@@ -87,7 +87,7 @@ type HTTPHiveClient struct {
 	doer HTTPClient
 
 	// sealer, when set, encrypts every outbound tip and decrypts every received
-	// one under the shared cluster key (R2/R3). Nil keeps the plaintext wire
+	// one under the shared cluster key. Nil keeps the plaintext wire
 	// format, the no-key mode the composition root chooses on SQLite or when no
 	// key is configured.
 	sealer Sealer

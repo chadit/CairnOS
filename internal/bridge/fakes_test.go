@@ -32,7 +32,7 @@ const (
 	wsDefault = "default"
 	wsAcme    = "acme"
 
-	// msgPropose makes the fake agent raise a D9 proposal, msgTool makes it emit a
+	// msgPropose makes the fake agent raise a workflow proposal, msgTool makes it emit a
 	// tool-call event, and msgGo drives a plain turn.
 	msgPropose = "propose"
 	msgTool    = "tool-please"

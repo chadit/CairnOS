@@ -9,8 +9,8 @@ import (
 )
 
 // MattermostPoster posts fan-out lines into one Mattermost channel as a named
-// identity, through the same send path the CLI and the workflow runner use
-// (FR34). It holds the registry rather than a resolved Sender because the
+// identity, through the same send path the CLI and the workflow runner use.
+// It holds the registry rather than a resolved Sender because the
 // bridge registers its identities after serve builds the fan-out, and a
 // reconnect replaces the sender in place.
 type MattermostPoster struct {

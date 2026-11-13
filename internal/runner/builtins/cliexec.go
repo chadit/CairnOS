@@ -230,7 +230,7 @@ func (c *CLI) Validate(task *runner.Task) error {
 
 // guardDashedPrompt refuses a resolved prompt starting with a dash when the
 // argv template feeds it as a bare positional, since the wrapped binary would
-// read it as a flag (spec M3). An unresolved reference defers to launch. The
+// read it as a flag. An unresolved reference defers to launch. The
 // guard steps aside for allow_dashed_prompt, a template placing {prompt} after
 // a -- terminator, or a stdin prompt, which never reaches argv.
 func (c *CLI) guardDashedPrompt(task *runner.Task) error {
@@ -343,7 +343,7 @@ func (c *CLI) classifyWait(runCtx context.Context, waitErr error, stderrTail, st
 
 // classifyExitOutput reads a non-zero exit's output tails to pick the error
 // class. A limit wins over re-auth, so a capped call retries (the wrapped CLI
-// picks its account per launch) instead of holding the job for a human (D12).
+// picks its account per launch) instead of holding the job for a human.
 // An unexplained non-zero exit is permanent: it is not safe to repeat.
 func (c *CLI) classifyExitOutput(output, message string, cause error) error {
 	lowered := strings.ToLower(output)

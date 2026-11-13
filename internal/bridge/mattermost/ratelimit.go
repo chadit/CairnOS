@@ -31,7 +31,7 @@ type BucketConfig struct {
 // Bucket is a token bucket shared by every identity pointed at one server.
 // Mattermost keys its own bucket by source IP, so identities in one process
 // share the server's budget whether or not they share a limiter; one bucket per
-// server URL is the only arrangement that matches (design D5). Safe for
+// server URL is the only arrangement that matches. Safe for
 // concurrent use.
 type Bucket struct {
 	// last, parked and tokens are guarded by mu; the rest is set once at

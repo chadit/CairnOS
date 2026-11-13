@@ -57,7 +57,7 @@ var _ bridge.Outbound = (*panicOut)(nil)
 // TestWorkerSurvivesAPanickingTurn proves a panic inside one turn costs that
 // turn and nothing else. The worker goroutine carried no recover, so a value
 // whose formatting panicked took the API server, the scheduler, and every other
-// identity down with it, which is what NFR3 forbids.
+// identity down with it. One identity's failure must never take down the rest.
 func TestWorkerSurvivesAPanickingTurn(t *testing.T) {
 	t.Parallel()
 
@@ -88,7 +88,7 @@ func TestWorkerSurvivesAPanickingTurn(t *testing.T) {
 // only live timer. The first timer used to survive its own entry being
 // overwritten, then fire early and deny the replacement while marking the
 // original message lapsed, leaving the replacement denied with no expiry line
-// and no timer of its own (FR23).
+// and no timer of its own.
 func TestSecondProposalReplacesTheFirstTimer(t *testing.T) {
 	t.Parallel()
 
@@ -122,7 +122,7 @@ func TestSecondProposalReplacesTheFirstTimer(t *testing.T) {
 // TestDeliverySurvivesAZeroMaxChars proves a transport reporting a useless cap
 // gets the reply whole. Cutting on a zero limit appended empty chunks forever
 // inside a conversation worker, so the process allocated until it died and Drain
-// blocked on a worker that was never going to return (FR18).
+// blocked on a worker that was never going to return.
 func TestDeliverySurvivesAZeroMaxChars(t *testing.T) {
 	t.Parallel()
 

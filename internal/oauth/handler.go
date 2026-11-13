@@ -55,7 +55,7 @@ type Config struct {
 	DefaultWorkspace string
 	DefaultRole      string
 
-	// Provision gates first-login auto-provisioning (spec H1). The zero value
+	// Provision gates first-login auto-provisioning. The zero value
 	// is provisioning-off, fail-closed: an unprovisioned subject is refused
 	// until an operator turns it on and, when set, clears the allowlists.
 	Provision ProvisionPolicy
@@ -65,7 +65,7 @@ type Config struct {
 	StateTTL time.Duration
 
 	// LoginRatePerMinute bounds one source IP's calls to the login route, the
-	// DoS guard on the unauthenticated, state-minting endpoint (spec L1). Zero
+	// DoS guard on the unauthenticated, state-minting endpoint. Zero
 	// uses the default.
 	LoginRatePerMinute int
 }
@@ -83,7 +83,7 @@ type Handler struct {
 // tokenResponse is the JSON the SPA receives on a successful callback: the
 // minted CairnOS token and its expiry. JSON is the simplest delivery for a
 // single-page app, which stores the token and sends it as a bearer on later
-// API calls; a cookie is an alternative the spec leaves open.
+// API calls; a cookie is an alternative left open.
 type tokenResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt string `json:"expires_at"`
@@ -121,7 +121,7 @@ func (h *Handler) Routes() map[string]http.HandlerFunc {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	// The login route is unauthenticated and mints a state-store entry per call,
 	// so a per-source rate limit guards both the process and the pending-state
-	// map against a flood (spec L1). A refused call answers 429 before any work.
+	// map against a flood. A refused call answers 429 before any work.
 	if !h.limiter.allow(clientIP(r)) {
 		http.Error(w, "too many login attempts", http.StatusTooManyRequests)
 
@@ -196,7 +196,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 // returning the subject and email claim it carries. PKCE binds the code to this
 // client, and the verifier checks the signature against the IdP JWKS, so the
 // email the auto-provision allowlist trusts is a signed claim, not anything the
-// caller could set (spec H1).
+// caller could set.
 func (h *Handler) verifiedSubject(ctx context.Context, code, verifier string) (identity, error) {
 	token, err := h.cfg.Exchanger.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
@@ -252,7 +252,7 @@ func membershipFailureStatus(err error) int {
 
 // writeToken sends the minted token as JSON. The response carries the CairnOS
 // bearer token, so it must never be cached: Cache-Control no-store plus the
-// Pragma no-cache backstop keep a proxy or browser from storing it (spec M1).
+// Pragma no-cache backstop keep a proxy or browser from storing it.
 func (h *Handler) writeToken(w http.ResponseWriter, r *http.Request, body tokenResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

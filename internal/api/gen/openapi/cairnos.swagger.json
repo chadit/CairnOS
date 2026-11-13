@@ -63,7 +63,7 @@
   "paths": {
     "/v1/a2a/messages": {
       "post": {
-        "summary": "SendMessage runs one conversational turn with this node and returns the\nreply. context_id names the conversation: the same id on a later call\ncontinues the same chat session, so a peer holds a multi-turn exchange\nrather than a series of unrelated questions (FR36). A turn that ends on a\nworkflow proposal answers with state \"input-required\" and the proposal\nfilled; the peer approves or denies it by sending \"approve\" or \"deny\" on\nthe same context_id.",
+        "summary": "SendMessage runs one conversational turn with this node and returns the\nreply. context_id names the conversation: the same id on a later call\ncontinues the same chat session, so a peer holds a multi-turn exchange\nrather than a series of unrelated questions. A turn that ends on a\nworkflow proposal answers with state \"input-required\" and the proposal\nfilled; the peer approves or denies it by sending \"approve\" or \"deny\" on\nthe same context_id.",
         "operationId": "A2AService_SendMessage",
         "responses": {
           "200": {
@@ -2692,11 +2692,11 @@
         },
         "to": {
           "type": "string",
-          "description": "to is the target in one of four forms: \"#channel-name\", \"@username\",\n\"channel:\u003cid\u003e\", or \"user:\u003cid\u003e\". A bare id is InvalidArgument (FR27)."
+          "description": "to is the target in one of four forms: \"#channel-name\", \"@username\",\n\"channel:\u003cid\u003e\", or \"user:\u003cid\u003e\". A bare id is InvalidArgument."
         },
         "text": {
           "type": "string",
-          "description": "text is the message body, sent unmodified so Mattermost renders any\nmentions it contains (FR29). Empty is InvalidArgument."
+          "description": "text is the message body, sent unmodified so Mattermost renders any\nmentions it contains. Empty is InvalidArgument."
         },
         "threadId": {
           "type": "string",
@@ -2742,7 +2742,7 @@
           "format": "double"
         }
       },
-      "description": "Proposal is a workflow the node wants to run on the peer's behalf, awaiting\nthe peer's decision. Approving additionally requires write:workflow on the\npeer's token (FR37)."
+      "description": "Proposal is a workflow the node wants to run on the peer's behalf, awaiting\nthe peer's decision. Approving additionally requires write:workflow on the\npeer's token."
     },
     "v1PutDocumentRequest": {
       "type": "object",
@@ -3032,7 +3032,7 @@
         },
         "confidence": {
           "type": "string",
-          "description": "confidence is low, medium, or high. Output-changing kinds never rise\nabove low in Phase 3."
+          "description": "confidence is low, medium, or high. Output-changing kinds never rise\nabove low."
         }
       },
       "description": "Savings is an estimated improvement with a confidence band, never a\npromise."
@@ -3284,7 +3284,7 @@
           "format": "double"
         }
       },
-      "description": "WorkflowProposal is the D9 confirmation payload: the workflow the agent wants\nto run, its inputs, and the estimated spend, shown so the user approves from\nfull information."
+      "description": "WorkflowProposal is the confirmation payload: the workflow the agent wants\nto run, its inputs, and the estimated spend, shown so the user approves from\nfull information."
     }
   }
 }

@@ -12,8 +12,8 @@ import (
 const cfgKeyCommand = "command"
 
 // cfgKeyEnvPassthrough names the optional host-env allowlist in a plugin block:
-// the host variables to forward to the child on top of the minimal base env
-// (spec L2). Absent forwards nothing but PATH and the socket variable.
+// the host variables to forward to the child on top of the minimal base env.
+// Absent forwards nothing but PATH and the socket variable.
 const cfgKeyEnvPassthrough = "env_passthrough"
 
 // Factory adapts New to the registry contract for one configured name. The

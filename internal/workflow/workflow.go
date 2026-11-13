@@ -216,7 +216,7 @@ type Action struct {
 
 	DependsOn []string
 
-	// Fallback is the per-action provider override (D12 mixed-model). When set,
+	// Fallback is the per-action provider override for the mixed-model layer. When set,
 	// it replaces the engine's [engine.fallback] default for this action's
 	// runner: the action's own runner runs first, then these providers in order
 	// only when it fails terminally. Empty means "use the engine default".

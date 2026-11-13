@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// loginRateDefaults bound the unauthenticated /v1/oauth/login route (spec L1).
+// loginRateDefaults bound the unauthenticated /v1/oauth/login route.
 // The route mints a state-store entry per call, so an unbounded caller could
 // both exhaust the process and flood the pending-state map; the per-IP bucket
 // throttles a single source. One login per second on average, with a

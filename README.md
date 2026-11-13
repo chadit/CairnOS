@@ -31,28 +31,39 @@ Or straight from the module path, no clone needed:
 go install github.com/chadit/CairnOS/cmd/cairnos@latest
 ```
 
-The module path install works once the repository is public. Until then,
-install from a clone.
-
 Either way you get the full binary: engine, CLI, serve, chat, MCP. The web UI is
 not part of it. Build it from `web/` and serve the static bundle beside the
 gateway, as [web/README.md](./web/README.md) describes. Check the binary landed
 with `cairnos help`.
 
-## Initialize and run your first prompt
+## Initialize and run your first workflow
 
 ```sh
-cairnos init      # writes a starter config under ~/.cairnos
-cairnos validate examples/agents/quickstart/quickstart.toml
-cairnos run examples/agents/quickstart/quickstart.toml
+cairnos init      # writes a starter config and examples/ under ~/.cairnos
+cairnos validate ~/.cairnos/examples/hello.toml
+cairnos run ~/.cairnos/examples/hello.toml
 ```
 
-The quickstart workflow sends one prompt through a CLI tool you have already
-logged into on this machine (it ships pointing at `codex`; swap the runner
-line for `claude`, `omp`, or any other logged-in tool, see
-[examples/agents/quickstart](./examples/agents/quickstart/README.md)). If the
-run prints a reply, your install, runner wiring, and tool auth all work.
-`cairnos init --dir <path>` picks a different home.
+The run prints a table like this:
+
+```text
+ACTION  RUNNER  STATUS     ATTEMPT  COST     OUTPUT              ERROR
+echo    mock    succeeded  1        $0.0000  echo: hello, world
+greet   mock    succeeded  1        $0.0000  hello, world
+
+run 01M78QKJGN998AS3DXQYAHG0BP (hello): succeeded
+```
+
+`hello.toml` runs two actions on the built-in `mock` runner, so it needs no
+model, API key, or logged-in CLI, and it works the same from a clone or a
+module path install. Two `succeeded` rows mean the install works.
+`cairnos init --dir <path>` picks a different home; pass the same `--dir` to
+`run`.
+
+To send a real prompt next, the
+[quickstart workflow](./examples/agents/quickstart/README.md) runs one through
+a CLI tool you have already logged into on this machine, such as `codex` or
+`claude`.
 
 `cairnos help` lists every command. These are the ones the rest of this README
 doesn't walk through; `cairnos <command> -h` gives each one's flags.
@@ -136,16 +147,52 @@ WantedBy=multi-user.target
 
 ```sh
 docker build -t cairnos .
+export CAIRNOS_AUTH_HS256_SECRET="$(openssl rand -hex 32)"
 docker run -d --name cairnos \
   -v cairnos-data:/data \
-  -p 7777:7777 -p 8080:8080 -p 9090:9090 \
+  -e CAIRNOS_API_GRPC=0.0.0.0:7777 \
+  -e CAIRNOS_API_HTTP=0.0.0.0:8080 \
+  -e CAIRNOS_AUTH_ENABLED=true \
+  -e CAIRNOS_AUTH_TLS_TERMINATED=true \
+  -e CAIRNOS_AUTH_HS256_SECRET \
+  -p 127.0.0.1:7777:7777 -p 127.0.0.1:8080:8080 -p 127.0.0.1:9090:9090 \
   cairnos
 ```
 
 The image's default command is `serve --dir /data`. Ports: gRPC on 7777, the
-JSON/HTTP gateway on 8080, Prometheus metrics on 9090. Keep the ports on
-localhost or a private network (Tailscale works well) and turn auth on
-(`[auth] enabled = true`) before anything else can reach them.
+JSON/HTTP gateway on 8080, Prometheus metrics on 9090.
+
+Serve binds `127.0.0.1` when an address has no host, and a loopback bind inside
+the container cannot be reached through a published port, so the recipe binds
+`0.0.0.0`. Serve refuses a non-loopback bind unless auth is on and
+`tls_terminated` says a TLS proxy fronts every connection. The
+`127.0.0.1:` publish prefixes keep every port on the host's loopback, so that
+holds as long as anything reaching CairnOS from another machine comes through a
+TLS-terminating reverse proxy. The metrics port has no auth, which is one more
+reason to keep it on the host's loopback. Those prefixes limit only the host
+side, so any container on the same Docker network can still reach 7777 and 8080
+in plaintext and 9090 with no auth. Run CairnOS on its own Docker network, or
+keep containers you do not trust off its network. The signing secret must be at least 32 bytes;
+keep it somewhere durable, since a new secret invalidates every issued token.
+
+With auth off, `auth.serve_without_auth_on_network = true` also gets past the
+bind check. It does nothing with auth on, so it cannot stand in for
+`tls_terminated`, and it opens the API to anything that can reach the ports,
+other containers on the same network included. Keep auth on.
+
+Mint an access key inside the container, then trade it for a token:
+
+```sh
+docker exec cairnos cairnos keys add --dir /data --label me --scopes read:run
+curl -s -X POST http://127.0.0.1:8080/v1/login -d '{"key":"<key>"}'
+```
+
+Send the token as `Authorization: Bearer <token>`. By default only health,
+login, `/openapi.json`, and `/routes` answer without one, and any other gateway
+call without a token gets a 401. Turning on A2A adds the public
+`/.well-known/agent.json` card, OAuth/OIDC login adds `/v1/oauth/login` and
+`/v1/oauth/callback`, and webhooks add `POST /v1/hooks/{token}` and
+`/v1/hooks/test/{token}`, which take the token in the path instead.
 
 ## Keeping a host current
 
@@ -1713,3 +1760,8 @@ make lint               # golangci-lint + gosec
 
 SQLite is the default store. Postgres backs multi-node setups; both are
 configured in the file `cairnos init` writes.
+
+## License
+
+CairnOS is released under the MIT License. See [LICENSE](./LICENSE) for the
+full text.

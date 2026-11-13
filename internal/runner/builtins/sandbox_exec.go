@@ -51,7 +51,7 @@ const (
 	runtimeDocker = "docker"
 )
 
-// Sandbox defaults. The resource caps ship in v1 (security amendment 2): a
+// Sandbox defaults. The resource caps ship in v1: a
 // fork bomb or a memory balloon beats a timeout, so bounding reachability
 // (network) and wall-clock (timeout) is not enough on its own.
 const (
@@ -82,7 +82,7 @@ const (
 	dockerSocketPath = "/var/run/docker.sock"
 )
 
-// Mount modes. A missing mode renders as read-only (security amendment 4):
+// Mount modes. A missing mode renders as read-only:
 // Docker's own default is read-write, which is the wrong default for a sandbox.
 const (
 	mountModeRO = "ro"
@@ -109,7 +109,7 @@ const (
 // Denied by default and enabled per action name; image, mounts, networking, and
 // caps are operator config only.
 //
-// Isolation boundary (security amendment 6): container isolation,
+// Isolation boundary: container isolation,
 // --network=none, --cap-drop=ALL, --security-opt=no-new-privileges, resource
 // caps, no default mounts, and the action gate. Workflow authors are trusted at
 // operator level, since the gate carries no workflow identity.
@@ -241,7 +241,7 @@ type sandboxLimits struct {
 
 // decodeSandboxLimits validates the runtime override, timeout, and the three
 // resource caps. Invalid values fail construction with ErrConfigValue rather
-// than becoming a silently unbounded container (security amendment 2).
+// than becoming a silently unbounded container.
 func decodeSandboxLimits(cfg map[string]any) (sandboxLimits, error) {
 	runtimeCfg, err := decodeRuntime(cfg)
 	if err != nil {
@@ -294,7 +294,7 @@ func decodeRuntime(cfg map[string]any) (string, error) {
 }
 
 // decodeSandboxTimeout reads the timeout backstop in seconds. A non-positive
-// timeout is rejected (security amendment 3): a shell runner reachable from
+// timeout is rejected: a shell runner reachable from
 // workflows and agent loops must never run without a wall-clock bound.
 func decodeSandboxTimeout(cfg map[string]any) (time.Duration, error) {
 	seconds, present, err := configInt(cfg, cfgKeyTimeout)
@@ -367,8 +367,8 @@ func decodeCPUs(cfg map[string]any) (float64, error) {
 }
 
 // decodeMounts validates and normalizes the operator mount list. The operator
-// is wiring a sandbox for agents to drive, so the rules are strict (security
-// amendment 4): absolute paths on both sides, no source resolving to the
+// is wiring a sandbox for agents to drive, so the rules are strict: absolute
+// paths on both sides, no source resolving to the
 // container runtime socket (a one-line host escape), read-only by default, and
 // read-write only when allow_rw_mounts is set.
 func decodeMounts(cfg map[string]any, allowRW bool) ([]string, error) {
@@ -587,8 +587,8 @@ func (s *SandboxExec) gate(task *runner.Task) error {
 }
 
 // runContext derives the effective deadline: Task.Deadline when set, else
-// now+timeout as the backstop, the earlier winning. timeout is always positive
-// (amendment 3), so a hung container always has a bound.
+// now+timeout as the backstop, the earlier winning. timeout is always positive,
+// so a hung container always has a bound.
 func (s *SandboxExec) runContext(ctx context.Context, task *runner.Task) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(s.timeout)
 
@@ -801,8 +801,8 @@ type runArgs struct {
 
 // buildRunArgv assembles the container run command. It is pure: no runtime, no
 // container, no config lookup, so the security defaults are unit-testable in a
-// table. harden gates the hardening flags (amendment 1); the resource caps
-// (amendment 2) always ship. When a runtime rejects a flag the container start
+// table. harden gates the hardening flags; the resource caps
+// always ship. When a runtime rejects a flag the container start
 // fails and the error surfaces through classification, never a silent drop.
 func buildRunArgv(args *runArgs) []string {
 	argv := []string{args.runtime, "run", "--rm", "--name", args.containerName}
@@ -840,8 +840,8 @@ func buildRunArgv(args *runArgs) []string {
 
 // containerName builds a unique, injection-safe container name:
 // cairnos-<sanitized RunID>-<8 hex random>. Sanitizing to [A-Za-z0-9_.-] means
-// a hostile RunID cannot inject into the later `<runtime> kill <name>` argv
-// (amendment 7); the random suffix keeps a leaked container attributable.
+// a hostile RunID cannot inject into the later `<runtime> kill <name>` argv;
+// the random suffix keeps a leaked container attributable.
 func containerName(runID string) (string, error) {
 	suffix := make([]byte, containerRandBytes)
 	if _, err := rand.Read(suffix); err != nil {

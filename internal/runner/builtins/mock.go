@@ -1,6 +1,6 @@
 // Package builtins holds the runners that ship inside the CairnOS binary.
-// Phase 0 carries mock and local_fn so the engine is runnable and testable with
-// no external services.
+// Mock and local_fn keep the engine runnable and testable with no external
+// services.
 package builtins
 
 import (
@@ -92,8 +92,7 @@ func validateMockFailClass(task *runner.Task) error {
 }
 
 // Describe implements runner.Describer so workflows can exercise the agent
-// loop with no external services: the mock is the canonical test tool, per the
-// Phase 1c acceptance criteria.
+// loop with no external services: the mock is the canonical test tool.
 func (*Mock) Describe() runner.ToolSpec {
 	return runner.ToolSpec{
 		Name: MockName,

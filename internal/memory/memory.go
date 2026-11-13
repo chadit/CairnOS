@@ -10,8 +10,8 @@ import (
 )
 
 // Store is the memory contract every backend satisfies, so swapping backends
-// is a config choice, never a workflow or runner change. Two deviations from
-// the spec sketch: Add and Replace take *Entry because house style passes a
+// is a config choice, never a workflow or runner change. Add and Replace
+// take *Entry because house style passes a
 // struct this large by pointer, and Search returns a SearchResult so the
 // semantic fallback is visible to callers.
 type Store interface {
@@ -76,8 +76,8 @@ type Query struct {
 	Semantic bool // use vectors if available
 }
 
-// SearchResult carries search hits plus the fallback signal the spec calls
-// for: when Semantic was requested but no vector backend is configured,
+// SearchResult carries search hits plus the fallback signal: when Semantic
+// was requested but no vector backend is configured,
 // keyword search answers and Fallback is true so callers know what they got.
 type SearchResult struct {
 	Entries  []Entry

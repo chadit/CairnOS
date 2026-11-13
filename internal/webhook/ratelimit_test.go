@@ -82,7 +82,7 @@ func TestRegistrationOverrideLoosensDefault(t *testing.T) {
 }
 
 // TestUnknownTokenGlobalRateCap proves unknown-token traffic is capped
-// process-wide (security amendment 3): with a global rate of 2, two distinct
+// process-wide: with a global rate of 2, two distinct
 // unknown tokens answer 404 and the third is shed with a generic 429.
 func TestUnknownTokenGlobalRateCap(t *testing.T) {
 	t.Parallel()
@@ -134,7 +134,7 @@ func TestNativeSignatureAccepted(t *testing.T) {
 
 // TestNativeReplayedNonceRejected proves a replay of a validly signed native
 // request inside the window is rejected on the reused nonce, and starts no
-// second run (security amendment 1).
+// second run.
 func TestNativeReplayedNonceRejected(t *testing.T) {
 	t.Parallel()
 
@@ -189,8 +189,7 @@ func TestNativeStaleTimestampRejected(t *testing.T) {
 }
 
 // TestGitHubSignatureAcceptedThenReplayRejected proves the GitHub sha256=<hex>
-// form is accepted once and a duplicate delivery id is rejected as a replay
-// (security amendment 1).
+// form is accepted once and a duplicate delivery id is rejected as a replay.
 func TestGitHubSignatureAcceptedThenReplayRejected(t *testing.T) {
 	t.Parallel()
 
@@ -307,8 +306,8 @@ func TestMissingSignatureHeaderRejected(t *testing.T) {
 	}
 }
 
-// TestHMACVerifiedBeforeRateBucket proves the request-path order fix (security
-// amendment 4): bad-signature requests never charge the per-registration bucket,
+// TestHMACVerifiedBeforeRateBucket proves the request-path order fix:
+// bad-signature requests never charge the per-registration bucket,
 // so a valid delivery still succeeds after a burst of forged ones. If HMAC were
 // checked after the rate cap, the forged requests would drain the rate-1 bucket
 // and block the real delivery.

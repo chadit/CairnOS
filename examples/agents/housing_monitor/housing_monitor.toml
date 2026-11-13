@@ -6,7 +6,7 @@
 #     --input region=austin-tx \
 #     --input notify_to=me@example.com
 #
-# Sourcing (S5): listings_url must be a real-estate API you hold a key for, or a
+# Sourcing: listings_url must be a real-estate API you hold a key for, or a
 # feed you run yourself. Never a scraped listing site; scraping Zillow, Redfin,
 # or similar violates their terms of service.
 
@@ -21,7 +21,7 @@ timeout     = "10m"
 [workflow.inputs.listings_url]
 type        = "string"
 required    = true
-description = "Your real-estate API endpoint. A source you are permitted to query (see the S5 note above)."
+description = "Your real-estate API endpoint. A source you are permitted to query (see the sourcing note above)."
 
 [workflow.inputs.region]
 type        = "string"

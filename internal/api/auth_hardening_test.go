@@ -28,8 +28,8 @@ import (
 // name the hardening-specific wire shapes used here.
 const wireTooManyLogins = "auth.too_many_logins" //nolint:gosec // canonical error code name, not a credential
 
-// hardeningOptions tunes the M1/M4 server fixture: the login limiter and the
-// stream-recheck cadence, with an injectable stream clock so M4 drives the
+// hardeningOptions tunes the hardening server fixture: the login limiter and the
+// stream-recheck cadence, with an injectable stream clock so the tests drive the
 // recheck deterministically.
 type hardeningOptions struct {
 	limiter       *auth.LoginLimiter
@@ -37,7 +37,7 @@ type hardeningOptions struct {
 	streamRecheck time.Duration
 }
 
-// hardeningFixture is one auth-enabled server built with the M1/M4 knobs set,
+// hardeningFixture is one auth-enabled server built with the hardening knobs set,
 // plus the handles the tests need.
 type hardeningFixture struct {
 	login     cairnosv1.LoginServiceClient
@@ -46,7 +46,7 @@ type hardeningFixture struct {
 	clock     *authClock
 }
 
-// startHardeningServer boots an auth-enabled server with the M1/M4 options
+// startHardeningServer boots an auth-enabled server with the hardening options
 // applied. It mirrors startAuthServer but exposes the login limiter and the
 // stream recheck so the hardening tests can exercise them.
 func startHardeningServer(t *testing.T, opts hardeningOptions) *hardeningFixture {
@@ -184,7 +184,7 @@ func (f *hardeningFixture) token(t *testing.T, scopes ...string) string {
 	return resp.GetToken()
 }
 
-// TestLoginConcurrencyCapShedsLoad is the M1 concurrency fix: with a
+// TestLoginConcurrencyCapShedsLoad proves the login concurrency cap: with a
 // single-slot derivation pool, firing many simultaneous logins splits the
 // callers into logins that got a working token and overflow refused with
 // RESOURCE_EXHAUSTED, with nothing landing anywhere else. The split point is
@@ -243,7 +243,7 @@ func TestLoginConcurrencyCapShedsLoad(t *testing.T) {
 	}
 }
 
-// TestLoginRateLimitTripsAfterBurst is the M1 per-peer rate fix: with a small
+// TestLoginRateLimitTripsAfterBurst proves the per-peer login rate limit: with a small
 // per-minute allowance and a wide pool, a single peer's logins pass up to the
 // burst and then trip RESOURCE_EXHAUSTED, all from one frozen instant so the
 // bucket never refills mid-test.
@@ -282,12 +282,12 @@ func TestLoginRateLimitTripsAfterBurst(t *testing.T) {
 	}
 }
 
-// streamRecheckInterval is the M4 recheck cadence under test; the injected
+// streamRecheckInterval is the stream recheck cadence under test; the injected
 // stream clock jumps a full interval per read, so a recheck fires on the next
 // send after a revoke without any real time passing.
 const streamRecheckInterval = 15 * time.Second
 
-// TestStreamRevokeMidStreamTerminates is the M4 fix end to end: a long-lived
+// TestStreamRevokeMidStreamTerminates proves the stream recheck end to end: a long-lived
 // RunWorkflow stream keeps delivering until the token is revoked mid-stream,
 // then the next send past the recheck interval re-verifies, fails, and ends
 // the stream with UNAUTHENTICATED. The stream clock is injected and advances a
@@ -364,7 +364,7 @@ func waitForRunning(t *testing.T, stream grpc.ServerStreamingClient[cairnosv1.Ru
 }
 
 // drainUntilError reads a stream to its first non-nil receive and returns the
-// status code; a clean EOF would surface as codes.OK, which the M4 assertion
+// status code; a clean EOF would surface as codes.OK, which the recheck assertion
 // rejects.
 func drainUntilError(t *testing.T, stream grpc.ServerStreamingClient[cairnosv1.RunEvent]) codes.Code {
 	t.Helper()

@@ -391,7 +391,7 @@ func waitForPosts(t *testing.T, conn *fakeConn, want int) []recordedPost {
 
 // TestDirectMessageRunsTurn proves a DM needs no mention, replies in the same
 // channel with no thread root, and binds its session under the identity and
-// channel (FR8).
+// channel.
 func TestDirectMessageRunsTurn(t *testing.T) {
 	t.Parallel()
 
@@ -425,7 +425,7 @@ func TestDirectMessageRunsTurn(t *testing.T) {
 }
 
 // TestChannelMentionRepliesInThread proves a root mention answers on its own
-// thread and reaches the agent with the leading @username removed (FR9, FR10).
+// thread and reaches the agent with the leading @username removed.
 func TestChannelMentionRepliesInThread(t *testing.T) {
 	t.Parallel()
 
@@ -448,7 +448,7 @@ func TestChannelMentionRepliesInThread(t *testing.T) {
 
 // TestThreadContinuationKeepsSession proves a later mention in the same thread
 // lands on the same conversation, which is what makes a thread one session
-// rather than one per post (FR11).
+// rather than one per post.
 func TestThreadContinuationKeepsSession(t *testing.T) {
 	t.Parallel()
 
@@ -473,7 +473,7 @@ func TestThreadContinuationKeepsSession(t *testing.T) {
 }
 
 // TestUnmentionedChannelPostIgnored proves channel chatter that does not name
-// the identity never becomes a turn (FR9).
+// the identity never becomes a turn.
 func TestUnmentionedChannelPostIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -494,8 +494,7 @@ func TestUnmentionedChannelPostIgnored(t *testing.T) {
 }
 
 // TestMentionInsideCodeFenceIgnored proves a username quoted in a code sample
-// does not wake the identity even when the server's mention list names it
-// (FR10).
+// does not wake the identity even when the server's mention list names it.
 func TestMentionInsideCodeFenceIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -526,7 +525,7 @@ func botEvent(postID string, props map[string]string) *mattermost.Event {
 
 // TestBotPostNeedsOptIn proves provenance blocks automated traffic by default
 // and that either opt-in admits it: the channel listed under allow_bots_in, or
-// the post's own activate_ai prop (FR14).
+// the post's own activate_ai prop.
 func TestBotPostNeedsOptIn(t *testing.T) {
 	t.Parallel()
 
@@ -593,7 +592,7 @@ func TestAllowBotsInResolvesChannelName(t *testing.T) {
 
 // TestLoopLimiterStopsRunawayBots proves the window closes a conversation the
 // provenance opt-in deliberately opened: the post that would exceed max_events
-// trips the cooldown and is counted unauthorized (FR15).
+// trips the cooldown and is counted unauthorized.
 func TestLoopLimiterStopsRunawayBots(t *testing.T) {
 	t.Parallel()
 
@@ -624,7 +623,7 @@ func TestLoopLimiterStopsRunawayBots(t *testing.T) {
 }
 
 // TestSilentReplyPostsNothing proves the core's [SILENT] contract reaches this
-// transport: the turn runs and nothing is posted (FR16).
+// transport: the turn runs and nothing is posted.
 func TestSilentReplyPostsNothing(t *testing.T) {
 	t.Parallel()
 
@@ -644,7 +643,7 @@ func TestSilentReplyPostsNothing(t *testing.T) {
 }
 
 // TestOwnPostDropped proves the identity does not answer its own echo, which is
-// what stops a bot talking to itself forever (FR13).
+// what stops a bot talking to itself forever.
 func TestOwnPostDropped(t *testing.T) {
 	t.Parallel()
 
@@ -711,7 +710,7 @@ func TestEachIdentityAnswersOnlyItsOwnMention(t *testing.T) {
 	}
 }
 
-// TestUsernameMismatchRefusesToAnswer proves the FR5 cross-check: a token whose
+// TestUsernameMismatchRefusesToAnswer proves the username cross-check: a token whose
 // account is not the configured username never reaches the gate, so a
 // misconfigured identity stays silent instead of answering as the wrong bot. A
 // second, correctly configured identity gets the same DM and its reply is the
@@ -767,7 +766,7 @@ func (*dialRefusingConn) Listen(_ context.Context, _ chan<- mattermost.Event) er
 // TestBackoffEscalatesWhenTheUpgradeIsRefused proves a REST connect that
 // succeeds while the WebSocket upgrade fails does not reset the reconnect delay.
 // Resetting it leaves the identity redialing once per base delay forever instead
-// of escalating toward the one-minute ceiling (FR7).
+// of escalating toward the one-minute ceiling.
 func TestBackoffEscalatesWhenTheUpgradeIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -792,7 +791,7 @@ func TestBackoffEscalatesWhenTheUpgradeIsRefused(t *testing.T) {
 // TestBareMentionRunsNoTurn proves a mention with nothing after it is dropped
 // rather than billed as a driver call against an empty message. The adapter's
 // blank-message guard runs before the mention is stripped, so the emptiness only
-// shows up afterwards (edge case 9).
+// shows up afterwards.
 func TestBareMentionRunsNoTurn(t *testing.T) {
 	t.Parallel()
 
@@ -961,7 +960,7 @@ func TestAckReactionFailureStillRunsTurn(t *testing.T) {
 }
 
 // TestTypingFailureStillRunsTurn proves a refused typing indicator costs only
-// the decoration: the turn still runs and the reply still lands (FR17).
+// the decoration: the turn still runs and the reply still lands.
 func TestTypingFailureStillRunsTurn(t *testing.T) {
 	t.Parallel()
 

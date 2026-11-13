@@ -33,10 +33,17 @@ jobs:
       # build has everything it needs, and regenerating would risk leaving the
       # tree dirty, which stamps every asset "+dirty" and makes the update
       # refuse the whole release.
+      #
+      # MIT, BSD, and Apache-2.0 require the license and NOTICE texts of every
+      # linked module to travel with the binaries, so the release carries them
+      # as LICENSE and THIRD_PARTY_NOTICES.txt. `cairnos update` selects assets
+      # by exact name, so it ignores both, and neither matches cairnos_* or
+      # enters checksums.txt.
       - name: build every platform
         run: |
+          targets=(linux/amd64 linux/arm64 darwin/arm64 windows/amd64)
           mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
+          for target in "${targets[@]}"; do
             os="${target%/*}"
             arch="${target#*/}"
             name="cairnos_${os}_${arch}"
@@ -47,6 +54,8 @@ jobs:
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
               go build -trimpath -o "dist/${name}" ./cmd/cairnos
           done
+          ./scripts/third-party-notices.sh "${targets[@]}" > dist/THIRD_PARTY_NOTICES.txt
+          cp LICENSE dist/LICENSE
           cd dist
           sha256sum cairnos_* > checksums.txt
       # `update` reads the stamp out of the asset it downloaded and refuses one

@@ -54,7 +54,7 @@ type queuedLine struct {
 }
 
 // Fanout posts selected engine and queue events to every sink, off the producer
-// goroutine (D8). Producers call Emit from any goroutine; a single drainer,
+// goroutine. Producers call Emit from any goroutine; a single drainer,
 // started by Run, posts each queued line to the sinks that selected its event.
 // A nil *Fanout is the "nothing configured" state where every method is a no-op,
 // so serve wires producers without nil guards.

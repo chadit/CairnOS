@@ -6,7 +6,7 @@ import (
 )
 
 // This per-registration limiter is written fresh rather than shared with
-// internal/oauth/ratelimit.go, a named choice the spec calls out. The two
+// internal/oauth/ratelimit.go on purpose. The two
 // limiters differ in shape, not just parameters: the login limiter keys on
 // client IP, runs one global rate, and prunes idle buckets because its key
 // space is every IP that ever hits the route. This one keys on registration ID,
@@ -20,8 +20,8 @@ const (
 	// registration override nor the config default sets a rate.
 	defaultRatePerMinute = 60
 
-	// defaultUnknownRatePerMinute caps unknown-token requests process-wide
-	// (security amendment 3): a generous global rate that sheds a flood of
+	// defaultUnknownRatePerMinute caps unknown-token requests process-wide:
+	// a generous global rate that sheds a flood of
 	// unmatched tokens without allocating per token or per source.
 	defaultUnknownRatePerMinute = 120
 )
@@ -115,8 +115,8 @@ func (l *registrationLimiter) allow(registrationID string, override int) bool {
 	return current.spend()
 }
 
-// globalLimiter is one process-wide token bucket for unknown-token requests
-// (security amendment 3). It allocates nothing per token or per source, so a
+// globalLimiter is one process-wide token bucket for unknown-token requests.
+// It allocates nothing per token or per source, so a
 // flood of unmatched tokens is throttled to a fixed rate without growing state.
 // Safe for concurrent use.
 type globalLimiter struct {

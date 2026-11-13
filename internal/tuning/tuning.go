@@ -1,9 +1,9 @@
-// Package tuning is the Phase 3 suggestion engine. It reads persisted run
+// Package tuning is the suggestion engine. It reads persisted run
 // history, looks for mechanical waste (repeated identical calls, burst calls
 // that could batch, token caps far above observed output), and emits
 // evidence-backed suggestions for a human to approve or reject. Nothing here
 // changes a workflow: approval renders an annotated diff the operator applies
-// by hand, and auto-apply waits for Phase 6.
+// by hand, and auto-apply lives in the autonomic package.
 package tuning
 
 import (
@@ -23,7 +23,7 @@ import (
 )
 
 // Detector defaults. Each is a starting heuristic, not a researched optimum:
-// the spec fixes the inputs and outputs of this engine, and the thresholds
+// the inputs and outputs of this engine are fixed, and the thresholds
 // grow from real data.
 const (
 	// defaultMinSavingsUSD drops suggestions saving less than a penny per
@@ -78,7 +78,7 @@ const (
 
 	// EvidenceReplaySimilarity holds the per-sample cosine scores the embedding
 	// comparator produced, and EvidenceReplayThreshold the value they were
-	// judged against. Together they are the R1 calibration record: the raw
+	// judged against. Together they are the calibration record: the raw
 	// numbers an operator reads to tune the threshold on a real corpus. Both are
 	// absent under the exact-match comparator, which produces no score.
 	EvidenceReplaySimilarity = "replay_similarity"
@@ -120,7 +120,7 @@ type Config struct {
 	Runners RunnerSource
 
 	// Comparator decides output equivalence during replay. Nil means the
-	// v1 exact-match comparator (the R1 placeholder; see Comparator).
+	// v1 exact-match comparator (the placeholder; see Comparator).
 	Comparator Comparator
 
 	// RunnerConfigs carries the [runner.<name>] config blocks so the param
@@ -287,8 +287,8 @@ func (e *Engine) loadCorpus(ctx context.Context) ([]*runRecord, error) {
 }
 
 // applyFloor drops suggestions whose estimated saving misses the configured
-// floor, the spec's "estimated savings must clear a configurable floor"
-// guardrail.
+// floor, so a suggestion reaches a human only when its saving is worth the
+// review.
 func (e *Engine) applyFloor(suggestions []*store.Suggestion) []*store.Suggestion {
 	kept := make([]*store.Suggestion, 0, len(suggestions))
 

@@ -12,7 +12,7 @@ const gateway = process.env.CAIRNOS_GATEWAY ?? 'http://localhost:8080';
 
 // productionCSP injects a strict Content-Security-Policy meta tag into the
 // built index.html so injected script cannot exfiltrate the localStorage bearer
-// token (M2). Build-only, because the dev server needs inline script, eval, and
+// token. Build-only, because the dev server needs inline script, eval, and
 // an HMR websocket. style-src keeps 'unsafe-inline' since React and reactflow
 // set element styles inline. frame-ancestors needs a real response header, so
 // the static host sends it (web/README.md).

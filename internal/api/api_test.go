@@ -1,4 +1,4 @@
-// Integration tests for the Phase 1a API server: a real sqlite store, the
+// Integration tests for the API server: a real sqlite store, the
 // mock runner and a narrow exec runner, real listeners on ephemeral loopback
 // ports, and both faces (gRPC and the generated HTTP gateway) of the one proto
 // source.
@@ -237,7 +237,7 @@ func startServerOver(t *testing.T, engineStore func(store.Store) store.Store, ex
 		Drain:        drain,
 		Extensions:   extensions,
 		Logger:       logger,
-		// Security middleware on for the M1/M4 gateway tests: an explicit CORS
+		// Security middleware on for the hardening and request-size gateway tests: an explicit CORS
 		// origin and a small body cap so the assertions have something to bite.
 		CORSOrigins:     []string{corsTestOrigin},
 		MaxBodyBytes:    testMaxBodyBytes,

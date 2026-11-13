@@ -13,8 +13,8 @@ lint:
     # would add noise to every streamed line.
     - RPC_RESPONSE_STANDARD_NAME
   ignore_only:
-    # The plugin contract is named RunnerPlugin across the spec; a Service
-    # suffix would put the docs and the wire name out of step.
+    # The plugin contract is named RunnerPlugin in pkg/plugin; a Service
+    # suffix would put the Go API and the wire name out of step.
     SERVICE_SUFFIX:
       - proto/cairnos/plugin/v1/plugin.proto
     # SendMessage and ConfirmAction both stream ChatEvent by design: an

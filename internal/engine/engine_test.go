@@ -566,7 +566,7 @@ func TestOnErrorContinueFinishesIndependentBranch(t *testing.T) {
 
 // TestFallbackChainServesFailedPrimary proves the mixed-model layer: when the
 // action's runner fails terminally and a fallback is configured, the engine runs
-// the fallback and the action succeeds (D12).
+// the fallback and the action succeeds.
 func TestFallbackChainServesFailedPrimary(t *testing.T) {
 	t.Parallel()
 

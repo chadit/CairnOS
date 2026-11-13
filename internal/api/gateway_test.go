@@ -220,8 +220,8 @@ func TestGatewayStreamsParseableJSONLines(t *testing.T) {
 }
 
 // TestGatewayMountsDiscoveryEndpoints pins what the server owns about
-// /openapi.json and /routes: both are mounted, both answer without a token
-// (spec L4), and both hand back JSON. Their contents come from the proto, so
+// /openapi.json and /routes: both are mounted, both answer without a token,
+// and both hand back JSON. Their contents come from the proto, so
 // asserting the paths inside them would test the generator.
 func TestGatewayMountsDiscoveryEndpoints(t *testing.T) {
 	t.Parallel()

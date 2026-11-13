@@ -1,6 +1,6 @@
 // Package messaging is the outbound send path: one registry of named
 // identities, each able to post to a chat system, behind the MessagingService
-// gRPC surface and its JSON gateway binding (FR26-FR30).
+// gRPC surface and its JSON gateway binding.
 //
 // The package owns no transport. A transport package (the Mattermost bridge,
 // today) builds a Sender and adds it to the Registry under the identity name

@@ -480,7 +480,7 @@ func TestDaemonFiresMissedScheduleOnceWithoutBacklog(t *testing.T) {
 		now := time.Now()
 
 		// Three hourly intervals passed while the process was "down": the
-		// spec's policy is one fire, no burst (S8).
+		// policy is one fire, no burst.
 		if _, err := store.Add(t.Context(), &scheduler.Schedule{
 			ID: behindScheduleID, WorkflowName: flowName, Cron: hourlyCron,
 			NextFire: now.Add(-3 * hourInterval),

@@ -7,8 +7,7 @@
 #
 # The three release actions have no dependencies between them, so the engine
 # runs them in parallel; suggest fans them back in. The log_progress action
-# is kind = "agent": it validates today but executes once the agent loop
-# lands in Phase 1c (see the README).
+# is kind = "agent": the agent loop runs it (see the README).
 
 [workflow]
 name        = "learning_coach"
@@ -61,9 +60,8 @@ Recent modelcontextprotocol/go-sdk releases:
 ${{ releases_mcp.output }}
 """
 
-# Agent action: schema-valid now, executes once the Phase 1c agent loop
-# ships. It records the suggestion in memory so next week's run can avoid
-# repeating material.
+# Agent action: it records the suggestion in memory so next week's run can
+# avoid repeating material.
 [action.log_progress]
 kind       = "agent"
 depends_on = ["suggest"]

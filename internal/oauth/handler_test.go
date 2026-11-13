@@ -49,8 +49,8 @@ const (
 
 // fakeIDP is a minimal OIDC identity provider for the handler tests: an RSA
 // key that signs ID tokens, and a go-oidc verifier built from the matching
-// public key through a static key set. The static key set is the JWKS the spec
-// calls for, verified by go-oidc the same way a live JWKS would be, without an
+// public key through a static key set. The static key set stands in for the
+// JWKS, verified by go-oidc the same way a live JWKS would be, without an
 // HTTP round trip.
 type fakeIDP struct {
 	key      *rsa.PrivateKey
@@ -215,7 +215,7 @@ func newHandler(t *testing.T, idp *fakeIDP, exchanger oauth.TokenExchanger, mint
 }
 
 // newHandlerWithPolicy wires a handler with an explicit auto-provision policy,
-// so the H1 tests can prove provisioning is refused or gated.
+// so the provisioning tests can prove provisioning is refused or gated.
 func newHandlerWithPolicy(t *testing.T, idp *fakeIDP, exchanger oauth.TokenExchanger, minter oauth.TokenMinter, members tenancy.Store, policy oauth.ProvisionPolicy) *oauth.Handler {
 	t.Helper()
 

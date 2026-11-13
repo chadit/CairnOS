@@ -246,8 +246,8 @@ func TestGenerateKeyProducesLoadable32ByteKey(t *testing.T) {
 	}
 }
 
-// TestLoadKeysAcceptsLowEntropyKeyByLength documents the hazard from security
-// council amendment 3: LoadKeys checks length, never entropy, so a 32-byte
+// TestLoadKeysAcceptsLowEntropyKeyByLength documents a known hazard: LoadKeys
+// checks length, never entropy, so a 32-byte
 // all-'A' key loads even though it is insecure. cairnos secrets keygen exists so
 // an operator never hand-picks a key like this.
 func TestLoadKeysAcceptsLowEntropyKeyByLength(t *testing.T) {

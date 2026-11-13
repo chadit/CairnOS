@@ -81,7 +81,7 @@ func waitForSkipLine(t *testing.T, bodies <-chan string) string {
 	}
 }
 
-// TestSourceDirtyLineNamesHostSourceAndFix covers FR9's wording: an operator
+// TestSourceDirtyLineNamesHostSourceAndFix covers the alert's wording: an operator
 // reading one line in a shared channel has to learn which box, which source,
 // what is wrong, and what to do about it.
 func TestSourceDirtyLineNamesHostSourceAndFix(t *testing.T) {
@@ -108,7 +108,7 @@ func TestSourceDirtyLineNamesHostSourceAndFix(t *testing.T) {
 	}
 }
 
-// TestSourceDirtyNotifierHoldsItsWindow covers the rate limit FR9 asks for: a
+// TestSourceDirtyNotifierHoldsItsWindow covers the alert's rate limit: a
 // tree skipped every five minutes is worth one line, not 288 a day.
 func TestSourceDirtyNotifierHoldsItsWindow(t *testing.T) {
 	t.Parallel()
@@ -135,7 +135,7 @@ func TestSourceDirtyNotifierHoldsItsWindow(t *testing.T) {
 	}
 }
 
-// TestSourceDirtyNotifierReportsAgainAfterAGoodSync is the other half of FR9: a
+// TestSourceDirtyNotifierReportsAgainAfterAGoodSync is the other half of that limit: a
 // tree that is fixed and dirtied again inside the window is news, so the clean
 // sync in between has to clear the silence.
 func TestSourceDirtyNotifierReportsAgainAfterAGoodSync(t *testing.T) {

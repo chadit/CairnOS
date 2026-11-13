@@ -1,5 +1,5 @@
 // MessagingService: the outbound send surface over the configured chat
-// identities (FR26-FR30). A caller names an identity, a target, and the text;
+// identities. A caller names an identity, a target, and the text;
 // the service resolves the target against that identity's transport and posts.
 // ListIdentities answers what a caller may send as, so a CLI or workflow does
 // not have to guess an identity name from config.
@@ -115,10 +115,10 @@ type MessagingServiceSendMessageRequest struct {
 	// identity names a configured identity; an unknown name is NotFound.
 	Identity string `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	// to is the target in one of four forms: "#channel-name", "@username",
-	// "channel:<id>", or "user:<id>". A bare id is InvalidArgument (FR27).
+	// "channel:<id>", or "user:<id>". A bare id is InvalidArgument.
 	To string `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
 	// text is the message body, sent unmodified so Mattermost renders any
-	// mentions it contains (FR29). Empty is InvalidArgument.
+	// mentions it contains. Empty is InvalidArgument.
 	Text string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
 	// thread_id optionally roots the post in an existing thread.
 	ThreadId      string `protobuf:"bytes,4,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`

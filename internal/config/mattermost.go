@@ -15,7 +15,7 @@ import (
 //
 // The server URL is an operator key here, unlike [Telegram]: Telegram's token
 // rides the request path, so a redirectable base URL would leak it, while
-// Mattermost sends the token in a header (decision D7). https is still required
+// Mattermost sends the token in a header. https is still required
 // unless InsecureHTTP is set.
 type Mattermost struct {
 	// Identity is the declared agent set keyed by identity name. Empty means the
@@ -39,7 +39,7 @@ type Mattermost struct {
 	// SendTimeout bounds each outbound REST call.
 	SendTimeout time.Duration
 
-	// ConfirmTTL is how long an unanswered D9 proposal stays pending before it
+	// ConfirmTTL is how long an unanswered workflow proposal stays pending before it
 	// expires as a deny.
 	ConfirmTTL time.Duration
 
@@ -85,7 +85,7 @@ type MattermostIdentity struct {
 	// takes the shared default (see MattermostTokenEnvs).
 	TokenEnv string
 
-	// Approvers lists the Mattermost usernames allowed to approve a D9 proposal.
+	// Approvers lists the Mattermost usernames allowed to approve a workflow proposal.
 	// Empty means nobody can, which leaves every proposal to expire as a deny:
 	// chat access does not imply workflow-approval authority.
 	Approvers []string
@@ -289,7 +289,7 @@ func validateMattermostLimits(mattermost *Mattermost) error {
 // identity's other keys, where it looks like it belongs. Silence is the worst of
 // the three possible answers: the operator gets a clean start, the bridge then
 // reports the token env as unset, and a live token sits in a file that is
-// probably committed (FR1).
+// probably committed.
 func rejectMattermostToken(identities map[string]fileMattermostIdentity) error {
 	for _, name := range slices.Sorted(maps.Keys(identities)) {
 		if identities[name].Token != nil {
@@ -450,7 +450,7 @@ type fileMattermostIdentity struct {
 	// Token exists only to be rejected. pelletier/go-toml drops an unknown key
 	// without a word, and turning on DisallowUnknownFields would break every
 	// other block in this file, so a declared field is the only way a token
-	// written beside username fails the load rather than being ignored (FR1).
+	// written beside username fails the load rather than being ignored.
 	Token *string `toml:"token"`
 
 	Username    string   `toml:"username"`

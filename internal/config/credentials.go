@@ -9,7 +9,7 @@ import (
 
 // Credential TOML keys. The parser matches against these and rejects anything
 // else, so an unknown or plaintext-secret key fails Load rather than being
-// dropped silently (security amendment 4).
+// dropped silently.
 const (
 	credKeyGrant           = "grant"
 	credKeyTokenURL        = "token_url"

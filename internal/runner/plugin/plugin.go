@@ -56,7 +56,7 @@ type Config struct {
 	Command []string
 
 	// EnvPassthrough names host environment variables to forward to the plugin
-	// process on top of the minimal base env (spec L2). Empty hands the child
+	// process on top of the minimal base env. Empty hands the child
 	// only PATH and the socket variable, so a plugin never receives the host's
 	// tokens, DSNs, or signing keys unless the operator listed the variable.
 	EnvPassthrough []string
@@ -177,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*Plugin, error) {
 }
 
 // pluginEnv builds the child process environment from a minimal base, never the
-// host's full os.Environ (spec L2). The base is the socket variable plus PATH,
+// host's full os.Environ. The base is the socket variable plus PATH,
 // so the child can find its own interpreter. Everything else arrives only when
 // the operator named it, by exact name, in env_passthrough.
 func pluginEnv(lookup environ.Lookup, socketPath string, passthrough []string) []string {
@@ -317,7 +317,10 @@ func (p *Plugin) code(suffix string) string {
 // that dies first cancels the wait through the exit watcher instead of
 // burning the whole timeout.
 func (p *Plugin) connect(ctx context.Context, socketPath string) error {
-	conn, err := grpc.NewClient("unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// "unix:" rather than "unix://": a Windows path such as C:\... after "//"
+	// parses as a host with a bad port, and gRPC then falls back to the dns
+	// resolver. The opaque form carries the path through on every platform.
+	conn, err := grpc.NewClient("unix:"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return fmt.Errorf("dial plugin socket: %w", err)
 	}

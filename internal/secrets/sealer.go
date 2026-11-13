@@ -144,7 +144,7 @@ func (s *Sealer) Open(workspace, name string, version int64, keyID string, nonce
 // NUL-joined so "a"/"bc" cannot collide with "ab"/"c", and the name is
 // normalized so a raw and a canonical name build the same AAD. The version tail
 // means restoring an older ciphertext row fails the open on the recency
-// mismatch (security council amendment 6).
+// mismatch.
 func aad(workspace, name string, version int64) []byte {
 	return []byte(workspace + "\x00" + NormalizeName(name) + "\x00" + strconv.FormatInt(version, 10))
 }

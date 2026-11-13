@@ -450,7 +450,7 @@ func newDeafServer(t *testing.T) *nettest.Server {
 // TestListenFailsWhenTheSocketStopsAnsweringPings proves the keepalive turns a
 // half-open connection into a transient failure the reconnect loop acts on.
 // Without it Read blocks forever, so the identity stops answering DMs and
-// mentions with no error and no log line until the process restarts (FR7, NFR3).
+// mentions with no error and no log line until the process restarts.
 func TestListenFailsWhenTheSocketStopsAnsweringPings(t *testing.T) {
 	t.Parallel()
 

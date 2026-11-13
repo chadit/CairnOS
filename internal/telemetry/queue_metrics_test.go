@@ -9,7 +9,7 @@ import (
 
 // TestQueueMetricsRecorded drives the work-queue recorder methods through the
 // manual reader and asserts each lands on the right Prometheus series, so the
-// scheduler-queue dashboard panels have data behind them (S8).
+// scheduler-queue dashboard panels have data behind them.
 func TestQueueMetricsRecorded(t *testing.T) {
 	t.Parallel()
 

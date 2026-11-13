@@ -452,7 +452,7 @@ func (b *builder) buildRetry(name string, value any) *RetryPolicy {
 	}
 
 	// Jitter defaults on: retry storms from synchronized backoff are exactly
-	// what the spec's full-jitter requirement exists to prevent.
+	// what full jitter exists to prevent.
 	policy := &RetryPolicy{Backoff: backoffExponential, Jitter: true}
 
 	for key, fieldValue := range table {

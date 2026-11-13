@@ -6,7 +6,7 @@
 #     --input resume_summary="Senior Go engineer, distributed systems" \
 #     --input notify_to=me@example.com
 #
-# Sourcing (S5): feed_url must be a source you're allowed to query. An official
+# Sourcing: feed_url must be a source you're allowed to query. An official
 # API you hold a key for, or a feed you run yourself. Never a scraped listing
 # site; scraping LinkedIn or Indeed violates their terms of service.
 
@@ -21,7 +21,7 @@ timeout     = "15m"
 [workflow.inputs.feed_url]
 type        = "string"
 required    = true
-description = "Your own job feed endpoint. A source you are permitted to query (see the S5 note above)."
+description = "Your own job feed endpoint. A source you are permitted to query (see the sourcing note above)."
 
 [workflow.inputs.resume_summary]
 type        = "string"

@@ -6,8 +6,8 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// RunWorkflowToolName is the registry name of the D9 gated workflow trigger the
-// chat agent holds (D9). It is the one tool whose call the chat agent
+// RunWorkflowToolName is the registry name of the confirmation-gated workflow trigger the
+// chat agent holds. It is the one tool whose call the chat agent
 // intercepts instead of executing: a call raises a confirmation gate rather
 // than running anything.
 const RunWorkflowToolName = "run_workflow"
@@ -28,7 +28,7 @@ const (
 	schemaRequired    = "required"
 )
 
-// runWorkflowTool is the descriptor side of the D9 gate. It implements
+// runWorkflowTool is the descriptor side of the confirmation gate. It implements
 // runner.Describer so the driver can see and call it, but Execute never runs a
 // workflow: the chat agent intercepts a run_workflow call and turns it into a
 // ConfirmationRequired event. Execute fails loudly so a code path calling the

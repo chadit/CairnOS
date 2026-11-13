@@ -3,7 +3,7 @@
 // CairnOS "run", so CreateTask starts a run, GetTask reads one, ListTasks lists
 // them, CancelTask stops one, and TaskUpdates streams a run's events.
 // SendMessage adds the conversational half: a peer holds a multi-turn chat with
-// this node over the same bridge core the chat transports drive (FR36). Every
+// this node over the same bridge core the chat transports drive. Every
 // method needs the a2a:task scope; the gateway gives HTTP-only agents the same
 // surface over JSON.
 
@@ -989,7 +989,7 @@ func (x *SendMessageResponse) GetProposal() *Proposal {
 
 // Proposal is a workflow the node wants to run on the peer's behalf, awaiting
 // the peer's decision. Approving additionally requires write:workflow on the
-// peer's token (FR37).
+// peer's token.
 type Proposal struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Workflow           string                 `protobuf:"bytes,1,opt,name=workflow,proto3" json:"workflow,omitempty"`

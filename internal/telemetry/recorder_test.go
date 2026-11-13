@@ -395,7 +395,7 @@ func assertAgentSpanTree(t *testing.T, ended []sdktrace.ReadOnlySpan) {
 }
 
 // TestObserveBreakersGaugeEncodesStates proves the gauge callback renders
-// the spec's encoding (0 closed, 1 half-open, 2 open) per runner.
+// the gauge encoding (0 closed, 1 half-open, 2 open) per runner.
 func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 	t.Parallel()
 
@@ -438,8 +438,8 @@ func TestObserveBreakersGaugeEncodesStates(t *testing.T) {
 
 // TestBridgeMetricsRecorded drives the four bridge recorder methods through the
 // manual reader, asserting each lands on the right series and outcome label so
-// the bridge dashboard panels have data (S3). BridgeConfirm's refused outcome is
-// checked because it counts the grant refusals S5 enforces. Every call carries a
+// the bridge dashboard panels have data. BridgeConfirm's refused outcome is
+// checked because it counts the approve-grant refusals. Every call carries a
 // transport and identity so Telegram's traffic stays unmixed.
 func TestBridgeMetricsRecorded(t *testing.T) {
 	t.Parallel()

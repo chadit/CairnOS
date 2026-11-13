@@ -40,7 +40,7 @@ depends_on = ["investigate"]
 params = { output = "${{ investigate.output }}" }
 `
 
-// happyPathTurns scripts the spec's canned goal walk: memory search, then
+// happyPathTurns scripts the canned goal walk: memory search, then
 // the mock tool, then the final answer.
 func happyPathTurns() []runner.Result {
 	return []runner.Result{

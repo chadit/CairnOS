@@ -9,7 +9,7 @@ import (
 // State is a circuit breaker position.
 type State int
 
-// Breaker states, following the spec diagram: CLOSED opens when the failure
+// Breaker states: CLOSED opens when the failure
 // rate trips, OPEN cools down into HALF_OPEN, and the probe outcome decides
 // between reopening and closing.
 const (
@@ -18,7 +18,7 @@ const (
 	StateHalfOpen
 )
 
-// String implements fmt.Stringer with the spec's spelling of each state.
+// String implements fmt.Stringer with the canonical spelling of each state.
 func (s State) String() string {
 	switch s {
 	case StateClosed:

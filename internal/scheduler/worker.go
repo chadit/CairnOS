@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Worker defaults, used when a WorkerConfig leaves a knob zero. They favor a
-// small, calm footprint; an operator tunes them per deployment (S8).
+// Worker defaults, used when a WorkerConfig leaves a field zero. They favor a
+// small, calm footprint; an operator tunes them per deployment.
 const (
 	defaultConcurrency   = 4
 	defaultPrefetch      = 8
@@ -40,10 +40,10 @@ type ItemMetrics interface {
 	ItemRun(ok bool)
 	// ItemDeadLettered records an item exhausting its deliveries.
 	ItemDeadLettered()
-	// ItemHeld records an item parked for re-authentication (D12).
+	// ItemHeld records an item parked for re-authentication.
 	ItemHeld()
 	// ItemResumed records a held item returned to ready after its credential
-	// became valid again (D12).
+	// became valid again.
 	ItemResumed()
 }
 
@@ -75,7 +75,7 @@ type WorkerConfig struct {
 	// key) is valid again at now, so the sweep can resume it without a human. The
 	// CLI wires it to the reauth credential probe; nil disables auto-resume, so
 	// held items wait for a manual resume, keeping the scheduler package free of
-	// the reauth dependency (D12).
+	// the reauth dependency.
 	ResumeProbe func(holdKey string, now time.Time) bool
 
 	// OnDeadLetter runs after an item exhausts its deliveries and settles
@@ -88,19 +88,19 @@ type WorkerConfig struct {
 	// OnHold runs after a job is parked for re-auth, so the CLI can alert an
 	// operator (a Discord webhook) with the tool and the remediation. nil
 	// disables notification; the scheduler package stays free of the notify and
-	// runner dependencies, the same seam as Holdable (D12).
+	// runner dependencies, the same seam as Holdable.
 	OnHold func(ctx context.Context, item *WorkItem, runErr error)
 
 	// HoldKey derives what a held item is waiting on (the re-auth provider) from
 	// the run error, stored on the item so a resume probe knows which credential
-	// to check. The scheduler does not interpret it (D12). A nil HoldKey, or one
+	// to check. The scheduler does not interpret it. A nil HoldKey, or one
 	// returning "", means the error cannot be held: it settles as a failure.
 	HoldKey func(error) string
 
 	// Holdable reports whether a run error means the job should be held for a
 	// human (an expired credential) rather than redelivered or dead-lettered.
 	// The CLI wires it to runner.IsReauth; nil means no error ever holds, so the
-	// scheduler package stays free of the runner dependency (D12).
+	// scheduler package stays free of the runner dependency.
 	Holdable func(error) bool
 
 	Logger        *slog.Logger
@@ -117,7 +117,7 @@ type WorkerConfig struct {
 // Worker drains the queue: it claims ready items up to its free capacity, runs
 // each through the QueueRunner, and acks or naks the result. A separate sweep
 // loop reclaims leases abandoned by crashed workers and dead-letters items past
-// their delivery limit, so no fire is silently lost (S8).
+// their delivery limit, so no fire is silently lost.
 type Worker struct {
 	runner        QueueRunner
 	queue         WorkQueue
@@ -333,8 +333,8 @@ func (w *Worker) process(ctx context.Context, item *WorkItem) {
 
 // holdItem parks an item whose run failed on an expired credential, so a human
 // can re-authenticate and resume it rather than the queue burning its deliveries
-// and dead-lettering a job that was never going to succeed without re-auth
-// (D12). A failed hold falls back to a normal nak, so the item is never
+// and dead-lettering a job that was never going to succeed without re-auth.
+// A failed hold falls back to a normal nak, so the item is never
 // silently stuck leased.
 func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 	var holdKey string
@@ -368,7 +368,7 @@ func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 	}
 
 	// Notify last and only after the hold succeeded: a held job is already safe,
-	// so a slow or failed alert never changes its fate (D12). onHold runs on the
+	// so a slow or failed alert never changes its fate. onHold runs on the
 	// detached settle context, which carries the ack-wait timeout.
 	if w.onHold != nil {
 		w.onHold(ctx, item, runErr)
@@ -376,7 +376,7 @@ func (w *Worker) holdItem(ctx context.Context, item *WorkItem, runErr error) {
 }
 
 // settleFailure naks a failed item and logs whether it was requeued or
-// dead-lettered, so a deferral is visible on the dashboard and in the log (S8).
+// dead-lettered, so a deferral is visible on the dashboard and in the log.
 func (w *Worker) settleFailure(ctx context.Context, item *WorkItem, runErr error) {
 	state, err := w.queue.Nak(ctx, item.ID, w.clock(), w.backoff, w.maxDeliveries)
 	if err != nil {
@@ -489,7 +489,7 @@ func (w *Worker) sweepOnce(ctx context.Context) {
 }
 
 // resumeHeld returns held items to ready once their credential is valid again, so
-// a re-authenticated tool's jobs flow without a human touching the queue (D12). A
+// a re-authenticated tool's jobs flow without a human touching the queue. A
 // nil probe disables auto-resume, but the keyless release below still runs: a row
 // no probe can name is stuck otherwise.
 func (w *Worker) resumeHeld(ctx context.Context, now time.Time) {

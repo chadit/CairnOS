@@ -5,7 +5,7 @@
 // the memory store, the workflow loader, and the run store the rest of the API
 // already owns.
 //
-// The surface shipped at Phase 7a:
+// The surface:
 //
 //   - tool run_workflow: start a run by name with inputs, backed by the run
 //     manager (scope write:workflow).
@@ -22,8 +22,8 @@
 // holds the machine). When the configured authenticator is nil, auth is
 // disabled and every call passes, matching the rest of the API.
 //
-// The get_language_rules tool landed in Phase 7b once the rules service
-// existed; it registers only when a rules store is wired (see server.go). The
-// MCP registry publish/import is the lowest-priority piece of spec 10 and stays
-// deferred (see registry.go).
+// The get_language_rules tool registers only when a rules store is wired (see
+// server.go). Publish and import against the public MCP registry stay deferred
+// until its schema settles, so registry.go speaks a small contract CairnOS owns
+// in the meantime.
 package mcp

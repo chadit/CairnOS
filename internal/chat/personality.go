@@ -24,7 +24,7 @@ const DefaultPersonality = PersonalityAssistant
 
 // builtinPrompts is the system prompt behind each built-in personality. They
 // share the gate framing (the agent proposes, the user confirms) so no
-// personality can talk itself past the D9 confirmation step.
+// personality can talk itself past the confirmation step.
 //
 //nolint:gochecknoglobals // an immutable lookup table read at turn start, never mutated
 var builtinPrompts = map[string]string{

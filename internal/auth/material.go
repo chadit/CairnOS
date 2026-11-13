@@ -109,7 +109,7 @@ func loadHS256(getenv func(string) string) (*Material, error) {
 }
 
 // loadEdDSA reads the ed25519 key pair from the configured PEM files. Both
-// halves are required: the Phase 4a serve process is issuer and verifier
+// halves are required: the serve process is issuer and verifier
 // in one.
 func loadEdDSA(getenv func(string) string) (*Material, error) {
 	privatePath := getenv(privateKeyFileEnv)
@@ -135,7 +135,7 @@ func loadEdDSA(getenv func(string) string) (*Material, error) {
 	// The configured public key must be the mate of the private key, or this
 	// node would sign tokens its own verifier rejects (a silent
 	// misconfiguration that only shows up at the first verify). Compare the
-	// derived public key against the loaded one (spec L5).
+	// derived public key against the loaded one.
 	derived, ok := privateKey.Public().(ed25519.PublicKey)
 	if !ok || !derived.Equal(publicKey) {
 		return nil, fmt.Errorf("%w: %s does not match the private key in %s", ErrKeyPairMismatch, publicPath, privatePath)
@@ -149,7 +149,7 @@ func loadEdDSA(getenv func(string) string) (*Material, error) {
 const groupOtherPermBits = 0o077
 
 // readPrivateKeyPEM parses a PKCS#8 PEM file into an ed25519 private key,
-// first refusing a world- or group-readable file (spec L5).
+// first refusing a world- or group-readable file.
 func readPrivateKeyPEM(path string) (ed25519.PrivateKey, error) {
 	if err := refuseOpenPerms(path); err != nil {
 		return nil, err
@@ -194,8 +194,8 @@ func readPublicKeyPEM(path string) (ed25519.PublicKey, error) {
 }
 
 // refuseOpenPerms rejects a private key file readable by group or other; a
-// world-readable signing key undermines every token minted under it (spec
-// L5). The check is skipped on platforms whose Stat reports no Unix mode
+// world-readable signing key undermines every token minted under it. The
+// check is skipped on platforms whose Stat reports no Unix mode
 // bits, where perm would always be zero.
 func refuseOpenPerms(path string) error {
 	info, err := os.Stat(path)

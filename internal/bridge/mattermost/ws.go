@@ -27,7 +27,7 @@ const pingDeadlineDivisor = 3
 
 // Listen holds one WebSocket connection and forwards every posted event to
 // events until ctx ends or the read fails. It never reconnects: the caller owns
-// the backoff, so a server refusing the token cannot spin here (FR7).
+// the backoff, so a server refusing the token cannot spin here.
 func (c *Client) Listen(ctx context.Context, events chan<- Event) error {
 	conn, err := c.dialSocket(ctx)
 	if err != nil {
@@ -81,8 +81,7 @@ func (c *Client) readFrames(ctx context.Context, conn *websocket.Conn, events ch
 // keepalive probes an idle event socket. A NAT table or a load balancer that
 // drops the flow without a FIN leaves Read blocked forever, so the identity
 // stops answering with no error and no log line until the process restarts. The
-// probe turns that silence into a transient failure the backoff reconnects from
-// (FR7, NFR3).
+// probe turns that silence into a transient failure the backoff reconnects from.
 type keepalive struct {
 	conn  *websocket.Conn
 	log   *slog.Logger

@@ -9,7 +9,7 @@ and the condition gates on it.
 
 This workflow does not scrape anything, and you shouldn't point it at a
 site that forbids it. Scraping LinkedIn, Indeed, or other listing sites
-violates their terms of service (S5).
+violates their terms of service.
 The `feed_url` input must be your own source: an official API you hold a
 key for, a job board that permits API access, or an aggregator you run
 yourself. The fetch step is a plain `webhook` POST so any endpoint you own

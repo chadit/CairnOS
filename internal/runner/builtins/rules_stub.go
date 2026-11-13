@@ -184,7 +184,7 @@ func (l *LanguageRules) resolveRules(ctx context.Context, language, project stri
 }
 
 // loadRules reads the base language file and overlays the optional project
-// file, project keys winning, per the merge contract in the spec.
+// file, project keys winning, per the merge contract.
 func (l *LanguageRules) loadRules(language, project string) (map[string]string, error) {
 	rules, err := readFlatRules(filepath.Join(l.dir, language+rulesExt))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -257,7 +257,7 @@ func isStemChar(ch rune) bool {
 }
 
 // readFlatRules parses one flat key = "value" rules file. A hand-rolled
-// reader keeps this Phase 1 stub on the standard library; the files are flat
+// reader keeps this stub on the standard library; the files are flat
 // string maps by contract, never nested TOML.
 func readFlatRules(path string) (map[string]string, error) {
 	// #nosec G304 -- path is the operator-configured rules dir joined with

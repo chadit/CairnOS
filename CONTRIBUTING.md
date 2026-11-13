@@ -79,6 +79,8 @@ flag code that passed before. Fix what it reports instead of adding exclusions.
 
 ## Commits and pull requests
 
+Contributions are licensed under the repository's [MIT license](./LICENSE).
+
 - Keep each pull request small and about one change. A refactor and a feature go
   in separate pull requests.
 - A behavior change needs a test that covers it. A bug fix needs a test that

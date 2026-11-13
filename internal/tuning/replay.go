@@ -10,7 +10,7 @@ import (
 )
 
 // Comparator decides whether a replayed output is equivalent to the recorded
-// one. It is the R1 seam: how to judge equivalence is still open, so the method
+// one. It is a seam: how to judge equivalence is still open, so the method
 // is swappable. ExactMatch is the v1 default and EmbeddingComparator drops in
 // here. Compare takes a context and may fail because a non-trivial comparator
 // calls a model over the network.
@@ -36,7 +36,7 @@ type Comparison struct {
 	Scored     bool
 }
 
-// ExactMatch is the v1 R1-placeholder comparator: outputs are equivalent only
+// ExactMatch is the v1 placeholder comparator: outputs are equivalent only
 // when their canonical JSON encodings are byte-identical. It never lets a
 // changed output through, at the cost of calling harmless rephrasing a
 // divergence. That trade is deliberate: output-changing suggestions are never
@@ -198,7 +198,7 @@ func (e *Engine) replayOne(ctx context.Context, target runner.Runner, suggestion
 }
 
 // recordSimilarity stamps the per-sample cosine scores and their threshold
-// into the suggestion's evidence. That is the R1 calibration record: an
+// into the suggestion's evidence. That is the calibration record: an
 // operator sees the similarity numbers next to the guardrail verdict, the data
 // needed to tune the threshold on a real corpus. Exact-match produces no
 // scores, so the call is a no-op there.

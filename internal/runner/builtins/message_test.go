@@ -68,7 +68,7 @@ func messageTask(params map[string]any) *runner.Task {
 
 // TestMessageSendsThroughSeam proves a well-formed action reaches the send seam
 // with its four params intact and returns the created message id as the output,
-// so a later action can answer in the same thread (FR32).
+// so a later action can answer in the same thread.
 func TestMessageSendsThroughSeam(t *testing.T) {
 	t.Parallel()
 

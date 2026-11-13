@@ -46,7 +46,7 @@ type Retriever interface {
 
 	// Query runs the typed graph query: tag and project filtering, bounded
 	// link traversal, and keyword text match, returning documents with their
-	// bodies (S1: a typed DSL, not GraphQL).
+	// bodies (a typed DSL, not GraphQL).
 	Query(ctx context.Context, query Query) (QueryResult, error)
 }
 
@@ -64,7 +64,7 @@ type Document struct {
 	Backlinks []string // inbound document ids (derived, read-only)
 }
 
-// Query is the typed graph query DSL (S1). Every field is optional and
+// Query is the typed graph query DSL. Every field is optional and
 // AND-combined: a query with Tags and LinkedFrom returns documents that both
 // carry the tags and sit within Hops of the source. The zero Query lists the
 // workspace.
@@ -95,13 +95,13 @@ type Query struct {
 	Limit int
 
 	// Semantic asks for vector search when a backend is configured. No vector
-	// backend ships in Phase 7 (D2), so a semantic query falls back to keyword
+	// backend ships, so a semantic query falls back to keyword
 	// and sets Fallback in the result.
 	Semantic bool
 }
 
-// QueryResult carries the matched documents plus the fallback signal the spec
-// calls for: when Semantic was requested but no vector backend is configured,
+// QueryResult carries the matched documents plus the fallback signal: when
+// Semantic was requested but no vector backend is configured,
 // keyword search answers and Fallback is true so callers know what they got,
 // mirroring memory.SearchResult.
 type QueryResult struct {

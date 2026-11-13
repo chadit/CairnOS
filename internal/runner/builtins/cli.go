@@ -74,7 +74,7 @@ type CLI struct {
 
 	// allowDashedPrompt opts out of the dashed-prompt guard, for operators who
 	// have vetted the wrapped binary and want a prompt that may begin with a
-	// dash to ride a bare positional anyway (spec M3).
+	// dash to ride a bare positional anyway.
 	allowDashedPrompt bool
 }
 

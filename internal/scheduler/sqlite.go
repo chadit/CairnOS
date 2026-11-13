@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
 )
 
-// schedulesSchema is the spec's schedules table, plus IF NOT EXISTS so opening
+// schedulesSchema is the schedules table, plus IF NOT EXISTS so opening
 // an existing database is idempotent. It shares the run store's database file
 // with disjoint tables, the same arrangement internal/memory uses.
 const schedulesSchema = `
@@ -35,7 +35,7 @@ const scheduleColumns = "id, workflow_path, workflow_name, cron, last_fired, nex
 // order across every table in the shared file.
 const storedTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
-// SQLite is the Phase 0b Schedules backend. Safe for concurrent use through
+// SQLite is a Schedules backend. Safe for concurrent use through
 // WAL mode and busy_timeout, which also lets the CLI add and remove
 // schedules while the daemon holds the file open.
 type SQLite struct {

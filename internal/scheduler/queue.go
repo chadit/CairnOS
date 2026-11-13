@@ -8,7 +8,7 @@ import (
 // DedupKeyFor builds the exactly-once enqueue key for one scheduled occurrence:
 // a single work item per (schedule, fire-time). Every node's cron may observe
 // the same occurrence, but the unique key lands one row, so the queue needs no
-// scheduling leader on the enqueue side (S8). The fire time keeps sub-minute
+// scheduling leader on the enqueue side. The fire time keeps sub-minute
 // precision, so two occurrences inside one minute key two rows.
 func DedupKeyFor(scheduleID string, fireTime time.Time) string {
 	return OccurrencePrefix(scheduleID) + fireTime.UTC().Format(time.RFC3339Nano)
@@ -37,8 +37,8 @@ func PollDedupKeyFor(scheduleID, eventID string) string {
 // WorkState is a queued item's lifecycle state. A cron fire enqueues a ready
 // item; a worker leases it; success acks (deletes) it; failure naks it back to
 // ready with backoff, or dead-letters it once it has been delivered too many
-// times. A held item is parked on a NeedsReauth pause (D12) and is not
-// redelivered until resumed (S8).
+// times. A held item is parked on a NeedsReauth pause and is not
+// redelivered until resumed.
 type WorkState string
 
 // Work item states. Completed items are deleted on ack rather than kept in a
@@ -66,7 +66,7 @@ type WorkItem struct {
 	// HoldKey records what a held item is waiting on, set when the item is held
 	// and cleared on resume. The queue treats it as opaque; the scheduler stores
 	// the re-auth provider name here so a resume probe knows which credential to
-	// check (D12). It is empty for any item that is not held.
+	// check. It is empty for any item that is not held.
 	HoldKey string
 
 	Payload    []byte
@@ -97,7 +97,7 @@ type OccurrenceQueue interface {
 	OccurrencePending(ctx context.Context, scheduleID string, now time.Time) (bool, error)
 }
 
-// HoldQueue is the NeedsReauth pause surface (D12): the three operations that
+// HoldQueue is the NeedsReauth pause surface: the three operations that
 // park an item for a human and let it back out again.
 type HoldQueue interface {
 	// Hold parks an item in the held state (a NeedsReauth pause), so the sweep
@@ -110,7 +110,7 @@ type HoldQueue interface {
 	Resume(ctx context.Context, id string) error
 
 	// ListHeld returns every held item with its hold key, so a resume probe can
-	// check the credential each one is waiting on (D12). An empty queue or no held
+	// check the credential each one is waiting on. An empty queue or no held
 	// items returns an empty slice, not an error.
 	ListHeld(ctx context.Context) ([]WorkItem, error)
 }
@@ -170,7 +170,7 @@ type SweepQueue interface {
 // is single-node (its write lock serializes the claim); the Postgres backend
 // claims with FOR UPDATE SKIP LOCKED so several workers across nodes pull
 // disjoint items. Both satisfy the same contract, proven by one conformance
-// suite (S8).
+// suite.
 type WorkQueue interface {
 	ProducerQueue
 	LeaseQueue

@@ -50,13 +50,13 @@ without a token, so the login screen offers a "Continue without signing in"
 path. If a guarded call returns 401, the app drops the token and returns to the
 login screen.
 
-### Token storage and the CSP (M2)
+### Token storage and the CSP
 
 The token lives in `localStorage`, not an httpOnly cookie. That was a deliberate
-call (decision M2): the access key stays
-the one credential to manage, the token rides a header so there is no CSRF
-surface, and it works on any topology with no server change. The trade is that a
-script running on the page could read the token, so two things cap the risk:
+call: the access key stays the one credential to manage, the token rides a
+header so there is no CSRF surface, and it works on any topology with no server
+change. The trade is that a script running on the page could read the token,
+so two things cap the risk:
 
 - The token is short-lived (1h) and revocable through the `jti`/`sub` denylist,
   so a stolen token's window is an hour on a credential an admin can kill.
@@ -80,15 +80,15 @@ Two operator notes follow from `connect-src 'self'`:
   host, since a meta-tag CSP cannot set `frame-ancestors`.
 
 Closing the read-the-token gap entirely means moving to an httpOnly cookie, which
-adds CSRF handling and a gateway `Set-Cookie` hook on `/v1/login`; M2 keeps that
-documented as the upgrade if it is ever needed.
+adds CSRF handling and a gateway `Set-Cookie` hook on `/v1/login`, so that stays
+the documented upgrade if it is ever needed.
 
 ## The TOML round-trip
 
 A workflow you build on the canvas exports to TOML the CLI runs, and re-imports
 with a **semantic** round-trip: same actions, same `depends_on` edges, same
 params, same agent settings, same behavior. Comments and exact formatting are
-**not** preserved. This matches the Phase 5a acceptance criterion.
+**not** preserved.
 
 What this means in practice:
 
@@ -122,7 +122,7 @@ parse` both normalize to the same workflow.
 
 ## Chat
 
-The Chat page is a client over the gateway's `ChatService` (the D9
+The Chat page is a client over the gateway's `ChatService` (the
 conversational surface). The sidebar lists sessions and starts a new one with a
 personality picker; the main column shows the transcript and a composer.
 
@@ -183,9 +183,11 @@ src/
   test/       MSW server, handlers, fixtures, the render helper
 ```
 
-## Phase 5b is not here
+## Governance
 
-Budgets and pause/resume controls need engine enforcement that ships in Phase
-5b. The Governance page labels them as previews and changes no server behavior.
-The one real control today is `CancelRun`, on a run's detail page. The app does
-not fake a spend cap.
+The server enforces workflow budgets and pauses: it refuses new runs of a
+paused workflow, and it checks a workflow's `[workflow.budget]` spend before
+each run starts. The Governance page describes those rules but has no controls
+yet, so pause, resume, and budget checks go through `cairnos pause`,
+`cairnos resume`, and `cairnos budget`, or the `/v1/governance` routes with an
+admin key. Terminating a run is `CancelRun`, on the run's detail page.

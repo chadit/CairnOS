@@ -22,8 +22,8 @@ const triggerChat = "chat"
 
 // ChatWorkflowTrigger adapts the run manager and the workflow resolver to
 // chat.WorkflowTrigger, so a confirmed chat proposal fires a real run through
-// the same engine, breakers, and governance every other run uses (D9: the
-// spawned run runs under Phase 5b budgets and pause, at depth exactly one).
+// the same engine, breakers, and governance every other run uses (the
+// spawned run runs under engine budgets and pause, at depth exactly one).
 type ChatWorkflowTrigger struct {
 	manager  *Manager
 	resolver *WorkflowResolver

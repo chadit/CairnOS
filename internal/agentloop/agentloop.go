@@ -17,7 +17,7 @@
 //     "end_turn".
 //
 // When the Output shape alone is ambiguous (a final answer that is a map
-// with a "tool" key), the stop reason decides. Per D8 there is no JSON-in-text
+// with a "tool" key), the stop reason decides. There is no JSON-in-text
 // fallback: a driver without native tool calling fails validation with
 // agent.driver_incapable.
 //
@@ -126,9 +126,9 @@ func (l *Loop) Execute(ctx context.Context, action *workflow.Action, task *runne
 // and no registry runner starts a workflow or another loop. Delegation is bounded
 // by its own walls (opt-in via tools, depth capped at 1, one delegation per action
 // run, iteration and budget clamped to the parent's remaining), so it adds exactly
-// one child level and never a third (D9 and D15).
+// one child level and never a third.
 
-// ValidateAction applies the run-start checks from the spec's termination table:
+// ValidateAction applies the run-start checks:
 // the driver must be a registered runner.ToolCaller (agent.driver_incapable
 // otherwise) and every tools entry a registered runner.Describer
 // (workflow.invalid otherwise). Tools resolve through the runner registry, except

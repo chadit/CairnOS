@@ -186,7 +186,7 @@ func TestKeysDisableEnableRoundTrip(t *testing.T) {
 		t.Fatal("key still enabled after keys disable")
 	}
 
-	// Disable wrote the deny-by-sub row, the spec's immediate revocation. A
+	// Disable wrote the deny-by-sub row for immediate revocation. A
 	// token issued at the key's creation time (before the revoke instant) is
 	// denied.
 	denied, err := authStore.IsDenied(t.Context(), "any", keyID, key.CreatedAt, time.Now())
@@ -222,7 +222,7 @@ func TestKeysDisableEnableRoundTrip(t *testing.T) {
 	}
 }
 
-// TestKeysEnableWarnsAboutResurrectedTokens is the L7 fix: re-enabling a key
+// TestKeysEnableWarnsAboutResurrectedTokens proves the resurrection warning: re-enabling a key
 // lifts its deny-by-sub row, so tokens minted before the disable are valid
 // again; the command must say so and point at `auth revoke --key`.
 func TestKeysEnableWarnsAboutResurrectedTokens(t *testing.T) {

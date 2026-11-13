@@ -73,8 +73,7 @@ func TestBridgeMultiTurnPersistsAcrossRestart(t *testing.T) {
 }
 
 // TestBridgeUnauthorizedSenderGetsNoReply proves a non-allowlisted sender gets
-// no reply and no turn, and increments updates_total{unauthorized}
-// (acceptance 4).
+// no reply and no turn, and increments updates_total{unauthorized}.
 func TestBridgeUnauthorizedSenderGetsNoReply(t *testing.T) {
 	t.Parallel()
 
@@ -187,7 +186,7 @@ func TestBridgeFailedSendCountsOnceNoRerun(t *testing.T) {
 	}
 
 	// The failure carries the adapter's own labels, so a dashboard attributes a
-	// missed reply to Telegram rather than to an unlabeled series (FR42).
+	// missed reply to Telegram rather than to an unlabeled series.
 	labels := rig.metrics.SendFailures()
 	if labels[0].Transport != transportName || labels[0].Identity != identityName {
 		t.Errorf("send failure labels = %+v, want transport %q", labels[0], transportName)
@@ -195,8 +194,7 @@ func TestBridgeFailedSendCountsOnceNoRerun(t *testing.T) {
 }
 
 // TestBridgeWorkspaceStampedOnEveryTurn proves the bridge stamps the mapped
-// workspace onto the store and the agent, exactly as the gRPC interceptor would
-// (security amendment: workspace stamping).
+// workspace onto the store and the agent, exactly as the gRPC interceptor would.
 func TestBridgeWorkspaceStampedOnEveryTurn(t *testing.T) {
 	t.Parallel()
 
@@ -225,7 +223,7 @@ func TestBridgeWorkspaceStampedOnEveryTurn(t *testing.T) {
 }
 
 // TestBridgeOffsetAckingSkipsAckedUpdates proves the ack advances past delivered
-// updates so a batch is not replayed on the next poll (acceptance 1, dispatch).
+// updates so a batch is not replayed on the next poll.
 func TestBridgeOffsetAckingSkipsAckedUpdates(t *testing.T) {
 	t.Parallel()
 
@@ -263,7 +261,7 @@ func TestBridgeOffsetAckingSkipsAckedUpdates(t *testing.T) {
 }
 
 // TestBridgeBackoffStateChangeLogsOnly proves long-poll failures retry and log
-// at warn only when the up/down state flips (acceptance 6).
+// at warn only when the up/down state flips.
 func TestBridgeBackoffStateChangeLogsOnly(t *testing.T) {
 	t.Parallel()
 
@@ -293,8 +291,8 @@ func TestBridgeBackoffStateChangeLogsOnly(t *testing.T) {
 // TestBridgeNoTokenInLogsOnTransportError proves the token, which a transport
 // error carries in its URL, never reaches the poll loop's logs. It injects the
 // real client through the NewClientOver seam over a failing tripper, so the
-// redaction under test is the shipped client's, not a fake's (acceptance 6;
-// security amendment: no token in errors or logs).
+// redaction under test is the shipped client's, not a fake's (no token in
+// errors or logs).
 func TestBridgeNoTokenInLogsOnTransportError(t *testing.T) {
 	t.Parallel()
 
@@ -339,7 +337,7 @@ func TestBridgeNoTokenInLogsOnTransportError(t *testing.T) {
 // TestBridgeDispatchFIFOAndConcurrent proves the dispatch model: a blocked turn
 // occupies only its chat while another chat runs concurrently, a second update
 // for the blocked chat waits and then runs FIFO, and a callback tap still gets an
-// immediate answerCallbackQuery from the poll loop (acceptance 1, S4 dispatch).
+// immediate answerCallbackQuery from the poll loop.
 func TestBridgeDispatchFIFOAndConcurrent(t *testing.T) {
 	t.Parallel()
 

@@ -740,8 +740,7 @@ func TestCreatePostRefusesARedirect(t *testing.T) {
 }
 
 // TestCreatePostRetriesAfterARateLimit proves a 429 is retried inside the call's
-// own deadline rather than dropping the reply outright (design section 5, edge
-// case 11).
+// own deadline rather than dropping the reply outright.
 func TestCreatePostRetriesAfterARateLimit(t *testing.T) {
 	t.Parallel()
 

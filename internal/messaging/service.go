@@ -42,7 +42,7 @@ func NewService(registry *Registry, metrics Metrics) *Service {
 }
 
 // SendMessage posts one message as the named identity. The text goes to the
-// transport unmodified so Mattermost renders any mentions it carries (FR29).
+// transport unmodified so Mattermost renders any mentions it carries.
 func (s *Service) SendMessage(
 	ctx context.Context,
 	req *cairnosv1.MessagingServiceSendMessageRequest,

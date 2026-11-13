@@ -254,7 +254,7 @@ func TestSchedulerCoordinatorContendForLeadership(t *testing.T) {
 // TestSchedulerCoordinatorsDistinctKeysElectIndependently proves the
 // parameterized key: two coordinators on different advisory-lock keys both win at
 // once, so the hive primary and the scheduler leader elect independently over the
-// same database (R3). The high-byte keys differ from the default so this runs
+// same database. The high-byte keys differ from the default so this runs
 // alongside the contention test against one database.
 func TestSchedulerCoordinatorsDistinctKeysElectIndependently(t *testing.T) {
 	t.Parallel()

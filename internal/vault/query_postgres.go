@@ -11,7 +11,7 @@ import (
 // Query runs the typed graph query against Postgres, behaviorally identical to
 // the sqlite backend; the shared conformance suite runs both through one spec
 // so a divergence fails a test. Semantic falls back to keyword with
-// QueryResult.Fallback set (D2).
+// QueryResult.Fallback set.
 //
 //nolint:gocritic // Store.Query fixes the by-value signature; helpers take *Query
 func (s *Postgres) Query(ctx context.Context, query Query) (QueryResult, error) {

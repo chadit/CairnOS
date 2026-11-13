@@ -48,7 +48,7 @@ type MessageSender interface {
 
 // Message posts a chat message through one of serve's configured identities, so
 // a workflow reaches a channel or a person on the same connection the bridge
-// answers on (FR32).
+// answers on.
 //
 // Config: none. Params: identity, to, text, and an optional thread or
 // thread_key. The target is one of #channel, @user, channel:<id>, or user:<id>.

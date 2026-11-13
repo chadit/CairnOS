@@ -7,8 +7,8 @@ import (
 )
 
 // Roles map a workspace membership onto a scope set the auth layer enforces.
-// The mapping is a decision, not a spec-given table: three roles cover the
-// governance surface this phase ships.
+// The mapping is a decision, not a given table: three roles cover the
+// governance surface.
 const (
 	// RoleAdmin holds every scope, including admin, so an admin manages keys,
 	// pauses workflows, and reads audit history in their workspace.
@@ -44,10 +44,10 @@ var roleScopes = map[string][]string{
 		auth.ScopeReadWorkflow, auth.ScopeWriteWorkflow,
 		auth.ScopeReadRun,
 		// An editor manages vault documents and language rules, the working set
-		// alongside memory and workflows (Phase 7b added the vault pair here).
+		// alongside memory and workflows.
 		auth.ScopeReadVault, auth.ScopeWriteVault,
 		// An editor holds chat:session and write:workflow, so an editor can hold
-		// a conversation and confirm a workflow trigger from it (Phase 9).
+		// a conversation and confirm a workflow trigger from it.
 		auth.ScopeChatSession,
 	},
 	RoleViewer: {

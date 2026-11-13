@@ -1,20 +1,20 @@
-// Package chat is the Phase 9 conversational front end over the Phase 1c agent
+// Package chat is the conversational front end over the agent
 // loop: a conversation is a long-lived agent action whose tools are memory, the
 // vault, and a gated run_workflow trigger. ChatAgent builds one turn over the
 // conversation history, drives a runner.ToolCaller the same way
 // internal/agentloop drives an agent action, and streams assistant text,
-// tool-call events, and the D9 confirmation-required signal back to the caller.
+// tool-call events, and the confirmation-required signal back to the caller.
 //
-// # The D9 confirmation gate
+// # The confirmation gate
 //
 // Agent loops are one level: an agent action's tools may not start a workflow.
-// The chat agent is the single, carefully-gated exception (D9). The
+// The chat agent is the single, carefully-gated exception. The
 // run_workflow tool the chat agent holds does not run a workflow when the
 // driver calls it. Instead the turn stops with a ConfirmationRequired event
 // carrying the proposed workflow, its inputs, and the estimated budget, and
 // waits for an explicit ConfirmAction from the user. Only an approval, on a
 // token that also carries write:workflow, fires the workflow, and it runs
-// under the normal engine governance (Phase 5b budgets and pause) at depth
+// under the normal engine governance (budgets and pause) at depth
 // exactly one: the spawned run's own actions still obey the one-level rule, so
 // nothing it does can start a third loop.
 package chat
@@ -26,7 +26,7 @@ import (
 	"github.com/chadit/CairnOS/pkg/runner"
 )
 
-// Tool names the chat agent offers. The trio is the Phase 9 tool set: memory
+// Tool names the chat agent offers. The trio is the tool set: memory
 // (search and load), the vault read tool, and the gated workflow trigger.
 const (
 	// ToolMemory is the memory built-in (search, load, add).
@@ -36,7 +36,7 @@ const (
 	// ToolUsage is the read-only rate-limit probe of the configured model CLI
 	// logins, the same one `cairnos usage` runs.
 	ToolUsage = builtins.UsageName
-	// ToolRunWorkflow is the D9 gated trigger: calling it proposes a workflow,
+	// ToolRunWorkflow is the confirmation-gated trigger: calling it proposes a workflow,
 	// it never runs one directly.
 	ToolRunWorkflow = RunWorkflowToolName
 )
@@ -52,7 +52,7 @@ const (
 	// vault); the gated trigger never produces this, it produces
 	// EventConfirmationRequired instead.
 	EventToolCall EventType = "tool_call"
-	// EventConfirmationRequired is the D9 gate: the agent proposed a workflow
+	// EventConfirmationRequired is the confirmation gate: the agent proposed a workflow
 	// and the turn paused, waiting for ConfirmAction.
 	EventConfirmationRequired EventType = "confirmation_required"
 	// EventRunStarted fires when a confirmed workflow trigger starts a run.
@@ -96,7 +96,7 @@ type Event struct {
 	Usage runner.Usage
 }
 
-// Proposal is the D9 confirmation payload: what the chat agent wants to run,
+// Proposal is the confirmation payload: what the chat agent wants to run,
 // with what inputs, and the estimated spend, so the user can approve or deny
 // from full information.
 type Proposal struct {

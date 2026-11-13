@@ -40,7 +40,7 @@ const (
 // cutoffs rely on.
 const timeLayout = "2006-01-02T15:04:05.000000000Z"
 
-// schemaSQL mirrors the spec schema verbatim, plus IF NOT EXISTS so Open is
+// schemaSQL is the run store schema, plus IF NOT EXISTS so Open is
 // idempotent across restarts.
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS runs (

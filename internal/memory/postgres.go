@@ -13,10 +13,10 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// pgMemorySchema mirrors the spec memory table. Keyword search rides a GIN
+// pgMemorySchema is the memory table. Keyword search rides a GIN
 // index over to_tsvector(content) instead of a separate virtual table, since
 // Postgres full-text search runs against the base row. Semantic search is a
-// Phase 4c stub, so a semantic query falls back to keyword and flags it just as
+// stub, so a semantic query falls back to keyword and flags it just as
 // the sqlite backend does.
 const pgMemorySchema = `
 CREATE TABLE IF NOT EXISTS memory_entries (
@@ -175,7 +175,7 @@ func (s *Postgres) Delete(ctx context.Context, id string) error {
 }
 
 // Search runs keyword search over content and tags with to_tsvector /
-// plainto_tsquery, the Postgres analog of sqlite's FTS5. Phase 4c has no
+// plainto_tsquery, the Postgres analog of sqlite's FTS5. There is no
 // vector backend, so a Semantic query falls back to keyword search with
 // SearchResult.Fallback set, the same contract the sqlite backend honors. A
 // query with no text and no tags lists the scope by importance instead.

@@ -1,7 +1,7 @@
 // Package telegram is the Telegram adapter for the messaging bridge: a long-poll
 // loop over the Bot API getUpdates method that turns allowlisted Telegram
 // updates into bridge.Inbound values and renders the core's replies back as Bot
-// API messages. Session binding, the turn fold, and the D9 confirmation gate all
+// API messages. Session binding, the turn fold, and the confirmation gate all
 // live in the core; this package owns only the wire.
 //
 // # Trust model
@@ -10,7 +10,7 @@
 // [bridge.telegram.users] are answered; every other sender is dropped with a
 // debug log and counted unauthorized, never replied to. Each allowlisted user
 // maps to a bridge.Grant naming the workspace its turns are stamped with and
-// whether it may approve a D9 proposal. The core enforces both, so the stance is
+// whether it may approve a workflow proposal. The core enforces both, so the stance is
 // recorded in the core's package doc and not repeated per check here.
 //
 // # Token hygiene and the base URL

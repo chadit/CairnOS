@@ -236,8 +236,7 @@ func buildResource(version string) (*resource.Resource, error) {
 // spans export nowhere, deliberately: they still flow through contexts, so
 // trace IDs reach logs via the slog bridge and the span tree stays
 // testable, at zero exporter cost. The OTLP connection is plain text by
-// contract: the endpoint is a local or sidecar collector, and Phase 4a
-// owns transport hardening.
+// contract: the endpoint is a local or sidecar collector.
 func newTracerProvider(ctx context.Context, otlpEndpoint string, res *resource.Resource) (*sdktrace.TracerProvider, error) {
 	options := []sdktrace.TracerProviderOption{sdktrace.WithResource(res)}
 

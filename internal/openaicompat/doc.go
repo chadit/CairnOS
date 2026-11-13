@@ -1,4 +1,4 @@
-// Package openaicompat adapts CairnOS's Phase 9 ChatService to the
+// Package openaicompat adapts CairnOS's ChatService to the
 // OpenAI-compatible chat completions wire shape, so off-the-shelf OpenAI
 // clients and chat frontends (OpenWebUI, LibreChat, the openai SDKs) can point
 // at a CairnOS node with a base URL and a token. It is protocol translation

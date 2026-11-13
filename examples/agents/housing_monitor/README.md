@@ -8,7 +8,7 @@ No matches means the alert is skipped, not failed.
 ## Where the listings come from (read this first)
 
 This workflow does not scrape listing sites, and you shouldn't make it.
-Scraping Zillow, Redfin, or similar violates their terms of service (S5). The
+Scraping Zillow, Redfin, or similar violates their terms of service. The
 `listings_url` input must be a source you may query: an official API you hold a
 key for, an MLS feed you have access to, or a service you run yourself. The
 fetch step is a plain `webhook` POST; swap it for an `mcp_client` action if your
@@ -25,14 +25,21 @@ source speaks MCP.
 
 ## The filter function
 
-The operator registers `listing_filter` at build time (code can't live in
-config). The contract: read `listings` (the raw API response) and
+The stock `cairnos` binary registers no `local_fn` functions, so this example
+needs a modified build. Code outside the CairnOS module cannot import
+`internal/runner/builtins`, so the function goes in a fork or checkout of this
+repository: add it to the empty map that `fixedBuiltins` passes to
+`builtins.LocalFnFactory` in `internal/cli/wiring.go`, then rebuild with
+`go build ./cmd/cairnos`.
+
+The contract: read `listings` (the raw API response) and
 `max_price` from the task params, return a map with a `count` (number of
 matches) and a `summary` (the email body). The condition reads `count` and
 the alert body reads `summary`, so both keys are required:
 
 ```go
-funcs := map[string]builtins.Func{
+// internal/cli/wiring.go, in fixedBuiltins
+{name: builtins.LocalFnName, factory: builtins.LocalFnFactory(map[string]builtins.Func{
     "listing_filter": func(
         _ context.Context, task *runner.Task,
     ) (any, error) {
@@ -44,8 +51,7 @@ funcs := map[string]builtins.Func{
             "summary": format(matches),
         }, nil
     },
-}
-registry.Register(builtins.LocalFnName, builtins.LocalFnFactory(funcs))
+})},
 ```
 
 ## Config

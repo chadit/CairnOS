@@ -9,8 +9,8 @@ var (
 	ErrInvalidCategory = errors.New("category is not in the fixed shareable set")
 
 	// ErrPublishDisabled reports a Publish call while publish_enabled is false.
-	// Publish stays off by default and gated on the privacy review (R2) and the
-	// hosting decision (R3); subscribe is always available.
+	// Publish stays off by default and gated on the privacy review and the
+	// hosting decision; subscribe is always available.
 	ErrPublishDisabled = errors.New("hive publish is disabled (publish_enabled = false)")
 
 	// ErrBelowMinObservations reports a Publish refused because the node has
@@ -37,8 +37,8 @@ var (
 	errNilIDMinter = errors.New("ingester requires a non-nil id minter")
 
 	// ErrKeyWrongSize reports a shared hive key that is not the 32 bytes
-	// AES-256 needs. The key is the private cluster's only privacy mechanism
-	// (R2/R3), so a wrong-sized key is a hard failure, never a silent
+	// AES-256 needs. The key is the private cluster's only privacy mechanism,
+	// so a wrong-sized key is a hard failure, never a silent
 	// downgrade.
 	ErrKeyWrongSize = errors.New("hive key must be 32 bytes (AES-256)")
 

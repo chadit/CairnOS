@@ -17,7 +17,7 @@ const a2aUsage = `usage: cairnos a2a card [--dir D]
          well-known path), so a consumer can inspect or pin it.
 `
 
-// cmdA2A dispatches the Phase 4b A2A subcommands. The card command reads only
+// cmdA2A dispatches the A2A subcommands. The card command reads only
 // the config and local key material, so it needs no context.
 func (a *App) cmdA2A(args []string) int {
 	if len(args) == 0 {

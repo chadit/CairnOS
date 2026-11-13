@@ -47,7 +47,7 @@ var (
 	// the key (sub) it was minted from.
 	ErrTokenRevoked = errors.New("token revoked")
 
-	// ErrScopeUnknown reports a scope name outside the spec's scope table.
+	// ErrScopeUnknown reports a scope name outside the known scopes.
 	ErrScopeUnknown = errors.New("unknown scope")
 
 	// ErrSecretTooShort reports an HS256 secret under the 32-byte floor; a

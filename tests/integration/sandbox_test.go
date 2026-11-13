@@ -138,8 +138,8 @@ func TestSandboxExecNonZeroExit(t *testing.T) {
 // TestSandboxExecNetworkOffByDefault proves the --network=none default takes
 // effect in a live container, not just in the built argv: with no network the
 // container sees only the loopback interface, so /sys/class/net lists exactly
-// "lo". This is the runtime half of security amendment 6 (the isolation
-// boundary must hold, not merely be requested).
+// "lo". This is the runtime half of the isolation boundary: it must hold, not
+// merely be requested.
 func TestSandboxExecNetworkOffByDefault(t *testing.T) {
 	t.Parallel()
 
@@ -154,7 +154,7 @@ func TestSandboxExecNetworkOffByDefault(t *testing.T) {
 }
 
 // TestSandboxExecReadOnlyRootWithTmpfsScratch proves the hardening flags
-// (security amendment 1) take effect in a live container: --read-only makes the
+// take effect in a live container: --read-only makes the
 // root filesystem unwritable while the paired --tmpfs keeps /tmp available for
 // scratch. A write outside /tmp is refused (permanent exit), and a write into
 // /tmp succeeds.

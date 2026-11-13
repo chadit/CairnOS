@@ -26,7 +26,7 @@ const (
 
 	// defaultMaxPostSize is the fallback when the server's client config is
 	// unreadable. Every released server accepts at least this many runes, so a
-	// reply split at this width always lands (FR5, edge case 10).
+	// reply split at this width always lands.
 	defaultMaxPostSize = 4000
 
 	// configKeyMaxPostSize names the field in the old-format client config.
@@ -205,7 +205,7 @@ func refuseRedirect(_ *http.Request, _ []*http.Request) error {
 }
 
 // parseServerURL rejects a URL the client must not talk to before any request
-// carries the token there (FR3).
+// carries the token there.
 func parseServerURL(raw string, insecure bool) (*url.URL, error) {
 	trimmed := strings.TrimSuffix(strings.TrimSpace(raw), "/")
 	if trimmed == "" {
@@ -265,7 +265,7 @@ func (c *Client) MaxChars() int {
 
 // Connect learns who this token is and how long a post may be. It runs on every
 // reconnect, not only at startup, so an identity renamed in Mattermost picks up
-// its new username without a restart (FR5).
+// its new username without a restart.
 func (c *Client) Connect(ctx context.Context) error {
 	var identity User
 
@@ -401,7 +401,7 @@ type typingRequest struct {
 
 // Typing shows the bot as typing. The server drops the request while it is
 // marked busy, so callers log the error at debug and never fail the turn: a
-// missing indicator is cosmetic (FR17).
+// missing indicator is cosmetic.
 func (c *Client) Typing(ctx context.Context, channelID, parentID string) error {
 	identity := c.Me()
 	if identity.ID == "" {
@@ -485,8 +485,8 @@ type apiRequest struct {
 
 // do runs one REST call, retrying once after a 429. Parking the shared bucket is
 // the wait: the retry blocks in the limiter for the window the server named, so
-// a burst that clears inside it still delivers its reply (design section 5,
-// edge case 11). A 429 on the retry hands back the rate-limited failure.
+// a burst that clears inside it still delivers its reply. A 429 on the retry
+// hands back the rate-limited failure.
 func (c *Client) do(ctx context.Context, call *apiRequest, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -519,7 +519,7 @@ func (c *Client) attempt(ctx context.Context, call *apiRequest, out any) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// The cause names the URL but never the token, which rides the
-		// Authorization header (FR43).
+		// Authorization header.
 		return &APIError{Class: ClassTransient, Method: call.Method, Message: err.Error(), Cause: err}
 	}
 

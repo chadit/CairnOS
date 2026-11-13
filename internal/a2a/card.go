@@ -1,4 +1,4 @@
-// Package a2a implements the Phase 4b Agent-to-Agent protocol adapter. It is a
+// Package a2a implements the Agent-to-Agent protocol adapter. It is a
 // thin protocol shim over the existing run lifecycle, not a second engine: an
 // A2A "task" is a CairnOS "run", so CreateTask starts a run, GetTask/ListTasks
 // read run history, CancelTask stops a run, and TaskUpdates streams a run's
@@ -40,7 +40,7 @@ type Skill struct {
 
 // Channel is one chat surface the node answers on, so a peer that would rather
 // hold a conversation than drive the task API knows where to reach this agent
-// and under what name (FR35). One entry per enabled chat identity.
+// and under what name. One entry per enabled chat identity.
 type Channel struct {
 	// Type names the transport, such as "mattermost".
 	Type string `json:"type"`

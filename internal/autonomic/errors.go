@@ -12,7 +12,7 @@ var (
 
 	// ErrKindNotAutoApplicable reports an Apply against a suggestion kind that
 	// changes output. Only caching and batching auto-apply; param tuning and
-	// prompt refactor stay manual because output equivalence is unsolved (R1).
+	// prompt refactor stay manual because output equivalence is unsolved.
 	ErrKindNotAutoApplicable = errors.New("only output-neutral kinds (caching, batching) auto-apply")
 
 	// ErrSuggestionNotApproved reports an Apply against a suggestion that is not

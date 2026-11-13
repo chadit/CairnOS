@@ -119,8 +119,7 @@ const (
 // defaultListLimit caps tabular output when no --limit is given.
 const defaultListLimit = 20
 
-// Circuit breaker defaults from the spec's runner circuit_breaker example;
-// a per-runner config surface arrives with the Phase 1a runner blocks.
+// Circuit breaker defaults every runner shares.
 const (
 	breakerFailureThreshold = 0.5
 	breakerWindow           = time.Minute
@@ -592,7 +591,7 @@ func webhookBackends(scheds scheduleStore) storeBackends[webhook.Store] {
 }
 
 // newCoordinator builds the advisory-lock coordinator that lets exactly one node
-// own scheduling across a shared postgres database (S2). It is nil off
+// own scheduling across a shared postgres database. It is nil off
 // postgres: leave scheduler.Config.Coordinator unset then, and the daemon
 // defaults to the SoloCoordinator, rather than storing a typed nil there.
 func newCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
@@ -612,7 +611,7 @@ func newCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
 const hiveAdvisoryLockKey int64 = 0x43524e53_00000002
 
 // newHiveCoordinator builds the coordinator that elects the one node running the
-// hive loop (R3), on the hive key over the schedule store's pool. It is nil off
+// hive loop, on the hive key over the schedule store's pool. It is nil off
 // postgres, where serve already refuses the hive.
 func newHiveCoordinator(scheds scheduleStore) *scheduler.PostgresCoordinator {
 	pgScheds, ok := scheds.(*scheduler.Postgres)
@@ -925,7 +924,7 @@ func newRegistry(
 }
 
 // languageRulesFactory picks the language_rules runner. With a Rules Service
-// wired (Phase 7b) it queries the service and falls back to the static-file
+// wired it queries the service and falls back to the static-file
 // reader for an unknown language. With none, on the local `cairnos run` path, it
 // is the static-file-only runner the examples have always used.
 func languageRulesFactory(rulesSvc rules.Service) runner.Factory {

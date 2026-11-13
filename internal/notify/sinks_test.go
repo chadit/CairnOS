@@ -60,7 +60,7 @@ func TestFanoutDeliversToEverySinkThatSelectedTheEvent(t *testing.T) {
 	t.Parallel()
 
 	// Two sinks with overlapping-but-different event sets: held goes to both,
-	// budget_denied only to the second. This is the FR34 shape, a Discord
+	// budget_denied only to the second. This is the intended shape, a Discord
 	// webhook and a Mattermost channel subscribed to different slices.
 	both := newRecordingPoster(nil)
 	budgetOnly := newRecordingPoster(nil)

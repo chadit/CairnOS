@@ -150,7 +150,7 @@ func (x *runExec) seedAction(ctx context.Context, name string, entry seedEntry) 
 	})
 }
 
-// loop implements the scheduling algorithm from the spec: launch every ready
+// loop implements the scheduling algorithm: launch every ready
 // action, wait for a terminal event, apply it, and reschedule, until every
 // action is terminal.
 func (x *runExec) loop(ctx context.Context) {

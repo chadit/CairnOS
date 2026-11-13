@@ -15,7 +15,7 @@ import (
 )
 
 // keySize is the AES-256 key length in bytes. The shared hive key is the
-// private cluster's privacy mechanism (R2/R3): the hive covers one operator's
+// private cluster's privacy mechanism: the hive covers one operator's
 // own nodes, so there is no untrusted participant to calibrate k-anonymity
 // against, and a key the host and transport cannot read carries privacy
 // instead. AES-256 because the key is long-lived and shared.

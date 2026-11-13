@@ -13,7 +13,7 @@ import (
 
 const (
 	// holdKey is the provider a held item waits on in the hold/resume case, the
-	// value Hold records and Resume clears (D12).
+	// value Hold records and Resume clears.
 	holdKey = "codex"
 
 	// claimLimit is the prefetch cap the cases hand to Claim, large enough that
@@ -387,7 +387,7 @@ func testQueueHoldThenResume(t *testing.T, queue Queue) {
 	}
 
 	// ListHeld surfaces the parked item with the provider it waits on, so a
-	// resume probe knows which credential to check (D12).
+	// resume probe knows which credential to check.
 	listed, err := queue.ListHeld(t.Context())
 	if err != nil {
 		t.Fatalf("list held: %v", err)

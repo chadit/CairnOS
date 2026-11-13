@@ -226,7 +226,7 @@ func TestChatSendMessageStreamsAnswerOverGRPC(t *testing.T) {
 	}
 }
 
-// TestChatConfirmationGateStreamsRunOverGRPC proves the D9 gate over gRPC: a
+// TestChatConfirmationGateStreamsRunOverGRPC proves the confirmation gate over gRPC: a
 // proposal streams confirmation-required, then an approve streams run-started,
 // run-finished, turn-done in order, and no run fires before the approve.
 func TestChatConfirmationGateStreamsRunOverGRPC(t *testing.T) {
@@ -397,10 +397,10 @@ func drainChatStream(stream grpc.ServerStreamingClient[cairnosv1.ChatEvent]) err
 	}
 }
 
-// TestChatScopeEnforced proves the Phase 9 scope rules over the auth fixture: a
+// TestChatScopeEnforced proves the scope rules over the auth fixture: a
 // token without chat:session is refused at SendMessage, a chat:session token
 // without write:workflow holds a conversation but its approve is refused at
-// ConfirmAction, and a token with both can confirm a workflow trigger (D9).
+// ConfirmAction, and a token with both can confirm a workflow trigger.
 func TestChatScopeEnforced(t *testing.T) {
 	t.Parallel()
 

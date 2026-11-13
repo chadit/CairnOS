@@ -30,7 +30,7 @@ const (
 // persists across turns. The turn drives the configured ToolCaller the same way
 // an agent action does: each iteration the driver answers, calls a read tool that
 // runs inline, or proposes a workflow. A run_workflow call is intercepted into
-// the D9 confirmation gate and the turn pauses for ConfirmAction. The user
+// the confirmation gate and the turn pauses for ConfirmAction. The user
 // message and the assistant reply or proposal persist for the next turn.
 
 // SendMessage runs one conversation turn for a new user message and streams its
@@ -260,7 +260,7 @@ func toolError(err error) map[string]any {
 	return out
 }
 
-// raiseGate is the D9 confirmation step: a run_workflow call does not run a
+// raiseGate is the confirmation step: a run_workflow call does not run a
 // workflow. It records a pending proposal, persists it as a tool message so the
 // thread shows what was proposed, and emits the confirmation-required event,
 // ending the turn. Only a later ConfirmAction(approve) fires the run.

@@ -1,7 +1,7 @@
 // Package scheduler runs workflows on cron schedules. Schedules persist in
-// SQLite so they survive restarts, next-fire math goes through robfig/cron, and
-// the daemon is single-node but fires through a Coordinator interface so the
-// Phase 4 leader lock drops in without a rewrite (S2).
+// SQLite or Postgres so they survive restarts, and next-fire math goes through
+// robfig/cron. The daemon fires through a Coordinator interface, so the same
+// loop runs alone on SQLite and behind the Postgres leader lock across nodes.
 package scheduler
 
 import (
@@ -32,9 +32,7 @@ type Schedule struct {
 	Cron         string
 }
 
-// Schedules is the persistence surface the daemon and the CLI share. The
-// Phase 0b implementation is SQLite; a Postgres-backed one arrives with
-// multi-node scaling.
+// Schedules is the persistence surface the daemon and the CLI share.
 type Schedules interface {
 	// Add validates the schedule's cron expression, stamps id, next_fire,
 	// and created_at, and persists it, returning the id.
@@ -57,9 +55,10 @@ type Runner interface {
 	Fire(ctx context.Context, sched *Schedule) error
 }
 
-// Coordinator decides whether this node may fire schedules right now. Phase
-// 0b is single-node, so SoloCoordinator is the only implementation; the
-// Phase 4 Postgres advisory lock implements the same method (S2).
+// Coordinator decides whether this node may fire schedules right now. The
+// SQLite backend uses SoloCoordinator. The Postgres backend always takes the
+// advisory lock through PostgresCoordinator, even on one node, since another
+// node can join the same database at any time.
 type Coordinator interface {
 	Leader(ctx context.Context) (bool, error)
 }
@@ -96,7 +95,7 @@ type Config struct {
 	Logger *slog.Logger
 }
 
-// Scheduler is the Phase 0b daemon: it watches the schedules table, sleeps
+// Scheduler is the daemon: it watches the schedules table, sleeps
 // until the earliest next_fire, fires due workflows once each, and stamps
 // the timestamps. Fire errors are logged and never stop the loop.
 type Scheduler struct {
@@ -191,8 +190,7 @@ func (s *Scheduler) pass(ctx context.Context) (time.Duration, error) {
 // fire runs one due schedule exactly once and reports the recomputed next fire
 // so the caller can sleep straight to it; a zero time means there is none to
 // wait on. A next_fire that fell behind does not fan out a burst at any
-// cadence: the backlog is logged and dropped, and next_fire recomputes from now
-// (S8).
+// cadence: the backlog is logged and dropped, and next_fire recomputes from now.
 func (s *Scheduler) fire(ctx context.Context, sched *Schedule, now time.Time) time.Time {
 	leader, err := s.coord.Leader(ctx)
 	if err != nil {

@@ -25,7 +25,7 @@ import (
 
 // NotifyDiscordWebhookEnv holds the Discord webhook URL re-auth alerts post to.
 // The webhook URL grants posting rights, so it is a secret read from the
-// environment, never a config file (D12). Unset disables re-auth notifications.
+// environment, never a config file. Unset disables re-auth notifications.
 const NotifyDiscordWebhookEnv = "CAIRNOS_NOTIFY_DISCORD_WEBHOOK" // #nosec G101 -- environment variable name, not a credential
 
 // queueMetricsAdapter forwards the worker's queue metrics to the telemetry
@@ -87,7 +87,7 @@ type SchedulePayload struct {
 // scheduleEnqueueRunner is the scheduler's Runner in the queue model: a cron
 // fire enqueues a work item instead of running the workflow inline. Enqueue is
 // exactly-once on the (schedule, fire-time) key, so a fire no worker can take
-// right away waits in the queue rather than being dropped (S8).
+// right away waits in the queue rather than being dropped.
 type scheduleEnqueueRunner struct {
 	queue  scheduler.WorkQueue
 	logger *slog.Logger
@@ -243,7 +243,7 @@ func workQueueBackends(scheds scheduleStore) storeBackends[workQueue] {
 
 // newQueueWorker builds the queue worker from the [scheduler] config block. It
 // wires runner.IsReauth as the hold predicate, so a NeedsReauth failure parks
-// the job for a human rather than dead-lettering it (D12). The fan-out routes
+// the job for a human rather than dead-lettering it. The fan-out routes
 // held and dead_lettered alerts to Discord when those events are selected; a
 // nil fan-out leaves both callbacks unset.
 func newQueueWorker(queue scheduler.WorkQueue, queueRunner scheduler.QueueRunner, cfg *config.Scheduler, metrics scheduler.QueueMetrics, fanout *notify.Fanout, monitor *reach.Monitor, logger *slog.Logger) *scheduler.Worker {
@@ -331,7 +331,7 @@ func newReachMonitor(fanout *notify.Fanout, logger *slog.Logger) *reach.Monitor 
 // held item's credential is valid again by re-reading the tool's creds file and
 // checking its expiry, never a real call. It returns nil when the user home
 // cannot be resolved, which disables auto-resume so held items wait for a manual
-// resume (D12).
+// resume.
 func newReauthResumeProbe(logger *slog.Logger) func(string, time.Time) bool {
 	home := reauthHomeDir(logger)
 	if home == "" {
@@ -390,7 +390,7 @@ func reauthHomeDir(logger *slog.Logger) string {
 
 // reauthHoldKey maps a re-auth run error to the credential provider the held job
 // waits on, stored on the item so the resume probe knows which credential to
-// check (D12). It returns "" when the error is not a runner error or its tool is
+// check. It returns "" when the error is not a runner error or its tool is
 // not a provider the prober knows, leaving the job held until an operator
 // resumes it.
 func reauthHoldKey(runErr error) string {
@@ -412,7 +412,7 @@ func reauthHoldKey(runErr error) string {
 // or "held" is deselected, leaving holds logged and counted. The alert matches
 // the direct notifier's content, keeping the default ["held"] set
 // byte-identical. Emit is fire-and-forget: a dropped alert never changes the
-// job's fate (D12).
+// job's fate.
 func NewReauthOnHold(fanout *notify.Fanout, logger *slog.Logger) func(context.Context, *scheduler.WorkItem, error) {
 	if !fanout.Selects(config.NotifyEventHeld) {
 		return nil

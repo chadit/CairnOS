@@ -1,6 +1,6 @@
 // Package bridge is the transport-neutral half of the messaging bridge: it binds
 // a conversation to a chat session, runs one worker per conversation, folds a
-// turn's events into a reply, and enforces the D9 confirmation gate. It reuses
+// turn's events into a reply, and enforces the confirmation gate. It reuses
 // the shipped chat agent and the store's chat sessions; it does not fork chat
 // logic.
 //
@@ -26,7 +26,7 @@
 //     store.ContextWithWorkspace before it touches the store or the agent,
 //     exactly as the gRPC interceptor stamps a verified token's workspace. A
 //     conversation bound in one tenant is invisible from another.
-//   - Approving a D9 workflow proposal is a distinct grant, AllowConfirm. Chat
+//   - Approving a workflow proposal is a distinct grant, AllowConfirm. Chat
 //     access does not imply the right to fire a workflow: an approve from a
 //     sender without the grant is refused, and so is any decision from someone
 //     other than the session opener. Denying is always safe and needs no grant.

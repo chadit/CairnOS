@@ -22,7 +22,7 @@ const (
 
 	// stateCompleted and stateInputRequired are the two A2A states a turn can
 	// end in: an ordinary answer, or a proposal waiting on the peer's approve or
-	// deny (FR37).
+	// deny.
 	stateCompleted     = "completed"
 	stateInputRequired = "input-required"
 
@@ -141,8 +141,7 @@ func (c *capture) Reply() (string, *chat.Proposal) {
 // SendMessage runs one conversational turn and answers with the reply. The
 // conversation is keyed by context_id, so a peer holding the same id across
 // calls continues the same chat session, and a turn that ends on a proposal
-// answers input-required for the peer to resolve with a later approve or deny
-// (FR36, FR37).
+// answers input-required for the peer to resolve with a later approve or deny.
 func (s *Service) SendMessage(ctx context.Context, req *a2av1.SendMessageRequest) (*a2av1.SendMessageResponse, error) {
 	if s.bridge == nil {
 		return nil, wireChatDisabled()
@@ -200,7 +199,7 @@ func releaseCeiling(done <-chan struct{}, cancel context.CancelFunc) {
 // inboundFor builds the core's view of one A2A turn. The workspace and the
 // approval grant both come off the verified token the interceptor stamped, so
 // an A2A peer is authorized exactly like a gRPC caller rather than by a second
-// allowlist (FR37).
+// allowlist.
 func inboundFor(ctx context.Context, contextID, text string, out *capture) *bridge.Inbound {
 	peer := peerID(ctx)
 
@@ -220,7 +219,7 @@ func inboundFor(ctx context.Context, contextID, text string, out *capture) *brid
 // chatKey scopes the session binding to the calling peer, not just to the peer's
 // chosen context id. The binding is (workspace, transport, chat_key), so an
 // unscoped key lets any other key in the workspace resume a conversation by
-// guessing an id as ordinary as "ops" and read the transcript back (FR36).
+// guessing an id as ordinary as "ops" and read the transcript back.
 func chatKey(peer, contextID string) string {
 	return peer + keySep + contextID
 }

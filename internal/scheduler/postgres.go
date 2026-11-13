@@ -9,14 +9,14 @@ import (
 )
 
 // advisoryLockKey is the fixed 64-bit key every CairnOS node uses for the
-// single-scheduler advisory lock (S2). The value is arbitrary; what matters is
+// single-scheduler advisory lock. The value is arbitrary; what matters is
 // that every node agrees on it. Postgres advisory locks share one key space per
 // database, so it also has to miss another application's key. "CRNS" in ASCII
 // keeps it recognizable in pg_locks.
 const advisoryLockKey int64 = 0x43524e53_00000001
 
 // PostgresCoordinator gates scheduling so exactly one node fires schedules at a
-// time (S2). The node holding the pg_try_advisory_lock on advisoryLockKey
+// time. The node holding the pg_try_advisory_lock on advisoryLockKey
 // leads; the rest fire nothing.
 //
 // The lock is connection-scoped, so the coordinator holds a dedicated

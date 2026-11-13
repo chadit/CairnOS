@@ -17,7 +17,7 @@ func frozenClock() func() time.Time {
 	return func() time.Time { return now }
 }
 
-// TestLoginRouteRateLimitsBurst proves the L1 guard: a single source IP that
+// TestLoginRouteRateLimitsBurst proves the login rate guard: a single source IP that
 // bursts past the configured login rate is refused with 429, while calls within
 // the rate succeed.
 func TestLoginRouteRateLimitsBurst(t *testing.T) {

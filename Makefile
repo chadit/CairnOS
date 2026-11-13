@@ -41,9 +41,10 @@ test-unit: proto ## Run unit tests only with the race detector (no container)
 test-integration: proto ## Run integration tests only (starts a Postgres container via testcontainers)
 	./scripts/integration.sh ./tests/integration/...
 
-test-scripts: ## Run the shell script tests against stub tools (needs jq, no network)
+test-scripts: ## Run the shell script tests against stub tools and fixture modules (needs jq and go, no network)
 	./scripts/update-deps_test.sh
 	./scripts/model-update-issues_test.sh
+	./scripts/third-party-notices_test.sh
 
 lint: gosec golangci-lint ## Run gosec and golangci-lint against the whole tree
 	$(TOOLS_DIR)/golangci-lint version

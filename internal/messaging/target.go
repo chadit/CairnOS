@@ -9,7 +9,7 @@ import (
 // strings so a log line or a test failure reads as the form the caller typed.
 type TargetKind string
 
-// The four target kinds, one per accepted input form (FR27).
+// The four target kinds, one per accepted input form.
 const (
 	KindChannelName TargetKind = "channel_name"
 	KindChannelID   TargetKind = "channel_id"
@@ -35,7 +35,7 @@ type Target struct {
 // ParseTarget reads one of the four accepted target forms. Everything else,
 // including a bare id, is ErrTargetUnrecognized: a bare "general" is both a
 // plausible channel name and a plausible channel id, and the wrong guess posts
-// to the wrong place (FR27).
+// to the wrong place.
 func ParseTarget(raw string) (Target, error) {
 	kind, value, ok := splitTarget(strings.TrimSpace(raw))
 	if !ok || value == "" {

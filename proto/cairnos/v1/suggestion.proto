@@ -1,8 +1,8 @@
-// SuggestionService: the Phase 3 tuning-suggestion review queue. The API
+// SuggestionService: the tuning-suggestion review queue. The API
 // mirrors the CLI: list the queue, approve, reject. There is no scan or
 // replay RPC on purpose; replay re-invokes real runners with real cost, so
-// it stays behind the CLI's explicit --replay flag, and nothing in Phase 3
-// auto-applies a suggestion.
+// it stays behind the CLI's explicit --replay flag, and nothing in this
+// service auto-applies a suggestion.
 
 syntax = "proto3";
 
@@ -49,7 +49,7 @@ message Savings {
   int64 latency_delta_ms = 2;
 
   // confidence is low, medium, or high. Output-changing kinds never rise
-  // above low in Phase 3.
+  // above low.
   string confidence = 3;
 }
 

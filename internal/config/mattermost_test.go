@@ -683,7 +683,7 @@ func TestLoadAcceptsEveryNotifyMattermostEvent(t *testing.T) {
 // TestLoadMattermostTokenIsNotAConfigKey proves a token written beside username
 // fails the load and names the env var instead. Ignoring it gives the operator a
 // clean start, a bridge reporting the env as unset, and a live token in a file
-// that is probably committed (FR1).
+// that is probably committed.
 func TestLoadMattermostTokenIsNotAConfigKey(t *testing.T) {
 	t.Parallel()
 

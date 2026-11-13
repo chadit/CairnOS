@@ -11,8 +11,7 @@ import (
 )
 
 // TestCoreNewRebindsAndSessionReplies proves /new starts a fresh session and
-// rebinds the conversation to it, and /session answers the current session id
-// (FR19).
+// rebinds the conversation to it, and /session answers the current session id.
 func TestCoreNewRebindsAndSessionReplies(t *testing.T) {
 	t.Parallel()
 
@@ -99,7 +98,7 @@ func TestCoreVerboseRelaysToolCall(t *testing.T) {
 }
 
 // TestCoreSilentReplyPostsNothing proves a reply of exactly [SILENT] posts
-// nothing while the turn still counts ok (FR16). The follow-up turn is what makes
+// nothing while the turn still counts ok. The follow-up turn is what makes
 // the absence observable: the conversation runs FIFO, so once its reply lands the
 // silent turn has already had its chance to post.
 func TestCoreSilentReplyPostsNothing(t *testing.T) {
@@ -130,7 +129,7 @@ func TestCoreSilentReplyPostsNothing(t *testing.T) {
 
 // TestCoreProposalRendersThroughOutbound proves a raised proposal reaches the
 // transport as a proposal, not as text, carrying the session id the decision will
-// come back under (FR21).
+// come back under.
 func TestCoreProposalRendersThroughOutbound(t *testing.T) {
 	t.Parallel()
 
@@ -157,7 +156,7 @@ func TestCoreProposalRendersThroughOutbound(t *testing.T) {
 
 // TestCoreTypedDecisionResolvesProposal proves a bare approve or deny from the
 // opener resolves the pending proposal and relays the run lines, which is the
-// only way to answer on a transport with no buttons (FR22).
+// only way to answer on a transport with no buttons.
 func TestCoreTypedDecisionResolvesProposal(t *testing.T) {
 	t.Parallel()
 
@@ -196,7 +195,7 @@ func TestCoreTypedDecisionResolvesProposal(t *testing.T) {
 // TestCoreDecisionRefusalsLeaveProposalPending proves the two refusal paths: an
 // approve from a sender without the grant, and any decision from someone other
 // than the opener. Both answer once, count refused, and leave the proposal live,
-// which the opener's own deny then resolves (FR22).
+// which the opener's own deny then resolves.
 func TestCoreDecisionRefusalsLeaveProposalPending(t *testing.T) {
 	t.Parallel()
 
@@ -248,7 +247,7 @@ func TestCoreDecisionRefusalsLeaveProposalPending(t *testing.T) {
 }
 
 // TestCoreStaleDecisionReplies proves a decision with no live proposal is
-// answered once, counts nothing, and never reaches the agent (FR24).
+// answered once, counts nothing, and never reaches the agent.
 func TestCoreStaleDecisionReplies(t *testing.T) {
 	t.Parallel()
 
@@ -291,7 +290,7 @@ func TestCoreTransportDecisionResolvesProposal(t *testing.T) {
 }
 
 // TestCoreProposalExpiresAsDeny proves an unanswered proposal denies after
-// confirm_ttl and the transport is asked to mark the message it sent (FR23).
+// confirm_ttl and the transport is asked to mark the message it sent.
 func TestCoreProposalExpiresAsDeny(t *testing.T) {
 	t.Parallel()
 
@@ -317,8 +316,7 @@ func TestCoreProposalExpiresAsDeny(t *testing.T) {
 }
 
 // TestCoreInboxOverflowDropsNewest proves a full conversation inbox drops the
-// newest inbound and counts it rather than blocking the transport's reader
-// (FR20).
+// newest inbound and counts it rather than blocking the transport's reader.
 func TestCoreInboxOverflowDropsNewest(t *testing.T) {
 	t.Parallel()
 

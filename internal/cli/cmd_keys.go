@@ -18,7 +18,7 @@ const keysUsage = `usage: cairnos keys <add|list|enable|disable> [flags]
   disable  <id>                                       Disable a key and deny its live tokens
 `
 
-// cmdKeys dispatches the Phase 4a access-key management subcommands.
+// cmdKeys dispatches the access-key management subcommands.
 func (a *App) cmdKeys(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", keysUsage)
@@ -152,8 +152,8 @@ func (a *App) cmdKeysList(ctx context.Context, args []string) int {
 }
 
 // cmdKeysSetEnabled is the shared enable/disable spine. Disabling also
-// denylists the key's live tokens (deny-by-sub, the spec's recommended
-// default) so revocation is immediate, not just at the next login.
+// denylists the key's live tokens (deny-by-sub) so revocation is immediate,
+// not just at the next login.
 // Enabling lifts that denial, which restores any of the key's unexpired
 // tokens too; revoke by key id afterwards to keep those dead.
 func (a *App) cmdKeysSetEnabled(ctx context.Context, label string, args []string, enabled bool) int {
@@ -195,7 +195,7 @@ func (a *App) cmdKeysSetEnabled(ctx context.Context, label string, args []string
 		a.printOutf("enabled %s\n", keyID)
 		// Re-enabling lifts the deny-by-sub row, so any of the key's tokens
 		// that were live before the disable are usable again. Warn so an
-		// operator who wanted those dead runs the explicit revoke (spec L7).
+		// operator who wanted those dead runs the explicit revoke.
 		a.printOutf("warning: tokens minted before this key was disabled are valid again; run `cairnos auth revoke --key %s` to kill them\n", keyID)
 
 		return ExitOK

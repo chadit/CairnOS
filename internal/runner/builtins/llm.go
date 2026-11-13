@@ -35,7 +35,7 @@ const (
 
 // Output-format values for keyOutputFormat. The empty value is the default:
 // the model's text lands in Result.Output verbatim, byte for byte the same as
-// before this knob existed. "json" parses that text as a JSON object or array
+// before this option existed. "json" parses that text as a JSON object or array
 // so downstream output references resolve fields natively.
 const (
 	outputFormatText = ""

@@ -5,7 +5,7 @@
 // The client is hand-rolled over net/http rather than built on
 // github.com/mattermost/mattermost/server/public. The bridge drives eight
 // endpoints, the official module pulls a large dependency tree, and its go
-// directive would raise this repo's toolchain floor (design D1). The cost of
+// directive would raise this repo's toolchain floor. The cost of
 // owning the wire shapes is paid down by the recorded frames in testdata.
 //
 // Two wire details are server implementation details rather than documented
@@ -19,5 +19,5 @@
 //
 // The bearer token rides an Authorization header, never a URL path, so no
 // error string or log line in this package can leak it the way a Bot API URL
-// would (FR43). The client still never logs headers.
+// would. The client still never logs headers.
 package mattermost

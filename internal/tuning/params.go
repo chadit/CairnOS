@@ -144,7 +144,7 @@ func (e *Engine) paramSuggestion(group *tokenDist) (*store.Suggestion, bool) {
 		},
 		EstSavings: store.Savings{
 			CostUSDPerRun: float64(maxTokens-proposed) * perTokenUSD,
-			// Output changes are the open research problem (R1): low, always.
+			// Output changes are the open research problem: low, always.
 			Confidence: store.ConfidenceLow,
 		},
 	}, true

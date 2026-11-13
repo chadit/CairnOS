@@ -25,7 +25,7 @@ import (
 // parameter is the request workspace at $1.
 const limitAfterWorkspace = " LIMIT $2"
 
-// schemaSQL mirrors the spec schema with JSONB columns and timestamptz, and
+// schemaSQL is the run store schema with JSONB columns and timestamptz, and
 // IF NOT EXISTS so Open is idempotent across restarts and across the several
 // nodes that may open the same database at once. The indexes match the
 // sqlite backend's so "list recent runs" and the status filter stay index

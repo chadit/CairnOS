@@ -65,7 +65,7 @@ type Source struct {
 
 // SourceFactory adapts the configured specs to the registry contract. Every
 // instance shares one lock per spec, so a webhook fire and a schedule fire
-// never run git in the same tree at once (FR12).
+// never run git in the same tree at once.
 //
 // logger, observer, and reconcile may be nil: only serve has a fan-out and a
 // running scheduler, and the one-shot commands build the registry without
@@ -123,7 +123,7 @@ func unknownSource(name string) error {
 // Execute implements runner.Runner. Output is empty when the sync moved nothing,
 // which is what lets a workflow condition a message on "something changed"
 // without inspecting Meta. Latency starts before the lock, so a fire that queued
-// behind another shows the wait FR12 creates rather than hiding it.
+// behind another shows the wait the per-source lock creates rather than hiding it.
 func (s *Source) Execute(ctx context.Context, task *runner.Task) (runner.Result, error) {
 	if err := s.Validate(task); err != nil {
 		return runner.Result{}, err

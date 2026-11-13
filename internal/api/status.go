@@ -50,20 +50,18 @@ const (
 	// codeIdentityNotFound reports a send addressed to a messaging identity
 	// the registry never held: the caller named an identity this serve was
 	// not configured with, which is a caller mistake rather than a transport
-	// failure (FR26).
+	// failure.
 	codeIdentityNotFound = "api.identity_not_found"
 	// codeChatDisabled reports a conversational request on a node whose chat
 	// surface is off. The peer asked for something this serve is not configured
-	// to do, which is a precondition rather than a missing route (FR36).
+	// to do, which is a precondition rather than a missing route.
 	codeChatDisabled    = "api.chat_disabled"
 	codeInvalidArgument = "api.invalid_argument"
 	codeUnimplemented   = "api.unimplemented"
 	codeInternal        = "api.internal"
 )
 
-// Canonical agent.* codes from the 04 mapping table. The agent loop ships in
-// Phase 1c; the mapping is wired now so its errors surface correctly the day
-// they exist.
+// Canonical agent.* codes the agent loop's errors map onto.
 const (
 	codeAgentBudgetExhausted = "agent.budget_exhausted"
 	codeAgentMaxIterations   = "agent.max_iterations"
@@ -84,7 +82,7 @@ const (
 
 	// codeAuthTooManyLogins maps to RESOURCE_EXHAUSTED: an unauthenticated
 	// Login flood that the concurrency cap or the per-peer rate limit refused
-	// before it could pin memory in argon2id work (spec M1).
+	// before it could pin memory in argon2id work.
 	codeAuthTooManyLogins = "auth.too_many_logins"
 )
 
@@ -195,7 +193,7 @@ func errorStatus(grpcCode codes.Code, cerr *cairnerr.Error) error {
 }
 
 // canonicalStatus classifies any error into the canonical gRPC shape:
-// cairnerr values map through the 04 table, everything else is INTERNAL.
+// cairnerr values map through the code table, everything else is INTERNAL.
 func canonicalStatus(err error) error {
 	if list, isList := errors.AsType[cairnerr.Errors](err); isList && len(list) > 0 {
 		return errorStatus(grpcCodeFor(list[0].Code), aggregateError(list))

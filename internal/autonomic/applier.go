@@ -1,4 +1,4 @@
-// Package autonomic is the Phase 6 gated auto-apply path. It applies an
+// Package autonomic is the gated auto-apply path. It applies an
 // approved, output-neutral suggestion to a workflow file, recording the prior
 // definition in the version store first so the change is reversible, and
 // writing an audit row so the action is on the record. It is the narrow,
@@ -8,7 +8,7 @@
 //
 //   - Auto-apply is default off (config [autonomic] auto_apply_enabled = false).
 //   - Only caching and batching apply. Param tuning and prompt refactor never
-//     do, because verifying they kept output quality is the open R1 problem.
+//     do, because verifying they kept output quality is an open problem.
 //     Apply refuses any other kind.
 //   - A suggestion must be approved first. Apply never touches an open or
 //     rejected suggestion.
@@ -329,7 +329,7 @@ func (a *Applier) findWorkflowPath(workflowName string) (string, error) {
 
 // guardApplicable enforces the kind and approval gates: only an approved
 // caching or batching suggestion may apply. Param tuning and prompt refactor
-// never auto-apply, because R1 (output equivalence) is unsolved.
+// never auto-apply, because checking output equivalence is unsolved.
 func guardApplicable(suggestion *store.Suggestion) error {
 	if !OutputNeutral(suggestion.Kind) {
 		return fmt.Errorf("%w: %s is not an output-neutral kind", ErrKindNotAutoApplicable, suggestion.Kind)

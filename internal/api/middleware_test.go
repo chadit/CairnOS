@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// Security middleware fixture values the M1/M4 gateway tests turn on.
+// Security middleware fixture values the hardening and request-size gateway tests turn on.
 const (
 	corsTestOrigin      = "https://app.example"
 	testMaxBodyBytes    = 1024
 	testMaxRecvMsgBytes = 1 << 20
 )
 
-// TestGatewaySetsSecurityHeaders proves the M1 hardening headers ride every
+// TestGatewaySetsSecurityHeaders proves the hardening headers ride every
 // gateway response: nosniff, frame-deny, and the strict CSP.
 func TestGatewaySetsSecurityHeaders(t *testing.T) {
 	t.Parallel()
@@ -45,7 +45,7 @@ func TestGatewaySetsSecurityHeaders(t *testing.T) {
 	}
 }
 
-// TestGatewayCORSEchoesAllowlistedOrigin proves the M1 CORS allowlist: a
+// TestGatewayCORSEchoesAllowlistedOrigin proves the CORS allowlist: a
 // request from an allowlisted origin echoes that exact origin (never a
 // wildcard), and an unlisted origin gets no allow header.
 func TestGatewayCORSEchoesAllowlistedOrigin(t *testing.T) {
@@ -86,7 +86,7 @@ func corsHeaderForOrigin(t *testing.T, fix *fixture, origin string) string {
 	return resp.Header.Get("Access-Control-Allow-Origin")
 }
 
-// TestGatewayRejectsOverLimitBody proves the M4 body cap: a POST whose body
+// TestGatewayRejectsOverLimitBody proves the body cap: a POST whose body
 // exceeds max_body_bytes is rejected with 413 instead of being buffered.
 func TestGatewayRejectsOverLimitBody(t *testing.T) {
 	t.Parallel()

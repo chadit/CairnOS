@@ -1,4 +1,4 @@
-// Package oauth implements the Phase 5b human-login path: a browser user signs
+// Package oauth implements the human-login path: a browser user signs
 // in at an OIDC identity provider, and CairnOS mints its own JWT carrying the
 // user's workspace and the role's scopes. It sits alongside the access-key
 // model, not in place of it.
@@ -65,7 +65,7 @@ type Tenancy interface {
 	AddMember(ctx context.Context, workspaceID, subject, role string) error
 }
 
-// ProvisionPolicy gates first-login auto-provisioning (spec H1). Auto-provision
+// ProvisionPolicy gates first-login auto-provisioning. Auto-provision
 // is off by default: an IdP-authenticated subject with no pre-existing
 // membership is refused unless an operator turns Enabled on, and even then the
 // allowlists, when set, decide which subjects may self-provision.

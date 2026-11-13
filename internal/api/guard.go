@@ -27,7 +27,7 @@ const openServeWarning = "SERVING WITHOUT AUTHENTICATION ON A NETWORK INTERFACE:
 	"auth.enabled=false with auth.serve_without_auth_on_network=true means every " +
 	"workflow, memory entry, and admin operation is open to anyone who can reach this address"
 
-// BindPolicy is the Phase 4a network-bind decision input: whether auth guards
+// BindPolicy is the network-bind decision input: whether auth guards
 // the listeners, whether a TLS-terminating proxy fronts them, and whether the
 // operator explicitly accepted serving an open API.
 type BindPolicy struct {
@@ -40,7 +40,7 @@ type BindPolicy struct {
 	// itself serves plaintext and delegates TLS to the proxy.
 	TLSTerminated bool
 
-	// ServeWithoutAuthOnNetwork is the spec's second explicit flag: with
+	// ServeWithoutAuthOnNetwork is the second explicit flag: with
 	// auth off, a non-loopback bind is refused unless this is also set.
 	ServeWithoutAuthOnNetwork bool
 }

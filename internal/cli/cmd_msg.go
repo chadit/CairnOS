@@ -42,7 +42,7 @@ const defaultMsgAddr = defaultChatAddr
 
 // cmdMsg is the outbound messaging client: it posts as a configured identity
 // through a running serve's MessagingService, and lists the identities that
-// serve holds (FR31). Everything it needs lives server-side, so the command is a
+// serve holds. Everything it needs lives server-side, so the command is a
 // thin gRPC client with no store and no config of its own.
 func (a *App) cmdMsg(ctx context.Context, args []string) int {
 	if len(args) == 0 {

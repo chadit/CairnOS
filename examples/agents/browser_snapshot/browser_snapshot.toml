@@ -67,8 +67,7 @@ ${{ snapshot.output }}
 # of a fixed step. Two consent gates line up here. The operator's
 # [runner.browser_nav] block registers the tool (config-only), and this action's
 # tools allowlist is the agent-side grant. Neither the goal nor the driver can
-# add a tool the operator did not wire. Validates today; executes under the
-# Phase 1c agent loop.
+# add a tool the operator did not wire.
 [action.investigate]
 kind           = "agent"
 depends_on     = ["summarize"]

@@ -192,7 +192,7 @@ func TestCoreHandlesOutboundWithoutCompletionHook(t *testing.T) {
 // TestCoreSignalsCompletionOnFullInbox proves the other drop path signals too.
 // The full-inbox branch is the one that fires under load rather than only at
 // shutdown, so it is the one a request-scoped caller actually meets while the
-// node is busy (FR20).
+// node is busy.
 func TestCoreSignalsCompletionOnFullInbox(t *testing.T) {
 	t.Parallel()
 

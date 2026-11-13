@@ -9,7 +9,7 @@ import (
 )
 
 // Fallback tries providers in order and returns the first success, so one
-// provider's outage does not fail an action another can serve (D12). call wires
+// provider's outage does not fail an action another can serve. call wires
 // each provider's own breaker, retry, and execute.
 //
 // When every provider fails, the last result comes back with a joined error

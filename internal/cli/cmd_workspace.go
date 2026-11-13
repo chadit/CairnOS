@@ -15,7 +15,7 @@ const workspaceUsage = `usage: cairnos workspace <create|list|add-member|members
   members     <workspace>                   List a workspace's members
 `
 
-// cmdWorkspace dispatches the Phase 5b workspace-management subcommands.
+// cmdWorkspace dispatches the workspace-management subcommands.
 func (a *App) cmdWorkspace(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		a.printErrf("%s", workspaceUsage)

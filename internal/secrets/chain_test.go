@@ -169,7 +169,7 @@ func TestChainEnvSetToNothingStillShadows(t *testing.T) {
 	}
 }
 
-// TestChainEnvShadowsStore is the security-council amendment 1 hazard: env stays
+// TestChainEnvShadowsStore is the env-shadowing hazard: env stays
 // first, so a stale env var silently shadows a rotated store value. A rotation
 // can look done while the old secret is still served. The chain resolution here
 // proves the hazard; the wiring surfaces it (startup warning) and the CLI marks

@@ -68,7 +68,7 @@ func TestFallbackJoinsErrorsAndPreservesClass(t *testing.T) {
 
 	// The primary needs re-auth and the fallback is down. The joined error must
 	// still classify as re-auth so the engine holds the job once nothing served
-	// it, the mixed-model and hold paths composing correctly (D12).
+	// it, the mixed-model and hold paths composing correctly.
 	reauthErr := runner.NewReauthError("codex.needs_reauth", "run: codex login")
 
 	_, err := reliability.Fallback(t.Context(), []string{reauthProvider, "qwen"},

@@ -15,8 +15,8 @@ import (
 	"github.com/chadit/CairnOS/internal/store"
 )
 
-// defaultSkills is the capability list the card advertises: the two skills
-// spec 09's example card names. The node runs any workflow by name through
+// defaultSkills is the capability list the card advertises: two skills. The
+// node runs any workflow by name through
 // CreateTask, so run_workflow is the headline skill; query_memory mirrors the
 // memory surface the same token reaches.
 func defaultSkills() []Skill {
@@ -64,7 +64,7 @@ type BundleConfig struct {
 	Version string
 
 	// Channels are the chat surfaces the card advertises, one per enabled chat
-	// identity (FR35). Nil leaves the card's channels key off entirely, which is
+	// identity. Nil leaves the card's channels key off entirely, which is
 	// what a node with chat disabled publishes.
 	Channels []Channel
 

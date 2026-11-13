@@ -147,7 +147,7 @@ func toolTurn(tool string, arguments map[string]any) runner.Result {
 	}
 }
 
-// runWorkflowTurn is a driver turn proposing a workflow trigger, the D9 gate
+// runWorkflowTurn is a driver turn proposing a workflow trigger, the confirmation gate
 // the chat agent intercepts.
 func runWorkflowTurn(workflowName string, inputs map[string]any) runner.Result {
 	return toolTurn(chat.RunWorkflowToolName, map[string]any{

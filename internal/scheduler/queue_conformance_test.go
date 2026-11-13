@@ -9,7 +9,7 @@ import (
 )
 
 // testHoldKey is the provider a held item waits on in the worker tests, the
-// value Hold records and Resume clears (D12).
+// value Hold records and Resume clears.
 const testHoldKey = "codex"
 
 // TestSQLiteQueueConformance runs the shared work-queue contract against the

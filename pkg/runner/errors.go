@@ -34,7 +34,7 @@ const (
 	// as a dead OAuth refresh token on a subscription CLI tool. The engine cannot
 	// fix it by retrying and a human must sign in again, so it is non-retryable
 	// like permanent; the scheduler queue holds the job until re-auth instead of
-	// dead-lettering it. See D12.
+	// dead-lettering it.
 	ClassNeedsReauth
 )
 

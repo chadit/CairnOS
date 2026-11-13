@@ -44,9 +44,9 @@ const (
 	msgStaleExpired = "This proposal expired."
 )
 
-// route is one live D9 proposal's routing state: where the proposal went, the
+// route is one live workflow proposal's routing state: where the proposal went, the
 // send surface that can mark it expired, the transport's reference for it, the
-// opener allowed to answer it, and the expiry timer. The D9 gate state itself
+// opener allowed to answer it, and the expiry timer. The confirmation gate state itself
 // stays inside chat.Agent; this is only what the core needs to route a decision
 // and settle the message on expiry.
 type route struct {
@@ -57,7 +57,7 @@ type route struct {
 	opener string
 }
 
-// sendProposal asks the transport to render a D9 workflow proposal, records the
+// sendProposal asks the transport to render a workflow proposal, records the
 // routing entry keyed by session id, and arms the expiry timer. A failed send
 // counts on send_failures_total and leaves nothing pending, since without a
 // delivered proposal there is nothing to answer.

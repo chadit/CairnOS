@@ -352,7 +352,7 @@ func bothFields() map[string]string {
 	return map[string]string{pullFieldOne: pullValueOne, pullFieldTwo: pullValueTwo}
 }
 
-// TestSecretsPullWithoutABlockIsANoOp covers FR3, the case every host without a
+// TestSecretsPullWithoutABlockIsANoOp covers the case every host without a
 // vault takes. Deploy runs this unconditionally, so a non-zero exit here would
 // stop all of them.
 func TestSecretsPullWithoutABlockIsANoOp(t *testing.T) {
@@ -514,7 +514,7 @@ func runPullAndRead(t *testing.T, binDir, dir, path string) string {
 	return string(body)
 }
 
-// TestSecretsPullDryRunWritesNothing covers FR8: an operator checks the mapping
+// TestSecretsPullDryRunWritesNothing covers the dry run: an operator checks the mapping
 // against the vault before a deploy touches the file the service reads.
 func TestSecretsPullDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -536,7 +536,7 @@ func TestSecretsPullDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestSecretsPullNamesEveryMissingField covers FR6 end to end: the run fails,
+// TestSecretsPullNamesEveryMissingField covers missing fields end to end: the run fails,
 // names everything to add, and leaves no file behind for the service to read.
 func TestSecretsPullNamesEveryMissingField(t *testing.T) {
 	t.Parallel()
@@ -750,7 +750,7 @@ func writeBitwardenConfig(t *testing.T, body string) string {
 	return dir
 }
 
-// TestSecretsPullInfersFieldsNamedLikeVariables covers FR19: a field whose name
+// TestSecretsPullInfersFieldsNamedLikeVariables proves a field whose name
 // is already the variable name needs no mapping, which is what keeps a host's
 // config from listing the same string twice. A field named for a human is left
 // alone, because nothing says what variable it would fill.
@@ -784,7 +784,7 @@ func TestSecretsPullInfersFieldsNamedLikeVariables(t *testing.T) {
 	}
 }
 
-// TestSecretsPullPrefersTheMappedField covers the collision half of FR19: an
+// TestSecretsPullPrefersTheMappedField covers the collision half of field inference: an
 // operator who wrote a mapping meant it, so the table beats the field that
 // happens to share the variable's name.
 func TestSecretsPullPrefersTheMappedField(t *testing.T) {
@@ -809,7 +809,7 @@ func TestSecretsPullPrefersTheMappedField(t *testing.T) {
 	}
 }
 
-// TestSecretsPullFailsWhenTheItemCarriesNothing covers the other FR19 edge: an
+// TestSecretsPullFailsWhenTheItemCarriesNothing covers the other inference edge: an
 // item with no variable-named field and no table is a configuration the pull
 // cannot act on, and the message has to name the item that was read.
 func TestSecretsPullFailsWhenTheItemCarriesNothing(t *testing.T) {
@@ -829,7 +829,7 @@ func TestSecretsPullFailsWhenTheItemCarriesNothing(t *testing.T) {
 	}
 }
 
-// TestSecretsPullTakesTheItemFromTheCredentialsFile covers FR18: a host whose
+// TestSecretsPullTakesTheItemFromTheCredentialsFile proves a host whose
 // credentials file names the item and whose config.toml does not still pulls.
 func TestSecretsPullTakesTheItemFromTheCredentialsFile(t *testing.T) {
 	t.Parallel()
@@ -882,11 +882,12 @@ func TestSecretsPullReadsACredentialsFileWrittenUnderTilde(t *testing.T) {
 	}
 }
 
-// TestSecretsPullWarnsAboutImpliedVariables covers FR20: the host will want a
-// bot token and an API key at run time, and the item carries neither. The pull
-// says so and still writes, because a value may well be in the hand-written env
-// file beside the generated one. The warning names the shared default an
-// operator should add and mentions the override separately.
+// TestSecretsPullWarnsAboutImpliedVariables covers the implied-variable
+// warning: the host will want a bot token and an API key at run time, and the
+// item carries neither. The pull says so and still writes, because a value may
+// be in the hand-written env file beside the generated one. The warning names
+// the shared default an operator should add and mentions the override
+// separately.
 func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 	t.Parallel()
 
@@ -915,7 +916,7 @@ func TestSecretsPullWarnsAboutImpliedVariables(t *testing.T) {
 	}
 }
 
-// TestSecretsPullWarnsWithTheRunnerBlockName covers the runner half of FR20
+// TestSecretsPullWarnsWithTheRunnerBlockName covers the runner half of that warning
 // under a block name of its own. The variable named is the one that runner
 // reads first, which is what an operator has to add to the item.
 func TestSecretsPullWarnsWithTheRunnerBlockName(t *testing.T) {
@@ -994,7 +995,7 @@ func TestSecretsPullNamesAnIdentityTokenEnv(t *testing.T) {
 	}
 }
 
-// TestSecretsPullIsQuietAboutALocalRunner is the other side of FR20: a runner
+// TestSecretsPullIsQuietAboutALocalRunner is the other side of that warning: a runner
 // pointed at a server on this side of the network reads no key, so warning about
 // one would train an operator to ignore the warnings that matter.
 func TestSecretsPullIsQuietAboutALocalRunner(t *testing.T) {

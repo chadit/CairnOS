@@ -196,7 +196,7 @@ func TestApplyCachingRecordsRollbackAndAnnotates(t *testing.T) {
 }
 
 // TestApplyRefusesParamTuning proves the kind gate: a param-tuning suggestion
-// never auto-applies, because verifying it kept output quality is the open R1
+// never auto-applies, because verifying it kept output quality is an open
 // problem.
 func TestApplyRefusesParamTuning(t *testing.T) {
 	t.Parallel()

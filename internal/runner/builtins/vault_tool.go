@@ -23,8 +23,8 @@ const (
 	defaultVaultDocs = 10
 )
 
-// VaultQuery is the built-in agent-loop tool over the vault's typed graph query
-// (S1). It exposes only the read side: keyword text match, tag and project
+// VaultQuery is the built-in agent-loop tool over the vault's typed graph query.
+// It exposes only the read side: keyword text match, tag and project
 // filters, and bounded link traversal.
 // There is no write op, so a chat turn cannot mutate the knowledge graph here.
 type VaultQuery struct {
