@@ -105,7 +105,7 @@ print_module_header() {
 # prints the Go standard library texts followed by each module's.
 # Returns 0, or exits through die.
 main() {
-	local target listing packages files module version module_dir file current goroot tool
+	local target listing packages files module version module_dir file current goroot tool goversion
 	for tool in go find sort cut grep cat; do
 		command -v "$tool" >/dev/null 2>&1 || die "${tool} is required"
 	done
@@ -133,8 +133,9 @@ main() {
 	done
 
 	goroot="$(go env GOROOT)"
+	goversion="$(go env GOVERSION)"
 	printf 'Third-party license and notice texts for cairnos built for: %s\n\n' "$*"
-	print_module_header "Go standard library and runtime $(go env GOVERSION)"
+	print_module_header "Go standard library and runtime ${goversion}"
 	print_text LICENSE "${goroot}/LICENSE"
 	if [ -f "${goroot}/PATENTS" ]; then
 		print_text PATENTS "${goroot}/PATENTS"
